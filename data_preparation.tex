@@ -1,0 +1,155 @@
+\documentclass{article}
+
+% Language setting
+\usepackage[english]{babel}
+
+% Page size and margins
+\usepackage[letterpaper,top=2cm,bottom=2cm,left=3cm,right=3cm,marginparwidth=1.75cm]{geometry}
+
+% Math + symbols
+\usepackage{amsmath,amssymb}
+
+% Useful packages
+\usepackage{graphicx}
+\usepackage[colorlinks=true, allcolors=blue]{hyperref}
+
+\title{General Data Preparation Pipeline}
+% \author{You}
+
+\begin{document}
+\maketitle
+
+% =========================
+% Dataset Preparation Plan (for all 4 ideas)
+% =========================
+
+\section{Shared Preparation (Supports Ideas 1--4)}
+To move quickly while keeping all four directions feasible, we first implement a shared data pipeline that supports: (i) variable-length context slicing, (ii) montage/channel variability, (iii) missingness masks, (iv) stress-test perturbations, and (v) optional embedding caches (e.g., SleepFM). This maximizes overlap and minimizes rework when deciding which direction to pursue.
+
+\subsection{S0. Storage Layout on CC (Realistic and Scalable)}
+Use a persistent high-quota location for derived artifacts and a fast temporary location for intermediate caches:
+\begin{itemize}
+    \item \texttt{\$PROJECT/psg/\{dataset\}/raw/} (symlink or extracted official structure)
+    \item \texttt{\$PROJECT/psg/\{dataset\}/derived/} (preprocessed signals, embeddings, metadata)
+    \item \texttt{\$PROJECT/psg/unified/metadata/} (global tables and splits)
+    \item \texttt{\$SCRATCH/psg\_cache/} (temporary caches, shards, memmaps)
+\end{itemize}
+Avoid storing large binary artifacts in \texttt{\$HOME}.
+
+\subsection{S1. Unified Metadata Table (Main Accelerator)}
+Create a single \texttt{csv/parquet} that indexes every subject-night across STAGES/SHHS/APPLES/MrOS. For each record store:
+\begin{itemize}
+    \item dataset name, subject ID, night ID, recording duration, timestamps
+    \item available channels list and mapping to modality families (EEG/EOG/EMG/ECG/Resp)
+    \item sampling rates per channel (or per modality family)
+    \item label availability flags and label paths (staging per 30s, night-level labels)
+    \item train/val/test split assignment (subject-wise) and fold ID
+    \item optional ``site/cohort'' ID if available (useful for shift evaluation)
+\end{itemize}
+This table is reused by all ideas.
+
+\subsection{S2. Standardize Preprocessing (Minimal, Consistent First)}
+Implement a consistent baseline preprocessing per night:
+\begin{itemize}
+    \item resampling to a common rate per modality family \emph{or} keep native rates with on-the-fly resampling
+    \item light bandpass filtering (initial defaults) and robust per-night channel scaling (z-score or median/IQR)
+    \item store per-window validity masks (invalid if missing/corrupted)
+\end{itemize}
+Cache the preprocessed per-night arrays once, then train from cached arrays.
+
+\subsection{S3. Create a Windowed Cache (Enables Variable Lengths and Fast Training)}
+Define canonical units:
+\begin{itemize}
+    \item epoch = 30s (for staging)
+    \item chunk = 2--5 minutes (for exits/long-context modules)
+    \item night windows = \{start, middle, end, full\} (for optional coverage experiments)
+\end{itemize}
+For each night, cache:
+\begin{itemize}
+    \item signals (or embeddings) per modality family over time
+    \item staging labels aligned to 30s epochs (if available)
+    \item night-level labels (AHI/apnea/etc.) with availability flags
+    \item modality-family masks $\mathbf{z}_m[t]$ indicating which modalities are present/valid per time step
+\end{itemize}
+
+\subsection{S4. Splits that Support Both In-domain and Domain Shift}
+Store two complementary split regimes:
+\begin{itemize}
+    \item in-domain: subject-wise split within each dataset (avoid leakage)
+    \item cross-dataset: train on dataset A, test on dataset B (for shift stress tests)
+\end{itemize}
+
+\subsection{S5. Optional: SleepFM Embedding Cache (Speed Booster Later)}
+If using SleepFM, cache embeddings per night:
+\begin{itemize}
+    \item $\mathbf{H}_m[t]$ per modality family and time step
+    \item store embedding time step size (e.g., 5s or 30s) to convert minutes $\leftrightarrow$ steps
+\end{itemize}
+You can implement the pipeline first on raw signals and later add embedding caching without changing the dataset index.
+
+% =========================================================
+
+\section{Idea-Specific Preparation (What Each Direction Needs in Addition)}
+
+\subsection{Idea 1 (AMTA+CSL): Extra Preparation}
+This direction primarily requires efficient \emph{random variable-length slicing} and paired short/long views.
+\begin{itemize}
+    \item \textbf{I1. Anchored sampling for staging:} index valid anchor epochs $t$ with label $y_t$ so the loader can return past-only context ending at $t$.
+    \item \textbf{I2. Length menu:} predefine a small length set (log-spaced), e.g., $\{2,5,10,20,40,80\}$ minutes, and implement loader functions returning two views $(L_s, L_\ell)$ for the same anchor/sample.
+    \item \textbf{I3. Optional coverage windows (night-level):} precompute indices for \{start, middle, end, full\} windows per night (nights vary in duration).
+\end{itemize}
+
+\subsection{Idea 2 (Early-Exit Length Selection): Extra Preparation}
+This direction needs fixed checkpoints and prefix states, which still rely on the same slicing primitives.
+\begin{itemize}
+    \item \textbf{I4. Checkpoints in model steps:} define exits as steps rather than minutes (e.g., if step=30s: 2/5/10/20/40 min $\rightarrow$ 4/10/20/40/80 steps).
+    \item \textbf{I5. Longest-prefix availability:} ensure the loader can always provide the maximum context $L_K$ for the sampled anchor, while shorter prefixes are subsets of it.
+    \item \textbf{I6. Optional coverage support (night-level):} enable prefix reading within a chosen window (start/middle/end/full) if later adding coverage selection.
+\end{itemize}
+
+\subsection{Idea 3 (Safe TTA + Stress Suite): Extra Preparation}
+This direction is evaluation- and shift-oriented: it needs a reproducible perturbation suite and target streams.
+\begin{itemize}
+    \item \textbf{I7. Stress-test transforms as dataset wrappers:} implement functions to apply missing modalities, montage perturbations (channel subsets), intermittent dropout, artifact injection, and sampling mismatches at signal-level or embedding-level.
+    \item \textbf{I8. Target ``streams'' for adaptation:} store per-night sequential ordering (time index) so test-time adaptation can process unlabeled sequences in order.
+    \item \textbf{I9. Prototype support (for margin gate):} after source training, compute and save class prototypes (mean embeddings per class) from the training set for use at test time.
+\end{itemize}
+
+\subsection{Idea 4 (Modality-aware MoE Routing): Extra Preparation}
+This direction needs reliable modality masks and missingness augmentation schedules.
+\begin{itemize}
+    \item \textbf{I10. Per-window modality-family masks:} ensure $\mathbf{z}_m[t]$ exists at the same temporal resolution as your model inputs (epoch or chunk).
+    \item \textbf{I11. Missingness/montage augmentation schedule:} implement seeded training-time augmentation:
+    \begin{itemize}
+        \item whole-modality drop (entire sample)
+        \item EEG channel subset sampling (montage simulation)
+        \item intermittent segment masking (contiguous gaps)
+    \end{itemize}
+    \item \textbf{I12. Optional cheap reliability proxies:} if desired, precompute lightweight per-window statistics per modality (RMS/variance, clipping ratio, flatline ratio, high-frequency energy ratio) to help routing; this avoids needing dataset-provided quality scores.
+\end{itemize}
+
+% =========================================================
+
+\section{Mutual Steps (Max Overlap Across Ideas 1--4)}
+The following steps are shared and can be executed before choosing a direction:
+\begin{enumerate}
+    \item Unified metadata table (subjects/nights, labels, channel lists, modality mapping, splits).
+    \item Cached per-night standardized arrays and aligned labels (staging + night-level).
+    \item Efficient variable-length slicing interface by (night\_id, anchor $t$, length $L$).
+    \item Modality-family masks per window and (optional) segment missingness masks.
+    \item Stress-test transform wrappers (even if initially unused).
+    \item Optional embedding cache (SleepFM) keyed by the same metadata indices.
+\end{enumerate}
+
+\section{Fastest Practical Start (Recommended)}
+To maximize speed:
+\begin{itemize}
+    \item Start with one dataset that is easiest to parse on CC (often SHHS or STAGES depending on access/tooling).
+    \item Implement staging first (many samples, quick feedback), then add one night-level label next.
+    \item Once one dataset runs end-to-end, replicate the adapter for additional datasets using the same unified metadata format.
+\end{itemize}
+
+% \bibliographystyle{alpha}
+% \bibliography{sample}
+
+\end{document}

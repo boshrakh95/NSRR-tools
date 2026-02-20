@@ -1,0 +1,141 @@
+# Signal Processing Parameters
+# All parameters are configurable and dataset-agnostic
+
+processing:
+  eeg:
+    description: "EEG preprocessing parameters"
+    filter_low: 0.3        # Hz
+    filter_high: 35.0       # Hz
+    target_sr: 128          # Hz (SleepFM requirement)
+    filter_type: "bandpass"
+    filter_order: 4
+    filter_method: "butterworth"
+    normalization: "zscore"  # or "robust", "minmax"
+    detrend: true
+    notch_filter: null      # Hz, null to disable
+    
+  eog:
+    description: "EOG preprocessing parameters"
+    filter_low: 0.3
+    filter_high: 35.0
+    target_sr: 128
+    filter_type: "bandpass"
+    filter_order: 4
+    filter_method: "butterworth"
+    normalization: "zscore"
+    detrend: true
+    notch_filter: null
+    
+  ecg:
+    description: "ECG preprocessing parameters"
+    filter_low: 0.5
+    filter_high: 45.0
+    target_sr: 128
+    filter_type: "bandpass"
+    filter_order: 4
+    filter_method: "butterworth"
+    normalization: "zscore"
+    detrend: true
+    notch_filter: null
+    
+  emg:
+    description: "EMG preprocessing parameters"
+    filter_low: 10.0
+    filter_high: 100.0
+    target_sr: 128
+    filter_type: "bandpass"
+    filter_order: 4
+    filter_method: "butterworth"
+    normalization: "zscore"
+    detrend: false  # EMG typically doesn't need detrending
+    notch_filter: null
+    
+  resp:
+    description: "Respiratory signal preprocessing"
+    filter_low: 0.05
+    filter_high: 2.0
+    target_sr: 128
+    filter_type: "bandpass"
+    filter_order: 4
+    filter_method: "butterworth"
+    normalization: "zscore"
+    detrend: true
+    notch_filter: null
+
+# HDF5 output settings
+hdf5:
+  dtype: "float16"           # float16 or float32
+  compression: "gzip"        # gzip, lzf, or null
+  compression_level: 4       # 0-9 for gzip
+  chunk_size: 38400          # 5 minutes @ 128 Hz
+  chunks: true               # Enable chunked storage
+  shuffle: true              # Improve compression
+  fletcher32: false          # Checksum (slower but safer)
+
+# Normalization options
+normalization:
+  zscore:
+    description: "Z-score normalization (mean=0, std=1)"
+    method: "zscore"
+    robust: false
+  
+  robust_zscore:
+    description: "Robust z-score using median and IQR"
+    method: "zscore"
+    robust: true
+    
+  minmax:
+    description: "Min-max scaling to [0, 1]"
+    method: "minmax"
+    feature_range: [0, 1]
+
+# Windowing/Segmentation
+windowing:
+  epoch_seconds: 30          # Standard sleep epoch
+  chunk_seconds: 300         # 5 min chunks for SleepFM
+  overlap: 0                 # Overlap between windows (0 = no overlap)
+  min_chunk_duration: 60     # Minimum valid chunk duration (seconds)
+
+# Masking parameters
+masking:
+  epoch_seconds: 30
+  chunk_seconds: 300
+  min_valid_ratio: 0.5       # Minimum valid data ratio for QC pass
+  artifact_detection: false  # Enable/disable artifact detection
+  artifact_method: "yasa"    # yasa, mne, or custom
+  
+# Quality control thresholds
+quality_control:
+  min_duration_hours: 4.0    # Minimum recording duration
+  max_duration_hours: 14.0   # Maximum recording duration
+  min_valid_ratio: 0.7       # Minimum valid data ratio
+  max_flat_line_seconds: 30  # Maximum consecutive flat-line duration
+  max_amplitude_std_ratio: 5.0  # Maximum std deviation ratio for outlier detection
+  check_sampling_rate: true  # Verify sampling rate consistency
+  allowed_sr_tolerance: 0.01 # Sampling rate tolerance (1%)
+
+# Parallel processing
+parallel:
+  n_jobs: 4                  # Number of parallel workers
+  backend: "loky"            # joblib backend: loky, threading, multiprocessing
+  verbose: 1                 # Verbosity level
+  batch_size: 10             # Subjects per batch
+  
+# Memory management
+memory:
+  max_ram_gb: 16             # Maximum RAM usage per worker
+  use_memmap: false          # Use memory-mapped files for large arrays
+  cache_dir: "/tmp/nsrr_cache"  # Temporary cache directory
+  
+# Logging
+logging:
+  level: "INFO"              # DEBUG, INFO, WARNING, ERROR, CRITICAL
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  log_to_file: true
+  log_dir: "logs"
+  
+# Progress tracking
+progress:
+  use_tqdm: true
+  checkpoint_interval: 10    # Save progress every N subjects
+  resume_from_checkpoint: true

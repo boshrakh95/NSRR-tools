@@ -1,0 +1,406 @@
+\documentclass{article}
+
+% Language setting
+\usepackage[english]{babel}
+
+% Page size and margins
+\usepackage[letterpaper,top=2cm,bottom=2cm,left=3cm,right=3cm,marginparwidth=1.75cm]{geometry}
+
+% Math + symbols
+\usepackage{amsmath,amssymb}
+
+% Useful packages
+\usepackage{graphicx}
+\usepackage[colorlinks=true, allcolors=blue]{hyperref}
+
+\title{Proposal for Objective 3}
+% \author{You}
+
+\begin{document}
+\maketitle
+
+% =========================
+% Proposal: Context-Length + Distribution-Change Robustness for Multimodal PSG
+% =========================
+
+\section{Motivation and Research Problems}
+Based on prior sleep modeling literature, the optimal amount of temporal context is \emph{task-dependent} (e.g., local patterns for per-epoch staging versus longer-range structure or sparse events for disease severity and phenotype risk). Meanwhile, real-world PSG is affected by \emph{distribution change}: montage differences, missing channels, sensor artifacts, sampling mismatches, and cross-site dataset shifts. These two issues make fixed design choices brittle and limit deployment reliability.
+
+This proposal focuses on two research problems:
+\begin{itemize}
+    \item \textbf{Problem A: Context usage uncertainty.} How much context (and potentially which night region) is truly needed for different sleep tasks, and how can we learn it automatically rather than selecting it manually?
+    \item \textbf{Problem B: Distribution change robustness.} How can we maintain (or safely recover) performance under montage/missingness/artifact/domain shift without labels, and avoid adaptation drift?
+\end{itemize}
+
+For each problem, I propose two method directions. Before developing new models, we will run targeted validation experiments (Phase 0) to confirm the problem on selected tasks/datasets and to produce reference ``oracle'' behaviors that we can later use to verify whether the proposed methods are selecting reasonable context lengths and behaving robustly under shift.
+
+\section{Phase 0: Validation Experiments (Proving the Problems Exist)}
+\subsection{Phase 0A: Validate Context-Length and Coverage Dependence (Problem A Evidence)}
+\paragraph{Datasets and Tasks (To start with).}
+Choose 2--3 tasks spanning temporal needs:
+\begin{itemize}
+    \item \textbf{Per-epoch task:} sleep staging (e.g., 5-class).
+    \item \textbf{Night-level tasks:} AHI severity, apnea presence, dementia, insomnia (depending on label availability per dataset).
+\end{itemize}
+Train on one source dataset (e.g., STAGES or SHHS) and evaluate in-domain; optionally add cross-dataset evaluation (e.g., train STAGES $\rightarrow$ test SHHS) as a stress test.
+
+\paragraph{Validation Protocol: Manual Length and Coverage Sweeps.}
+For each task, train the same downstream architecture multiple times with fixed context lengths:
+\[
+L \in \{30\text{s},\,2\text{m},\,5\text{m},\,10\text{m},\,20\text{m},\,40\text{m},\,80\text{m}\} \quad (\text{log-spaced})
+\]
+\begin{itemize}
+    \item For \textbf{staging}, define context around an anchor epoch $t$ (e.g., past-only window ending at $t$).
+    \item For \textbf{night-level tasks}, evaluate both \emph{length} and \emph{coverage} (night region), since ``best length'' is confounded with ``where to look.'' Use a small menu of windows: \{start, middle, end, full-night\}.
+\end{itemize}
+
+\paragraph{Outcomes (Problem A).}
+\begin{itemize}
+    \item Different tasks have different performance-vs-length curves; optima differ.
+    \item Some tasks plateau quickly; some benefit from intermediate/longer context; sometimes full context can be worse than intermediate.
+    \item Night-level tasks may prefer different night regions (coverage), motivating optional coverage selection.
+\end{itemize}
+
+\paragraph{How Phase 0A ties to main experiments.}
+The best-performing length(s) and region(s) from Phase 0A become:
+\begin{itemize}
+    \item a reference ``oracle'' for comparison (what a human would choose with hindsight),
+    \item a target behavior to validate that learned policies (Ideas 1--2) recover similar length/coverage preferences automatically.
+\end{itemize}
+
+\subsection{Phase 0B: Validate Robustness Failure Modes (Problem B Evidence)}
+\paragraph{PSG-specific stress-test suite.}
+We quantify what breaks robustness using controlled perturbations:
+\begin{itemize}
+    \item \textbf{Missing modalities/channels:} drop ECG/Resp/EOG/EMG; simulate EEG montage changes via channel-subset sampling.
+    \item \textbf{Intermittent missingness:} drop contiguous segments (e.g., 10--30 min gaps).
+    \item \textbf{Artifact injection:} noise bursts / amplitude scaling / baseline drift proxies.
+    \item \textbf{Sampling mismatches:} resampling/filtering differences.
+    \item \textbf{Cross-dataset transfer:} train on dataset A and test on dataset B (site/capture shift).
+\end{itemize}
+
+\paragraph{Outcomes (Problem B).}
+\begin{itemize}
+    \item Identify which modalities, montage changes, and artifact types degrade each task the most.
+    \item Establish robust baselines and a consistent evaluation protocol for Ideas 3--4.
+\end{itemize}
+
+% =========================================================
+\section{Problem A: Context Usage Uncertainty}
+We assume a backbone that produces per-window embeddings (e.g., SleepFM) and keep long-context modules lightweight and length-flexible.
+
+\section{Idea 1: AMTA + CSL (Multi-Timescale Adapter with Context Sufficiency Learning)}
+\subsection{Goal}
+Learn a lightweight long-context module that (i) adaptively mixes short/medium/long temporal evidence and (ii) is trained to behave stably across context lengths. This turns context-length choice from a manual hyperparameter into a learned/measurable property. It also yields interpretability via gates and post-hoc sufficiency/importance analysis.
+
+\subsection{Inputs (Backbone + Multimodal, Montage-Agnostic Interface)}
+\begin{itemize}
+    \item Channel-agnostic backbone produces embeddings per time step/window: $\mathbf{h}_m[t]$ for each modality family $m$ (EEG/EOG/EMG/ECG/Resp), plus a mask $\mathbf{z}_m[t]\in\{0,1\}$ indicating availability.
+\end{itemize}
+
+\subsection{Architecture: Adaptive Multi-Timescale Adapter (AMTA)}
+We build three temporal pathways with different receptive fields and mix them with a learned gate:
+\begin{itemize}
+    \item \textbf{Short path:} local minutes-scale context (e.g., small TCN/GRU over recent steps).
+    \item \textbf{Medium path:} tens-of-minutes context (e.g., dilated TCN or small SSM / Mamba-style block).
+    \item \textbf{Long path:} hours-scale memory (e.g., compact SSM state or hierarchical pooling state).
+\end{itemize}
+Each path outputs features at time $t$: $\mathbf{f}_{\text{short}}[t],\,\mathbf{f}_{\text{med}}[t],\,\mathbf{f}_{\text{long}}[t]$.
+A gate outputs mixing weights $\mathbf{g}[t]\in\mathbb{R}^3$ (softmaxed), optionally conditioned on missingness:
+\[
+\mathbf{f}[t] \;=\; g_{\text{short}}[t]\mathbf{f}_{\text{short}}[t] \;+\; g_{\text{med}}[t]\mathbf{f}_{\text{med}}[t] \;+\; g_{\text{long}}[t]\mathbf{f}_{\text{long}}[t].
+\]
+A task-specific head consumes $\mathbf{f}[t]$ (staging) or a pooled summary of $\mathbf{f}[\cdot]$ (night-level).
+
+\paragraph{Options for modality fusion.}
+\begin{itemize}
+    \item \textbf{Fusion-first:} fuse modalities at each $t$ into one vector, then AMTA processes the fused sequence.
+    \item \textbf{Per-modality states:} run small temporal adapters per modality family, then fuse their states with a mask-aware gate.
+\end{itemize}
+
+\subsection{Training: Context Sufficiency Learning (CSL) via Truncated Multi-View Batches}
+For each training sample, we create two views with different history lengths that share the same prediction target.
+\begin{itemize}
+    \item \textbf{Sleep Staging:} anchor an epoch $t$ with label $y_t$. Create:
+    \begin{itemize}
+        \item short view: last $L_s$ minutes ending at $t$,
+        \item long view: last $L_\ell$ minutes ending at $t$ (with $L_\ell > L_s$).
+    \end{itemize}
+    \item \textbf{Night-level:} choose a window (see optional coverage) and create short/long views inside the chosen window.
+\end{itemize}
+
+\subsubsection{Losses}
+Let $p_s$ and $p_\ell$ be predictions from short and long views, and $y$ be the label.
+\begin{enumerate}
+    \item \textbf{Supervised losses (always on):}
+    \[
+    \mathcal{L}_{\text{sup}} \;=\; \mathcal{L}(p_s,y) \;+\; \mathcal{L}(p_\ell,y)
+    \]
+    where $\mathcal{L}$ is CE for classification or MAE/MSE for regression tasks.
+    \item \textbf{Consistency loss (selectively on):} encourage the short prediction to match the long prediction \emph{only when long actually helps}.
+    Two practical gating options:
+    \begin{itemize}
+        \item \textbf{Confidence-gated:} apply consistency if the long prediction is confident (e.g., low entropy or high margin).
+        \item \textbf{Better-with-label gated:} apply consistency only if $\mathcal{L}(p_\ell,y) < \mathcal{L}(p_s,y)$ for this sample.
+    \end{itemize}
+    Using a distillation-style match (e.g., KL divergence) gives:
+    \[
+    \mathcal{L}_{\text{cons}} \;=\; \mathbf{1}[\text{gate passes}]\cdot \mathrm{KL}\big(p_\ell \,\|\, p_s\big).
+    \]
+\end{enumerate}
+Total:
+\[
+\mathcal{L}_{\text{total}} \;=\; \mathcal{L}_{\text{sup}} \;+\; \lambda_{\text{cons}}\mathcal{L}_{\text{cons}}.
+\]
+
+\subsection{Testing and Outcomes}
+\paragraph{Testing.}
+\begin{itemize}
+    \item Evaluate performance across a sweep of lengths $L$ (as in Phase 0A) and compare to the validation curves.
+    \item Under missingness/montage change, evaluate robustness (drop modality families; channel-subset perturbations).
+\end{itemize}
+
+\paragraph{Outcomes.}
+\begin{itemize}
+    \item AMTA gates reveal when the model relies on short vs long evidence.
+    \item CSL yields stable behavior across lengths and supports a principled ``sufficiency length'' estimate (smallest $L$ within $\epsilon$ of best).
+    \item Validate alignment with Phase 0A: do learned sufficiency trends match the manually observed task-specific optima?
+\end{itemize}
+
+\subsection{Interpretability for Idea 1}
+\begin{itemize}
+    \item \textbf{Timescale importance over time:} visualize $g_{\text{short}}[t],g_{\text{med}}[t],g_{\text{long}}[t]$ and summarize by task/subject.
+    \item \textbf{Modality reliance:} if modality-aware gating is used, report average modality weights per task; show shifts under missingness.
+    \item \textbf{Window importance:} rank time segments by gate mass or attribution; validate by masking top-ranked segments vs random segments and measuring performance drop.
+\end{itemize}
+
+\subsection{Possible Add-on: Coverage Selection (Where to Look) for Night-Level Tasks}
+Length alone does not address the ``last hour matters'' case. Add coverage selection only for night-level outcomes:
+\begin{itemize}
+    \item \textbf{Option C1:} candidate windows \{start, middle, end, full\}; learn a window selector and run AMTA+CSL inside the selected window.
+    \item \textbf{Option C2:} cheap coarse scan (downsampled embeddings) predicts a window location/duration; run AMTA inside that window.
+\end{itemize}
+
+% =========================================================
+\section{Idea 2: Adaptive Early-Exit Length Selection (Learn Which Length to Use)}
+\subsection{Goal}
+Train a model that produces predictions at multiple predefined lengths and learns a selector that chooses which length to use per sample/task. The selector is trained to choose the \emph{earliest near-best} exit, enabling intermediate optima and avoiding the assumption that longer is always better.
+
+\subsection{Architecture}
+\begin{itemize}
+    \item \textbf{Incremental long-context module:} any temporal module that can produce a state after consuming a prefix of the sequence (SSM/GRU/TCN/AMTA).
+    \item \textbf{Exit heads:} $K$ small heads at checkpoints $L_1 < L_2 < \dots < L_K$ (e.g., 2/5/10/20/40 minutes). Each head produces a prediction $p_k$ from state $\mathbf{s}_k$.
+    \item \textbf{Selector:} a small MLP that outputs a categorical distribution over exits (``predict $k$'' formulation), conditioned on features (e.g., $\mathbf{s}_K$ plus missingness mask).
+\end{itemize}
+
+\paragraph{Selector input.}
+Use the longest-context state $\mathbf{s}_K$ plus missingness mask:
+\[
+q \;=\; \mathrm{softmax}\big(\mathrm{MLP}([\mathbf{s}_K;\,\mathbf{z}])\big)\in\mathbb{R}^K.
+\]
+
+\subsection{Training: One Forward Pass, Multiple Exits}
+For each training example:
+\begin{enumerate}
+    \item Run the long-context module once up to $L_K$ and record checkpoint states $\mathbf{s}_1,\dots,\mathbf{s}_K$.
+    \item Compute predictions at all exits: $p_k = \mathrm{Head}_k(\mathbf{s}_k)$.
+    \item Compute supervised loss per exit:
+    \[
+    \ell_k \;=\; \mathcal{L}(p_k,y).
+    \]
+\end{enumerate}
+
+\subsubsection{Defining the target exit $k^\star$ (Oracle-exit supervision; no RL)}
+Compute:
+\[
+k_{\text{best}} = \arg\min_k \ell_k, \qquad
+k^\star = \min\{k:\; \ell_k \le \ell_{k_{\text{best}}} + \delta\},
+\]
+i.e., the earliest exit within a small margin $\delta$ of the best exit.
+
+\subsubsection{Losses}
+\begin{enumerate}
+    \item \textbf{Multi-exit supervised loss (train all exits):}
+    \[
+    \mathcal{L}_{\text{exit}} \;=\; \sum_{k=1}^{K} w_k\,\ell_k.
+    \]
+    \item \textbf{Selector loss (cross-entropy over exits):}
+    \[
+    \mathcal{L}_{\text{sel}} \;=\; \mathrm{CE}(q, k^\star).
+    \]
+\end{enumerate}
+Total:
+\[
+\mathcal{L}_{\text{total}} \;=\; \mathcal{L}_{\text{exit}} \;+\; \lambda_{\text{sel}}\mathcal{L}_{\text{sel}}.
+\]
+
+\subsection{Testing and Outcomes}
+\paragraph{Testing.}
+At test time (labels unavailable), we cannot compute $\ell_k$. The selector provides an actionable decision:
+\begin{itemize}
+    \item Compute $q=\mathrm{softmax}(\cdot)$ and choose $\hat{k}=\arg\max_k q[k]$.
+    \item Output prediction $p_{\hat{k}}$ as the model's final decision.
+\end{itemize}
+
+\paragraph{Outcomes.}
+\begin{itemize}
+    \item The model automatically selects different exits for different tasks/samples.
+    \item Validate against Phase 0A: does the distribution of chosen $\hat{k}$ align with the lengths that were optimal in the manual sweep?
+    \item Potentially improve performance by avoiding overly long context when it hurts and by adapting length under missingness.
+\end{itemize}
+
+\subsection{Interpretability for Idea 2}
+\begin{itemize}
+    \item \textbf{Chosen-length histograms:} report $\hat{k}$ (or minutes) distributions by task, cohort, and missingness condition.
+    \item \textbf{Why it chose longer:} correlate larger $\hat{k}$ with missing modalities or low-confidence indicators.
+    \item \textbf{Masking validation:} if combined with coverage/segment importance, mask selected segments and quantify performance drop vs random masks.
+\end{itemize}
+
+\subsection{Possible Add-on: Risk-Controlled Early Exit (Safety Under Shift)}
+After training, calibrate confidence thresholds on a validation set to only exit early when risk is controlled. This can make the method more conservative under dataset shift:
+\begin{itemize}
+    \item Calibrate confidence per exit on validation.
+    \item At test time, only accept early exit if confidence passes calibrated threshold; otherwise fall back to later exits or abstain.
+\end{itemize}
+
+\subsection{Possible Add-on: Coverage Selection (Where to Look) for Night-Level Tasks}
+For night-level outcomes, augment length selection with coverage selection:
+\begin{itemize}
+    \item \textbf{Option C1:} choose among \{start, middle, end, full\} and then choose exit $\hat{k}$ within the selected window.
+    \item \textbf{Option C2:} cheap coarse scan predicts window start/duration; run exits within that window and select $\hat{k}$.
+\end{itemize}
+
+% =========================================================
+\section{Problem B: Distribution Change Robustness}
+We focus on robustness under montage variation, missing channels, artifacts, sampling mismatches, and cross-dataset transfer. We propose two complementary directions: safe label-free test-time adaptation (Idea 3) and modality-aware mixture-of-experts routing (Idea 4).
+
+\section{Idea 3: PSG Stress Suite + Safe Test-Time Adaptation (TTA) with Safety Gates}
+\subsection{Goal}
+Measure robustness failures using a PSG-specific stress-test suite (Phase 0B), then design a safe, label-free test-time adaptation procedure that can recover performance under shift \emph{without} drifting and collapsing.
+
+\subsection{Train vs Test-Time Separation}
+\begin{itemize}
+    \item \textbf{Training time (source):} train the base predictor on labeled source data (optionally with missingness augmentation).
+    \item \textbf{Test time (target, unlabeled):} adapt only a small parameter subset using unlabeled objectives, but \emph{only} when safety gates pass.
+\end{itemize}
+
+\subsection{What is Adapted (Tiny Parameter Sets)}
+We update only a small subset to reduce drift risk:
+\begin{itemize}
+    \item \textbf{Option P1:} normalization parameters/statistics (e.g., affine scales/shifts).
+    \item \textbf{Option P2:} small adapters/LoRA modules in the temporal adapter or head.
+    \item \textbf{Option P3:} classifier head only (bias/scale or a small MLP head).
+    \item \textbf{Option P4 (optional):} only a modality fusion gate (if present).
+\end{itemize}
+
+\subsection{Unlabeled TTA Objectives (Label-free)}
+Given an unlabeled test batch, we minimize an unsupervised objective:
+\begin{itemize}
+    \item \textbf{Option U1: entropy minimization:} encourage confident predictions on target data.
+    \item \textbf{Option U2: augmentation consistency:} predictions should match under mild perturbations (noise/cropping/masking).
+    \item \textbf{Option U3 (optional): prototype consistency:} keep embeddings close to source prototypes of predicted class.
+\end{itemize}
+
+\subsection{Safety Gates (Update Only if All Pass)}
+We apply updates only if all three gates pass:
+\begin{enumerate}
+    \item \textbf{Gate 1 --- Confidence gate (entropy).} Compute prediction entropy $H(p)$. Update only if:
+    \[
+    H(p) < \tau_H.
+    \]
+    \item \textbf{Gate 2 --- Prototype margin gate.} Precompute fixed class prototypes from source training (mean embedding per class). For a sample embedding, compute cosine similarities to prototypes; let $s_1$ and $s_2$ be top-1 and top-2 similarities. Update only if:
+    \begin{itemize}
+        \item predicted class matches the top prototype class, and
+        \item $(s_1 - s_2) > \tau_M$.
+    \end{itemize}
+    \item \textbf{Gate 3 --- Drift control (rollback/stop).} Maintain an EMA copy of adapted parameters. Track a rolling prediction distribution over the last $W$ batches. If the distribution shifts too abruptly (e.g., KL divergence exceeds $\tau_D$), rollback to EMA and freeze updates for $N$ steps.
+\end{enumerate}
+
+\subsection{Test-Time Adaptation Loop (What Happens at Inference)}
+For each unlabeled target batch:
+\begin{itemize}
+    \item Compute predictions and gate statistics.
+    \item If all gates pass: take a small gradient step on the unlabeled objective (U1/U2/U3) updating only the chosen parameter subset (P1--P4).
+    \item Else: do not update (and possibly rollback/freeze under Gate 3).
+\end{itemize}
+
+\subsection{Evaluation and Outcomes}
+\begin{itemize}
+    \item Evaluate on Phase 0B stress tests and cross-dataset transfer.
+    \item Show recovery of performance under shift while avoiding collapse (compare gated vs ungated TTA).
+\end{itemize}
+
+\subsection{Interpretability for Idea 3}
+\begin{itemize}
+    \item Gate pass rates: fraction of samples/batches passing each gate.
+    \item Rollback analysis: when drift is detected and how often updates are frozen.
+    \item Confidence/margin trajectories over time (per night or per subject).
+\end{itemize}
+
+\subsection{Core Ablations for Idea 3}
+\begin{itemize}
+    \item No TTA vs TTA (ungated) vs TTA (gated).
+    \item Remove each gate (Gate 1 / Gate 2 / Gate 3) to show necessity.
+    \item Parameter subset: head-only vs adapter-only vs norm-only.
+    \item Unlabeled objective: entropy vs consistency vs hybrid.
+\end{itemize}
+
+% =========================================================
+\section{Idea 4: Modality-Aware Mixture-of-Experts (MoE) Routing for PSG Robustness}
+\subsection{Goal}
+Improve robustness to missing/unreliable modalities and montage variability by using multiple small specialist sub-models (experts) and a router that selects (and mixes) experts based on available signals. This is designed to go beyond simple modality weighting, by enabling different \emph{mappings} under different modality regimes.
+
+\subsection{Architecture}
+\begin{itemize}
+    \item \textbf{Router:} a small network that takes missingness mask $\mathbf{z}$ (and optional reliability proxies) and outputs expert weights.
+    \item \textbf{Experts:} multiple lightweight specialists (recommended: small temporal adapters, not only MLP heads) that can encode different modality regimes and temporal cues.
+    \item \textbf{Combiner:} weighted mixture of expert outputs (or expert states) to form the final prediction.
+\end{itemize}
+
+\paragraph{Expert design options.}
+\begin{itemize}
+    \item \textbf{Option E1 (modality-regime experts):} experts specialize in EEG-rich vs ECG/Resp-dominant vs missing-EEG regimes.
+    \item \textbf{Option E2 (timescale experts):} experts specialize in short vs long temporal evidence (can connect to sufficiency).
+    \item \textbf{Option E3 (artifact-robust experts):} experts specialize in noisy conditions (learned via artifact augmentation).
+\end{itemize}
+
+\subsection{Training}
+\begin{itemize}
+    \item \textbf{Supervised task loss:} train end-to-end on labeled source data.
+    \item \textbf{Missingness/montage augmentation (recommended):} simulate realistic channel drop and montage changes during training so the router learns meaningful routing.
+    \item \textbf{MoE regularization (recommended):} use a load-balancing term to prevent routing collapse to one expert.
+\end{itemize}
+
+\subsection{Testing and Outcomes}
+\begin{itemize}
+    \item Evaluate robustness on Phase 0B stress tests and cross-dataset transfer.
+    \item Compare against a \textbf{simple gating baseline} (weighted modality fusion) to demonstrate that MoE provides gains beyond reweighting.
+\end{itemize}
+
+\subsection{Interpretability for Idea 4}
+\begin{itemize}
+    \item Router weight trajectories over time (e.g., per chunk): when EEG is missing, does routing shift toward ECG/Resp experts?
+    \item Expert usage summaries: average expert weights by task, dataset, and stress condition.
+\end{itemize}
+
+\subsection{Core Ablations for Idea 4}
+\begin{itemize}
+    \item Simple modality gating (baseline) vs MoE routing.
+    \item MLP-only experts vs temporal experts (stronger, more distinct).
+    \item Time-varying routing (per chunk) vs one routing per night.
+    \item With vs without load balancing regularization (collapse ablation).
+    \item With vs without missingness/montage augmentation.
+\end{itemize}
+
+\subsection{Optional Integration with Problem A (Context Robustness)}
+MoE can be combined with CSL (Idea 1) to improve robustness to varying context length:
+\begin{itemize}
+    \item Train MoE under truncated multi-view batches (short/long views).
+    \item Apply selective consistency (confidence-gated or better-with-label gated) to stabilize behavior across lengths.
+    \item Produce sufficiency curves under different missingness regimes.
+\end{itemize}
+
+% \bibliographystyle{alpha}
+% \bibliography{sample}
+
+\end{document}

@@ -1,0 +1,286 @@
+# Channel Name Alternatives for Robust Detection
+# Maps standardized channel names to dataset-specific variations
+
+channel_alternatives:
+  # EEG Channels
+  C3-M2:
+    - C3-M2
+    - C3M2
+    - C3:M2
+    - EEG C3-M2
+    - C3-A2
+    - C3A2
+    - C3:A2
+    - EEG C3-A2
+    - C3
+  
+  C4-M1:
+    - C4-M1
+    - C4M1
+    - C4:M1
+    - EEG C4-M1
+    - C4-A1
+    - C4A1
+    - C4:A1
+    - EEG C4-A1
+    - C4
+  
+  O1-M2:
+    - O1-M2
+    - O1M2
+    - O1:M2
+    - EEG O1-M2
+    - O1-A2
+    - O1A2
+    - O1:A2
+    - EEG O1-A2
+    - O1
+  
+  O2-M1:
+    - O2-M1
+    - O2M1
+    - O2:M1
+    - EEG O2-M1
+    - O2-A1
+    - O2A1
+    - O2:A1
+    - EEG O2-A1
+    - O2
+  
+  F3-M2:
+    - F3-M2
+    - F3M2
+    - F3:M2
+    - EEG F3-M2
+    - F3-A2
+    - F3A2
+    - F3:A2
+    - EEG F3-A2
+    - F3
+  
+  F4-M1:
+    - F4-M1
+    - F4M1
+    - F4:M1
+    - EEG F4-M1
+    - F4-A1
+    - F4A1
+    - F4:A1
+    - EEG F4-A1
+    - F4
+  
+  # EOG Channels
+  LOC:
+    - LOC
+    - LEOG
+    - EOG LOC-A2
+    - EOG(L)
+    - EOG-L
+    - E1
+    - E1-M2
+    - E1M2
+    - E1:M2
+    - EOG1
+    - L-EOG
+    - EOGl
+  
+  ROC:
+    - ROC
+    - REOG
+    - EOG ROC-A1
+    - EOG(R)
+    - EOG-R
+    - E2
+    - E2-M2
+    - E2M2
+    - E2:M2
+    - E2-M1
+    - EOG2
+    - R-EOG
+    - EOGr
+  
+  # ECG Channels
+  EKG:
+    - EKG
+    - ECG
+    - ECG1
+    - ECG 1
+    - ECGI
+    - ECG I
+    - ECG II
+    - ECG2
+    - ECG 2
+    - ECGII
+    - EKG1
+    - EKG2
+  
+  # Respiratory Channels - Airflow
+  Flow:
+    - Flow
+    - Airflow
+    - AIRFLOW
+    - Nasal
+    - NasalP
+    - Nasal Pressure
+    - NASAL P
+    - NASAL PRESSURE
+    - NasalAC
+    - Nasal-AC
+    - NEW AIR
+    - NEWAIR
+    - New Air
+  
+  # Respiratory Channels - Thoracic Effort
+  Thor:
+    - Thor
+    - THOR
+    - Thorax
+    - Chest
+    - RIP Thorax
+    - RIP Thora
+    - Thoracic
+    - THOR RES
+    - THOR EFFORT
+    - ChestDC
+    - CHEST
+  
+  # Respiratory Channels - Abdominal Effort
+  ABD:
+    - ABD
+    - ABDM
+    - Abdomen
+    - Abdo
+    - ABDO
+    - RIP Abdomen
+    - RIP Abdom
+    - ABDOMEN
+    - ABDO RES
+    - ABDO EFFORT
+    - Abdominal
+    - AbdDC
+  
+  # EMG Channels - Chin
+  CHIN:
+    - CHIN
+    - Chin
+    - Chin1
+    - CHIN1
+    - Chin EMG
+    - CHIN2
+    - Chin2
+    - CHINEMG
+    - ChinEMG
+  
+  # EMG Channels - Legs
+  LLEG:
+    - LLEG
+    - LEG(L)
+    - L Leg
+    - LLeg
+    - Leg L
+    - Left Leg
+    - L-LEG 1
+    - LLEGEMG
+  
+  RLEG:
+    - RLEG
+    - LEG(R)
+    - R Leg
+    - RLeg
+    - Leg R
+    - Right Leg
+    - R-LEG 1
+    - RLEGEMG
+
+# Mapping to SleepFM-compatible names
+# Original name -> SleepFM name
+sleepfm_naming:
+  # EEG - keep montage notation for clarity
+  C3-M2: C3-M2
+  C4-M1: C4-M1
+  O1-M2: O1-M2
+  O2-M1: O2-M1
+  F3-M2: F3-M2
+  F4-M1: F4-M1
+  
+  # EOG - use SleepFM's convention
+  LOC: EOG(L)
+  ROC: EOG(R)
+  
+  # ECG - simple name
+  EKG: EKG
+  
+  # Respiratory - standardized
+  Flow: Flow
+  Thor: Thor
+  ABD: ABD
+  
+  # EMG - standardized
+  CHIN: CHIN
+  LLEG: LLEG
+  RLEG: RLEG
+
+# Priority order for channel selection
+# If multiple alternatives found, use this order
+channel_priority:
+  C3-M2:
+    - C3-M2
+    - C3M2
+    - C3-A2
+    - C3A2
+  C4-M1:
+    - C4-M1
+    - C4M1
+    - C4-A1
+    - C4A1
+  O1-M2:
+    - O1-M2
+    - O1M2
+    - O1-A2
+    - O1A2
+  O2-M1:
+    - O2-M1
+    - O2M1
+    - O2-A1
+    - O2A1
+  LOC:
+    - LOC
+    - E1-M2
+    - E1M2
+    - EOG LOC-A2
+  ROC:
+    - ROC
+    - E2-M2
+    - E2M2
+    - EOG ROC-A1
+  EKG:
+    - EKG
+    - ECG
+    - ECG1
+  Flow:
+    - Flow
+    - Airflow
+    - AIRFLOW
+    - Nasal Pressure
+  Thor:
+    - Thor
+    - THOR
+    - Thorax
+    - Chest
+  ABD:
+    - ABD
+    - ABDM
+    - Abdomen
+    - Abdo
+  CHIN:
+    - CHIN
+    - Chin
+    - Chin1
+  LLEG:
+    - LLEG
+    - LEG(L)
+    - L Leg
+  RLEG:
+    - RLEG
+    - LEG(R)
+    - R Leg

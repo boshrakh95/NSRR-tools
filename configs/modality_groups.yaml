@@ -1,0 +1,116 @@
+# Modality Group Definitions
+# Based on SleepFM's 4-modality system: BAS, RESP, EKG, EMG
+
+modalities:
+  EEG:
+    description: "Electroencephalography - Brain electrical activity"
+    sleepfm_group: "BAS"  # BAS = Brain Activity Signals (includes EEG + EOG)
+    channels:
+      - C3-M2
+      - C4-M1
+      - O1-M2
+      - O2-M1
+      - F3-M2
+      - F4-M1
+      - Fz
+      - Cz
+      - Pz
+    processing_params: eeg
+    required: true  # At least one EEG channel required
+    
+  EOG:
+    description: "Electrooculography - Eye movement"
+    sleepfm_group: "BAS"
+    channels:
+      - LOC
+      - ROC
+    processing_params: eog
+    required: false
+    
+  ECG:
+    description: "Electrocardiography - Cardiac electrical activity"
+    sleepfm_group: "EKG"
+    channels:
+      - EKG
+    processing_params: ecg
+    required: false
+    
+  EMG:
+    description: "Electromyography - Muscle electrical activity"
+    sleepfm_group: "EMG"
+    channels:
+      - CHIN
+      - LLEG
+      - RLEG
+    processing_params: emg
+    required: false
+    
+  RESP:
+    description: "Respiratory signals - Airflow and effort"
+    sleepfm_group: "RESP"
+    channels:
+      - Flow
+      - Thor
+      - ABD
+    processing_params: resp
+    required: false
+
+# SleepFM modality groupings
+sleepfm_modalities:
+  BAS:
+    description: "Brain Activity Signals (EEG + EOG)"
+    includes:
+      - EEG
+      - EOG
+    max_channels: 32  # For padding in SleepFM
+    
+  RESP:
+    description: "Respiratory signals"
+    includes:
+      - RESP
+    max_channels: 16
+    
+  EKG:
+    description: "Cardiac signals"
+    includes:
+      - ECG
+    max_channels: 4
+    
+  EMG:
+    description: "Muscle activity"
+    includes:
+      - EMG
+    max_channels: 8
+
+# Minimum requirements for valid recordings
+minimum_requirements:
+  # At least one modality from each group for multimodal experiments
+  option_1:
+    description: "Full multimodal (all 4 modalities)"
+    required_modalities:
+      - EEG
+      - EOG
+      - ECG
+      - EMG
+      - RESP
+    min_channels_per_modality:
+      EEG: 1
+      EOG: 1
+      ECG: 1
+      EMG: 1
+      RESP: 1
+  
+  option_2:
+    description: "Core modalities (EEG + at least 2 others)"
+    required_modalities:
+      - EEG
+    min_other_modalities: 2
+    min_channels_per_modality:
+      EEG: 2
+  
+  option_3:
+    description: "Minimal (EEG only - for baseline)"
+    required_modalities:
+      - EEG
+    min_channels_per_modality:
+      EEG: 2

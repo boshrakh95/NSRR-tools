@@ -1,0 +1,67 @@
+# Path Configuration for Compute Canada
+# All paths are configurable and can be overridden via environment variables
+
+# Base directories
+paths:
+  # Raw data location (original NSRR downloads)
+  raw_base: "${SCRATCH}/psg/nsrr"
+  
+  # Processed/derived data output
+  derived_base: "${SCRATCH}/psg"
+  
+  # Unified metadata and splits
+  unified_base: "${SCRATCH}/psg/unified"
+  
+  # Temporary cache (fast storage)
+  cache_base: "${SCRATCH}/psg_cache"
+  
+  # Home directory for small files (configs, logs)
+  home_base: "${HOME}/NSRR-tools"
+
+# Dataset-specific paths
+datasets:
+  stages:
+    raw_tar: "${SCRATCH}/psg/nsrr/stages/raw_tar"
+    original: "${SCRATCH}/psg/nsrr/stages/original"
+    datasets: "${SCRATCH}/psg/nsrr/stages/datasets"
+    derived: "${SCRATCH}/psg/stages/derived"
+    
+  shhs:
+    raw_tar: "${SCRATCH}/psg/nsrr/shhs/raw_tar"
+    original: "${SCRATCH}/psg/nsrr/shhs/original"
+    datasets: "${SCRATCH}/psg/nsrr/shhs/datasets"
+    derived: "${SCRATCH}/psg/shhs/derived"
+    
+  apples:
+    raw_tar: "${SCRATCH}/psg/nsrr/apples/raw_tar"
+    original: "${SCRATCH}/psg/nsrr/apples/original"
+    datasets: "${SCRATCH}/psg/nsrr/apples/datasets"
+    derived: "${SCRATCH}/psg/apples/derived"
+    
+  mros:
+    raw_tar: "${SCRATCH}/psg/nsrr/mros/raw_tar"
+    original: "${SCRATCH}/psg/nsrr/mros/original"
+    datasets: "${SCRATCH}/psg/nsrr/mros/datasets"
+    derived: "${SCRATCH}/psg/mros/derived"
+
+# Output structure within derived directories
+derived_structure:
+  hdf5_signals: "hdf5_signals"
+  annotations: "annotations"
+  masks: "masks"
+  embeddings: "embeddings_sleepfm"
+  logs: "logs"
+  validation: "validation"
+  normalization_stats: "normalization_stats"
+
+# Unified outputs
+unified:
+  metadata: "${SCRATCH}/psg/unified/metadata"
+  splits: "${SCRATCH}/psg/unified/splits"
+  cache: "${SCRATCH}/psg_cache"
+  reports: "${HOME}/NSRR-tools/reports"
+
+# Environment variable expansion
+# Set these in your shell or SLURM script:
+# export SCRATCH=/scratch/username
+# export HOME=/home/username
