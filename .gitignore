@@ -1,0 +1,39 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# venv / uv
+.venv/
+__pycache__/
+*.pyc
+.uv/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# logs / outputs
+outputs/
+runs/
+*.log
+
+# NSRR data (do NOT commit)
+data/
+datasets/
+**/*.edf
+**/*.xml
+**/*.tar
+**/*.tgz
+**/*.tar.gz
+**/*.zip
+**/*.zst
+**/*.gz
+**/*.h5
+**/*.parquet
+**/*.csv  # (optional: keep if you want only small metadata CSVs)

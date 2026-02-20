@@ -1,0 +1,27 @@
+[project]
+name = "nsrr-tools"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "boshrakh95", email = "boshra.khajehpiri.1@ens.etsmtl.ca" }
+]
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=2.4.2",
+    "pandas>=3.0.1",
+    "pyyaml>=6.0.3",
+    "rich>=14.3.3",
+    "tqdm>=4.67.3",
+]
+
+[build-system]
+requires = ["uv_build>=0.10.4,<0.11.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "black>=26.1.0",
+    "pre-commit>=4.5.1",
+    "ruff>=0.15.2",
+]
