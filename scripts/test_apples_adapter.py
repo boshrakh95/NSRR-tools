@@ -5,7 +5,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
 
-from nsrr_tools.core.config import Config
+from nsrr_tools.utils.config import Config
 from nsrr_tools.datasets.apples_adapter import APPLESAdapter
 
 

@@ -59,7 +59,8 @@ def main():
     # Test with one subject
     if edf_files and not metadata_df.empty:
         print("\n6. Testing with first subject...")
-        test_subject_id, test_edf_path = edf_files[0]
+        # test_subject_id, test_edf_path = edf_files[0]
+        test_subject_id, test_edf_path = edf_files[2] # 0 and 1 didn't have annotations
         print(f"  Subject: {test_subject_id}")
         print(f"  EDF: {test_edf_path}")
         
