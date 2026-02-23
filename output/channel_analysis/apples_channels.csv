@@ -1,0 +1,11 @@
+dataset,subject_id,num_channels,channels,sampling_freq,edf_path
+APPLES,apples-570302,14,"ECG,snore,SpO2,C3_M2,C4_M1,O1_M2,O2_M1,thermistor,nasal_pres,abdomen,thorax,EMG,LOC,ROC",100.0,/scratch/boshra95/psg/nsrr/apples/sample_extraction/polysomnography/apples-570302.edf
+APPLES,apples-160353,16,"ECG,pulse,snore,SpO2,C3_M2,C4_M1,O1_M2,O2_M1,thermistor,nasal_pres,abdomen,thorax,EMG,LOC,ROC,LEG",100.0,/scratch/boshra95/psg/nsrr/apples/sample_extraction/polysomnography/apples-160353.edf
+APPLES,apples-560232,14,"ECG,snore,SpO2,C3_M2,C4_M1,O1_M2,O2_M1,thermistor,nasal_pres,abdomen,thorax,EMG,LOC,ROC",100.0,/scratch/boshra95/psg/nsrr/apples/sample_extraction/polysomnography/apples-560232.edf
+APPLES,apples-170363,16,"ECG,pulse,snore,SpO2,C3_M2,C4_M1,O1_M2,O2_M1,thermistor,nasal_pres,abdomen,thorax,EMG,LOC,ROC,LEG",200.0,/scratch/boshra95/psg/nsrr/apples/sample_extraction/polysomnography/apples-170363.edf
+APPLES,apples-140009,16,"ECG,pulse,snore,SpO2,C3_M2,C4_M1,O1_M2,O2_M1,thermistor,nasal_pres,abdomen,thorax,EMG,LOC,ROC,LEG",100.0,/scratch/boshra95/psg/nsrr/apples/sample_extraction/polysomnography/apples-140009.edf
+APPLES,apples-570300,14,"ECG,snore,SpO2,C3_M2,C4_M1,O1_M2,O2_M1,thermistor,nasal_pres,abdomen,thorax,EMG,LOC,ROC",100.0,/scratch/boshra95/psg/nsrr/apples/sample_extraction/polysomnography/apples-570300.edf
+APPLES,apples-160314,16,"ECG,pulse,snore,SpO2,C3_M2,C4_M1,O1_M2,O2_M1,thermistor,nasal_pres,abdomen,thorax,EMG,LOC,ROC,LEG",100.0,/scratch/boshra95/psg/nsrr/apples/sample_extraction/polysomnography/apples-160314.edf
+APPLES,apples-150165,16,"ECG,pulse,snore,SpO2,C3_M2,C4_M1,O1_M2,O2_M1,thermistor,nasal_pres,abdomen,thorax,EMG,LOC,ROC,LEG",100.0,/scratch/boshra95/psg/nsrr/apples/sample_extraction/polysomnography/apples-150165.edf
+APPLES,apples-260282,16,"ECG,pulse,snore,SpO2,C3_M2,C4_M1,O1_M2,O2_M1,thermistor,nasal_pres,abdomen,thorax,EMG,LOC,ROC,LEG",100.0,/scratch/boshra95/psg/nsrr/apples/sample_extraction/polysomnography/apples-260282.edf
+APPLES,apples-360123,15,"ECG,snore,SpO2,C3_M2,C4_M1,O1_M2,O2_M1,thermistor,nasal_pres,abdomen,thorax,EMG,LOC,ROC,LEG",100.0,/scratch/boshra95/psg/nsrr/apples/sample_extraction/polysomnography/apples-360123.edf

@@ -1,0 +1,116 @@
+Total unique channels across all datasets: 100
+
+
+EEG (24 channels):
+  C3
+  C3_M2
+  C4
+  C4_M1
+  CO2_EndTidal
+  EEG
+  EEG(sec)
+  EEG2
+  EEG_A1-A2
+  EEG_C3-A2
+  EEG_C4-A1
+  EEG_F3-A2
+  EEG_F4-A1
+  EEG_O1-A2
+  EEG_O2-A1
+  EEG_P3-A2
+  EEG_P4-A1
+  EEG_T3-A2
+  EEG_T4-A1
+  Flow_Patient3
+  O1_M2
+  O2_M1
+  SaO2
+  SpO2
+
+EOG (7 channels):
+  EOG(L)
+  EOG(R)
+  EOG_LOC-A2
+  EOG_ROC-A2
+  LOC
+  ROC
+  Snore2
+
+ECG (6 channels):
+  ECG
+  ECG L
+  ECG R
+  ECG_I
+  ECG_II
+  ECG_IIHF
+
+EMG (11 channels):
+  EMG
+  EMG_Aux1
+  EMG_Aux2
+  EMG_Chin
+  L Chin
+  LEG
+  Leg L
+  Leg R
+  Leg_1
+  Leg_2
+  R Chin
+
+RESP (17 channels):
+  ABDO RES
+  AIRFLOW
+  Abdominal
+  Airflow
+  Cannula Flow
+  Effort_ABD
+  Flow_Patient
+  Flow_Patient2
+  PulseRate
+  Snore
+  THOR RES
+  Thoracic
+  abdomen
+  nasal_pres
+  pulse
+  snore
+  thorax
+
+OTHER (5 channels):
+  LIGHT
+  POSITION
+  Pleth
+  Position
+  SOUND
+
+UNKNOWN (30 channels):
+  A1
+  A2
+  AUX
+  Body
+  BreathRate
+  DHR
+  Effort_THO
+  H.R.
+  HR
+  Leak_Total
+  NEW AIR
+  NEWAIR
+  OX stat
+  PressCheck
+  Press_Patient
+  RR
+  STAT
+  SUM
+  Technical
+  thermistor
+  xPAP_CPAP
+  xPAP_EPAP
+  xPAP_EPAPMax
+  xPAP_EPAPMin
+  xPAP_IPAP
+  xPAP_IPAPMax
+  xPAP_IPAPMin
+  xPAP_MaxPress
+  xPAP_PSMax
+  xPAP_PSMin

@@ -46,14 +46,14 @@ modalities:
     required: false
     
   RESP:
-    description: "Respiratory signals - Airflow and effort"
+    description: "Respiratory signals - Effort belts only (FLOW excluded due to noise)"
     sleepfm_group: "RESP"
     channels:
-      - Flow
       - Thor
       - ABD
     processing_params: resp
     required: false
+    note: "Airflow/nasal pressure excluded - effort belts are more reliable"
 
 # SleepFM modality groupings
 sleepfm_modalities:

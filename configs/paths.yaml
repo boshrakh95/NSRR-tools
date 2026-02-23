@@ -23,24 +23,28 @@ datasets:
   stages:
     raw_tar: "${SCRATCH}/psg/nsrr/stages/raw_tar"
     original: "${SCRATCH}/psg/nsrr/stages/original"
+    sample: "${SCRATCH}/psg/nsrr/stages/sample_extraction"
     datasets: "${SCRATCH}/psg/nsrr/stages/datasets"
     derived: "${SCRATCH}/psg/stages/derived"
     
   shhs:
     raw_tar: "${SCRATCH}/psg/nsrr/shhs/raw_tar"
     original: "${SCRATCH}/psg/nsrr/shhs/original"
+    sample: "${SCRATCH}/psg/nsrr/shhs/sample_extraction"
     datasets: "${SCRATCH}/psg/nsrr/shhs/datasets"
     derived: "${SCRATCH}/psg/shhs/derived"
     
   apples:
     raw_tar: "${SCRATCH}/psg/nsrr/apples/raw_tar"
     original: "${SCRATCH}/psg/nsrr/apples/original"
+    sample: "${SCRATCH}/psg/nsrr/apples/sample_extraction"
     datasets: "${SCRATCH}/psg/nsrr/apples/datasets"
     derived: "${SCRATCH}/psg/apples/derived"
     
   mros:
     raw_tar: "${SCRATCH}/psg/nsrr/mros/raw_tar"
     original: "${SCRATCH}/psg/nsrr/mros/original"
+    sample: "${SCRATCH}/psg/nsrr/mros/sample_extraction"
     datasets: "${SCRATCH}/psg/nsrr/mros/datasets"
     derived: "${SCRATCH}/psg/mros/derived"
 

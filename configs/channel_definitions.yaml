@@ -1,8 +1,13 @@
-# Channel Name Alternatives for Robust Detection
-# Maps standardized channel names to dataset-specific variations
+# Channel Definitions - Comprehensive NSRR Support
+# Based on SleepFM's channel_groups.json - includes ALL accepted channel names
+# Sources:
+# - sleepfm-clinical/sleepfm/configs/channel_groups.json (complete list)
+# - nocturn configs for STAGES, SHHS, APPLES, MrOS datasets
+# - Excludes FLOW/airflow channels per user requirement (noisy)
 
 channel_alternatives:
-  # EEG Channels
+  # ==================== EEG CHANNELS ====================
+  
   C3-M2:
     - C3-M2
     - C3M2
@@ -13,6 +18,23 @@ channel_alternatives:
     - C3:A2
     - EEG C3-A2
     - C3
+    - EEG C3-A22
+    - C3:M1
+    - C3M1
+    - C3-M1
+    - EEG C3-A1
+    - C3:A1
+    - C3-A1
+    - C3-Cz
+    - C3-O1
+    - C3:C4
+    - M2:C3
+    - A2:C3
+    - A2:A1:C3
+    - C3:M1:M2
+    - C3:M1-M2
+    - C3:M2:M1
+    - C3-M2:C4-M1
   
   C4-M1:
     - C4-M1
@@ -24,6 +46,25 @@ channel_alternatives:
     - C4:A1
     - EEG C4-A1
     - C4
+    - EEG C4-A12
+    - C4:M2
+    - C4M2
+    - C4-M2
+    - EEG C4-A2
+    - C4:A2
+    - C4-A2
+    - C4-Cz
+    - F2-C4
+    - T4-O2
+    - M1:C4
+    - M2:C4
+    - A1:C4
+    - C4:C3
+    - T4:C4
+    - C4:M1:M2
+    - C4:M1-M2
+    - C4:M2:M1
+    - Fp2-C4
   
   O1-M2:
     - O1-M2
@@ -35,6 +76,24 @@ channel_alternatives:
     - O1:A2
     - EEG O1-A2
     - O1
+    - EEG O1-A22
+    - O1:M1
+    - O1M1
+    - O1-M1
+    - EEG O1-A1
+    - O1-Cz
+    - O1-x
+    - M2:O1
+    - M1:O1
+    - A2:O1
+    - T3-O1
+    - C3-O1
+    - O1:M1:M2
+    - O1:M1-M2
+    - O1:M2:M1
+    - O2-M1:O1-M2
+    - M2:M1:O1:M2
+    - O1:E1:M1
   
   O2-M1:
     - O2-M1
@@ -46,6 +105,20 @@ channel_alternatives:
     - O2:A1
     - EEG O2-A1
     - O2
+    - EEG O2-A12
+    - O2:M2
+    - O2M2
+    - O2-M2
+    - EEG O2-A2
+    - O2-x
+    - M1:O2
+    - M2:O2
+    - A1:O2
+    - T4-O2
+    - O2:O1
+    - O2:M1:M2
+    - O2:M1-M2
+    - O2:M2:M1
   
   F3-M2:
     - F3-M2
@@ -57,6 +130,23 @@ channel_alternatives:
     - F3:A2
     - EEG F3-A2
     - F3
+    - EEG F3-A22
+    - F3:M1
+    - F3-M1
+    - EEG F3-A1
+    - F3/A2
+    - F3-Cz
+    - Fp1-C3
+    - F3:F4
+    - F4:F3
+    - M2:F3
+    - M1:F3
+    - A2:F3
+    - F3:M1:M2
+    - F3:M1-M2
+    - F3:M2:M1
+    - F4-M1:F3-M2
+    - F3:M2:E1:M1
   
   F4-M1:
     - F4-M1
@@ -68,110 +158,480 @@ channel_alternatives:
     - F4:A1
     - EEG F4-A1
     - F4
+    - EEG F4-A12
+    - F4:M2
+    - F4-M2
+    - EEG F4-A2
+    - F4/A1
+    - F4-Cz
+    - F2-T4
+    - M1:F4
+    - M2:F4
+    - A1:F4
+    - Fp2-T4
+    - F4:M1:M2
+    - F4:M1-M2
+    - F4:M2:M1
   
-  # EOG Channels
+  # Additional standard EEG positions
+  Fp1:
+    - Fp1
+    - FP1
+    - FP1-A2
+    - FP1-M2
+    - FP1-C3
+    - Fp1:M2
+    - Fp1:A2
+    - Fp1/A2
+    - EEG Fp1-A2
+    - EEG Fp1-A22
+    - Fp1-Cz
+    - Fp1-T3
+    - Fp1:Fp2
+    - FP1A2
+    - FP1M2
+    - Fp1-C3
+    - Fp1:M1+M2
+    - M2:Fp1
+    - Fp1:E2
+  
+  Fp2:
+    - Fp2
+    - FP2
+    - FP2-A1
+    - FP2-M1
+    - Fp2:M1
+    - Fp2:A1
+    - EEG Fp2-A1
+    - EEG Fp2-A12
+    - Fp2-Cz
+    - Fp2-T4
+    - Fp2:Fp1
+    - FP2A1
+    - FP2M1
+    - Fp2-C4
+    - Fp2:M1+M2
+    - M1:Fp2
+    - E1:Fp2
+    - E2:Fp1
+  
+  Fz:
+    - Fz
+    - FZ
+    - FZ-A1A2
+    - FZ-M1M2
+    - FZ-A2
+    - Fz-A1
+    - Fz-A2
+    - Fz-Cz
+    - FZA2
+    - FZM2
+    - Pz:Fz
+  
+  Cz:
+    - Cz
+    - CZ
+    - CZA2
+    - CZM2
+    - M1-Cz
+    - M2-Cz
+    - C3-Cz
+    - C4-Cz
+    - O1-Cz
+    - C2-Cz
+    - T3-Cz
+    - T4-Cz
+    - F3-Cz
+    - F4-Cz
+    - F7-Cz
+    - F8-Cz
+    - T5-Cz
+    - P3-Cz
+    - Pz-Cz
+    - P4-Cz
+    - T6-Cz
+    - Fp1-Cz
+    - Fp2-Cz
+    - E1-Cz
+    - E2-Cz
+    - Fz-Cz
+  
+  Pz:
+    - Pz
+    - PZ
+    - PZA1
+    - PZM1
+    - Pz-Cz
+  
+  Oz:
+    - Oz
+    - OZ
+    - Fpz:Oz
+    - Oz:M1
+  
+  Fpz:
+    - Fpz
+  
+  P3:
+    - P3
+    - P3-Cz
+    - EEG P3-A2
+    - P3:P4
+    - P3:M2
+    - P3M2
+    - T3-Cz
+  
+  P4:
+    - P4
+    - P4-Cz
+    - EEG P4-A1
+    - P4:M1
+    - P4M1
+  
+  T3:
+    - T3
+    - T3-Cz
+    - T3-M2
+    - T3M2
+    - T3A2
+    - T3/A2
+    - EEG T3-A2
+    - T3:M1
+    - T3:M2
+    - T3-O1
+    - T3:T4
+    - Fp1-T3
+  
+  T4:
+    - T4
+    - T4-Cz
+    - T4-M1
+    - T4M1
+    - T4A1
+    - T4/A1
+    - EEG T4-A1
+    - T4:M1
+    - T4-O2
+    - Fp2-T4
+  
+  T5:
+    - T5
+    - T5-Cz
+    - T5:M2
+    - T5M2
+    - T5A2
+    - EEG T5-A2
+    - T6:T5
+  
+  T6:
+    - T6
+    - T6-Cz
+    - T6:M1
+    - T6M1
+    - T6A1
+    - EEG T6-A1
+  
+  F7:
+    - F7
+    - F7-Cz
+    - F7:M2
+    - F7M2
+    - F7A2
+    - EEG F7-A2
+    - F8:F7
+  
+  F8:
+    - F8
+    - F8-Cz
+    - F8:M1
+    - F8M1
+    - F8A1
+    - EEG F8-A1
+  
+  # Generic EEG labels
+  EEG:
+    - EEG
+    - EEG 2
+    - EEG sec
+    - EEG(SEC)
+    - EEG(sec)
+    - EEG2
+    - EEG1
+    - EEG3
+    - EEG A1-A2
+    - M1M2
+    - A1A2
+  
+  # Reference electrodes
+  M1:
+    - M1
+    - M1:M2
+    - M2:M1
+    - M1M2
+  
+  M2:
+    - M2
+  
+  A1:
+    - A1
+    - A2:A1
+    - A1:A2
+    - A1A2
+  
+  A2:
+    - A2
+  
+  # ==================== EOG CHANNELS ====================
+  
   LOC:
     - LOC
     - LEOG
     - EOG LOC-A2
+    - EOG LOC-A22
     - EOG(L)
     - EOG-L
+    - L-EOG
     - E1
     - E1-M2
     - E1M2
     - E1:M2
+    - E1-Cz
+    - E1:M1
+    - M1:E1
+    - M2:E1
+    - E1:M1:M2
+    - E1:M1-M2
+    - E1:M2:M1
     - EOG1
-    - L-EOG
+    - EOG1:A2
+    - EOG1:A1
+    - A2:EOG1
+    - A1:EOG1
     - EOGl
+    - EOGl:M1
+    - EOGl:M2
+    - E1:E2
+    - E1 (LEOG)
+    - LOC-M2
   
   ROC:
     - ROC
     - REOG
     - EOG ROC-A1
+    - EOG ROC-A12
+    - EOG ROC-A2
+    - EOG ROC-A22
     - EOG(R)
     - EOG-R
+    - R-EOG
     - E2
     - E2-M2
     - E2M2
     - E2:M2
-    - E2-M1
+    - E2:M1
+    - M2:E2
+    - E2-Cz
+    - E2:M1:M2
+    - E2:M1-M2
+    - E2:M2:M1
     - EOG2
-    - R-EOG
+    - EOG2:A1
+    - EOG2:A2
+    - A1:EOG2
+    - A2:EOG2
     - EOGr
+    - EOGr:M1
+    - EOGr:M2
+    - EOGr512
+    - EOGr512:M1
+    - EOGr512:M2
+    - E2 (REOG)
+    - ROC-M1
+    - M2:E2:M1
   
-  # ECG Channels
+  # ==================== ECG/EKG CHANNELS ====================
+  
   EKG:
     - EKG
     - ECG
-    - ECG1
-    - ECG 1
-    - ECGI
-    - ECG I
-    - ECG II
-    - ECG2
     - ECG 2
+    - ECG II
+    - ECG I
+    - ECGI
     - ECGII
+    - ECG1
+    - ECG2
     - EKG1
     - EKG2
+    - EKG_L-Cz
+    - EKG_R-Cz
+    - EKG-R
+    - EKG-L
+    - ECG1-EC
+    - ECGL
+    - ECGR
+    - ECG L
+    - ECG R
+    - ECGI-0
+    - ECGII-0
+    - ECGI-1
+    - ECGII-1
+    - ECG1-ECG2
+    - ECG L-ECG R
+    - ECG IIHF
+    - ECG I2
+    - ECG #1
+    - ECG #2
+    - EKG #1
+    - EKG #2
   
-  # Respiratory Channels - Airflow
-  Flow:
-    - Flow
-    - Airflow
-    - AIRFLOW
-    - Nasal
-    - NasalP
-    - Nasal Pressure
-    - NASAL P
-    - NASAL PRESSURE
-    - NasalAC
-    - Nasal-AC
-    - NEW AIR
-    - NEWAIR
-    - New Air
+  # ==================== RESPIRATORY CHANNELS ====================
+  # NOTE: Airflow/nasal pressure intentionally excluded (noisy)
+  # Only using effort belts
   
-  # Respiratory Channels - Thoracic Effort
   Thor:
     - Thor
     - THOR
     - Thorax
-    - Chest
-    - RIP Thorax
-    - RIP Thora
     - Thoracic
-    - THOR RES
-    - THOR EFFORT
+    - Chest
     - ChestDC
     - CHEST
+    - CHEST #1
+    - chest
+    - RIP Thorax
+    - RIP Thora
+    - THOR RES
+    - THOR EFFORT
+    - Chest Effort
+    - Effort THO
+    - RIP Tho
   
-  # Respiratory Channels - Abdominal Effort
   ABD:
     - ABD
     - ABDM
+    - Abd
     - Abdomen
+    - Abdominal
     - Abdo
+    - ABDOMEN
     - ABDO
+    - AbdDC
     - RIP Abdomen
     - RIP Abdom
-    - ABDOMEN
+    - RIP Abd
     - ABDO RES
     - ABDO EFFORT
-    - Abdominal
-    - AbdDC
+    - Abd:Chest
+    - p.Abdomen
+    - Sum.RIPs
+    - Sum RIP
   
-  # EMG Channels - Chin
+  # Additional RESP channels (SpO2, HR, Snore, etc.)
+  SpO2:
+    - SpO2
+    - SaO2
+    - TcSpO2
+    - tcSpO2
+    - SpO2 Masimo
+    - SaO2_Masimo
+    - SpO2-0
+    - SpO2-1
+    - SentecSpO2
+    - SPO2
+    - Sa02
+    - SAO2
+    - O2_Masimo
+    - O2-Masimo
+  
+  Snore:
+    - Snore
+    - Snore2
+    - Snoring
+    - Snore-db
+    - Snore1
+    - Snoreg
+    - Snoring2
+    - Snoring2a
+    - SNORE
+    - SNOR
+    - Snore_CU
+    - P-Snore
+    - Pressure Snore
+    - Mic
+    - MIC
+    - Nasal Snore
+  
+  HR:
+    - Pulse
+    - PPG
+    - TcPPG
+    - PPG Masimo
+    - Finger PPG
+    - PPG_Masimo
+    - PPG-Masimo
+    - Tosca_Pulse
+    - SentecPPG
+    - PULSE
+    - Pulse-0
+    - Pulse-1
+    - PulseRa
+    - Pulse Rate
+    - PulseRate
+    - PulseR
+    - HRate
+    - Heartrate
+    - H.R.
+    - HR
+    - Heart Rate
+    - Heart Rate_CU
+  
+  # ==================== EMG CHANNELS ====================
+  
   CHIN:
     - CHIN
     - Chin
     - Chin1
-    - CHIN1
-    - Chin EMG
-    - CHIN2
     - Chin2
+    - CHIN1
+    - CHIN2
+    - CHIN3
+    - CHIN 2
+    - CHIN1-C
+    - CHIN2-C
+    - Chin EMG
+    - Chin EMG2
+    - Chin2 EMG
+    - Chin 1
+    - Chin 2
+    - Chin 3
     - CHINEMG
     - ChinEMG
+    - Chin:Chin2
+    - Chin:RIC
+    - Chin2:Chin
+    - Chin:Chin2:Chin
+    - Chin_L-Cz
+    - Chin_Ctr-Cz
+    - Chin_R-Cz
+    - Chin-L
+    - Chin-Ctr
+    - Chin-R
+    - Chin_L-Chin-Ctr
+    - Chin_R-Chin_Ctr
+    - LChin
+    - RChin
+    - L Chin
+    - R Chin
+    - ChinA
+    - ChinR
+    - ChinL
+    - Chin-A
+    - Chin1-Chin2
+    - Chin 1-Chin 2
+    - L Chin-R Chin
+    - chin
   
-  # EMG Channels - Legs
   LLEG:
     - LLEG
     - LEG(L)
@@ -180,7 +640,21 @@ channel_alternatives:
     - Leg L
     - Left Leg
     - L-LEG 1
+    - L-LEG 2
     - LLEGEMG
+    - Leg-L
+    - LegL
+    - L-Leg1
+    - L-Leg2
+    - L-Leg 1-L-Leg 2
+    - L Leg 1
+    - L Leg 2
+    - LEG/L
+    - Leg/L
+    - LEMG
+    - L EMG
+    - Leg 1
+    - Leg 12
   
   RLEG:
     - RLEG
@@ -189,98 +663,288 @@ channel_alternatives:
     - RLeg
     - Leg R
     - Right Leg
-    - R-LEG 1
     - RLEGEMG
+    - Leg-R
+    - LegR
+    - R-Leg1
+    - R-Leg2
+    - R-Leg1-R-Leg2
+    - R Leg 1
+    - R Leg 2
+    - LEG/R
+    - Leg/R
+    - R EMG
+    - Leg 2
+    - Leg 22
+    - R-LEG 1
+    - R-LEG 2
+  
+  # Additional EMG (arms, feet, masseter, etc.)
+  EMG:
+    - EMG
+    - RIC EMG
+    - Arm EMG
+    - Legs
+    - Leg
+    - EMG1
+    - EMG2
+    - EMG3
+    - EMG4
+    - EMG5
+    - EMG6
+    - Integral EMG
+    - EMG:EMG4
+    - InterEMG
+    - EMGd1
+    - EMGd2
+    - EMG Chin
+    - EMG Aux1
+    - EMG Aux2
+    - EMG Aux12
+    - EMG #1
+    - EMG #2
+    - EMG #3
+    - Pleth
+  
+  Arms-L:
+    - Arms-L
+    - Arm-L
+    - Arm_L
+    - L Arm
+    - LArm
+    - ARM L
+    - ARM LEFT
+    - L-Arm
+    - Arms-L Flex
+    - Arms-L Ext
+    - L-Arm1
+    - L-Arm2
+    - L Arm 1
+    - L Arm 2
+    - R-Arm
+  
+  Arms-R:
+    - Arms-R
+    - Arm-R
+    - Arm_R
+    - R Arm
+    - RArm
+    - ARM R
+    - ARM RIGHT
+    - Arms-R Flex
+    - Arms-R Ext
+    - R-Arm1
+    - R-Arm2
+    - R Arm 1
+    - R Arm 2
+    - Right Arm 2
+    - Right arm
+  
+  Feet-L:
+    - Feet-L
+    - Foot-L
+    - Foot
+  
+  Feet-R:
+    - Feet-R
+    - Foot-R
+  
+  Masseter:
+    - Masseter-L
+    - Masseter-R
+    - Mass-L
+    - Mass-R
+    - Mass-LR
+    - Masset.
+    - MASSETE
+    - Massater 1
+    - Massater 2
+    - Masseter 1
+    - Masseter 2
+    - Left Masseter 1
+    - Left Masseter 2
+    - Right Masseter 1
+    - Right Masseter 2
+    - Right-Masseter1
+  
+  Temporalis:
+    - Temporalis-L
+    - Temporalis-R
+  
+  Flexor:
+    - Flexor_L-Cz
+    - Extensor_L-Cz
+    - Flexor_R-Cz
+    - Extensor_R-Cz
+    - Flexor-L
+    - Extensor-L
+    - Ext1
+    - Ext2
+    - Ext3
+    - Ext4
+  
+  SCM:
+    - SCM
+    - Scalene
+    - Should.
 
-# Mapping to SleepFM-compatible names
-# Original name -> SleepFM name
+# ==================== SLEEPFM NAMING ====================
+# Standardized names used in HDF5 files for SleepFM
+
 sleepfm_naming:
-  # EEG - keep montage notation for clarity
+  # EEG - keep referenced format (confirmed compatible)
   C3-M2: C3-M2
   C4-M1: C4-M1
   O1-M2: O1-M2
   O2-M1: O2-M1
   F3-M2: F3-M2
   F4-M1: F4-M1
+  Fp1: Fp1
+  Fp2: Fp2
+  Fz: Fz
+  Cz: Cz
+  Pz: Pz
+  Oz: Oz
+  P3: P3
+  P4: P4
+  T3: T3
+  T4: T4
+  T5: T5
+  T6: T6
+  F7: F7
+  F8: F8
   
-  # EOG - use SleepFM's convention
-  LOC: EOG(L)
-  ROC: EOG(R)
+  # EOG
+  LOC: LOC
+  ROC: ROC
   
-  # ECG - simple name
+  # ECG
   EKG: EKG
   
-  # Respiratory - standardized
-  Flow: Flow
+  # RESP (no FLOW)
   Thor: Thor
   ABD: ABD
+  SpO2: SpO2
+  Snore: Snore
+  HR: HR
   
-  # EMG - standardized
+  # EMG
   CHIN: CHIN
   LLEG: LLEG
   RLEG: RLEG
+  Arms-L: Arms-L
+  Arms-R: Arms-R
+  Feet-L: Feet-L
+  Feet-R: Feet-R
+  Masseter: Masseter
+  EMG: EMG
 
-# Priority order for channel selection
-# If multiple alternatives found, use this order
+# ==================== PRIORITY ORDER ====================
+# When multiple alternatives found, use this order
+
 channel_priority:
   C3-M2:
     - C3-M2
     - C3M2
+    - EEG C3-M2
     - C3-A2
     - C3A2
+    - EEG C3-A2
+  
   C4-M1:
     - C4-M1
     - C4M1
+    - EEG C4-M1
     - C4-A1
     - C4A1
+    - EEG C4-A1
+  
   O1-M2:
     - O1-M2
     - O1M2
+    - EEG O1-M2
     - O1-A2
     - O1A2
+    - EEG O1-A2
+  
   O2-M1:
     - O2-M1
     - O2M1
+    - EEG O2-M1
     - O2-A1
     - O2A1
+    - EEG O2-A1
+  
+  F3-M2:
+    - F3-M2
+    - F3M2
+    - EEG F3-M2
+    - F3-A2
+    - F3A2
+    - EEG F3-A2
+  
+  F4-M1:
+    - F4-M1
+    - F4M1
+    - EEG F4-M1
+    - F4-A1
+    - F4A1
+    - EEG F4-A1
+  
   LOC:
     - LOC
     - E1-M2
     - E1M2
     - EOG LOC-A2
+    - LEOG
+    - EOG-L
+    - EOG(L)
+  
   ROC:
     - ROC
     - E2-M2
     - E2M2
     - EOG ROC-A1
+    - REOG
+    - EOG-R
+    - EOG(R)
+  
   EKG:
     - EKG
     - ECG
     - ECG1
-  Flow:
-    - Flow
-    - Airflow
-    - AIRFLOW
-    - Nasal Pressure
+    - ECG II
+  
+  # Note: FLOW intentionally excluded
   Thor:
     - Thor
     - THOR
     - Thorax
     - Chest
+    - RIP Thorax
+  
   ABD:
     - ABD
     - ABDM
     - Abdomen
     - Abdo
+    - RIP Abdomen
+  
   CHIN:
     - CHIN
     - Chin
     - Chin1
+    - CHINEMG
+    - Chin EMG
+  
   LLEG:
     - LLEG
     - LEG(L)
     - L Leg
+    - LLeg
+  
   RLEG:
     - RLEG
     - LEG(R)
     - R Leg
+    - RLeg

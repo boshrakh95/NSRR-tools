@@ -1,0 +1,11 @@
+dataset,subject_id,num_channels,channels,sampling_freq,edf_path
+SHHS,shhs1-202560,16,"SaO2,H.R.,EEG(sec),ECG,EMG,EOG(L),EOG(R),EEG,SOUND,AIRFLOW,THOR RES,ABDO RES,POSITION,LIGHT,NEWAIR,OX stat",125.0,/scratch/boshra95/psg/nsrr/shhs/sample_extraction/shhs1/shhs1-202560.edf
+SHHS,shhs1-201245,16,"SaO2,H.R.,EEG(sec),ECG,EMG,EOG(L),EOG(R),EEG,SOUND,AIRFLOW,THOR RES,ABDO RES,POSITION,LIGHT,NEW AIR,OX stat",125.0,/scratch/boshra95/psg/nsrr/shhs/sample_extraction/shhs1/shhs1-201245.edf
+SHHS,shhs1-203279,16,"SaO2,H.R.,EEG(sec),ECG,EMG,EOG(L),EOG(R),EEG,SOUND,AIRFLOW,THOR RES,ABDO RES,POSITION,LIGHT,AUX,OX stat",125.0,/scratch/boshra95/psg/nsrr/shhs/sample_extraction/shhs1/shhs1-203279.edf
+SHHS,shhs1-205000,16,"SaO2,H.R.,EEG(sec),ECG,EMG,EOG(L),EOG(R),EEG,SOUND,AIRFLOW,THOR RES,ABDO RES,POSITION,LIGHT,NEW AIR,OX stat",125.0,/scratch/boshra95/psg/nsrr/shhs/sample_extraction/shhs1/shhs1-205000.edf
+SHHS,shhs1-202894,14,"SaO2,H.R.,EEG(sec),ECG,EMG,EOG(L),EOG(R),EEG,THOR RES,ABDO RES,POSITION,LIGHT,NEW AIR,OX stat",125.0,/scratch/boshra95/psg/nsrr/shhs/sample_extraction/shhs1/shhs1-202894.edf
+SHHS,shhs1-200074,14,"SaO2,H.R.,EEG(sec),ECG,EMG,EOG(L),EOG(R),EEG,THOR RES,ABDO RES,POSITION,LIGHT,AIRFLOW,OX stat",125.0,/scratch/boshra95/psg/nsrr/shhs/sample_extraction/shhs1/shhs1-200074.edf
+SHHS,shhs1-200709,15,"SaO2,H.R.,EEG2,ECG,EMG,EOG(L),EOG(R),EEG,AIRFLOW,THOR RES,ABDO RES,POSITION,LIGHT,NEW AIR,OX stat",125.0,/scratch/boshra95/psg/nsrr/shhs/sample_extraction/shhs1/shhs1-200709.edf
+SHHS,shhs1-200722,15,"SaO2,H.R.,EEG(sec),ECG,EMG,EOG(L),EOG(R),EEG,AIRFLOW,THOR RES,ABDO RES,POSITION,LIGHT,NEW AIR,OX stat",125.0,/scratch/boshra95/psg/nsrr/shhs/sample_extraction/shhs1/shhs1-200722.edf
+SHHS,shhs1-202510,16,"SaO2,H.R.,EEG(sec),ECG,EMG,EOG(L),EOG(R),EEG,SOUND,AIRFLOW,THOR RES,ABDO RES,POSITION,LIGHT,NEWAIR,OX stat",125.0,/scratch/boshra95/psg/nsrr/shhs/sample_extraction/shhs1/shhs1-202510.edf
+SHHS,shhs1-204124,15,"SaO2,H.R.,EEG(sec),ECG,EMG,EOG(L),EOG(R),EEG,SOUND,THOR RES,ABDO RES,POSITION,LIGHT,NEW AIR,OX stat",125.0,/scratch/boshra95/psg/nsrr/shhs/sample_extraction/shhs1/shhs1-204124.edf
