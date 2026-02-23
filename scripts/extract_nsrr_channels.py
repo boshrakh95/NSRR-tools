@@ -44,24 +44,29 @@ def find_edf_files_stages(raw_path: Path, max_files: int = None):
         print(f"  Path does not exist: {raw_path}")
         return []
     
-    # Try multiple patterns for STAGES
-    patterns = [
-        'original/*/usable/*.edf',  # Original structure
-        '**/GSSA/*.edf',             # Sample extraction structure
-        '**/*.edf'                   # Generic fallback
-    ]
-    
-    for pattern in patterns:
-        found = list(raw_path.glob(pattern))
-        if found:
-            print(f"  Found {len(found)} EDFs using pattern: {pattern}")
-            for edf_path in found:
-                # Extract subject ID from filename
-                subject_id = edf_path.stem
-                edf_files.append((subject_id, edf_path))
-                if max_files and len(edf_files) >= max_files:
-                    break
-            break
+    # Look for EDFs in the STAGES PSGs/<SITE>/ structure
+    stages_psg_path = raw_path / 'STAGES PSGs'
+    if stages_psg_path.exists():
+        pattern = '**/*.edf'
+        found = list(stages_psg_path.glob(pattern))
+        print(f"  Found {len(found)} EDFs in STAGES PSGs directory")
+        
+        for edf_path in found:
+            # Extract subject ID from filename
+            subject_id = edf_path.stem
+            edf_files.append((subject_id, edf_path))
+            if max_files and len(edf_files) >= max_files:
+                break
+    else:
+        # Fallback: try generic recursive search
+        found = list(raw_path.glob('**/*.edf'))
+        print(f"  Found {len(found)} EDFs using recursive search")
+        
+        for edf_path in found:
+            subject_id = edf_path.stem
+            edf_files.append((subject_id, edf_path))
+            if max_files and len(edf_files) >= max_files:
+                break
     
     return edf_files[:max_files] if max_files else edf_files
 

@@ -24,8 +24,7 @@ runs/
 *.log
 
 # NSRR data (do NOT commit)
-data/
-datasets/
+# datasets/
 **/*.edf
 **/*.xml
 **/*.tar

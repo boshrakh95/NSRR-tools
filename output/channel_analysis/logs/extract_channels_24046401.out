@@ -1,0 +1,51 @@
+========================================
+SLURM Job: 24046401
+Node: fc30569
+Start time: Mon Feb 23 14:47:58 PST 2026
+========================================
+Extracting channels from datasets: stages shhs apples mros
+Output directory: /home/boshra95/NSRR-tools/output/channel_analysis
+========================================
+
+Starting channel extraction...
+
+================================================================================
+NSRR Channel Extraction Tool
+================================================================================
+Datasets: stages, shhs, apples, mros
+Output directory: output/channel_analysis
+
+Loading configuration...
+✓ Configuration loaded
+
+================================================================================
+Processing STAGES dataset
+================================================================================
+  Using: original directory
+  Searching in: /scratch/boshra95/nsrr_downloads/stages/original
+  Found 34 EDFs using pattern: **/GSSA/*.edf
+  Found 34 EDF files
+
+  Summary:
+    Total subjects: 34
+    Total unique channels: 56
+    Avg channels per subject: 35.3
+    Sampling frequencies: [1000.]
+
+  Channel distribution by modality:
+    EEG: 20 unique channels
+    EOG: 3 unique channels
+    ECG: 3 unique channels
+    EMG: 5 unique channels
+    RESP: 5 unique channels
+    OTHER: 1 unique channels
+    UNKNOWN: 19 unique channels
+  ✓ Saved to output/channel_analysis/stages_channels.csv
+
+================================================================================
+Processing SHHS dataset
+================================================================================
+  Using: original directory
+  Searching in: /scratch/boshra95/nsrr_downloads/shhs/polysomnography
+  Found 8444 EDFs using pattern: **/*.edf
+  Found 8444 EDF files
