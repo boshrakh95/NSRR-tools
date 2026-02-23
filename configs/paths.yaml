@@ -38,6 +38,7 @@ datasets:
     
   mros:
     original: "${SCRATCH}/nsrr_downloads/mros/polysomnography"
+    annotations: "${SCRATCH}/nsrr_downloads/mros/polysomnography/annotations-events-nsrr"
     datasets: "${SCRATCH}/nsrr_downloads/mros/datasets"
     derived: "${SCRATCH}/psg/mros/derived"
 
