@@ -19,33 +19,26 @@ paths:
   home_base: "${HOME}/NSRR-tools"
 
 # Dataset-specific paths
+# Using nsrr_downloads which has extracted files with annotations
 datasets:
   stages:
-    raw_tar: "${SCRATCH}/psg/nsrr/stages/raw_tar"
-    original: "${SCRATCH}/psg/nsrr/stages/original"
-    sample: "${SCRATCH}/psg/nsrr/stages/sample_extraction"
-    datasets: "${SCRATCH}/psg/nsrr/stages/datasets"
+    original: "${SCRATCH}/nsrr_downloads/stages/original"
+    datasets: "${SCRATCH}/nsrr_downloads/stages/datasets"
     derived: "${SCRATCH}/psg/stages/derived"
     
   shhs:
-    raw_tar: "${SCRATCH}/psg/nsrr/shhs/raw_tar"
-    original: "${SCRATCH}/psg/nsrr/shhs/original"
-    sample: "${SCRATCH}/psg/nsrr/shhs/sample_extraction"
-    datasets: "${SCRATCH}/psg/nsrr/shhs/datasets"
+    original: "${SCRATCH}/nsrr_downloads/shhs/polysomnography"
+    datasets: "${SCRATCH}/nsrr_downloads/shhs/datasets"
     derived: "${SCRATCH}/psg/shhs/derived"
     
   apples:
-    raw_tar: "${SCRATCH}/psg/nsrr/apples/raw_tar"
-    original: "${SCRATCH}/psg/nsrr/apples/original"
-    sample: "${SCRATCH}/psg/nsrr/apples/sample_extraction"
-    datasets: "${SCRATCH}/psg/nsrr/apples/datasets"
+    original: "${SCRATCH}/nsrr_downloads/apples/polysomnography"
+    datasets: "${SCRATCH}/nsrr_downloads/apples/datasets"
     derived: "${SCRATCH}/psg/apples/derived"
     
   mros:
-    raw_tar: "${SCRATCH}/psg/nsrr/mros/raw_tar"
-    original: "${SCRATCH}/psg/nsrr/mros/original"
-    sample: "${SCRATCH}/psg/nsrr/mros/sample_extraction"
-    datasets: "${SCRATCH}/psg/nsrr/mros/datasets"
+    original: "${SCRATCH}/nsrr_downloads/mros/polysomnography"
+    datasets: "${SCRATCH}/nsrr_downloads/mros/datasets"
     derived: "${SCRATCH}/psg/mros/derived"
 
 # Output structure within derived directories
