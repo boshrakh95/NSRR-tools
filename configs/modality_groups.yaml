@@ -12,9 +12,26 @@ modalities:
       - O2-M1
       - F3-M2
       - F4-M1
+      - Fp1
+      - Fp2
       - Fz
       - Cz
       - Pz
+      - Oz
+      - Fpz
+      - P3
+      - P4
+      - T3
+      - T4
+      - T5
+      - T6
+      - F7
+      - F8
+      - EEG
+      - M1
+      - M2
+      - A1
+      - A2
     processing_params: eeg
     required: true  # At least one EEG channel required
     
@@ -42,18 +59,41 @@ modalities:
       - CHIN
       - LLEG
       - RLEG
+      - EMG
+      - Arms-L
+      - Arms-R
+      - Feet-L
+      - Feet-R
+      - Masseter
+      - Temporalis
+      - Flexor
+      - SCM
     processing_params: emg
     required: false
     
   RESP:
-    description: "Respiratory signals - Effort belts only (FLOW excluded due to noise)"
+    description: "Respiratory signals - Effort belts, SpO2, airflow"
     sleepfm_group: "RESP"
     channels:
       - Thor
       - ABD
+      - SpO2
+      - Snore
+      - HR
+      - Airflow
+      - Position
+      - Light
+      - Sound
+      - Pleth
+      - CPAP_Pressure
+      - CPAP_Limits
+      - CPAP_Leak
+      - RespRate
+      - HR_Derived
+      - Status
     processing_params: resp
     required: false
-    note: "Airflow/nasal pressure excluded - effort belts are more reliable"
+    note: "Includes respiratory effort, SpO2, airflow, and auxiliary channels"
 
 # SleepFM modality groupings
 sleepfm_modalities:

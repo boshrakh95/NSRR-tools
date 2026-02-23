@@ -11,12 +11,14 @@ channel_alternatives:
   C3-M2:
     - C3-M2
     - C3M2
+    - C3_M2
     - C3:M2
     - EEG C3-M2
     - C3-A2
     - C3A2
     - C3:A2
     - EEG C3-A2
+    - EEG_C3-A2
     - C3
     - EEG C3-A22
     - C3:M1
@@ -39,12 +41,14 @@ channel_alternatives:
   C4-M1:
     - C4-M1
     - C4M1
+    - C4_M1
     - C4:M1
     - EEG C4-M1
     - C4-A1
     - C4A1
     - C4:A1
     - EEG C4-A1
+    - EEG_C4-A1
     - C4
     - EEG C4-A12
     - C4:M2
@@ -69,12 +73,14 @@ channel_alternatives:
   O1-M2:
     - O1-M2
     - O1M2
+    - O1_M2
     - O1:M2
     - EEG O1-M2
     - O1-A2
     - O1A2
     - O1:A2
     - EEG O1-A2
+    - EEG_O1-A2
     - O1
     - EEG O1-A22
     - O1:M1
@@ -98,12 +104,14 @@ channel_alternatives:
   O2-M1:
     - O2-M1
     - O2M1
+    - O2_M1
     - O2:M1
     - EEG O2-M1
     - O2-A1
     - O2A1
     - O2:A1
     - EEG O2-A1
+    - EEG_O2-A1
     - O2
     - EEG O2-A12
     - O2:M2
@@ -129,6 +137,7 @@ channel_alternatives:
     - F3A2
     - F3:A2
     - EEG F3-A2
+    - EEG_F3-A2
     - F3
     - EEG F3-A22
     - F3:M1
@@ -157,6 +166,7 @@ channel_alternatives:
     - F4A1
     - F4:A1
     - EEG F4-A1
+    - EEG_F4-A1
     - F4
     - EEG F4-A12
     - F4:M2
@@ -276,6 +286,7 @@ channel_alternatives:
     - P3
     - P3-Cz
     - EEG P3-A2
+    - EEG_P3-A2
     - P3:P4
     - P3:M2
     - P3M2
@@ -285,6 +296,7 @@ channel_alternatives:
     - P4
     - P4-Cz
     - EEG P4-A1
+    - EEG_P4-A1
     - P4:M1
     - P4M1
   
@@ -296,6 +308,7 @@ channel_alternatives:
     - T3A2
     - T3/A2
     - EEG T3-A2
+    - EEG_T3-A2
     - T3:M1
     - T3:M2
     - T3-O1
@@ -310,6 +323,7 @@ channel_alternatives:
     - T4A1
     - T4/A1
     - EEG T4-A1
+    - EEG_T4-A1
     - T4:M1
     - T4-O2
     - Fp2-T4
@@ -355,10 +369,12 @@ channel_alternatives:
     - EEG sec
     - EEG(SEC)
     - EEG(sec)
+    - EEG(sec2)
     - EEG2
     - EEG1
     - EEG3
     - EEG A1-A2
+    - EEG_A1-A2
     - M1M2
     - A1A2
   
@@ -388,6 +404,7 @@ channel_alternatives:
     - LEOG
     - EOG LOC-A2
     - EOG LOC-A22
+    - EOG_LOC-A2
     - EOG(L)
     - EOG-L
     - L-EOG
@@ -421,6 +438,7 @@ channel_alternatives:
     - EOG ROC-A12
     - EOG ROC-A2
     - EOG ROC-A22
+    - EOG_ROC-A2
     - EOG(R)
     - EOG-R
     - R-EOG
@@ -457,6 +475,9 @@ channel_alternatives:
     - ECG 2
     - ECG II
     - ECG I
+    - ECG_I
+    - ECG_II
+    - ECG_IIHF
     - ECGI
     - ECGII
     - ECG1
@@ -494,6 +515,7 @@ channel_alternatives:
     - THOR
     - Thorax
     - Thoracic
+    - thorax
     - Chest
     - ChestDC
     - CHEST
@@ -505,6 +527,7 @@ channel_alternatives:
     - THOR EFFORT
     - Chest Effort
     - Effort THO
+    - Effort_THO
     - RIP Tho
   
   ABD:
@@ -513,6 +536,7 @@ channel_alternatives:
     - Abd
     - Abdomen
     - Abdominal
+    - abdomen
     - Abdo
     - ABDOMEN
     - ABDO
@@ -522,6 +546,7 @@ channel_alternatives:
     - RIP Abd
     - ABDO RES
     - ABDO EFFORT
+    - Effort_ABD
     - Abd:Chest
     - p.Abdomen
     - Sum.RIPs
@@ -544,8 +569,19 @@ channel_alternatives:
     - O2_Masimo
     - O2-Masimo
   
+  Airflow:
+    - Airflow
+    - AIRFLOW
+    - Cannula Flow
+    - nasal_pres
+    - Flow_Patient
+    - Flow_Patient2
+    - Flow_Patient3
+    - thermistor
+  
   Snore:
     - Snore
+    - snore
     - Snore2
     - Snoring
     - Snore-db
@@ -564,6 +600,7 @@ channel_alternatives:
   
   HR:
     - Pulse
+    - pulse
     - PPG
     - TcPPG
     - PPG Masimo
@@ -591,6 +628,8 @@ channel_alternatives:
   CHIN:
     - CHIN
     - Chin
+    - EMG_Chin
+    - EMG Chin
     - Chin1
     - Chin2
     - CHIN1
@@ -634,10 +673,13 @@ channel_alternatives:
   
   LLEG:
     - LLEG
+    - LEG
     - LEG(L)
     - L Leg
     - LLeg
     - Leg L
+    - Leg_1
+    - Leg 1
     - Left Leg
     - L-LEG 1
     - L-LEG 2
@@ -662,6 +704,8 @@ channel_alternatives:
     - R Leg
     - RLeg
     - Leg R
+    - Leg_2
+    - Leg 2
     - Right Leg
     - RLEGEMG
     - Leg-R
@@ -699,7 +743,9 @@ channel_alternatives:
     - EMGd2
     - EMG Chin
     - EMG Aux1
+    - EMG_Aux1
     - EMG Aux2
+    - EMG_Aux2
     - EMG Aux12
     - EMG #1
     - EMG #2
@@ -787,6 +833,75 @@ channel_alternatives:
     - SCM
     - Scalene
     - Should.
+
+  # ==================== ENVIRONMENTAL/OTHER CHANNELS ====================
+  
+  Position:
+    - Position
+    - POSITION
+    - Body
+    - Body Position
+    - Pos
+  
+  Light:
+    - Light
+    - LIGHT
+    - Ambient Light
+  
+  Sound:
+    - Sound
+    - SOUND
+    - Ambient Sound
+  
+  Pleth:
+    - Pleth
+    - Plethysmography
+    
+  # ==================== DEVICE/TECHNICAL CHANNELS ====================
+  
+  # CPAP/xPAP monitoring (STAGES)
+  CPAP_Pressure:
+    - xPAP_CPAP
+    - xPAP_IPAP
+    - xPAP_EPAP
+    - xPAP_MaxPress
+    - Press_Patient
+    - PressCheck
+  
+  CPAP_Limits:
+    - xPAP_IPAPMax
+    - xPAP_IPAPMin
+    - xPAP_EPAPMax
+    - xPAP_EPAPMin
+    - xPAP_PSMax
+    - xPAP_PSMin
+  
+  CPAP_Leak:
+    - Leak_Total
+    - Leak
+  
+  # Respiratory rate
+  RespRate:
+    - BreathRate
+    - RR
+    - Breath Rate
+    - Respiratory Rate
+  
+  # Derived HR
+  HR_Derived:
+    - DHR
+    - H.R.
+  
+  # Status/auxiliary
+  Status:
+    - Technical
+    - STAT
+    - OX stat
+    - SUM
+    - AUX
+    - NEW AIR
+    - NEWAIR
+    - CO2_EndTidal
 
 # ==================== SLEEPFM NAMING ====================
 # Standardized names used in HDF5 files for SleepFM

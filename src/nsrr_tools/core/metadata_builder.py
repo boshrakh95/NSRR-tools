@@ -1,0 +1,323 @@
+"""Metadata builder for unified NSRR dataset catalog."""
+
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
+import pandas as pd
+from loguru import logger
+from tqdm import tqdm
+
+from nsrr_tools.utils.config import Config
+from nsrr_tools.core.channel_mapper import ChannelMapper
+from nsrr_tools.core.modality_detector import ModalityDetector
+
+
+class MetadataBuilder:
+    """Build unified metadata catalog across NSRR datasets.
+    
+    Scans all datasets and creates a comprehensive metadata table containing:
+    - Subject identifiers
+    - Available channels and modalities
+    - Phenotypic data (age, sex, AHI, cognitive scores, etc.)
+    - File paths and data availability
+    - Quality metrics
+    
+    Output: unified_metadata.parquet with one row per subject
+    """
+    
+    def __init__(self, config: Config):
+        """Initialize metadata builder.
+        
+        Args:
+            config: Configuration object
+        """
+        self.config = config
+        self.channel_mapper = ChannelMapper(config)
+        self.modality_detector = ModalityDetector(config)
+        
+        unified_base = config.paths['paths']['unified_base']
+        self.unified_path = Path(unified_base) / 'unified_metadata.parquet'
+        self.unified_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    def build_metadata(
+        self,
+        datasets: List[str] = None,
+        force_rebuild: bool = False,
+        use_cache: bool = True
+    ) -> pd.DataFrame:
+        """Build unified metadata across datasets.
+        
+        Args:
+            datasets: List of dataset names to process (None = all)
+            force_rebuild: Rebuild even if cached metadata exists
+            use_cache: Use cached per-dataset metadata if available
+            
+        Returns:
+            DataFrame with unified metadata
+        """
+        if datasets is None:
+            datasets = ['stages', 'shhs', 'apples', 'mros']
+        
+        # Check if unified metadata already exists
+        if self.unified_path.exists() and not force_rebuild:
+            logger.info(f"Loading existing metadata from {self.unified_path}")
+            return pd.read_parquet(self.unified_path)
+        
+        logger.info(f"Building metadata for datasets: {', '.join(datasets)}")
+        
+        # Process each dataset
+        all_metadata = []
+        for dataset_name in datasets:
+            logger.info(f"Processing {dataset_name.upper()}...")
+            
+            try:
+                dataset_meta = self._process_dataset(dataset_name, use_cache)
+                if dataset_meta is not None and len(dataset_meta) > 0:
+                    all_metadata.append(dataset_meta)
+                    logger.info(f"  ✓ {len(dataset_meta)} subjects from {dataset_name}")
+                else:
+                    logger.warning(f"  ⚠ No metadata from {dataset_name}")
+                    
+            except Exception as e:
+                logger.error(f"  ✗ Error processing {dataset_name}: {e}")
+                continue
+        
+        if not all_metadata:
+            raise ValueError("No metadata collected from any dataset")
+        
+        # Combine all datasets
+        unified_df = pd.concat(all_metadata, ignore_index=True)
+        logger.info(f"Combined metadata: {len(unified_df)} total subjects")
+        
+        # Add derived columns
+        unified_df = self._add_derived_columns(unified_df)
+        
+        # Save unified metadata
+        unified_df.to_parquet(self.unified_path, index=False)
+        logger.success(f"Saved unified metadata to {self.unified_path}")
+        
+        return unified_df
+    
+    def _process_dataset(
+        self,
+        dataset_name: str,
+        use_cache: bool = True
+    ) -> Optional[pd.DataFrame]:
+        """Process one dataset and extract metadata.
+        
+        Args:
+            dataset_name: Name of dataset (stages, shhs, apples, mros)
+            use_cache: Use cached metadata if available
+            
+        Returns:
+            DataFrame with dataset metadata
+        """
+        # Get dataset adapter
+        adapter = self._get_dataset_adapter(dataset_name)
+        if adapter is None:
+            logger.error(f"No adapter found for {dataset_name}")
+            return None
+        
+        # Check for cached metadata
+        cache_file = adapter.derived_path / 'metadata_cache.parquet'
+        if use_cache and cache_file.exists():
+            logger.info(f"  Using cached metadata from {cache_file}")
+            return pd.read_parquet(cache_file)
+        
+        # Load phenotype data
+        try:
+            pheno_df = adapter.load_metadata()
+            logger.info(f"  Loaded {len(pheno_df)} subjects from metadata CSV")
+        except Exception as e:
+            logger.error(f"  Failed to load metadata: {e}")
+            return None
+        
+        # Scan EDF files for available channels
+        logger.info("  Scanning EDF files for channels...")
+        edf_files = adapter.find_edf_files()
+        
+        if not edf_files:
+            logger.warning("  No EDF files found")
+            # Return phenotype data without channel info
+            pheno_df['dataset'] = dataset_name.upper()
+            pheno_df['has_edf'] = False
+            return pheno_df
+        
+        logger.info(f"  Found {len(edf_files)} EDF files")
+        
+        # Extract channel information for each subject
+        channel_info = {}
+        for subject_id, edf_path in tqdm(edf_files, desc=f"  Scanning {dataset_name}"):
+            try:
+                # Detect channels
+                detected = self.channel_mapper.detect_channels_in_edf(edf_path)
+                
+                # Group by modality
+                modality_groups = self.modality_detector.group_channels_by_modality(
+                    detected  # Pass the dict, not list
+                )
+                
+                # Store info
+                channel_info[subject_id] = {
+                    'edf_path': str(edf_path),
+                    'num_channels': len(detected),
+                    'has_edf': True,
+                    **{f'has_{mod}': len(channels) > 0 
+                       for mod, channels in modality_groups.items()},
+                    **{f'n_{mod}': len(channels) 
+                       for mod, channels in modality_groups.items()},
+                    'channels': ','.join(detected.keys()),
+                    'channel_list': list(detected.keys())
+                }
+                
+            except Exception as e:
+                logger.warning(f"  Error processing {subject_id}: {e}")
+                channel_info[subject_id] = {
+                    'edf_path': str(edf_path),
+                    'has_edf': False
+                }
+        
+        # Merge with phenotype data
+        channel_df = pd.DataFrame.from_dict(channel_info, orient='index')
+        channel_df['subject_id'] = channel_df.index
+        
+        # Merge on subject_id (handle different ID column names)
+        id_col = adapter.get_subject_id_column()
+        merged_df = pheno_df.merge(
+            channel_df,
+            left_on=id_col,
+            right_on='subject_id',
+            how='left'
+        )
+        
+        # Fill missing EDF info
+        merged_df['has_edf'] = merged_df['has_edf'].fillna(False)
+        merged_df['dataset'] = dataset_name.upper()
+        
+        # Cache the results
+        cache_file.parent.mkdir(parents=True, exist_ok=True)
+        merged_df.to_parquet(cache_file, index=False)
+        logger.info(f"  Cached metadata to {cache_file}")
+        
+        return merged_df
+    
+    def _get_dataset_adapter(self, dataset_name: str):
+        """Get the appropriate dataset adapter.
+        
+        Args:
+            dataset_name: Name of dataset
+            
+        Returns:
+            Dataset adapter instance
+        """
+        from nsrr_tools.datasets.stages_adapter import STAGESAdapter
+        # TODO: Import other adapters when implemented
+        
+        if dataset_name.lower() == 'stages':
+            return STAGESAdapter(self.config)
+        # TODO: Add other datasets
+        # elif dataset_name.lower() == 'shhs':
+        #     return SHHSAdapter(self.config)
+        # elif dataset_name.lower() == 'apples':
+        #     return APPLESAdapter(self.config)
+        # elif dataset_name.lower() == 'mros':
+        #     return MrOSAdapter(self.config)
+        else:
+            logger.warning(f"No adapter implemented for {dataset_name}")
+            return None
+    
+    def _add_derived_columns(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Add derived/computed columns to metadata.
+        
+        Args:
+            df: Input dataframe
+            
+        Returns:
+            DataFrame with additional columns
+        """
+        # Add completeness score (0-1)
+        modality_cols = [c for c in df.columns if c.startswith('has_')]
+        if modality_cols:
+            df['completeness'] = df[modality_cols].sum(axis=1) / len(modality_cols)
+        
+        # Add usability flag (has minimum required channels)
+        if 'has_BAS' in df.columns and 'has_RESP' in df.columns:
+            df['is_usable'] = df['has_BAS'] & df['has_RESP']
+        
+        # Sort by dataset and subject_id
+        if 'dataset' in df.columns:
+            df = df.sort_values(['dataset', df.columns[0]])
+        
+        return df
+    
+    def get_summary_statistics(self, metadata_df: pd.DataFrame = None) -> Dict:
+        """Generate summary statistics from metadata.
+        
+        Args:
+            metadata_df: Metadata dataframe (loads from file if None)
+            
+        Returns:
+            Dictionary with summary statistics
+        """
+        if metadata_df is None:
+            if not self.unified_path.exists():
+                raise FileNotFoundError(f"Metadata not found: {self.unified_path}")
+            metadata_df = pd.read_parquet(self.unified_path)
+        
+        summary = {
+            'total_subjects': len(metadata_df),
+            'datasets': {},
+            'channel_coverage': {},
+            'usability': {}
+        }
+        
+        # Per-dataset stats
+        for dataset in metadata_df['dataset'].unique():
+            dataset_df = metadata_df[metadata_df['dataset'] == dataset]
+            summary['datasets'][dataset] = {
+                'n_subjects': len(dataset_df),
+                'with_edf': dataset_df['has_edf'].sum() if 'has_edf' in dataset_df else 0
+            }
+        
+        # Channel coverage
+        modality_cols = [c for c in metadata_df.columns if c.startswith('has_')]
+        for col in modality_cols:
+            modality = col.replace('has_', '')
+            summary['channel_coverage'][modality] = metadata_df[col].sum()
+        
+        # Usability
+        if 'is_usable' in metadata_df.columns:
+            summary['usability']['usable_subjects'] = metadata_df['is_usable'].sum()
+            summary['usability']['usable_percent'] = (
+                100 * metadata_df['is_usable'].mean()
+            )
+        
+        return summary
+    
+    def print_summary(self, metadata_df: pd.DataFrame = None):
+        """Print a formatted summary of the metadata.
+        
+        Args:
+            metadata_df: Metadata dataframe (loads from file if None)
+        """
+        stats = self.get_summary_statistics(metadata_df)
+        
+        print("\n" + "="*80)
+        print("UNIFIED METADATA SUMMARY")
+        print("="*80)
+        print(f"\nTotal subjects: {stats['total_subjects']}")
+        
+        print("\nPer-dataset breakdown:")
+        for dataset, info in stats['datasets'].items():
+            print(f"  {dataset:10s}: {info['n_subjects']:5d} subjects "
+                  f"({info['with_edf']:5d} with EDF)")
+        
+        print("\nChannel coverage (subjects with modality):")
+        for modality, count in stats['channel_coverage'].items():
+            pct = 100 * count / stats['total_subjects']
+            print(f"  {modality:10s}: {count:5d} ({pct:5.1f}%)")
+        
+        if 'usability' in stats and 'usable_subjects' in stats['usability']:
+            print(f"\nUsable subjects (BAS + RESP): {stats['usability']['usable_subjects']} "
+                  f"({stats['usability']['usable_percent']:.1f}%)")
+        
+        print("="*80 + "\n")

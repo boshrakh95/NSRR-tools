@@ -1,0 +1,77 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Test: Channel Config",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/test_channel_config.py",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "python": "${workspaceFolder}/.venv/bin/python",
+            "env": {
+                "SCRATCH": "/scratch/boshra95",
+                "HOME": "/home/boshra95"
+            }
+        },
+        {
+            "name": "Test: STAGES Adapter",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/test_stages_adapter.py",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "python": "${workspaceFolder}/.venv/bin/python",
+            "env": {
+                "SCRATCH": "/scratch/boshra95",
+                "HOME": "/home/boshra95"
+            }
+        },
+        {
+            "name": "Test: Extract Channels (5 files)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/extract_nsrr_channels.py",
+            "args": [
+                "--datasets", "stages",
+                "--max-files", "5"
+            ],
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "python": "${workspaceFolder}/.venv/bin/python",
+            "env": {
+                "SCRATCH": "/scratch/boshra95",
+                "HOME": "/home/boshra95"
+            }
+        },
+        {
+            "name": "Test: Extract Channels (all datasets)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/extract_nsrr_channels.py",
+            "args": [
+                "--datasets", "stages", "shhs", "apples", "mros"
+            ],
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "python": "${workspaceFolder}/.venv/bin/python",
+            "env": {
+                "SCRATCH": "/scratch/boshra95",
+                "HOME": "/home/boshra95"
+            }
+        },
+        {
+            "name": "Test: Metadata Builder",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/test_metadata_builder.py",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "python": "${workspaceFolder}/.venv/bin/python",
+            "env": {
+                "SCRATCH": "/scratch/boshra95",
+                "HOME": "/home/boshra95"
+            }
+        }
+    ]
+}
