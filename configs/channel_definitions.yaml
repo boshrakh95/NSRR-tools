@@ -25,10 +25,12 @@ channel_alternatives:
     - C3M1
     - C3-M1
     - EEG C3-A1
+    - EEG_C3-A1
     - C3:A1
     - C3-A1
     - C3-Cz
     - C3-O1
+    - C3-P3
     - C3:C4
     - M2:C3
     - A2:C3
@@ -55,9 +57,11 @@ channel_alternatives:
     - C4M2
     - C4-M2
     - EEG C4-A2
+    - EEG_C4-A2
     - C4:A2
     - C4-A2
     - C4-Cz
+    - C4-P4
     - F2-C4
     - T4-O2
     - M1:C4
@@ -83,10 +87,12 @@ channel_alternatives:
     - EEG_O1-A2
     - O1
     - EEG O1-A22
+    - EEG_O1-A22
     - O1:M1
     - O1M1
     - O1-M1
     - EEG O1-A1
+    - EEG_O1-A1
     - O1-Cz
     - O1-x
     - M2:O1
@@ -114,10 +120,12 @@ channel_alternatives:
     - EEG_O2-A1
     - O2
     - EEG O2-A12
+    - EEG_O2-A12
     - O2:M2
     - O2M2
     - O2-M2
     - EEG O2-A2
+    - EEG_O2-A2
     - O2-x
     - M1:O2
     - M2:O2
@@ -140,11 +148,14 @@ channel_alternatives:
     - EEG_F3-A2
     - F3
     - EEG F3-A22
+    - EEG_F3-A22
     - F3:M1
     - F3-M1
     - EEG F3-A1
+    - EEG_F3-A1
     - F3/A2
     - F3-Cz
+    - F3-C3
     - Fp1-C3
     - F3:F4
     - F4:F3
@@ -169,11 +180,14 @@ channel_alternatives:
     - EEG_F4-A1
     - F4
     - EEG F4-A12
+    - EEG_F4-A12
     - F4:M2
     - F4-M2
     - EEG F4-A2
+    - EEG_F4-A2
     - F4/A1
     - F4-Cz
+    - F4-C4
     - F2-T4
     - M1:F4
     - M2:F4
@@ -190,11 +204,15 @@ channel_alternatives:
     - FP1-A2
     - FP1-M2
     - FP1-C3
+    - FP1-F3
+    - FP1-F7
     - Fp1:M2
     - Fp1:A2
     - Fp1/A2
     - EEG Fp1-A2
     - EEG Fp1-A22
+    - EEG_Fp1-A2
+    - EEG_Fp1-A22
     - Fp1-Cz
     - Fp1-T3
     - Fp1:Fp2
@@ -210,10 +228,14 @@ channel_alternatives:
     - FP2
     - FP2-A1
     - FP2-M1
+    - FP2-F4
+    - FP2-F8
     - Fp2:M1
     - Fp2:A1
     - EEG Fp2-A1
     - EEG Fp2-A12
+    - EEG_Fp2-A1
+    - EEG_Fp2-A12
     - Fp2-Cz
     - Fp2-T4
     - Fp2:Fp1
@@ -375,6 +397,7 @@ channel_alternatives:
     - EEG3
     - EEG A1-A2
     - EEG_A1-A2
+    - EEG_A1-A22
     - M1M2
     - A1A2
   
@@ -405,6 +428,7 @@ channel_alternatives:
     - EOG LOC-A2
     - EOG LOC-A22
     - EOG_LOC-A2
+    - EOG_LOC-A22
     - EOG(L)
     - EOG-L
     - L-EOG
@@ -419,6 +443,7 @@ channel_alternatives:
     - E1:M1:M2
     - E1:M1-M2
     - E1:M2:M1
+    - E1_(LEOG)
     - EOG1
     - EOG1:A2
     - EOG1:A1
@@ -436,9 +461,12 @@ channel_alternatives:
     - REOG
     - EOG ROC-A1
     - EOG ROC-A12
+    - EOG_ROC-A1
+    - EOG_ROC-A12
     - EOG ROC-A2
     - EOG ROC-A22
     - EOG_ROC-A2
+    - EOG_ROC-A22
     - EOG(R)
     - EOG-R
     - R-EOG
@@ -452,6 +480,7 @@ channel_alternatives:
     - E2:M1:M2
     - E2:M1-M2
     - E2:M2:M1
+    - E2_(REOG)
     - EOG2
     - EOG2:A1
     - EOG2:A2
@@ -473,10 +502,13 @@ channel_alternatives:
     - EKG
     - ECG
     - ECG 2
+    - ECG_2
     - ECG II
     - ECG I
     - ECG_I
+    - ECG_I2
     - ECG_II
+    - ECG_II2
     - ECG_IIHF
     - ECGI
     - ECGII
@@ -484,6 +516,8 @@ channel_alternatives:
     - ECG2
     - EKG1
     - EKG2
+    - EKG_#1
+    - EKG_#2
     - EKG_L-Cz
     - EKG_R-Cz
     - EKG-R
@@ -572,11 +606,32 @@ channel_alternatives:
   Airflow:
     - Airflow
     - AIRFLOW
+    - AIRFLOW-0
+    - AIRFLOW-1
     - Cannula Flow
+    - CannulaFlow
+    - Cannula
+    - NASAL
+    - NASAL_PRESSURE
+    - Nasal
+    - NasalDC
+    - NasalOr
+    - NasalSn
+    - Nasal_Pressure
+    - Nasal_Therm
     - nasal_pres
+    - Flow
+    - FLOW
     - Flow_Patient
     - Flow_Patient2
     - Flow_Patient3
+    - Flow_Aux4
+    - Pressure_Flow
+    - CFLOW
+    - DC_Nasal_Canual
+    - CPAP_Flow
+    - CPAP_raw_flow
+    - ResMed_Flow
     - thermistor
   
   Snore:
@@ -629,6 +684,7 @@ channel_alternatives:
     - CHIN
     - Chin
     - EMG_Chin
+    - EMG_Chin2
     - EMG Chin
     - Chin1
     - Chin2
@@ -677,15 +733,23 @@ channel_alternatives:
     - LEG(L)
     - L Leg
     - LLeg
+    - LLeg3
+    - LLeg4
     - Leg L
     - Leg_1
     - Leg 1
+    - Leg_12
     - Left Leg
     - L-LEG 1
     - L-LEG 2
+    - L-LEG1
+    - L-LEG2
+    - L-LEG_1
+    - L-LEG_2
     - LLEGEMG
     - Leg-L
     - LegL
+    - LegsL-Leg1
     - L-Leg1
     - L-Leg2
     - L-Leg 1-L-Leg 2
@@ -703,9 +767,12 @@ channel_alternatives:
     - LEG(R)
     - R Leg
     - RLeg
+    - RLeg5
+    - RLeg6
     - Leg R
     - Leg_2
     - Leg 2
+    - Leg_22
     - Right Leg
     - RLEGEMG
     - Leg-R
@@ -713,6 +780,10 @@ channel_alternatives:
     - R-Leg1
     - R-Leg2
     - R-Leg1-R-Leg2
+    - R-LEG1
+    - R-LEG2
+    - R-LEG_1
+    - R-LEG_2
     - R Leg 1
     - R Leg 2
     - LEG/R
@@ -726,6 +797,12 @@ channel_alternatives:
   # Additional EMG (arms, feet, masseter, etc.)
   EMG:
     - EMG
+    - EMG_#1
+    - EMG_#2
+    - EMG_#3
+    - EMG_Aux1
+    - EMG_Aux12
+    - EMG_Aux2
     - RIC EMG
     - Arm EMG
     - Legs
@@ -805,17 +882,35 @@ channel_alternatives:
     - MASSETE
     - Massater 1
     - Massater 2
+    - Massater_1
+    - Massater_2
     - Masseter 1
     - Masseter 2
+    - Masseter_1
+    - Masseter_2
     - Left Masseter 1
     - Left Masseter 2
+    - Left_Masseter_1
+    - Left_Masseter_2
     - Right Masseter 1
     - Right Masseter 2
+    - Right_Masseter_1
+    - Right_Masseter_2
     - Right-Masseter1
   
   Temporalis:
     - Temporalis-L
     - Temporalis-R
+  
+  Arms:
+    - Arms-L
+    - Arms-R
+    - L-Arm1
+    - L-Arm2
+    - R-Arm1
+    - R-Arm2
+    - Right_Arm_2
+    - Right_arm
   
   Flexor:
     - Flexor_L-Cz

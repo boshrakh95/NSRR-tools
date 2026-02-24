@@ -1,505 +1,2240 @@
 {
-  "total_unique": 100,
+  "total_unique": 447,
   "by_frequency": [
     {
       "channel": "SaO2",
-      "count": 20,
+      "count": 11690,
       "modality": "EEG"
     },
     {
       "channel": "ECG",
-      "count": 20,
+      "count": 9982,
       "modality": "ECG"
     },
     {
       "channel": "EMG",
-      "count": 20,
+      "count": 9570,
       "modality": "EMG"
     },
     {
-      "channel": "LOC",
-      "count": 20,
-      "modality": "EOG"
-    },
-    {
-      "channel": "ROC",
-      "count": 20,
-      "modality": "EOG"
-    },
-    {
-      "channel": "SpO2",
-      "count": 15,
+      "channel": "EEG",
+      "count": 8466,
       "modality": "EEG"
     },
     {
-      "channel": "H.R.",
-      "count": 10,
-      "modality": "UNKNOWN"
-    },
-    {
       "channel": "EOG(L)",
-      "count": 10,
+      "count": 8444,
       "modality": "EOG"
     },
     {
       "channel": "EOG(R)",
-      "count": 10,
+      "count": 8444,
       "modality": "EOG"
     },
     {
-      "channel": "EEG",
-      "count": 10,
-      "modality": "EEG"
-    },
-    {
       "channel": "THOR RES",
-      "count": 10,
+      "count": 8444,
       "modality": "RESP"
     },
     {
       "channel": "ABDO RES",
-      "count": 10,
+      "count": 8444,
       "modality": "RESP"
     },
     {
       "channel": "POSITION",
-      "count": 10,
+      "count": 8444,
       "modality": "OTHER"
     },
     {
       "channel": "LIGHT",
-      "count": 10,
+      "count": 8442,
       "modality": "OTHER"
-    },
-    {
-      "channel": "OX stat",
-      "count": 10,
-      "modality": "UNKNOWN"
-    },
-    {
-      "channel": "snore",
-      "count": 10,
-      "modality": "RESP"
-    },
-    {
-      "channel": "C3_M2",
-      "count": 10,
-      "modality": "EEG"
-    },
-    {
-      "channel": "C4_M1",
-      "count": 10,
-      "modality": "EEG"
-    },
-    {
-      "channel": "O1_M2",
-      "count": 10,
-      "modality": "EEG"
-    },
-    {
-      "channel": "O2_M1",
-      "count": 10,
-      "modality": "EEG"
-    },
-    {
-      "channel": "thermistor",
-      "count": 10,
-      "modality": "UNKNOWN"
-    },
-    {
-      "channel": "nasal_pres",
-      "count": 10,
-      "modality": "RESP"
-    },
-    {
-      "channel": "abdomen",
-      "count": 10,
-      "modality": "RESP"
-    },
-    {
-      "channel": "thorax",
-      "count": 10,
-      "modality": "RESP"
-    },
-    {
-      "channel": "Position",
-      "count": 10,
-      "modality": "OTHER"
-    },
-    {
-      "channel": "Leg L",
-      "count": 10,
-      "modality": "EMG"
-    },
-    {
-      "channel": "Leg R",
-      "count": 10,
-      "modality": "EMG"
-    },
-    {
-      "channel": "C3",
-      "count": 10,
-      "modality": "EEG"
-    },
-    {
-      "channel": "C4",
-      "count": 10,
-      "modality": "EEG"
-    },
-    {
-      "channel": "A1",
-      "count": 10,
-      "modality": "UNKNOWN"
-    },
-    {
-      "channel": "A2",
-      "count": 10,
-      "modality": "UNKNOWN"
-    },
-    {
-      "channel": "ECG L",
-      "count": 10,
-      "modality": "ECG"
-    },
-    {
-      "channel": "ECG R",
-      "count": 10,
-      "modality": "ECG"
-    },
-    {
-      "channel": "L Chin",
-      "count": 10,
-      "modality": "EMG"
-    },
-    {
-      "channel": "R Chin",
-      "count": 10,
-      "modality": "EMG"
-    },
-    {
-      "channel": "Airflow",
-      "count": 10,
-      "modality": "RESP"
-    },
-    {
-      "channel": "SUM",
-      "count": 10,
-      "modality": "UNKNOWN"
-    },
-    {
-      "channel": "Thoracic",
-      "count": 10,
-      "modality": "RESP"
-    },
-    {
-      "channel": "Abdominal",
-      "count": 10,
-      "modality": "RESP"
-    },
-    {
-      "channel": "STAT",
-      "count": 10,
-      "modality": "UNKNOWN"
-    },
-    {
-      "channel": "HR",
-      "count": 10,
-      "modality": "UNKNOWN"
-    },
-    {
-      "channel": "Cannula Flow",
-      "count": 10,
-      "modality": "RESP"
-    },
-    {
-      "channel": "DHR",
-      "count": 10,
-      "modality": "UNKNOWN"
     },
     {
       "channel": "EEG(sec)",
-      "count": 9,
+      "count": 8271,
       "modality": "EEG"
     },
     {
       "channel": "AIRFLOW",
-      "count": 8,
+      "count": 6465,
       "modality": "RESP"
     },
     {
-      "channel": "LEG",
-      "count": 7,
-      "modality": "EMG"
+      "channel": "H.R.",
+      "count": 5800,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "OX stat",
+      "count": 5431,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "C3",
+      "count": 4813,
+      "modality": "EEG"
+    },
+    {
+      "channel": "C4",
+      "count": 4813,
+      "modality": "EEG"
     },
     {
       "channel": "SOUND",
-      "count": 6,
+      "count": 4425,
       "modality": "OTHER"
     },
     {
-      "channel": "NEW AIR",
-      "count": 6,
-      "modality": "UNKNOWN"
-    },
-    {
-      "channel": "pulse",
-      "count": 6,
+      "channel": "Airflow",
+      "count": 4217,
       "modality": "RESP"
     },
     {
-      "channel": "EEG_F3-A2",
-      "count": 5,
-      "modality": "EEG"
-    },
-    {
-      "channel": "EEG_F4-A1",
-      "count": 5,
-      "modality": "EEG"
-    },
-    {
-      "channel": "EEG_A1-A2",
-      "count": 5,
-      "modality": "EEG"
-    },
-    {
-      "channel": "EEG_C3-A2",
-      "count": 5,
-      "modality": "EEG"
-    },
-    {
-      "channel": "EEG_C4-A1",
-      "count": 5,
-      "modality": "EEG"
-    },
-    {
-      "channel": "EEG_O1-A2",
-      "count": 5,
-      "modality": "EEG"
-    },
-    {
-      "channel": "EEG_O2-A1",
-      "count": 5,
-      "modality": "EEG"
-    },
-    {
-      "channel": "EOG_LOC-A2",
-      "count": 5,
-      "modality": "EOG"
-    },
-    {
-      "channel": "EOG_ROC-A2",
-      "count": 5,
-      "modality": "EOG"
-    },
-    {
-      "channel": "EMG_Chin",
-      "count": 5,
-      "modality": "EMG"
-    },
-    {
-      "channel": "Leg_1",
-      "count": 5,
-      "modality": "EMG"
-    },
-    {
-      "channel": "Leg_2",
-      "count": 5,
-      "modality": "EMG"
-    },
-    {
-      "channel": "ECG_I",
-      "count": 5,
-      "modality": "ECG"
-    },
-    {
-      "channel": "RR",
-      "count": 5,
+      "channel": "SUM",
+      "count": 4106,
       "modality": "UNKNOWN"
     },
     {
-      "channel": "ECG_II",
-      "count": 5,
+      "channel": "LOC",
+      "count": 4033,
+      "modality": "EOG"
+    },
+    {
+      "channel": "ROC",
+      "count": 4026,
+      "modality": "EOG"
+    },
+    {
+      "channel": "HR",
+      "count": 3951,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "NEW AIR",
+      "count": 3938,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "Position",
+      "count": 3930,
+      "modality": "OTHER"
+    },
+    {
+      "channel": "STAT",
+      "count": 3930,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "DHR",
+      "count": 3923,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "A1",
+      "count": 2929,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "A2",
+      "count": 2929,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "Leg L",
+      "count": 2908,
+      "modality": "EMG"
+    },
+    {
+      "channel": "Leg R",
+      "count": 2908,
+      "modality": "EMG"
+    },
+    {
+      "channel": "Thoracic",
+      "count": 2908,
+      "modality": "RESP"
+    },
+    {
+      "channel": "Abdominal",
+      "count": 2908,
+      "modality": "RESP"
+    },
+    {
+      "channel": "ECG L",
+      "count": 2902,
       "modality": "ECG"
+    },
+    {
+      "channel": "ECG R",
+      "count": 2902,
+      "modality": "ECG"
+    },
+    {
+      "channel": "L Chin",
+      "count": 2902,
+      "modality": "EMG"
+    },
+    {
+      "channel": "R Chin",
+      "count": 2902,
+      "modality": "EMG"
+    },
+    {
+      "channel": "SpO2",
+      "count": 2899,
+      "modality": "EEG"
+    },
+    {
+      "channel": "Cannula Flow",
+      "count": 2874,
+      "modality": "RESP"
+    },
+    {
+      "channel": "PR",
+      "count": 2644,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "OX STAT",
+      "count": 2644,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "Chest",
+      "count": 1894,
+      "modality": "RESP"
+    },
+    {
+      "channel": "E1",
+      "count": 1888,
+      "modality": "EOG"
+    },
+    {
+      "channel": "E2",
+      "count": 1888,
+      "modality": "EOG"
+    },
+    {
+      "channel": "M1",
+      "count": 1884,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "M2",
+      "count": 1884,
+      "modality": "UNKNOWN"
     },
     {
       "channel": "Snore",
-      "count": 5,
+      "count": 1537,
       "modality": "RESP"
     },
     {
-      "channel": "Snore2",
-      "count": 5,
-      "modality": "EOG"
-    },
-    {
-      "channel": "Flow_Patient",
-      "count": 5,
+      "channel": "snore",
+      "count": 1104,
       "modality": "RESP"
     },
     {
-      "channel": "Flow_Patient2",
-      "count": 5,
-      "modality": "RESP"
+      "channel": "C3_M2",
+      "count": 1097,
+      "modality": "EEG"
     },
     {
-      "channel": "Effort_THO",
-      "count": 5,
+      "channel": "C4_M1",
+      "count": 1097,
+      "modality": "EEG"
+    },
+    {
+      "channel": "O2_M1",
+      "count": 1097,
+      "modality": "EEG"
+    },
+    {
+      "channel": "thermistor",
+      "count": 1097,
       "modality": "UNKNOWN"
     },
     {
-      "channel": "Effort_ABD",
-      "count": 5,
+      "channel": "nasal_pres",
+      "count": 1097,
+      "modality": "RESP"
+    },
+    {
+      "channel": "abdomen",
+      "count": 1097,
+      "modality": "RESP"
+    },
+    {
+      "channel": "thorax",
+      "count": 1097,
+      "modality": "RESP"
+    },
+    {
+      "channel": "O1_M2",
+      "count": 1095,
+      "modality": "EEG"
+    },
+    {
+      "channel": "ABD",
+      "count": 1046,
+      "modality": "RESP"
+    },
+    {
+      "channel": "LegL",
+      "count": 1025,
+      "modality": "EMG"
+    },
+    {
+      "channel": "LegR",
+      "count": 1025,
+      "modality": "EMG"
+    },
+    {
+      "channel": "ECGL",
+      "count": 1025,
+      "modality": "ECG"
+    },
+    {
+      "channel": "ECGR",
+      "count": 1025,
+      "modality": "ECG"
+    },
+    {
+      "channel": "LChin",
+      "count": 1025,
+      "modality": "EMG"
+    },
+    {
+      "channel": "RChin",
+      "count": 1025,
+      "modality": "EMG"
+    },
+    {
+      "channel": "CannulaFlow",
+      "count": 981,
       "modality": "RESP"
     },
     {
       "channel": "Pleth",
-      "count": 5,
+      "count": 946,
       "modality": "OTHER"
     },
     {
-      "channel": "Body",
-      "count": 5,
-      "modality": "UNKNOWN"
-    },
-    {
-      "channel": "PulseRate",
-      "count": 5,
-      "modality": "RESP"
-    },
-    {
-      "channel": "Flow_Patient3",
-      "count": 5,
+      "channel": "O1",
+      "count": 886,
       "modality": "EEG"
     },
     {
-      "channel": "xPAP_CPAP",
-      "count": 5,
+      "channel": "O2",
+      "count": 886,
+      "modality": "EEG"
+    },
+    {
+      "channel": "F3",
+      "count": 886,
+      "modality": "EEG"
+    },
+    {
+      "channel": "F4",
+      "count": 886,
+      "modality": "EEG"
+    },
+    {
+      "channel": "LEG",
+      "count": 881,
+      "modality": "EMG"
+    },
+    {
+      "channel": "New Air",
+      "count": 796,
       "modality": "UNKNOWN"
     },
     {
-      "channel": "xPAP_IPAP",
-      "count": 5,
-      "modality": "UNKNOWN"
+      "channel": "ECG_II",
+      "count": 774,
+      "modality": "ECG"
     },
     {
-      "channel": "xPAP_EPAP",
-      "count": 5,
-      "modality": "UNKNOWN"
+      "channel": "pulse",
+      "count": 774,
+      "modality": "RESP"
     },
     {
-      "channel": "Leak_Total",
-      "count": 5,
-      "modality": "UNKNOWN"
+      "channel": "EEG_A1-A2",
+      "count": 746,
+      "modality": "EEG"
     },
     {
-      "channel": "PressCheck",
-      "count": 5,
+      "channel": "RR",
+      "count": 746,
       "modality": "UNKNOWN"
     },
     {
       "channel": "ECG_IIHF",
-      "count": 5,
+      "count": 746,
       "modality": "ECG"
     },
     {
       "channel": "Technical",
-      "count": 5,
+      "count": 746,
       "modality": "UNKNOWN"
     },
     {
-      "channel": "xPAP_MaxPress",
-      "count": 3,
-      "modality": "UNKNOWN"
+      "channel": "EOG_LOC-A2",
+      "count": 745,
+      "modality": "EOG"
     },
     {
-      "channel": "xPAP_EPAPMin",
-      "count": 3,
-      "modality": "UNKNOWN"
-    },
-    {
-      "channel": "xPAP_EPAPMax",
-      "count": 3,
-      "modality": "UNKNOWN"
-    },
-    {
-      "channel": "xPAP_PSMin",
-      "count": 3,
-      "modality": "UNKNOWN"
-    },
-    {
-      "channel": "xPAP_PSMax",
-      "count": 3,
-      "modality": "UNKNOWN"
-    },
-    {
-      "channel": "xPAP_IPAPMin",
-      "count": 3,
-      "modality": "UNKNOWN"
-    },
-    {
-      "channel": "xPAP_IPAPMax",
-      "count": 3,
-      "modality": "UNKNOWN"
-    },
-    {
-      "channel": "BreathRate",
-      "count": 3,
-      "modality": "UNKNOWN"
-    },
-    {
-      "channel": "Press_Patient",
-      "count": 3,
-      "modality": "UNKNOWN"
-    },
-    {
-      "channel": "EMG_Aux1",
-      "count": 2,
+      "channel": "EMG_Chin",
+      "count": 745,
       "modality": "EMG"
     },
     {
-      "channel": "EMG_Aux2",
-      "count": 2,
+      "channel": "EEG_F3-A2",
+      "count": 744,
+      "modality": "EEG"
+    },
+    {
+      "channel": "EEG_O2-A1",
+      "count": 744,
+      "modality": "EEG"
+    },
+    {
+      "channel": "EOG_ROC-A2",
+      "count": 744,
+      "modality": "EOG"
+    },
+    {
+      "channel": "EEG_F4-A1",
+      "count": 743,
+      "modality": "EEG"
+    },
+    {
+      "channel": "EEG_C3-A2",
+      "count": 743,
+      "modality": "EEG"
+    },
+    {
+      "channel": "EEG_C4-A1",
+      "count": 743,
+      "modality": "EEG"
+    },
+    {
+      "channel": "EEG_O1-A2",
+      "count": 743,
+      "modality": "EEG"
+    },
+    {
+      "channel": "Pulse",
+      "count": 738,
+      "modality": "RESP"
+    },
+    {
+      "channel": "Chin",
+      "count": 700,
       "modality": "EMG"
     },
     {
-      "channel": "EEG_T3-A2",
-      "count": 2,
+      "channel": "Flow_Patient",
+      "count": 668,
+      "modality": "RESP"
+    },
+    {
+      "channel": "Effort_THO",
+      "count": 668,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "Effort_ABD",
+      "count": 668,
+      "modality": "RESP"
+    },
+    {
+      "channel": "Leg_1",
+      "count": 667,
+      "modality": "EMG"
+    },
+    {
+      "channel": "Leg_2",
+      "count": 667,
+      "modality": "EMG"
+    },
+    {
+      "channel": "Flow_Patient2",
+      "count": 667,
+      "modality": "RESP"
+    },
+    {
+      "channel": "Body",
+      "count": 667,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "Flow_Patient3",
+      "count": 667,
       "modality": "EEG"
     },
     {
-      "channel": "EEG_T4-A1",
-      "count": 2,
+      "channel": "xPAP_CPAP",
+      "count": 667,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "xPAP_IPAP",
+      "count": 667,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "xPAP_EPAP",
+      "count": 667,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "Leak_Total",
+      "count": 667,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "PulseRate",
+      "count": 667,
+      "modality": "RESP"
+    },
+    {
+      "channel": "PressCheck",
+      "count": 667,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "Fp1",
+      "count": 534,
       "modality": "EEG"
     },
     {
-      "channel": "EEG_P3-A2",
-      "count": 2,
+      "channel": "Fp2",
+      "count": 534,
       "modality": "EEG"
     },
     {
-      "channel": "EEG_P4-A1",
-      "count": 2,
+      "channel": "ECG_I",
+      "count": 529,
+      "modality": "ECG"
+    },
+    {
+      "channel": "PAP_Pres",
+      "count": 528,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "PAP_Pt_Flo",
+      "count": 528,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "PAP_TV",
+      "count": 528,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "PAP_Leak",
+      "count": 528,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "Oral-CO2",
+      "count": 528,
       "modality": "EEG"
     },
     {
-      "channel": "CO2_EndTidal",
-      "count": 2,
+      "channel": "TcCO2",
+      "count": 528,
       "modality": "EEG"
     },
     {
-      "channel": "NEWAIR",
-      "count": 2,
+      "channel": "TcSpO2",
+      "count": 528,
+      "modality": "EEG"
+    },
+    {
+      "channel": "Impedan",
+      "count": 519,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "SPO2",
+      "count": 500,
+      "modality": "EEG"
+    },
+    {
+      "channel": "TcPPG",
+      "count": 490,
+      "modality": "RESP"
+    },
+    {
+      "channel": "RIC",
+      "count": 488,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "Abd",
+      "count": 488,
+      "modality": "RESP"
+    },
+    {
+      "channel": "Chin2",
+      "count": 464,
+      "modality": "EMG"
+    },
+    {
+      "channel": "Nasal",
+      "count": 462,
+      "modality": "RESP"
+    },
+    {
+      "channel": "NasOr",
+      "count": 461,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "DIA",
+      "count": 441,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "ExOb",
+      "count": 441,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "Battery",
+      "count": 436,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "RAT",
+      "count": 435,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "LAT",
+      "count": 435,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "BPos",
+      "count": 435,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "PPG",
+      "count": 435,
+      "modality": "RESP"
+    },
+    {
+      "channel": "Mvmt",
+      "count": 429,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "NasalSn",
+      "count": 423,
+      "modality": "RESP"
+    },
+    {
+      "channel": "Snore2",
+      "count": 401,
+      "modality": "EOG"
+    },
+    {
+      "channel": "NasOr2",
+      "count": 398,
       "modality": "UNKNOWN"
     },
     {
       "channel": "AUX",
+      "count": 386,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "Abdomen",
+      "count": 383,
+      "modality": "RESP"
+    },
+    {
+      "channel": "NEWAIR",
+      "count": 350,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "EMG_Aux1",
+      "count": 335,
+      "modality": "EMG"
+    },
+    {
+      "channel": "EMG1",
+      "count": 317,
+      "modality": "EMG"
+    },
+    {
+      "channel": "EMG2",
+      "count": 317,
+      "modality": "EMG"
+    },
+    {
+      "channel": "EMG3",
+      "count": 317,
+      "modality": "EMG"
+    },
+    {
+      "channel": "CPAP_Leak",
+      "count": 317,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "CO2_EndTidal",
+      "count": 249,
+      "modality": "EEG"
+    },
+    {
+      "channel": "PTAF",
+      "count": 242,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "CPAP_Pressure",
+      "count": 241,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "CPAP_Flow",
+      "count": 241,
+      "modality": "RESP"
+    },
+    {
+      "channel": "L-Leg2",
+      "count": 209,
+      "modality": "EMG"
+    },
+    {
+      "channel": "R-Leg1",
+      "count": 209,
+      "modality": "EMG"
+    },
+    {
+      "channel": "R-Leg2",
+      "count": 209,
+      "modality": "EMG"
+    },
+    {
+      "channel": "EEG_Fp1-A2",
+      "count": 202,
+      "modality": "EEG"
+    },
+    {
+      "channel": "EEG_Fp2-A1",
+      "count": 202,
+      "modality": "EEG"
+    },
+    {
+      "channel": "Pressure",
+      "count": 201,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "EMG_Aux2",
+      "count": 199,
+      "modality": "EMG"
+    },
+    {
+      "channel": "ECG1",
+      "count": 190,
+      "modality": "ECG"
+    },
+    {
+      "channel": "ECG2",
+      "count": 190,
+      "modality": "ECG"
+    },
+    {
+      "channel": "Nasal_Pressure",
+      "count": 189,
+      "modality": "RESP"
+    },
+    {
+      "channel": "L-Leg1",
+      "count": 189,
+      "modality": "EMG"
+    },
+    {
+      "channel": "EEG_Fp1-A22",
+      "count": 186,
+      "modality": "EEG"
+    },
+    {
+      "channel": "EEG_Fp2-A12",
+      "count": 186,
+      "modality": "EEG"
+    },
+    {
+      "channel": "EEG_F3-A22",
+      "count": 186,
+      "modality": "EEG"
+    },
+    {
+      "channel": "EEG_F4-A12",
+      "count": 186,
+      "modality": "EEG"
+    },
+    {
+      "channel": "EEG_A1-A22",
+      "count": 186,
+      "modality": "EEG"
+    },
+    {
+      "channel": "EEG_C3-A22",
+      "count": 186,
+      "modality": "EEG"
+    },
+    {
+      "channel": "EEG_C4-A12",
+      "count": 186,
+      "modality": "EEG"
+    },
+    {
+      "channel": "EEG_O1-A22",
+      "count": 186,
+      "modality": "EEG"
+    },
+    {
+      "channel": "EEG_O2-A12",
+      "count": 186,
+      "modality": "EEG"
+    },
+    {
+      "channel": "EOG_LOC-A22",
+      "count": 186,
+      "modality": "EOG"
+    },
+    {
+      "channel": "EMG_Chin2",
+      "count": 186,
+      "modality": "EMG"
+    },
+    {
+      "channel": "Leg_12",
+      "count": 186,
+      "modality": "EMG"
+    },
+    {
+      "channel": "Leg_22",
+      "count": 186,
+      "modality": "EMG"
+    },
+    {
+      "channel": "ECG_II2",
+      "count": 186,
+      "modality": "ECG"
+    },
+    {
+      "channel": "EOG_ROC-A22",
+      "count": 185,
+      "modality": "EOG"
+    },
+    {
+      "channel": "EEG_T3-A2",
+      "count": 174,
+      "modality": "EEG"
+    },
+    {
+      "channel": "EEG_T4-A1",
+      "count": 174,
+      "modality": "EEG"
+    },
+    {
+      "channel": "EEG_P3-A2",
+      "count": 174,
+      "modality": "EEG"
+    },
+    {
+      "channel": "EEG_P4-A1",
+      "count": 174,
+      "modality": "EEG"
+    },
+    {
+      "channel": "SAO2",
+      "count": 173,
+      "modality": "EEG"
+    },
+    {
+      "channel": "Plesmo",
+      "count": 173,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "C-LEAK",
+      "count": 173,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "Tidal_Vol",
+      "count": 173,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "F3-M2",
+      "count": 172,
+      "modality": "EEG"
+    },
+    {
+      "channel": "F4-M1",
+      "count": 172,
+      "modality": "EEG"
+    },
+    {
+      "channel": "C3-M2",
+      "count": 172,
+      "modality": "EEG"
+    },
+    {
+      "channel": "C4-M1",
+      "count": 172,
+      "modality": "EEG"
+    },
+    {
+      "channel": "O1-M2",
+      "count": 172,
+      "modality": "EEG"
+    },
+    {
+      "channel": "O2-M1",
+      "count": 172,
+      "modality": "EEG"
+    },
+    {
+      "channel": "Heartrate",
+      "count": 172,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "LAT1-LAT2",
+      "count": 172,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "RAT1-RAT2",
+      "count": 172,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "IC1-IC2",
+      "count": 172,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "CFLOW",
+      "count": 172,
+      "modality": "RESP"
+    },
+    {
+      "channel": "SUB-R_-_V5",
+      "count": 172,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "Nasal_Therm",
+      "count": 172,
+      "modality": "RESP"
+    },
+    {
+      "channel": "P-Snore",
+      "count": 172,
+      "modality": "RESP"
+    },
+    {
+      "channel": "SUBR-SUBL",
+      "count": 167,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "LA1-LA2",
+      "count": 167,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "TCCO2_Digital",
+      "count": 159,
+      "modality": "EEG"
+    },
+    {
+      "channel": "ETCO2_Wave",
+      "count": 159,
+      "modality": "EEG"
+    },
+    {
+      "channel": "ETCO2_Digital",
+      "count": 159,
+      "modality": "EEG"
+    },
+    {
+      "channel": "CHEST",
+      "count": 148,
+      "modality": "RESP"
+    },
+    {
+      "channel": "EKG1",
+      "count": 148,
+      "modality": "ECG"
+    },
+    {
+      "channel": "EKG2",
+      "count": 148,
+      "modality": "ECG"
+    },
+    {
+      "channel": "SNORE",
+      "count": 147,
+      "modality": "RESP"
+    },
+    {
+      "channel": "New A/F",
+      "count": 142,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "Min_Vent",
+      "count": 138,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "Right_Masseter_2",
+      "count": 137,
+      "modality": "EMG"
+    },
+    {
+      "channel": "Left_Masseter_1",
+      "count": 137,
+      "modality": "EMG"
+    },
+    {
+      "channel": "Left_Masseter_2",
+      "count": 137,
+      "modality": "EMG"
+    },
+    {
+      "channel": "NASAL_PRESSURE",
+      "count": 127,
+      "modality": "RESP"
+    },
+    {
+      "channel": "ABDOMEN",
+      "count": 127,
+      "modality": "RESP"
+    },
+    {
+      "channel": "PULSE",
+      "count": 127,
+      "modality": "RESP"
+    },
+    {
+      "channel": "L-EOG",
+      "count": 116,
+      "modality": "EOG"
+    },
+    {
+      "channel": "R-EOG",
+      "count": 116,
+      "modality": "EOG"
+    },
+    {
+      "channel": "Pz",
+      "count": 108,
+      "modality": "EEG"
+    },
+    {
+      "channel": "P4",
+      "count": 108,
+      "modality": "EEG"
+    },
+    {
+      "channel": "Press_Patient",
+      "count": 97,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "EEG 2",
+      "count": 97,
+      "modality": "EEG"
+    },
+    {
+      "channel": "xPAP_MaxPress",
+      "count": 96,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "xPAP_EPAPMin",
+      "count": 96,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "xPAP_EPAPMax",
+      "count": 96,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "xPAP_PSMin",
+      "count": 96,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "xPAP_PSMax",
+      "count": 96,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "BreathRate",
+      "count": 96,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "L-LEG1",
+      "count": 96,
+      "modality": "EMG"
+    },
+    {
+      "channel": "L-LEG2",
+      "count": 96,
+      "modality": "EMG"
+    },
+    {
+      "channel": "R-LEG1",
+      "count": 96,
+      "modality": "EMG"
+    },
+    {
+      "channel": "R-LEG2",
+      "count": 96,
+      "modality": "EMG"
+    },
+    {
+      "channel": "xPAP_IPAPMin",
+      "count": 95,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "xPAP_IPAPMax",
+      "count": 95,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "EKG",
+      "count": 95,
+      "modality": "ECG"
+    },
+    {
+      "channel": "Massater_1",
+      "count": 95,
+      "modality": "EMG"
+    },
+    {
+      "channel": "Massater_2",
+      "count": 95,
+      "modality": "EMG"
+    },
+    {
+      "channel": "Pos.",
+      "count": 93,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "RLEG",
+      "count": 91,
+      "modality": "EMG"
+    },
+    {
+      "channel": "LLEG",
+      "count": 91,
+      "modality": "EMG"
+    },
+    {
+      "channel": "AIRFLOW-0",
+      "count": 91,
+      "modality": "RESP"
+    },
+    {
+      "channel": "AIRFLOW-1",
+      "count": 91,
+      "modality": "RESP"
+    },
+    {
+      "channel": "POS",
+      "count": 87,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "Right_Masseter_1",
+      "count": 79,
+      "modality": "EMG"
+    },
+    {
+      "channel": "Right_arm",
+      "count": 75,
+      "modality": "EMG"
+    },
+    {
+      "channel": "Right_Arm_2",
+      "count": 75,
+      "modality": "EMG"
+    },
+    {
+      "channel": "EtCO2",
+      "count": 75,
+      "modality": "EEG"
+    },
+    {
+      "channel": "ETCO2_Trend",
+      "count": 75,
+      "modality": "EEG"
+    },
+    {
+      "channel": "E1M2",
+      "count": 74,
+      "modality": "EOG"
+    },
+    {
+      "channel": "E2M2",
+      "count": 74,
+      "modality": "EOG"
+    },
+    {
+      "channel": "C3M2",
+      "count": 74,
+      "modality": "EEG"
+    },
+    {
+      "channel": "C4M1",
+      "count": 74,
+      "modality": "EEG"
+    },
+    {
+      "channel": "O1M2",
+      "count": 74,
+      "modality": "EEG"
+    },
+    {
+      "channel": "O2M1",
+      "count": 74,
+      "modality": "EEG"
+    },
+    {
+      "channel": "F3M2",
+      "count": 74,
+      "modality": "EEG"
+    },
+    {
+      "channel": "F4M1",
+      "count": 74,
+      "modality": "EEG"
+    },
+    {
+      "channel": "CFLO",
+      "count": 74,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "LEAK",
+      "count": 74,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "IPAP",
+      "count": 74,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "EPAP",
+      "count": 74,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "DC08",
+      "count": 74,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "CHIN",
+      "count": 74,
+      "modality": "EMG"
+    },
+    {
+      "channel": "ETCO2",
+      "count": 72,
+      "modality": "EEG"
+    },
+    {
+      "channel": "ETCO2_TREND",
+      "count": 72,
+      "modality": "EEG"
+    },
+    {
+      "channel": "F1M2",
+      "count": 70,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "F2M1",
+      "count": 70,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "FLOW",
+      "count": 70,
+      "modality": "RESP"
+    },
+    {
+      "channel": "SNOR",
+      "count": 70,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "THOR",
+      "count": 70,
+      "modality": "RESP"
+    },
+    {
+      "channel": "ABDM",
+      "count": 70,
+      "modality": "RESP"
+    },
+    {
+      "channel": "ETC2",
+      "count": 70,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "WAVE",
+      "count": 70,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "Plth",
+      "count": 70,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "32",
+      "count": 69,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "T3M2",
+      "count": 65,
+      "modality": "EEG"
+    },
+    {
+      "channel": "T4M1",
+      "count": 65,
+      "modality": "EEG"
+    },
+    {
+      "channel": "ECG_2",
+      "count": 65,
+      "modality": "ECG"
+    },
+    {
+      "channel": "CO2",
+      "count": 62,
+      "modality": "EEG"
+    },
+    {
+      "channel": "Right-Masseter1",
+      "count": 58,
+      "modality": "EMG"
+    },
+    {
+      "channel": "CNEP_pressure",
+      "count": 58,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "L-Arm1",
+      "count": 57,
+      "modality": "EMG"
+    },
+    {
+      "channel": "L-Arm2",
+      "count": 57,
+      "modality": "EMG"
+    },
+    {
+      "channel": "R-Arm1",
+      "count": 57,
+      "modality": "EMG"
+    },
+    {
+      "channel": "R-Arm2",
+      "count": 57,
+      "modality": "EMG"
+    },
+    {
+      "channel": "EEG2",
+      "count": 55,
+      "modality": "EEG"
+    },
+    {
+      "channel": "EMG_Aux12",
+      "count": 54,
+      "modality": "EMG"
+    },
+    {
+      "channel": "ECG_I2",
+      "count": 54,
+      "modality": "ECG"
+    },
+    {
+      "channel": "Pes-L2",
+      "count": 54,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "Pes-L3",
+      "count": 54,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "Pes-L4",
+      "count": 54,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "Pes-L1",
+      "count": 54,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "TidVol_Instant",
+      "count": 53,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "Flow_Aux4",
+      "count": 52,
+      "modality": "RESP"
+    },
+    {
+      "channel": "cNEP_pressure",
+      "count": 49,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "Other",
+      "count": 49,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "EPMS",
+      "count": 48,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "T3",
+      "count": 42,
+      "modality": "EEG"
+    },
+    {
+      "channel": "T4",
+      "count": 42,
+      "modality": "EEG"
+    },
+    {
+      "channel": "Pulse_Amp",
+      "count": 42,
+      "modality": "RESP"
+    },
+    {
+      "channel": "Arms-L",
+      "count": 39,
+      "modality": "EMG"
+    },
+    {
+      "channel": "Arms-R",
+      "count": 39,
+      "modality": "EMG"
+    },
+    {
+      "channel": "F7",
+      "count": 38,
+      "modality": "EEG"
+    },
+    {
+      "channel": "F8",
+      "count": 38,
+      "modality": "EEG"
+    },
+    {
+      "channel": "Light",
+      "count": 38,
+      "modality": "OTHER"
+    },
+    {
+      "channel": "Move.",
+      "count": 38,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "ChestDC",
+      "count": 37,
+      "modality": "RESP"
+    },
+    {
+      "channel": "AbdDC",
+      "count": 37,
+      "modality": "RESP"
+    },
+    {
+      "channel": "NasalDC",
+      "count": 37,
+      "modality": "RESP"
+    },
+    {
+      "channel": "Fz",
+      "count": 34,
+      "modality": "EEG"
+    },
+    {
+      "channel": "P3",
+      "count": 34,
+      "modality": "EEG"
+    },
+    {
+      "channel": "T6",
+      "count": 34,
+      "modality": "EEG"
+    },
+    {
+      "channel": "T5",
+      "count": 34,
+      "modality": "EEG"
+    },
+    {
+      "channel": "Oz",
+      "count": 34,
+      "modality": "EEG"
+    },
+    {
+      "channel": "Cz",
+      "count": 34,
+      "modality": "EEG"
+    },
+    {
+      "channel": "Foot-L",
+      "count": 34,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "Foot-R",
+      "count": 34,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "unused",
+      "count": 33,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "E1_(LEOG)",
+      "count": 31,
+      "modality": "EOG"
+    },
+    {
+      "channel": "E2_(REOG)",
+      "count": 31,
+      "modality": "EOG"
+    },
+    {
+      "channel": "L-LEG_1",
+      "count": 31,
+      "modality": "EMG"
+    },
+    {
+      "channel": "L-LEG_2",
+      "count": 31,
+      "modality": "EMG"
+    },
+    {
+      "channel": "R-LEG_1",
+      "count": 31,
+      "modality": "EMG"
+    },
+    {
+      "channel": "R-LEG_2",
+      "count": 31,
+      "modality": "EMG"
+    },
+    {
+      "channel": "Fpz",
+      "count": 30,
+      "modality": "EEG"
+    },
+    {
+      "channel": "Winx-Pump",
+      "count": 28,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "Winx-Oral",
+      "count": 28,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "Accu",
+      "count": 28,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "Marker",
+      "count": 28,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "SpO2Sta",
+      "count": 28,
+      "modality": "EEG"
+    },
+    {
+      "channel": "EOG1",
+      "count": 27,
+      "modality": "EOG"
+    },
+    {
+      "channel": "EOG2",
+      "count": 27,
+      "modality": "EOG"
+    },
+    {
+      "channel": "NasalOr",
+      "count": 27,
+      "modality": "RESP"
+    },
+    {
+      "channel": "PLMr",
+      "count": 27,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "PLMl",
+      "count": 27,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "Pressure.1",
+      "count": 26,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "CHIN1",
+      "count": 21,
+      "modality": "EMG"
+    },
+    {
+      "channel": "CHIN2",
+      "count": 21,
+      "modality": "EMG"
+    },
+    {
+      "channel": "CHIN3",
+      "count": 21,
+      "modality": "EMG"
+    },
+    {
+      "channel": "16",
+      "count": 21,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "20",
+      "count": 21,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "21",
+      "count": 21,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "NCPT",
+      "count": 21,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "PLMr.",
+      "count": 21,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "PLMl.",
+      "count": 21,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "Flow",
+      "count": 20,
+      "modality": "RESP"
+    },
+    {
+      "channel": "Cannula",
+      "count": 20,
+      "modality": "RESP"
+    },
+    {
+      "channel": "Masseter_1",
+      "count": 20,
+      "modality": "EMG"
+    },
+    {
+      "channel": "Masseter_2",
+      "count": 20,
+      "modality": "EMG"
+    },
+    {
+      "channel": "EKG_#1",
+      "count": 20,
+      "modality": "ECG"
+    },
+    {
+      "channel": "EKG_#2",
+      "count": 20,
+      "modality": "ECG"
+    },
+    {
+      "channel": "EMG_#1",
+      "count": 20,
+      "modality": "EMG"
+    },
+    {
+      "channel": "EMG_#2",
+      "count": 20,
+      "modality": "EMG"
+    },
+    {
+      "channel": "EMG_#3",
+      "count": 20,
+      "modality": "EMG"
+    },
+    {
+      "channel": "LegsL-Leg1",
+      "count": 20,
+      "modality": "EMG"
+    },
+    {
+      "channel": "Sa02",
+      "count": 20,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "ResMed_Flow",
+      "count": 20,
+      "modality": "RESP"
+    },
+    {
+      "channel": "ResMed_Pressure",
+      "count": 20,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "WPLM_ST",
+      "count": 20,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "WPLM_ST.1",
+      "count": 19,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "TidVol_Target",
+      "count": 13,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "EEG sec",
+      "count": 13,
+      "modality": "EEG"
+    },
+    {
+      "channel": "EEG_T5-A2",
+      "count": 12,
+      "modality": "EEG"
+    },
+    {
+      "channel": "EEG_T6-A1",
+      "count": 12,
+      "modality": "EEG"
+    },
+    {
+      "channel": "CPAP_raw_flow",
+      "count": 10,
+      "modality": "RESP"
+    },
+    {
+      "channel": "CPAP_leak",
+      "count": 10,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "EEG_F7-A2",
+      "count": 9,
+      "modality": "EEG"
+    },
+    {
+      "channel": "EEG_F8-A1",
+      "count": 9,
+      "modality": "EEG"
+    },
+    {
+      "channel": "Sum",
+      "count": 9,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "FP1",
+      "count": 9,
+      "modality": "EEG"
+    },
+    {
+      "channel": "FP2",
+      "count": 9,
+      "modality": "EEG"
+    },
+    {
+      "channel": "Graphical_Aux2",
+      "count": 8,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "EEG(SEC)",
+      "count": 8,
+      "modality": "EEG"
+    },
+    {
+      "channel": "LLeg3",
+      "count": 6,
+      "modality": "EMG"
+    },
+    {
+      "channel": "LLeg4",
+      "count": 6,
+      "modality": "EMG"
+    },
+    {
+      "channel": "RLeg5",
+      "count": 6,
+      "modality": "EMG"
+    },
+    {
+      "channel": "RLeg6",
+      "count": 6,
+      "modality": "EMG"
+    },
+    {
+      "channel": "CPAP",
+      "count": 6,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "L Chin-R Chin",
+      "count": 6,
+      "modality": "EMG"
+    },
+    {
+      "channel": "C3-A2",
+      "count": 6,
+      "modality": "EEG"
+    },
+    {
+      "channel": "C4-A1",
+      "count": 6,
+      "modality": "EEG"
+    },
+    {
+      "channel": "ECG L-ECG R",
+      "count": 6,
+      "modality": "ECG"
+    },
+    {
+      "channel": "Press",
+      "count": 5,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "Leak",
+      "count": 5,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "TV",
+      "count": 5,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "MV",
+      "count": 5,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "SUBL-SUBR",
+      "count": 5,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "Tcm4CO2",
+      "count": 5,
+      "modality": "EEG"
+    },
+    {
+      "channel": "24",
+      "count": 4,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "25",
+      "count": 4,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "26",
+      "count": 4,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "28",
+      "count": 4,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "29",
+      "count": 4,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "30",
+      "count": 4,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "31",
+      "count": 4,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "DC05",
+      "count": 4,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "DC06",
+      "count": 4,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "DC07",
+      "count": 4,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "BPOS",
+      "count": 4,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "Pos",
+      "count": 4,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "Nonin_sat",
+      "count": 4,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "wPLMr",
+      "count": 4,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "wPLMr_Sta",
+      "count": 4,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "wPLMl",
+      "count": 4,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "wPLMl_Sta",
+      "count": 4,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "CH37",
+      "count": 4,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "Mass-L",
+      "count": 3,
+      "modality": "EMG"
+    },
+    {
+      "channel": "Mass-R",
+      "count": 3,
+      "modality": "EMG"
+    },
+    {
+      "channel": "EEG_F3-A1",
+      "count": 2,
+      "modality": "EEG"
+    },
+    {
+      "channel": "EEG_F4-A2",
+      "count": 2,
+      "modality": "EEG"
+    },
+    {
+      "channel": "EEG_C3-A1",
+      "count": 2,
+      "modality": "EEG"
+    },
+    {
+      "channel": "EEG_C4-A2",
+      "count": 2,
+      "modality": "EEG"
+    },
+    {
+      "channel": "EEG_O1-A1",
+      "count": 2,
+      "modality": "EEG"
+    },
+    {
+      "channel": "EEG_O2-A2",
+      "count": 2,
+      "modality": "EEG"
+    },
+    {
+      "channel": "SCM",
+      "count": 2,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "Scalene",
+      "count": 2,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "PLM3.",
+      "count": 2,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "epms",
+      "count": 2,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "LEG(L)",
+      "count": 2,
+      "modality": "EMG"
+    },
+    {
+      "channel": "LEG(R)",
+      "count": 2,
+      "modality": "EMG"
+    },
+    {
+      "channel": "DC_Nasal_Canual",
+      "count": 1,
+      "modality": "RESP"
+    },
+    {
+      "channel": "TcpCO2",
+      "count": 1,
+      "modality": "EEG"
+    },
+    {
+      "channel": "EOG_ROC-A1",
+      "count": 1,
+      "modality": "EOG"
+    },
+    {
+      "channel": "EOG_ROC-A12",
+      "count": 1,
+      "modality": "EOG"
+    },
+    {
+      "channel": "T-Volume",
       "count": 1,
       "modality": "UNKNOWN"
     },
     {
-      "channel": "EEG2",
+      "channel": "Resp_Rate",
+      "count": 1,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "CO2_EndTidal2",
       "count": 1,
       "modality": "EEG"
+    },
+    {
+      "channel": "FP1-F7",
+      "count": 1,
+      "modality": "EEG"
+    },
+    {
+      "channel": "F7-T3",
+      "count": 1,
+      "modality": "EEG"
+    },
+    {
+      "channel": "T3-T5",
+      "count": 1,
+      "modality": "EEG"
+    },
+    {
+      "channel": "T5-O1",
+      "count": 1,
+      "modality": "EEG"
+    },
+    {
+      "channel": "x",
+      "count": 1,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "FP1-F3",
+      "count": 1,
+      "modality": "EEG"
+    },
+    {
+      "channel": "F3-C3",
+      "count": 1,
+      "modality": "EEG"
+    },
+    {
+      "channel": "C3-P3",
+      "count": 1,
+      "modality": "EEG"
+    },
+    {
+      "channel": "P3-O1",
+      "count": 1,
+      "modality": "EEG"
+    },
+    {
+      "channel": "x.1",
+      "count": 1,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "FP2-F4",
+      "count": 1,
+      "modality": "EEG"
+    },
+    {
+      "channel": "F4-C4",
+      "count": 1,
+      "modality": "EEG"
+    },
+    {
+      "channel": "C4-P4",
+      "count": 1,
+      "modality": "EEG"
+    },
+    {
+      "channel": "P4-O2",
+      "count": 1,
+      "modality": "EEG"
+    },
+    {
+      "channel": "x.2",
+      "count": 1,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "FP2-F8",
+      "count": 1,
+      "modality": "EEG"
+    },
+    {
+      "channel": "F8-T4",
+      "count": 1,
+      "modality": "EEG"
+    },
+    {
+      "channel": "T4-T6",
+      "count": 1,
+      "modality": "EEG"
+    },
+    {
+      "channel": "T6-O2",
+      "count": 1,
+      "modality": "EEG"
+    },
+    {
+      "channel": "PLM4.",
+      "count": 1,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "C3:C4",
+      "count": 1,
+      "modality": "EEG"
+    },
+    {
+      "channel": "Fp2:Fp1",
+      "count": 1,
+      "modality": "EEG"
+    },
+    {
+      "channel": "F4:F3",
+      "count": 1,
+      "modality": "EEG"
+    },
+    {
+      "channel": "Pressure_Flow",
+      "count": 1,
+      "modality": "RESP"
+    },
+    {
+      "channel": "F3:M2",
+      "count": 1,
+      "modality": "EEG"
+    },
+    {
+      "channel": "Pressure_Snore",
+      "count": 1,
+      "modality": "RESP"
+    },
+    {
+      "channel": "New AIR",
+      "count": 1,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "new air",
+      "count": 1,
+      "modality": "UNKNOWN"
+    },
+    {
+      "channel": "NASAL",
+      "count": 1,
+      "modality": "RESP"
+    },
+    {
+      "channel": "CH36",
+      "count": 1,
+      "modality": "UNKNOWN"
     }
   ]
 }

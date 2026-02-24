@@ -49,3 +49,204 @@ Processing SHHS dataset
   Searching in: /scratch/boshra95/nsrr_downloads/shhs/polysomnography
   Found 8444 EDFs using pattern: **/*.edf
   Found 8444 EDF files
+
+  Summary:
+    Total subjects: 8444
+    Total unique channels: 36
+    Avg channels per subject: 14.9
+    Sampling frequencies: [125. 250. 256.]
+
+  Channel distribution by modality:
+    EEG: 7 unique channels
+    EOG: 2 unique channels
+    ECG: 1 unique channels
+    EMG: 3 unique channels
+    RESP: 6 unique channels
+    OTHER: 3 unique channels
+    UNKNOWN: 14 unique channels
+  ✓ Saved to output/channel_analysis/shhs_channels.csv
+
+================================================================================
+Processing APPLES dataset
+================================================================================
+  Using: original directory
+  Searching in: /scratch/boshra95/nsrr_downloads/apples/polysomnography
+  Found 1104 EDFs using pattern: **/*.edf
+  Found 1104 EDF files
+
+  Summary:
+    Total subjects: 1104
+    Total unique channels: 16
+    Avg channels per subject: 15.4
+    Sampling frequencies: [100. 200.]
+
+  Channel distribution by modality:
+    EEG: 5 unique channels
+    EOG: 2 unique channels
+    ECG: 1 unique channels
+    EMG: 2 unique channels
+    RESP: 5 unique channels
+    UNKNOWN: 1 unique channels
+  ✓ Saved to output/channel_analysis/apples_channels.csv
+
+================================================================================
+Processing MROS dataset
+================================================================================
+  Using: original directory
+  Searching in: /scratch/boshra95/nsrr_downloads/mros/polysomnography
+  Found 3933 EDFs using pattern: **/*.edf
+  Found 3933 EDF files
+
+  Summary:
+    Total subjects: 3933
+    Total unique channels: 42
+    Avg channels per subject: 22.0
+    Sampling frequencies: [1024.  512.]
+
+  Channel distribution by modality:
+    EEG: 6 unique channels
+    EOG: 4 unique channels
+    ECG: 5 unique channels
+    EMG: 9 unique channels
+    RESP: 7 unique channels
+    OTHER: 1 unique channels
+    UNKNOWN: 10 unique channels
+  ✓ Saved to output/channel_analysis/mros_channels.csv
+
+================================================================================
+Generating summary reports
+================================================================================
+  ✓ Saved to output/channel_analysis/all_unique_channels.txt
+  ✓ Saved to output/channel_analysis/channel_frequency.json
+
+================================================================================
+Comparing with channel_definitions.yaml
+================================================================================
+  Channels in config: 714
+  Channels found in data: 447
+  Missing in config: 225
+
+  Top 20 missing channels (to add to config):
+
+    EEG:
+      - C3-P3
+      - C4-P4
+      - CO2
+      - CO2_EndTidal2
+      - EEG_A1-A22
+      - EEG_C3-A1
+      - EEG_C3-A22
+      - EEG_C4-A12
+      - EEG_C4-A2
+      - EEG_F3-A1
+      - EEG_F3-A22
+      - EEG_F4-A12
+      - EEG_F4-A2
+      - EEG_F7-A2
+      - EEG_F8-A1
+      - EEG_Fp1-A2
+      - EEG_Fp1-A22
+      - EEG_Fp2-A1
+      - EEG_Fp2-A12
+      - EEG_O1-A1
+
+    EOG:
+      - E1_(LEOG)
+      - E2_(REOG)
+      - EOG_LOC-A22
+      - EOG_ROC-A1
+      - EOG_ROC-A12
+      - EOG_ROC-A22
+
+    ECG:
+      - ECG_2
+      - ECG_I2
+      - ECG_II2
+      - EKG_#1
+      - EKG_#2
+
+    EMG:
+      - EMG_#1
+      - EMG_#2
+      - EMG_#3
+      - EMG_Aux12
+      - EMG_Chin2
+      - L-LEG1
+      - L-LEG2
+      - L-LEG_1
+      - L-LEG_2
+      - LLeg3
+      - LLeg4
+      - Left_Masseter_1
+      - Left_Masseter_2
+      - Leg_12
+      - Leg_22
+      - LegsL-Leg1
+      - Massater_1
+      - Massater_2
+      - Masseter_1
+      - Masseter_2
+
+    RESP:
+      - AIRFLOW-0
+      - AIRFLOW-1
+      - CFLOW
+      - CPAP_Flow
+      - CPAP_raw_flow
+      - Cannula
+      - CannulaFlow
+      - DC_Nasal_Canual
+      - FLOW
+      - Flow
+      - Flow_Aux4
+      - NASAL
+      - NASAL_PRESSURE
+      - Nasal
+      - NasalDC
+      - NasalOr
+      - NasalSn
+      - Nasal_Pressure
+      - Nasal_Therm
+      - Pressure_Flow
+
+    UNKNOWN:
+      - 16
+      - 20
+      - 21
+      - 24
+      - 25
+      - 26
+      - 28
+      - 29
+      - 30
+      - 31
+      - 32
+      - Accu
+      - BPOS
+      - BPos
+      - Battery
+      - C-LEAK
+      - CFLO
+      - CH36
+      - CH37
+      - CNEP_pressure
+
+  In config but not found in data: 492 (these are variants/alternatives)
+
+================================================================================
+✓ Channel extraction complete!
+================================================================================
+Results saved in: output/channel_analysis
+  - Per-dataset CSVs: <dataset>_channels.csv
+  - All unique channels: all_unique_channels.txt
+  - Frequency analysis: channel_frequency.json
+
+========================================
+Channel extraction completed successfully!
+End time: Mon Feb 23 16:02:27 PST 2026
+========================================
+
+Results saved in:
+  - Per-dataset CSVs: output/channel_analysis/<dataset>_channels.csv
+  - All unique channels: output/channel_analysis/all_unique_channels.txt
+  - Frequency analysis: output/channel_analysis/channel_frequency.json

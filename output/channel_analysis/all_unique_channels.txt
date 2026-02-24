@@ -1,74 +1,299 @@
-Total unique channels across all datasets: 100
+Total unique channels across all datasets: 447
 
 
-EEG (24 channels):
+EEG (122 channels):
   C3
+  C3-A2
+  C3-M2
+  C3-P3
+  C3:C4
+  C3M2
   C3_M2
   C4
+  C4-A1
+  C4-M1
+  C4-P4
+  C4M1
   C4_M1
+  CO2
   CO2_EndTidal
+  CO2_EndTidal2
+  Cz
   EEG
+  EEG 2
+  EEG sec
+  EEG(SEC)
   EEG(sec)
   EEG2
   EEG_A1-A2
+  EEG_A1-A22
+  EEG_C3-A1
   EEG_C3-A2
+  EEG_C3-A22
   EEG_C4-A1
+  EEG_C4-A12
+  EEG_C4-A2
+  EEG_F3-A1
   EEG_F3-A2
+  EEG_F3-A22
   EEG_F4-A1
+  EEG_F4-A12
+  EEG_F4-A2
+  EEG_F7-A2
+  EEG_F8-A1
+  EEG_Fp1-A2
+  EEG_Fp1-A22
+  EEG_Fp2-A1
+  EEG_Fp2-A12
+  EEG_O1-A1
   EEG_O1-A2
+  EEG_O1-A22
   EEG_O2-A1
+  EEG_O2-A12
+  EEG_O2-A2
   EEG_P3-A2
   EEG_P4-A1
   EEG_T3-A2
   EEG_T4-A1
+  EEG_T5-A2
+  EEG_T6-A1
+  ETCO2
+  ETCO2_Digital
+  ETCO2_TREND
+  ETCO2_Trend
+  ETCO2_Wave
+  EtCO2
+  F3
+  F3-C3
+  F3-M2
+  F3:M2
+  F3M2
+  F4
+  F4-C4
+  F4-M1
+  F4:F3
+  F4M1
+  F7
+  F7-T3
+  F8
+  F8-T4
+  FP1
+  FP1-F3
+  FP1-F7
+  FP2
+  FP2-F4
+  FP2-F8
   Flow_Patient3
+  Fp1
+  Fp2
+  Fp2:Fp1
+  Fpz
+  Fz
+  O1
+  O1-M2
+  O1M2
   O1_M2
+  O2
+  O2-M1
+  O2M1
   O2_M1
+  Oral-CO2
+  Oz
+  P3
+  P3-O1
+  P4
+  P4-O2
+  Pz
+  SAO2
+  SPO2
   SaO2
   SpO2
+  SpO2Sta
+  T3
+  T3-T5
+  T3M2
+  T4
+  T4-T6
+  T4M1
+  T5
+  T5-O1
+  T6
+  T6-O2
+  TCCO2_Digital
+  TcCO2
+  TcSpO2
+  Tcm4CO2
+  TcpCO2
 
-EOG (7 channels):
+EOG (21 channels):
+  E1
+  E1M2
+  E1_(LEOG)
+  E2
+  E2M2
+  E2_(REOG)
   EOG(L)
   EOG(R)
+  EOG1
+  EOG2
   EOG_LOC-A2
+  EOG_LOC-A22
+  EOG_ROC-A1
+  EOG_ROC-A12
   EOG_ROC-A2
+  EOG_ROC-A22
+  L-EOG
   LOC
+  R-EOG
   ROC
   Snore2
 
-ECG (6 channels):
+ECG (19 channels):
   ECG
   ECG L
+  ECG L-ECG R
   ECG R
+  ECG1
+  ECG2
+  ECGL
+  ECGR
+  ECG_2
   ECG_I
+  ECG_I2
   ECG_II
+  ECG_II2
   ECG_IIHF
+  EKG
+  EKG1
+  EKG2
+  EKG_#1
+  EKG_#2
 
-EMG (11 channels):
+EMG (72 channels):
+  Arms-L
+  Arms-R
+  CHIN
+  CHIN1
+  CHIN2
+  CHIN3
+  Chin
+  Chin2
   EMG
+  EMG1
+  EMG2
+  EMG3
+  EMG_#1
+  EMG_#2
+  EMG_#3
   EMG_Aux1
+  EMG_Aux12
   EMG_Aux2
   EMG_Chin
+  EMG_Chin2
   L Chin
+  L Chin-R Chin
+  L-Arm1
+  L-Arm2
+  L-LEG1
+  L-LEG2
+  L-LEG_1
+  L-LEG_2
+  L-Leg1
+  L-Leg2
+  LChin
   LEG
+  LEG(L)
+  LEG(R)
+  LLEG
+  LLeg3
+  LLeg4
+  Left_Masseter_1
+  Left_Masseter_2
   Leg L
   Leg R
+  LegL
+  LegR
   Leg_1
+  Leg_12
   Leg_2
+  Leg_22
+  LegsL-Leg1
+  Mass-L
+  Mass-R
+  Massater_1
+  Massater_2
+  Masseter_1
+  Masseter_2
   R Chin
+  R-Arm1
+  R-Arm2
+  R-LEG1
+  R-LEG2
+  R-LEG_1
+  R-LEG_2
+  R-Leg1
+  R-Leg2
+  RChin
+  RLEG
+  RLeg5
+  RLeg6
+  Right-Masseter1
+  Right_Arm_2
+  Right_Masseter_1
+  Right_Masseter_2
+  Right_arm
 
-RESP (17 channels):
+RESP (56 channels):
+  ABD
+  ABDM
   ABDO RES
+  ABDOMEN
   AIRFLOW
+  AIRFLOW-0
+  AIRFLOW-1
+  Abd
+  AbdDC
+  Abdomen
   Abdominal
   Airflow
+  CFLOW
+  CHEST
+  CPAP_Flow
+  CPAP_raw_flow
+  Cannula
   Cannula Flow
+  CannulaFlow
+  Chest
+  ChestDC
+  DC_Nasal_Canual
   Effort_ABD
+  FLOW
+  Flow
+  Flow_Aux4
   Flow_Patient
   Flow_Patient2
+  NASAL
+  NASAL_PRESSURE
+  Nasal
+  NasalDC
+  NasalOr
+  NasalSn
+  Nasal_Pressure
+  Nasal_Therm
+  P-Snore
+  PPG
+  PULSE
+  Pressure_Flow
+  Pressure_Snore
+  Pulse
   PulseRate
+  Pulse_Amp
+  ResMed_Flow
+  SNORE
   Snore
+  THOR
   THOR RES
+  TcPPG
   Thoracic
   abdomen
   nasal_pres
@@ -76,34 +301,156 @@ RESP (17 channels):
   snore
   thorax
 
-OTHER (5 channels):
+OTHER (6 channels):
   LIGHT
+  Light
   POSITION
   Pleth
   Position
   SOUND
 
-UNKNOWN (30 channels):
+UNKNOWN (151 channels):
+  16
+  20
+  21
+  24
+  25
+  26
+  28
+  29
+  30
+  31
+  32
   A1
   A2
   AUX
+  Accu
+  BPOS
+  BPos
+  Battery
   Body
   BreathRate
+  C-LEAK
+  CFLO
+  CH36
+  CH37
+  CNEP_pressure
+  CPAP
+  CPAP_Leak
+  CPAP_Pressure
+  CPAP_leak
+  DC05
+  DC06
+  DC07
+  DC08
   DHR
+  DIA
+  EPAP
+  EPMS
+  ETC2
   Effort_THO
+  ExOb
+  F1M2
+  F2M1
+  Foot-L
+  Foot-R
+  Graphical_Aux2
   H.R.
   HR
+  Heartrate
+  IC1-IC2
+  IPAP
+  Impedan
+  LA1-LA2
+  LAT
+  LAT1-LAT2
+  LEAK
+  Leak
   Leak_Total
+  M1
+  M2
+  MV
+  Marker
+  Min_Vent
+  Move.
+  Mvmt
+  NCPT
   NEW AIR
   NEWAIR
+  NasOr
+  NasOr2
+  New A/F
+  New AIR
+  New Air
+  Nonin_sat
+  OX STAT
   OX stat
+  Other
+  PAP_Leak
+  PAP_Pres
+  PAP_Pt_Flo
+  PAP_TV
+  PLM3.
+  PLM4.
+  PLMl
+  PLMl.
+  PLMr
+  PLMr.
+  POS
+  PR
+  PTAF
+  Pes-L1
+  Pes-L2
+  Pes-L3
+  Pes-L4
+  Plesmo
+  Plth
+  Pos
+  Pos.
+  Press
   PressCheck
   Press_Patient
+  Pressure
+  Pressure.1
+  RAT
+  RAT1-RAT2
+  RIC
   RR
+  ResMed_Pressure
+  Resp_Rate
+  SCM
+  SNOR
   STAT
+  SUB-R_-_V5
+  SUBL-SUBR
+  SUBR-SUBL
   SUM
+  Sa02
+  Scalene
+  Sum
+  T-Volume
+  TV
   Technical
+  TidVol_Instant
+  TidVol_Target
+  Tidal_Vol
+  WAVE
+  WPLM_ST
+  WPLM_ST.1
+  Winx-Oral
+  Winx-Pump
+  cNEP_pressure
+  epms
+  new air
   thermistor
+  unused
+  wPLMl
+  wPLMl_Sta
+  wPLMr
+  wPLMr_Sta
+  x
+  x.1
+  x.2
   xPAP_CPAP
   xPAP_EPAP
   xPAP_EPAPMax
