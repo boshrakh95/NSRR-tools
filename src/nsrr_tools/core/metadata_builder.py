@@ -48,7 +48,8 @@ class MetadataBuilder:
         self,
         datasets: List[str] = None,
         force_rebuild: bool = False,
-        use_cache: bool = True
+        use_cache: bool = True,
+        limit: int = None
     ) -> pd.DataFrame:
         """Build unified metadata across datasets.
         
@@ -56,6 +57,7 @@ class MetadataBuilder:
             datasets: List of dataset names to process (None = all)
             force_rebuild: Rebuild even if cached metadata exists
             use_cache: Use cached per-dataset metadata if available
+            limit: Limit to first N subjects per dataset (for testing)
             
         Returns:
             DataFrame with unified metadata
@@ -63,8 +65,8 @@ class MetadataBuilder:
         if datasets is None:
             datasets = ['stages', 'shhs', 'apples', 'mros']
         
-        # Check if unified metadata already exists
-        if self.unified_path.exists() and not force_rebuild:
+        # Check if unified metadata already exists (skip if using limit for testing)
+        if self.unified_path.exists() and not force_rebuild and not limit:
             logger.info(f"Loading existing metadata from {self.unified_path}")
             return pd.read_parquet(self.unified_path)
         
@@ -76,7 +78,7 @@ class MetadataBuilder:
             logger.info(f"Processing {dataset_name.upper()}...")
             
             try:
-                dataset_meta = self._process_dataset(dataset_name, use_cache)
+                dataset_meta = self._process_dataset(dataset_name, use_cache, limit)
                 if dataset_meta is not None and len(dataset_meta) > 0:
                     all_metadata.append(dataset_meta)
                     logger.info(f"  ✓ {len(dataset_meta)} subjects from {dataset_name}")
@@ -106,13 +108,15 @@ class MetadataBuilder:
     def _process_dataset(
         self,
         dataset_name: str,
-        use_cache: bool = True
+        use_cache: bool = True,
+        limit: int = None
     ) -> Optional[pd.DataFrame]:
         """Process one dataset and extract metadata.
         
         Args:
             dataset_name: Name of dataset (stages, shhs, apples, mros)
             use_cache: Use cached metadata if available
+            limit: Limit to first N subjects (for testing)
             
         Returns:
             DataFrame with dataset metadata
@@ -123,9 +127,9 @@ class MetadataBuilder:
             logger.error(f"No adapter found for {dataset_name}")
             return None
         
-        # Check for cached metadata
+        # Check for cached metadata (skip if using limit for testing)
         cache_file = adapter.derived_path / 'metadata_cache.parquet'
-        if use_cache and cache_file.exists():
+        if use_cache and cache_file.exists() and not limit:
             logger.info(f"  Using cached metadata from {cache_file}")
             return pd.read_parquet(cache_file)
         
@@ -150,10 +154,20 @@ class MetadataBuilder:
         
         logger.info(f"  Found {len(edf_files)} EDF files")
         
+        # Apply limit if specified
+        if limit and limit < len(edf_files):
+            logger.info(f"  Limiting to first {limit} subjects")
+            edf_files = edf_files[:limit]
+        
         # Extract channel information for each subject
         channel_info = {}
         for subject_id, edf_path in tqdm(edf_files, desc=f"  Scanning {dataset_name}"):
             try:
+                # Normalize subject ID to match phenotype format
+                # EDF may have "mros-visit1-aa0001", phenotype has "AA0001"
+                # Extract last part after last dash and uppercase
+                normalized_id = subject_id.split('-')[-1].upper()
+                
                 # Read EDF header with MNE (lightweight, doesn't load signal data)
                 raw = mne.io.read_raw_edf(edf_path, preload=False, verbose='ERROR')
                 
@@ -178,8 +192,8 @@ class MetadataBuilder:
                                 if detected.get(orig_ch) == std_ch]
                         modality_sfreqs[f'{mod}_sfreq'] = max(rates) if rates else 0
                 
-                # Store info
-                channel_info[subject_id] = {
+                # Store info (use normalized ID as key for merging)
+                channel_info[normalized_id] = {
                     'edf_path': str(edf_path),
                     'num_channels': len(ch_names),
                     'duration_sec': duration,
@@ -197,7 +211,7 @@ class MetadataBuilder:
                 
             except Exception as e:
                 logger.warning(f"  Error processing {subject_id}: {e}")
-                channel_info[subject_id] = {
+                channel_info[normalized_id] = {
                     'edf_path': str(edf_path),
                     'has_edf': False,
                     'error': str(e)
@@ -209,24 +223,31 @@ class MetadataBuilder:
         
         # Merge on subject_id (handle different ID column names)
         id_col = adapter.get_subject_id_column()
+        
+        # If limiting, only keep subjects we scanned (inner join)
+        # Otherwise keep all phenotype subjects (left join)
+        merge_how = 'inner' if limit else 'left'
+        
         merged_df = pheno_df.merge(
             channel_df,
             left_on=id_col,
             right_on='subject_id',
-            how='left'
+            how=merge_how
         )
         
-        # Fill missing EDF info
-        merged_df['has_edf'] = merged_df['has_edf'].fillna(False)
+        # Fill missing EDF info (only relevant for left join)
+        if not limit:
+            merged_df['has_edf'] = merged_df['has_edf'].fillna(False)
         merged_df['dataset'] = dataset_name.upper()
         
         # Add label availability flags
         merged_df = self._add_label_availability(merged_df, adapter, dataset_name)
         
-        # Cache the results
-        cache_file.parent.mkdir(parents=True, exist_ok=True)
-        merged_df.to_parquet(cache_file, index=False)
-        logger.info(f"  Cached metadata to {cache_file}")
+        # Cache the results (but not when testing with limit)
+        if not limit:
+            cache_file.parent.mkdir(parents=True, exist_ok=True)
+            merged_df.to_parquet(cache_file, index=False)
+            logger.info(f"  Cached metadata to {cache_file}")
         
         return merged_df
     
