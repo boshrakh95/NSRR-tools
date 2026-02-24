@@ -3,6 +3,7 @@
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 import pandas as pd
+import mne
 from loguru import logger
 from tqdm import tqdm
 
@@ -24,18 +25,23 @@ class MetadataBuilder:
     Output: unified_metadata.parquet with one row per subject
     """
     
-    def __init__(self, config: Config):
+    def __init__(self, config: Config, output_dir: Optional[Path] = None):
         """Initialize metadata builder.
         
         Args:
             config: Configuration object
+            output_dir: Custom output directory (default: from config)
         """
         self.config = config
         self.channel_mapper = ChannelMapper(config)
         self.modality_detector = ModalityDetector(config)
         
-        unified_base = config.paths['paths']['unified_base']
-        self.unified_path = Path(unified_base) / 'unified_metadata.parquet'
+        if output_dir:
+            self.unified_path = Path(output_dir) / 'unified_metadata.parquet'
+        else:
+            unified_base = config.paths['paths']['unified_base']
+            self.unified_path = Path(unified_base) / 'unified_metadata.parquet'
+        
         self.unified_path.parent.mkdir(parents=True, exist_ok=True)
     
     def build_metadata(
@@ -148,32 +154,53 @@ class MetadataBuilder:
         channel_info = {}
         for subject_id, edf_path in tqdm(edf_files, desc=f"  Scanning {dataset_name}"):
             try:
-                # Detect channels
-                detected = self.channel_mapper.detect_channels_in_edf(edf_path)
+                # Read EDF header with MNE (lightweight, doesn't load signal data)
+                raw = mne.io.read_raw_edf(edf_path, preload=False, verbose='ERROR')
+                
+                # Get all channel names and sampling rates
+                ch_names = raw.ch_names
+                sfreqs = {ch: raw.info['sfreq'] for ch in ch_names}
+                duration = raw.times[-1]
+                
+                # Detect standardized channels
+                detected = self.channel_mapper.detect_channels_from_list(ch_names)
                 
                 # Group by modality
-                modality_groups = self.modality_detector.group_channels_by_modality(
-                    detected  # Pass the dict, not list
-                )
+                modality_groups = self.modality_detector.group_channels_by_modality(detected)
+                
+                # Get sampling rates per modality (max rate in each modality)
+                modality_sfreqs = {}
+                for mod, channels in modality_groups.items():
+                    if channels:
+                        rates = [sfreqs.get(orig_ch, 0) 
+                                for orig_ch in ch_names 
+                                for std_ch in channels 
+                                if detected.get(orig_ch) == std_ch]
+                        modality_sfreqs[f'{mod}_sfreq'] = max(rates) if rates else 0
                 
                 # Store info
                 channel_info[subject_id] = {
                     'edf_path': str(edf_path),
-                    'num_channels': len(detected),
+                    'num_channels': len(ch_names),
+                    'duration_sec': duration,
                     'has_edf': True,
                     **{f'has_{mod}': len(channels) > 0 
                        for mod, channels in modality_groups.items()},
                     **{f'n_{mod}': len(channels) 
                        for mod, channels in modality_groups.items()},
-                    'channels': ','.join(detected.keys()),
-                    'channel_list': list(detected.keys())
+                    **modality_sfreqs,
+                    'channels': ','.join(sorted(detected.values())),
+                    'raw_channels': ','.join(ch_names)
                 }
+                
+                raw.close()
                 
             except Exception as e:
                 logger.warning(f"  Error processing {subject_id}: {e}")
                 channel_info[subject_id] = {
                     'edf_path': str(edf_path),
-                    'has_edf': False
+                    'has_edf': False,
+                    'error': str(e)
                 }
         
         # Merge with phenotype data
@@ -193,6 +220,9 @@ class MetadataBuilder:
         merged_df['has_edf'] = merged_df['has_edf'].fillna(False)
         merged_df['dataset'] = dataset_name.upper()
         
+        # Add label availability flags
+        merged_df = self._add_label_availability(merged_df, adapter, dataset_name)
+        
         # Cache the results
         cache_file.parent.mkdir(parents=True, exist_ok=True)
         merged_df.to_parquet(cache_file, index=False)
@@ -210,20 +240,87 @@ class MetadataBuilder:
             Dataset adapter instance
         """
         from nsrr_tools.datasets.stages_adapter import STAGESAdapter
-        # TODO: Import other adapters when implemented
+        from nsrr_tools.datasets.shhs_adapter import SHHSAdapter
+        from nsrr_tools.datasets.apples_adapter import APPLESAdapter
+        from nsrr_tools.datasets.mros_adapter import MrOSAdapter
         
         if dataset_name.lower() == 'stages':
             return STAGESAdapter(self.config)
-        # TODO: Add other datasets
-        # elif dataset_name.lower() == 'shhs':
-        #     return SHHSAdapter(self.config)
-        # elif dataset_name.lower() == 'apples':
-        #     return APPLESAdapter(self.config)
-        # elif dataset_name.lower() == 'mros':
-        #     return MrOSAdapter(self.config)
+        elif dataset_name.lower() == 'shhs':
+            return SHHSAdapter(self.config)
+        elif dataset_name.lower() == 'apples':
+            return APPLESAdapter(self.config)
+        elif dataset_name.lower() == 'mros':
+            return MrOSAdapter(self.config)
         else:
             logger.warning(f"No adapter implemented for {dataset_name}")
             return None
+    
+    def _add_label_availability(
+        self, 
+        df: pd.DataFrame, 
+        adapter, 
+        dataset_name: str
+    ) -> pd.DataFrame:
+        """Add flags for label availability (staging, AHI, cognitive scores).
+        
+        Args:
+            df: Dataframe with metadata
+            adapter: Dataset adapter
+            dataset_name: Name of dataset
+            
+        Returns:
+            DataFrame with label availability flags
+        """
+        # Check for sleep staging annotations
+        df['has_staging'] = df['has_edf'].copy()  # Assume if EDF exists, staging exists
+        
+        # Check for AHI (apnea-hypopnea index)
+        ahi_cols = [c for c in df.columns if 'ahi' in c.lower()]
+        if ahi_cols:
+            df['has_ahi'] = df[ahi_cols[0]].notna()
+        else:
+            df['has_ahi'] = False
+        
+        # Check for cognitive scores (dataset-specific)
+        if dataset_name.lower() == 'mros':
+            # MrOS has cognitive scores: 3ms (modified mini-mental state)
+            cog_cols = [c for c in df.columns if '3ms' in c.lower() or 'cogni' in c.lower()]
+            if cog_cols:
+                df['has_cognitive'] = df[cog_cols].notna().any(axis=1)
+            else:
+                df['has_cognitive'] = False
+        elif dataset_name.lower() == 'stages':
+            # STAGES has cognitive outcomes
+            cog_cols = [c for c in df.columns if 'cogni' in c.lower() or 'memory' in c.lower()]
+            if cog_cols:
+                df['has_cognitive'] = df[cog_cols].notna().any(axis=1)
+            else:
+                df['has_cognitive'] = False
+        else:
+            df['has_cognitive'] = False
+        
+        # Check for demographics (age, sex, BMI)
+        age_cols = [c for c in df.columns if c.lower() in ['age', 'age_at_visit', 'vsage1']]
+        sex_cols = [c for c in df.columns if c.lower() in ['sex', 'gender', 'male']]
+        bmi_cols = [c for c in df.columns if 'bmi' in c.lower()]
+        
+        if age_cols:
+            df['has_age'] = df[age_cols[0]].notna()
+        else:
+            df['has_age'] = False
+            
+        if sex_cols:
+            df['has_sex'] = df[sex_cols[0]].notna()
+        else:
+            df['has_sex'] = False
+            
+        if bmi_cols:
+            df['has_bmi'] = df[bmi_cols[0]].notna()
+        else:
+            df['has_bmi'] = False
+        
+        return df
     
     def _add_derived_columns(self, df: pd.DataFrame) -> pd.DataFrame:
         """Add derived/computed columns to metadata.
