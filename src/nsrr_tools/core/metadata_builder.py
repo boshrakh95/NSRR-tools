@@ -247,6 +247,9 @@ class MetadataBuilder:
                 right_on='merge_key',
                 how='inner' if limit else 'left'
             ).copy()
+            
+            # Use original ID as subject_id (single visit per subject)
+            merged_df['subject_id'] = merged_df[id_col].astype(str)
         
         elif dataset_name.lower() == 'apples':
             # APPLES: Multi-step merge strategy with visit 1 baseline data
@@ -307,6 +310,9 @@ class MetadataBuilder:
                     logger.info(f"  Merged visit 1 baseline data for {len(visit1_cols_to_add)} variables")
                     logger.warning(f"  Note: Demographics/cognitive data from visit 1 (baseline), "
                                  f"PSG data from visit 3 (diagnosis)")
+                
+                # Use nsrrid as subject_id (one PSG per subject despite multiple visits)
+                merged_df['subject_id'] = merged_df[id_col].astype(str)
             elif 'fileid' in pheno_df.columns:
                 # No visitn column, simple merge on fileid
                 merged_df = pheno_df.merge(
@@ -315,6 +321,7 @@ class MetadataBuilder:
                     right_on='merge_key',
                     how='inner' if limit else 'left'
                 ).copy()
+                merged_df['subject_id'] = merged_df[id_col].astype(str)
             else:
                 # Fallback: merge on subject_id
                 logger.info(f"  No 'fileid' in APPLES metadata, using subject_id merge")
@@ -324,20 +331,52 @@ class MetadataBuilder:
                     right_on='merge_key',
                     how='inner' if limit else 'left'
                 ).copy()
+                merged_df['subject_id'] = merged_df[id_col].astype(str)
         
         elif dataset_name.lower() in ['stages', 'shhs']:
-            # STAGES/SHHS: Simple subject ID merge (single visit per subject in our data)
+            # STAGES/SHHS merge
             # Convert types if needed (SHHS has int nsrrid, EDF filenames are strings)
             if id_col in pheno_df.columns:
                 # Convert pheno_df ID to string for consistent merging
                 pheno_df[id_col] = pheno_df[id_col].astype(str)
             
-            merged_df = pheno_df.merge(
-                channel_df,
-                left_on=id_col,
-                right_on='merge_key',
-                how='inner' if limit else 'left'
-            ).copy()
+            # For SHHS: Extract visit from EDF path BEFORE merge to handle multi-visit subjects
+            if dataset_name.lower() == 'shhs':
+                # Extract visit from EDF filename in channel_df
+                channel_df['psg_visit'] = channel_df['edf_path'].str.extract(r'shhs(\d)', expand=False).fillna('1').astype(int)
+                
+                # Extract visit from phenotype data (visitnumber column if present)
+                if 'visitnumber' in pheno_df.columns:
+                    pheno_df['psg_visit'] = pheno_df['visitnumber'].fillna(1).astype(int)
+                else:
+                    # If no visitnumber, assume visit 1 for all
+                    pheno_df['psg_visit'] = 1
+                
+                # Merge on both nsrrid AND visit
+                merged_df = pheno_df.merge(
+                    channel_df,
+                    left_on=[id_col, 'psg_visit'],
+                    right_on=['merge_key', 'psg_visit'],
+                    how='inner' if limit else 'left'
+                ).copy()
+                
+                # Create composite subject_id to treat each visit as a distinct subject
+                # Format: {nsrrid}_v{visit} (e.g., 200001_v1, 200001_v2)
+                merged_df['subject_id'] = merged_df[id_col].astype(str) + '_v' + merged_df['psg_visit'].astype(str)
+                
+                logger.info(f"  SHHS visits: {merged_df['psg_visit'].value_counts().sort_index().to_dict()}")
+                logger.info(f"  Created {len(merged_df)} unique visit records with composite subject_ids")
+            else:
+                # STAGES: Simple merge on subject_id only
+                merged_df = pheno_df.merge(
+                    channel_df,
+                    left_on=id_col,
+                    right_on='merge_key',
+                    how='inner' if limit else 'left'
+                ).copy()
+                
+                # Use original ID as subject_id (single visit per subject)
+                merged_df['subject_id'] = merged_df[id_col].astype(str)
         
         else:
             # Unknown dataset: try subject_id merge
@@ -348,6 +387,9 @@ class MetadataBuilder:
                 right_on='merge_key',
                 how='inner' if limit else 'left'
             ).copy()
+            
+            # Use original ID as subject_id
+            merged_df['subject_id'] = merged_df[id_col].astype(str)
         
         # Fill missing EDF info (only relevant for left join)
         if not limit:

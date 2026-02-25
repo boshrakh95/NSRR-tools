@@ -29,22 +29,22 @@ from .base_adapter import BaseNSRRAdapter
 class SHHSAdapter(BaseNSRRAdapter):
     """Adapter for SHHS dataset."""
     
-    def __init__(self, config, visit: int = 1):
+    def __init__(self, config):
         """Initialize SHHS adapter.
         
         Args:
             config: Config object
-            visit: Visit number (1 or 2)
         """
         super().__init__(config, 'shhs')
-        self.visit = visit
         
-        # Metadata files (from nocturn)
+        # Metadata files (from nocturn) - load both visit 1 and visit 2
         self.metadata_files = {
             'harmonized': 'shhs-harmonized-dataset-0.21.0.csv',
-            'main': f'shhs{visit}-dataset-0.21.0.csv',
+            'shhs1': 'shhs1-dataset-0.21.0.csv',
+            'shhs2': 'shhs2-dataset-0.21.0.csv',
             'cvd': 'shhs-cvd-summary-dataset-0.21.0.csv',
-            # 'hrv': f'shhs{visit}-hrv-summary-0.21.0.csv',  # optional
+            # 'hrv1': 'shhs1-hrv-summary-0.21.0.csv',  # optional
+            # 'hrv2': 'shhs2-hrv-summary-0.21.0.csv',  # optional
         }
         
         # Subject ID column (SHHS uses nsrrid)
@@ -52,20 +52,19 @@ class SHHSAdapter(BaseNSRRAdapter):
         
         # Phenotype columns (from multiple files)
         # harmonized: nsrr_age, nsrr_sex, nsrr_race, nsrr_bmi, PSG metrics
-        # main: rdi3p (AHI), ess_s2, rest10/ms204c (rested morning)
+        # shhs1/shhs2: rdi3p (AHI), ess_s2 (visit 2), rest10 (visit 1)
         # cvd: any_cvd, cvd_death
         self.phenotype_cols = [
             'nsrrid', 'visitnumber',
             # From harmonized
             'nsrr_age', 'nsrr_sex', 'nsrr_race', 'nsrr_bmi', 'nsrr_current_smoker',
             'nsrr_ttleffsp_f1', 'nsrr_phrnumar_f1', 'nsrr_pctdursp_sr', 'nsrr_pctdursp_s3',
-            # From main dataset
+            # From visit-specific datasets (will have both rest10 and ess_s2 after merge)
             'rdi3p',  # AHI
-            'ess_s2' if visit == 2 else 'rest10',
         ]
     
     def find_edf_files(self) -> List[Tuple[str, Path]]:
-        """Find all SHHS EDF files.
+        """Find all SHHS EDF files from both visits.
         
         SHHS structure varies by visit and extraction.
         Subject ID extracted from EDF filename.
@@ -79,7 +78,7 @@ class SHHSAdapter(BaseNSRRAdapter):
         if 'sample' in self.dataset_paths:
             sample_path = self.dataset_paths['sample']
             if sample_path.exists():
-                logger.info(f"Checking SHHS visit {self.visit} sample directory")
+                logger.info(f"Checking SHHS sample directory")
                 sample_edfs = list(sample_path.rglob('*.edf'))
                 
                 for edf_path in sample_edfs:
@@ -90,7 +89,7 @@ class SHHSAdapter(BaseNSRRAdapter):
                 if edf_files:
                     # Filter duplicates (prefer base file over _1, _2 versions)
                     edf_files = self._filter_duplicate_edfs(edf_files)
-                    logger.info(f"Found {len(edf_files)} SHHS{self.visit} EDF files in sample")
+                    logger.info(f"Found {len(edf_files)} SHHS EDF files in sample")
                     return edf_files
         
         # Original structure
@@ -99,7 +98,7 @@ class SHHSAdapter(BaseNSRRAdapter):
             logger.warning(f"SHHS original path does not exist: {original_path}")
             return []
         
-        # Search for EDFs
+        # Search for EDFs from both visits
         for edf_path in original_path.rglob('*.edf'):
             subject_id = self._extract_subject_id_from_filename(edf_path.stem)
             if subject_id:
@@ -107,7 +106,11 @@ class SHHSAdapter(BaseNSRRAdapter):
         
         # Filter duplicates
         edf_files = self._filter_duplicate_edfs(edf_files)
-        logger.info(f"Found {len(edf_files)} SHHS{self.visit} EDF files")
+        
+        # Count by visit for logging
+        visit1_count = sum(1 for _, path in edf_files if 'shhs1' in path.stem.lower())
+        visit2_count = sum(1 for _, path in edf_files if 'shhs2' in path.stem.lower())
+        logger.info(f"Found {len(edf_files)} SHHS EDF files ({visit1_count} SHHS1, {visit2_count} SHHS2)")
         return edf_files
     
     def _extract_subject_id_from_filename(self, filename: str) -> Optional[str]:
@@ -125,11 +128,12 @@ class SHHSAdapter(BaseNSRRAdapter):
         # Remove _1, _2 suffix if present
         base_name = filename.split('_')[0]
         
-        # Try patterns
-        if base_name.startswith(f'shhs{self.visit}-'):
-            return base_name.replace(f'shhs{self.visit}-', '')
+        # Try patterns for both visits
+        if base_name.startswith('shhs1-') or base_name.startswith('shhs2-'):
+            # Extract ID after 'shhs1-' or 'shhs2-'
+            return base_name.split('-', 1)[1]
         elif base_name.startswith('shhs'):
-            # Extract number after 'shhs'
+            # Extract number after 'shhs' (generic pattern)
             parts = base_name.split('-')
             if len(parts) > 1:
                 return parts[1]
@@ -139,22 +143,34 @@ class SHHSAdapter(BaseNSRRAdapter):
         return None
     
     def _filter_duplicate_edfs(self, edf_files: List[Tuple[str, Path]]) -> List[Tuple[str, Path]]:
-        """Filter duplicate EDFs, preferring base file over numbered versions.
+        """Filter duplicate EDFs within same visit, but keep both visits for each subject.
         
-        Priority: X.edf > X_1.edf > X_2.edf
+        For SHHS, subjects can have EDFs from both visit 1 and visit 2.
+        These are different recordings years apart (2-5 years), so we keep both.
+        Within each visit, prefer base file over numbered versions.
+        
+        Priority within same visit: X.edf > X_1.edf > X_2.edf
         
         Args:
             edf_files: List of (subject_id, edf_path) tuples
         
         Returns:
-            Filtered list with one file per subject
+            Filtered list with one file per subject per visit
         """
-        subject_files = {}
+        subject_visit_files = {}
         
         for subject_id, edf_path in edf_files:
             stem = edf_path.stem
             
-            # Determine priority (lower is better)
+            # Determine visit from filename
+            if 'shhs1' in stem.lower():
+                visit = 1
+            elif 'shhs2' in stem.lower():
+                visit = 2
+            else:
+                visit = 1  # Default to visit 1 if unclear
+            
+            # Determine priority within same visit (lower is better)
             if '_' not in stem:
                 priority = 0  # Base file (X.edf)
             else:
@@ -164,13 +180,16 @@ class SHHSAdapter(BaseNSRRAdapter):
                 except (ValueError, IndexError):
                     priority = 99  # Unknown suffix
             
-            # Keep file with lowest priority
-            if subject_id not in subject_files or priority < subject_files[subject_id][1]:
-                subject_files[subject_id] = (edf_path, priority)
+            # Create compound key: (subject_id, visit)
+            key = (subject_id, visit)
+            
+            # Keep file with lowest priority within same visit
+            if key not in subject_visit_files or priority < subject_visit_files[key][1]:
+                subject_visit_files[key] = (edf_path, priority, visit)
         
-        # Return sorted list
-        result = [(sid, path) for sid, (path, _) in subject_files.items()]
-        return sorted(result, key=lambda x: x[0])
+        # Return sorted list - keep original subject_id, include visit info in path
+        result = [(sid, path) for (sid, _), (path, _, _) in subject_visit_files.items()]
+        return sorted(result, key=lambda x: (x[0], x[1].stem))
     
     def find_annotation_file(self, subject_id: str) -> Optional[Path]:
         """Find SHHS annotation file (NSRR XML format).
@@ -185,11 +204,11 @@ class SHHSAdapter(BaseNSRRAdapter):
         if not annotations_path or not annotations_path.exists():
             return None
         
-        # SHHS XML pattern: shhs1-200001-nsrr.xml
-        xml_pattern = f'shhs{self.visit}-{subject_id}-nsrr.xml'
-        
-        for xml_path in annotations_path.rglob(xml_pattern):
-            return xml_path
+        # Try both visit 1 and visit 2 patterns: shhs1-200001-nsrr.xml or shhs2-200001-nsrr.xml
+        for visit in [1, 2]:
+            xml_pattern = f'shhs{visit}-{subject_id}-nsrr.xml'
+            for xml_path in annotations_path.rglob(xml_pattern):
+                return xml_path
         
         return None
     
@@ -277,7 +296,12 @@ class SHHSAdapter(BaseNSRRAdapter):
             
             if file_path.exists():
                 try:
-                    df = pd.read_csv(file_path)
+                    # Try UTF-8 first, fallback to latin1 for files with special characters
+                    try:
+                        df = pd.read_csv(file_path, low_memory=False)
+                    except UnicodeDecodeError:
+                        logger.warning(f"UTF-8 decode failed for {file_key}, trying latin1 encoding")
+                        df = pd.read_csv(file_path, low_memory=False, encoding='latin1')
                     logger.info(f"Loaded SHHS {file_key}: {len(df)} subjects, {len(df.columns)} columns")
                     dfs_to_merge.append(df)
                 except Exception as e:
