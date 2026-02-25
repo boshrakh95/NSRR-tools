@@ -96,6 +96,20 @@ class MetadataBuilder:
         unified_df = pd.concat(all_metadata, ignore_index=True)
         logger.info(f"Combined metadata: {len(unified_df)} total subjects")
         
+        # Normalize mixed-type columns before saving (e.g., visit numbers)
+        # Convert columns with mixed int/str/nan to string for consistency
+        for col in unified_df.columns:
+            if unified_df[col].dtype == 'object':
+                # Check if column has mixed numeric and string types
+                sample = unified_df[col].dropna().head(100)
+                if len(sample) > 0:
+                    has_int = any(isinstance(x, (int, float)) for x in sample)
+                    has_str = any(isinstance(x, str) for x in sample)
+                    if has_int and has_str:
+                        # Mixed types - convert all to string
+                        unified_df[col] = unified_df[col].astype(str)
+                        unified_df[col] = unified_df[col].replace('nan', None)
+        
         # Add derived columns
         unified_df = self._add_derived_columns(unified_df)
         
@@ -163,10 +177,13 @@ class MetadataBuilder:
         channel_info = {}
         for subject_id, edf_path in tqdm(edf_files, desc=f"  Scanning {dataset_name}"):
             try:
-                # Normalize subject ID to match phenotype format
-                # EDF may have "mros-visit1-aa0001", phenotype has "AA0001"
-                # Extract last part after last dash and uppercase
-                normalized_id = subject_id.split('-')[-1].upper()
+                # Normalize subject ID to match phenotype format (dataset-specific)
+                if dataset_name.lower() == 'mros':
+                    # MrOS: "mros-visit1-aa0001" -> "AA0001"
+                    normalized_id = subject_id.split('-')[-1].upper()
+                else:
+                    # APPLES/SHHS/STAGES: use subject_id as-is (already extracted by adapter)
+                    normalized_id = subject_id
                 
                 # Read EDF header with MNE (lightweight, doesn't load signal data)
                 raw = mne.io.read_raw_edf(edf_path, preload=False, verbose='ERROR')
@@ -186,10 +203,8 @@ class MetadataBuilder:
                 modality_sfreqs = {}
                 for mod, channels in modality_groups.items():
                     if channels:
-                        rates = [sfreqs.get(orig_ch, 0) 
-                                for orig_ch in ch_names 
-                                for std_ch in channels 
-                                if detected.get(orig_ch) == std_ch]
+                        # channels is {standard_name: found_name}, get rates of found channels
+                        rates = [sfreqs.get(found_ch, 0) for std_ch, found_ch in channels.items()]
                         modality_sfreqs[f'{mod}_sfreq'] = max(rates) if rates else 0
                 
                 # Store info (use normalized ID as key for merging)
@@ -219,21 +234,120 @@ class MetadataBuilder:
         
         # Merge with phenotype data
         channel_df = pd.DataFrame.from_dict(channel_info, orient='index')
-        channel_df['subject_id'] = channel_df.index
+        channel_df['merge_key'] = channel_df.index
         
-        # Merge on subject_id (handle different ID column names)
+        # Determine merge strategy based on dataset
         id_col = adapter.get_subject_id_column()
         
-        # If limiting, only keep subjects we scanned (inner join)
-        # Otherwise keep all phenotype subjects (left join)
-        merge_how = 'inner' if limit else 'left'
+        if dataset_name.lower() == 'mros':
+            # MrOS: Simple merge on subject_id (normalized from EDF filename)
+            merged_df = pheno_df.merge(
+                channel_df,
+                left_on=id_col,
+                right_on='merge_key',
+                how='inner' if limit else 'left'
+            ).copy()
         
-        merged_df = pheno_df.merge(
-            channel_df,
-            left_on=id_col,
-            right_on='subject_id',
-            how=merge_how
-        )
+        elif dataset_name.lower() == 'apples':
+            # APPLES: Multi-step merge strategy with visit 1 baseline data
+            # 1. Merge on fileid to get PSG visit data (visit 3)
+            # 2. Also merge visit 1 baseline data (demographics, cognitive) for same subject
+            if 'fileid' in pheno_df.columns and 'visitn' in pheno_df.columns:
+                # First merge: Get data from the PSG visit (based on fileid)
+                merged_df = pheno_df.merge(
+                    channel_df,
+                    left_on='fileid',
+                    right_on='merge_key',
+                    how='inner' if limit else 'left',
+                    suffixes=('', '_psg_visit')
+                ).copy()
+                
+                # Second merge: Add visit 1 baseline data for demographics/cognitive
+                # (only if PSG visit is NOT visit 1)
+                id_col = adapter.get_subject_id_column()
+                visit1_data = pheno_df[pheno_df['visitn'] == 1].copy()
+                
+                # Select visit 1 columns to add (demographics, cognitive, questionnaires)
+                visit1_cols_to_add = []
+                for col in visit1_data.columns:
+                    # Include baseline measures but exclude ID columns and visit markers
+                    if any(term in col.lower() for term in ['age', 'sex', 'race', 'bmi', 'education',
+                                                             'mmse', 'cogn', 'phq', 'gad', 'bdi',
+                                                             'medical', 'history', 'smoker']) \
+                       and col not in [id_col, 'fileid', 'visitn']:
+                        visit1_cols_to_add.append(col)
+                
+                if visit1_cols_to_add:
+                    visit1_subset = visit1_data[[id_col] + visit1_cols_to_add].copy()
+                    # Rename to indicate these are from visit 1
+                    visit1_rename = {col: f'{col}_visit1' for col in visit1_cols_to_add}
+                    visit1_subset = visit1_subset.rename(columns=visit1_rename)
+                    
+                    # Merge visit 1 data
+                    merged_df = merged_df.merge(
+                        visit1_subset,
+                        on=id_col,
+                        how='left',
+                        suffixes=('', '_dup')
+                    )
+                    
+                    # For each subject, use visit 1 value if current visit is missing or is not visit 1
+                    for orig_col in visit1_cols_to_add:
+                        v1_col = f'{orig_col}_visit1'
+                        if v1_col in merged_df.columns:
+                            # If original column is missing or this is not visit 1, use visit 1 value
+                            if orig_col in merged_df.columns:
+                                mask = merged_df[orig_col].isna() | (merged_df['visitn'] != 1)
+                                merged_df.loc[mask, orig_col] = merged_df.loc[mask, v1_col]
+                            else:
+                                merged_df[orig_col] = merged_df[v1_col]
+                            # Drop the _visit1 column
+                            merged_df = merged_df.drop(columns=[v1_col])
+                    
+                    logger.info(f"  Merged visit 1 baseline data for {len(visit1_cols_to_add)} variables")
+                    logger.warning(f"  Note: Demographics/cognitive data from visit 1 (baseline), "
+                                 f"PSG data from visit 3 (diagnosis)")
+            elif 'fileid' in pheno_df.columns:
+                # No visitn column, simple merge on fileid
+                merged_df = pheno_df.merge(
+                    channel_df,
+                    left_on='fileid',
+                    right_on='merge_key',
+                    how='inner' if limit else 'left'
+                ).copy()
+            else:
+                # Fallback: merge on subject_id
+                logger.info(f"  No 'fileid' in APPLES metadata, using subject_id merge")
+                merged_df = pheno_df.merge(
+                    channel_df,
+                    left_on=id_col,
+                    right_on='merge_key',
+                    how='inner' if limit else 'left'
+                ).copy()
+        
+        elif dataset_name.lower() in ['stages', 'shhs']:
+            # STAGES/SHHS: Simple subject ID merge (single visit per subject in our data)
+            # Convert types if needed (SHHS has int nsrrid, EDF filenames are strings)
+            if id_col in pheno_df.columns:
+                # Convert pheno_df ID to string for consistent merging
+                pheno_df[id_col] = pheno_df[id_col].astype(str)
+            
+            merged_df = pheno_df.merge(
+                channel_df,
+                left_on=id_col,
+                right_on='merge_key',
+                how='inner' if limit else 'left'
+            ).copy()
+        
+        else:
+            # Unknown dataset: try subject_id merge
+            logger.warning(f"Unknown dataset {dataset_name}, using default subject_id merge")
+            merged_df = pheno_df.merge(
+                channel_df,
+                left_on=id_col,
+                right_on='merge_key',
+                how='inner' if limit else 'left'
+            ).copy()
         
         # Fill missing EDF info (only relevant for left join)
         if not limit:
@@ -303,41 +417,52 @@ class MetadataBuilder:
         else:
             df['has_ahi'] = False
         
-        # Check for cognitive scores (dataset-specific)
-        if dataset_name.lower() == 'mros':
-            # MrOS has cognitive scores: 3ms (modified mini-mental state)
-            cog_cols = [c for c in df.columns if '3ms' in c.lower() or 'cogni' in c.lower()]
-            if cog_cols:
-                df['has_cognitive'] = df[cog_cols].notna().any(axis=1)
+        # Check for cognitive/psychiatric scores (dataset-specific, from nocturn ontology)
+        if dataset_name.lower() == 'apples':
+            # APPLES: mmsetotalscore (MMSE - cognitive function, visit 1)
+            if 'mmsetotalscore' in df.columns:
+                df['has_cognitive'] = df['mmsetotalscore'].notna()
             else:
                 df['has_cognitive'] = False
+        
         elif dataset_name.lower() == 'stages':
-            # STAGES has cognitive outcomes
-            cog_cols = [c for c in df.columns if 'cogni' in c.lower() or 'memory' in c.lower()]
-            if cog_cols:
-                df['has_cognitive'] = df[cog_cols].notna().any(axis=1)
-            else:
-                df['has_cognitive'] = False
+            # STAGES: Cognitive scores from external files (ISI, PHQ-9, GAD-7)
+            # NOTE: These require complex Excel file loading - placeholder for now
+            # Will implement after base metadata extraction is complete
+            # Expected columns: isi_score, phq_1000, gad_0800, fss_1000
+            df['has_cognitive'] = False
+            # TODO: Load and merge STAGES cognitive data from:
+            # - STAGES ASQ ISI to DIET 20200513 Final deidentified.xlsx (isi_score)
+            # - stages-dataset-0.3.0.csv (phq_1000, gad_0800, fss_1000)
+        
         else:
+            # MrOS, SHHS: No cognitive/psychiatric scores in standard CSVs
             df['has_cognitive'] = False
         
         # Check for demographics (age, sex, BMI)
-        age_cols = [c for c in df.columns if c.lower() in ['age', 'age_at_visit', 'vsage1']]
-        sex_cols = [c for c in df.columns if c.lower() in ['sex', 'gender', 'male']]
+        # Look for columns containing these keywords (e.g., nsrr_age, age_at_visit, vsage1)
+        age_cols = [c for c in df.columns if 'age' in c.lower() and 'gt89' not in c.lower()]
+        sex_cols = [c for c in df.columns if 'sex' in c.lower() or 'gender' in c.lower() or c.lower() == 'male']
         bmi_cols = [c for c in df.columns if 'bmi' in c.lower()]
         
         if age_cols:
-            df['has_age'] = df[age_cols[0]].notna()
+            # Use first age column found (prefer nsrr_age over others)
+            age_col = next((c for c in age_cols if 'nsrr' in c.lower()), age_cols[0])
+            df['has_age'] = df[age_col].notna()
         else:
             df['has_age'] = False
             
         if sex_cols:
-            df['has_sex'] = df[sex_cols[0]].notna()
+            # Use first sex column found (prefer nsrr_sex over others)
+            sex_col = next((c for c in sex_cols if 'nsrr' in c.lower()), sex_cols[0])
+            df['has_sex'] = df[sex_col].notna()
         else:
             df['has_sex'] = False
             
         if bmi_cols:
-            df['has_bmi'] = df[bmi_cols[0]].notna()
+            # Use first BMI column found (prefer nsrr_bmi over others)
+            bmi_col = next((c for c in bmi_cols if 'nsrr' in c.lower()), bmi_cols[0])
+            df['has_bmi'] = df[bmi_col].notna()
         else:
             df['has_bmi'] = False
         
