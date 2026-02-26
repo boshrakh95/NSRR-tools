@@ -297,7 +297,14 @@ class APPLESAdapter(BaseNSRRAdapter):
                 if dup_cols:
                     df = df.drop(columns=dup_cols)
         
-        logger.info(f"Merged APPLES metadata: {len(df)} subjects, {len(df.columns)} columns")
+        # Note: This count includes ALL visits per subject (will be filtered by metadata_builder)
+        if 'visitn' in df.columns:
+            visit_counts = df['visitn'].value_counts().sort_index()
+            logger.info(f"Merged APPLES metadata: {len(df)} total rows across {df['nsrrid'].nunique()} subjects")
+            logger.info(f"  Visit distribution: {dict(visit_counts)}")
+            logger.info(f"  Note: Metadata builder will filter to specific visit(s)")
+        else:
+            logger.info(f"Merged APPLES metadata: {len(df)} subjects, {len(df.columns)} columns")
         
         missing_cols = [col for col in self.phenotype_cols if col not in df.columns]
         if missing_cols:

@@ -253,68 +253,82 @@ class MetadataBuilder:
         
         elif dataset_name.lower() == 'apples':
             # APPLES: Multi-step merge strategy with visit 1 baseline data
-            # 1. Merge on fileid to get PSG visit data (visit 3)
-            # 2. Also merge visit 1 baseline data (demographics, cognitive) for same subject
+            # Strategy: Filter to visit 3 (DX/PSG visit) first, then overlay visit 1 (BL) demographics
+            # Background: APPLES has 7 visits per subject, but only visit 3 has PSG (fileid)
+            #   - Visit 1 (BL): Demographics (age, sex, BMI) and baseline measures
+            #   - Visit 3 (DX): PSG recording (has fileid) but demographics are NaN
+            #   - We need: ONE row per subject, with visit 1 demographics + visit 3 PSG data
             if 'fileid' in pheno_df.columns and 'visitn' in pheno_df.columns:
-                # First merge: Get data from the PSG visit (based on fileid)
-                merged_df = pheno_df.merge(
+                id_col = adapter.get_subject_id_column()
+                
+                # Step 1: Filter phenotype data to visit 3 (DX/PSG visit) only
+                # This is where the EDF recordings are from
+                visit3_data = pheno_df[pheno_df['visitn'] == 3].copy()
+                logger.info(f"  Loaded {len(pheno_df)} total rows from metadata CSVs")
+                logger.info(f"  Filtered to visit 3 (DX/PSG): {len(visit3_data)} subjects")
+                
+                # Step 2: Create visit 1 (BL/baseline) demographics dataframe
+                visit1_data = pheno_df[pheno_df['visitn'] == 1].copy()
+                
+                # Select demographic and baseline columns from visit 1
+                demo_cols = []
+                for col in visit1_data.columns:
+                    # Demographics and baseline measures (NOT PSG-specific like AHI)
+                    if any(term in col.lower() for term in ['age', 'sex', 'race', 'bmi', 'education',
+                                                             'mmse', 'cogn', 'phq', 'gad', 'bdi', 'ess',
+                                                             'medical', 'history', 'smoker', 'current_smoker']) \
+                       and not any(term in col.lower() for term in ['ahi', 'ttleffsp', 'phrnumar', 'pctdursp']) \
+                       and col not in [id_col, 'fileid', 'visitn']:
+                        demo_cols.append(col)
+                
+                if demo_cols:
+                    visit1_demo = visit1_data[[id_col] + demo_cols].copy()
+                    # Rename to indicate baseline origin
+                    demo_rename = {col: f'{col}_bl' for col in demo_cols}
+                    visit1_demo = visit1_demo.rename(columns=demo_rename)
+                    
+                    # Step 3: Overlay baseline demographics onto visit 3 data
+                    visit3_data = visit3_data.merge(
+                        visit1_demo,
+                        on=id_col,
+                        how='left'
+                    )
+                    
+                    # Replace NaN demographics in visit 3 with baseline values
+                    for col in demo_cols:
+                        bl_col = f'{col}_bl'
+                        if bl_col in visit3_data.columns:
+                            if col in visit3_data.columns:
+                                # Use baseline value when visit 3 is missing
+                                visit3_data[col] = visit3_data[col].fillna(visit3_data[bl_col])
+                            else:
+                                # Column doesn't exist in visit 3, use baseline
+                                visit3_data[col] = visit3_data[bl_col]
+                            # Drop the _bl column
+                            visit3_data = visit3_data.drop(columns=[bl_col])
+                    
+                    logger.info(f"  Overlaid visit 1 baseline data for {len(demo_cols)} demographic variables")
+                
+                # Step 4: Merge visit 3 data (with baseline overlay) with channel data
+                merged_df = visit3_data.merge(
                     channel_df,
                     left_on='fileid',
                     right_on='merge_key',
-                    how='inner' if limit else 'left',
-                    suffixes=('', '_psg_visit')
+                    how='inner' if limit else 'left'
                 ).copy()
                 
-                # Second merge: Add visit 1 baseline data for demographics/cognitive
-                # (only if PSG visit is NOT visit 1)
-                id_col = adapter.get_subject_id_column()
-                visit1_data = pheno_df[pheno_df['visitn'] == 1].copy()
+                logger.info(f"  Result: {len(merged_df)} subjects after merge (one row per subject)")
+                edf_count = int(merged_df['has_edf'].sum() if 'has_edf' in merged_df else 0)
+                no_edf_count = len(merged_df) - edf_count
+                logger.info(f"    - {edf_count} with EDF files")
+                logger.info(f"    - {no_edf_count} without EDF (metadata only)")
+                logger.info(f"  Demographics from visit 1 (baseline), PSG from visit 3 (diagnosis)")
                 
-                # Select visit 1 columns to add (demographics, cognitive, questionnaires)
-                visit1_cols_to_add = []
-                for col in visit1_data.columns:
-                    # Include baseline measures but exclude ID columns and visit markers
-                    if any(term in col.lower() for term in ['age', 'sex', 'race', 'bmi', 'education',
-                                                             'mmse', 'cogn', 'phq', 'gad', 'bdi',
-                                                             'medical', 'history', 'smoker']) \
-                       and col not in [id_col, 'fileid', 'visitn']:
-                        visit1_cols_to_add.append(col)
-                
-                if visit1_cols_to_add:
-                    visit1_subset = visit1_data[[id_col] + visit1_cols_to_add].copy()
-                    # Rename to indicate these are from visit 1
-                    visit1_rename = {col: f'{col}_visit1' for col in visit1_cols_to_add}
-                    visit1_subset = visit1_subset.rename(columns=visit1_rename)
-                    
-                    # Merge visit 1 data
-                    merged_df = merged_df.merge(
-                        visit1_subset,
-                        on=id_col,
-                        how='left',
-                        suffixes=('', '_dup')
-                    )
-                    
-                    # For each subject, use visit 1 value if current visit is missing or is not visit 1
-                    for orig_col in visit1_cols_to_add:
-                        v1_col = f'{orig_col}_visit1'
-                        if v1_col in merged_df.columns:
-                            # If original column is missing or this is not visit 1, use visit 1 value
-                            if orig_col in merged_df.columns:
-                                mask = merged_df[orig_col].isna() | (merged_df['visitn'] != 1)
-                                merged_df.loc[mask, orig_col] = merged_df.loc[mask, v1_col]
-                            else:
-                                merged_df[orig_col] = merged_df[v1_col]
-                            # Drop the _visit1 column
-                            merged_df = merged_df.drop(columns=[v1_col])
-                    
-                    logger.info(f"  Merged visit 1 baseline data for {len(visit1_cols_to_add)} variables")
-                    logger.warning(f"  Note: Demographics/cognitive data from visit 1 (baseline), "
-                                 f"PSG data from visit 3 (diagnosis)")
-                
-                # Use nsrrid as subject_id (one PSG per subject despite multiple visits)
+                # Use nsrrid as subject_id (one row per subject)
                 merged_df['subject_id'] = merged_df[id_col].astype(str)
             elif 'fileid' in pheno_df.columns:
-                # No visitn column, simple merge on fileid
+                # No visitn column, simple merge on fileid (one EDF per subject)
+                id_col = adapter.get_subject_id_column()
                 merged_df = pheno_df.merge(
                     channel_df,
                     left_on='fileid',
@@ -322,9 +336,11 @@ class MetadataBuilder:
                     how='inner' if limit else 'left'
                 ).copy()
                 merged_df['subject_id'] = merged_df[id_col].astype(str)
+                logger.info(f"  Merged {len(merged_df)} subjects on fileid")
             else:
                 # Fallback: merge on subject_id
-                logger.info(f"  No 'fileid' in APPLES metadata, using subject_id merge")
+                id_col = adapter.get_subject_id_column()
+                logger.warning(f"  No 'fileid' in APPLES metadata, using subject_id merge")
                 merged_df = pheno_df.merge(
                     channel_df,
                     left_on=id_col,
