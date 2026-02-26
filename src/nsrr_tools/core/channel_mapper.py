@@ -2,7 +2,7 @@
 
 from typing import Dict, List, Optional, Set, Tuple
 from pathlib import Path
-import mne
+import pyedflib
 from loguru import logger
 
 
@@ -47,10 +47,9 @@ class ChannelMapper:
             Example: {'C3-M2': 'C3M2', 'LOC': 'E1-M2', ...}
         """
         try:
-            # Read EDF header only (fast)
-            raw = mne.io.read_raw_edf(edf_path, preload=False, verbose=False)
-            available_channels = raw.ch_names
-            del raw  # Free memory
+            # Read EDF header only (fast with pyedflib)
+            with pyedflib.EdfReader(str(edf_path)) as edf:
+                available_channels = edf.getSignalLabels()
             
             return self.detect_channels_from_list(available_channels)
         

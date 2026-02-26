@@ -3,7 +3,7 @@
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 import pandas as pd
-import mne
+import pyedflib
 from loguru import logger
 from tqdm import tqdm
 
@@ -185,13 +185,13 @@ class MetadataBuilder:
                     # APPLES/SHHS/STAGES: use subject_id as-is (already extracted by adapter)
                     normalized_id = subject_id
                 
-                # Read EDF header with MNE (lightweight, doesn't load signal data)
-                raw = mne.io.read_raw_edf(edf_path, preload=False, verbose='ERROR')
-                
-                # Get all channel names and sampling rates
-                ch_names = raw.ch_names
-                sfreqs = {ch: raw.info['sfreq'] for ch in ch_names}
-                duration = raw.times[-1]
+                # Read EDF header with pyedflib (fast, only reads header)
+                with pyedflib.EdfReader(str(edf_path)) as edf:
+                    # Get all channel names and sampling rates
+                    ch_names = edf.getSignalLabels()
+                    sfreqs = {ch_names[i]: edf.getSampleFrequency(i) 
+                             for i in range(edf.signals_in_file)}
+                    duration = edf.getFileDuration()
                 
                 # Detect standardized channels
                 detected = self.channel_mapper.detect_channels_from_list(ch_names)
@@ -221,8 +221,6 @@ class MetadataBuilder:
                     'channels': ','.join(sorted(detected.values())),
                     'raw_channels': ','.join(ch_names)
                 }
-                
-                raw.close()
                 
             except Exception as e:
                 logger.warning(f"  Error processing {subject_id}: {e}")
