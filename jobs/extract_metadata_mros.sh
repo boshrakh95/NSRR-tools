@@ -1,8 +1,9 @@
 #!/bin/bash
 #SBATCH --job-name=meta_mros
-#SBATCH --time=60:00:00
-#SBATCH --cpus-per-task=1
-#SBATCH --mem=16G
+#SBATCH --time=01:00:00
+#SBATCH --cpus-per-task=2
+#SBATCH --mem=8000M
+#SBATCH --account=def-forouzan
 #SBATCH --output=logs/extract_metadata_mros_%j.log
 #SBATCH --error=logs/extract_metadata_mros_%j.err
 

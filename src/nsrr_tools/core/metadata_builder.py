@@ -207,8 +207,18 @@ class MetadataBuilder:
                         rates = [sfreqs.get(found_ch, 0) for std_ch, found_ch in channels.items()]
                         modality_sfreqs[f'{mod}_sfreq'] = max(rates) if rates else 0
                 
-                # Store info (use normalized ID as key for merging)
-                channel_info[normalized_id] = {
+                # For SHHS: Include visit in key to avoid overwriting multi-visit subjects
+                # For others: Use normalized_id directly
+                if dataset_name.lower() == 'shhs':
+                    # Extract visit from EDF path (shhs1 or shhs2)
+                    visit = 2 if 'shhs2' in str(edf_path).lower() else 1
+                    # Use composite key: nsrrid_visit (to be consistent with merge logic)
+                    dict_key = (normalized_id, visit)
+                else:
+                    dict_key = normalized_id
+                
+                # Store info (use dict_key for deduplication)
+                channel_info[dict_key] = {
                     'edf_path': str(edf_path),
                     'num_channels': len(ch_names),
                     'duration_sec': duration,
@@ -224,7 +234,14 @@ class MetadataBuilder:
                 
             except Exception as e:
                 logger.warning(f"  Error processing {subject_id}: {e}")
-                channel_info[normalized_id] = {
+                # Use same key logic as success case
+                if dataset_name.lower() == 'shhs':
+                    visit = 2 if 'shhs2' in str(edf_path).lower() else 1
+                    dict_key = (normalized_id, visit)
+                else:
+                    dict_key = normalized_id
+                    
+                channel_info[dict_key] = {
                     'edf_path': str(edf_path),
                     'has_edf': False,
                     'error': str(e)
@@ -232,7 +249,15 @@ class MetadataBuilder:
         
         # Merge with phenotype data
         channel_df = pd.DataFrame.from_dict(channel_info, orient='index')
-        channel_df['merge_key'] = channel_df.index
+        
+        # For SHHS: Extract merge_key and visit from tuple index
+        # For others: Index is already the merge_key
+        if dataset_name.lower() == 'shhs':
+            # Index is tuple (nsrrid, visit)
+            channel_df['merge_key'] = [idx[0] for idx in channel_df.index]
+            channel_df['psg_visit'] = [idx[1] for idx in channel_df.index]
+        else:
+            channel_df['merge_key'] = channel_df.index
         
         # Determine merge strategy based on dataset
         id_col = adapter.get_subject_id_column()
@@ -354,11 +379,9 @@ class MetadataBuilder:
                 # Convert pheno_df ID to string for consistent merging
                 pheno_df[id_col] = pheno_df[id_col].astype(str)
             
-            # For SHHS: Extract visit from EDF path BEFORE merge to handle multi-visit subjects
+            # For SHHS: Extract visit from phenotype data to handle multi-visit subjects
+            # Note: channel_df already has psg_visit from earlier processing
             if dataset_name.lower() == 'shhs':
-                # Extract visit from EDF filename in channel_df
-                channel_df['psg_visit'] = channel_df['edf_path'].str.extract(r'shhs(\d)', expand=False).fillna('1').astype(int)
-                
                 # Extract visit from phenotype data (visitnumber column if present)
                 if 'visitnumber' in pheno_df.columns:
                     pheno_df['psg_visit'] = pheno_df['visitnumber'].fillna(1).astype(int)
