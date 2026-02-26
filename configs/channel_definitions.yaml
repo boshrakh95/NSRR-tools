@@ -1059,73 +1059,101 @@ channel_priority:
     - C3-M2
     - C3M2
     - EEG C3-M2
+    - EEG_C3-M2    # STAGES uses underscore
     - C3-A2
     - C3A2
     - EEG C3-A2
+    - EEG_C3-A2    # STAGES uses underscore
     - C3
   
   C4-M1:
     - C4-M1
     - C4M1
     - EEG C4-M1
+    - EEG_C4-M1    # STAGES uses underscore
     - C4-A1
     - C4A1
     - EEG C4-A1
+    - EEG_C4-A1    # STAGES uses underscore
     - C4
   
   O1-M2:
     - O1-M2
     - O1M2
     - EEG O1-M2
+    - EEG_O1-M2    # STAGES uses underscore
     - O1-A2
     - O1A2
     - EEG O1-A2
+    - EEG_O1-A2    # STAGES uses underscore
     - O1
   
   O2-M1:
     - O2-M1
     - O2M1
     - EEG O2-M1
+    - EEG_O2-M1    # STAGES uses underscore
     - O2-A1
     - O2A1
     - EEG O2-A1
+    - EEG_O2-A1    # STAGES uses underscore
     - O2
   
   F3-M2:
     - F3-M2
     - F3M2
     - EEG F3-M2
+    - EEG_F3-M2    # STAGES uses underscore
     - F3-A2
     - F3A2
     - EEG F3-A2
+    - EEG_F3-A2    # STAGES uses underscore
     - F3
   
   F4-M1:
     - F4-M1
     - F4M1
     - EEG F4-M1
+    - EEG_F4-M1    # STAGES uses underscore
     - F4-A1
     - F4A1
     - EEG F4-A1
+    - EEG_F4-A1    # STAGES uses underscore
     - F4
   
   LOC:
     - LOC
+    - EOG_LOC-A2    # STAGES most common (745 subjects)
+    - EOG_LOC-A22   # STAGES variant (186 subjects)
+    - L-EOG         # STAGES (116 subjects)
+    - E1_(LEOG)     # STAGES (31 subjects)
+    - E1            # STAGES standalone (863 subjects)
     - E1-M2
     - E1M2
     - EOG LOC-A2
+    - EOG LOC-A22
     - LEOG
     - EOG-L
     - EOG(L)
+    - EOG1
   
   ROC:
     - ROC
+    - EOG_ROC-A2    # STAGES most common (744 subjects)
+    - EOG_ROC-A22   # STAGES variant (185 subjects)
+    - R-EOG         # STAGES (116 subjects)
+    - E2_(REOG)     # STAGES (31 subjects)
+    - E2            # STAGES standalone (863 subjects)
     - E2-M2
     - E2M2
     - EOG ROC-A1
+    - EOG_ROC-A1
+    - EOG ROC-A2
+    - EOG ROC-A22
     - REOG
     - EOG-R
     - EOG(R)
+    - EOG2
   
   # EKG, Thor, ABD, CHIN, LLEG, RLEG: No priority - use all alternatives
   # (Too many variants to list, let it search the full alternatives list)
