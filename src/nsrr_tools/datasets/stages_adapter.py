@@ -323,6 +323,16 @@ class STAGESAdapter(BaseNSRRAdapter):
             try:
                 df_harmonized = pd.read_csv(harmonized_path)
                 logger.info(f"Loaded STAGES harmonized: {len(df_harmonized)} subjects, {len(df_harmonized.columns)} columns")
+                
+                # STAGES CSV files have duplicate subject_codes - keep last occurrence
+                # (analysis shows last row has most complete data in 70% of cases)
+                if 'subject_code' in df_harmonized.columns:
+                    n_before = len(df_harmonized)
+                    df_harmonized = df_harmonized.drop_duplicates(subset=['subject_code'], keep='last')
+                    n_after = len(df_harmonized)
+                    if n_before != n_after:
+                        logger.info(f"  Removed {n_before - n_after} duplicate subject_codes (keeping last occurrence)")
+                
                 dfs_to_merge.append(df_harmonized)
             except Exception as e:
                 logger.error(f"Error loading harmonized file: {e}")
@@ -334,6 +344,16 @@ class STAGESAdapter(BaseNSRRAdapter):
             try:
                 df_main = pd.read_csv(main_path)
                 logger.info(f"Loaded STAGES main: {len(df_main)} subjects, {len(df_main.columns)} columns")
+                
+                # STAGES CSV files have duplicate subject_codes - keep last occurrence
+                # (analysis shows last row has most complete data in 70% of cases)
+                if 'subject_code' in df_main.columns:
+                    n_before = len(df_main)
+                    df_main = df_main.drop_duplicates(subset=['subject_code'], keep='last')
+                    n_after = len(df_main)
+                    if n_before != n_after:
+                        logger.info(f"  Removed {n_before - n_after} duplicate subject_codes (keeping last occurrence)")
+                
                 dfs_to_merge.append(df_main)
             except Exception as e:
                 logger.error(f"Error loading main file: {e}")
@@ -348,13 +368,14 @@ class STAGESAdapter(BaseNSRRAdapter):
         if len(dfs_to_merge) == 1:
             df = dfs_to_merge[0]
         else:
-            # Merge on nsrrid (common ID across all STAGES files)
+            # Merge on subject_code (after deduplication, should be 1-to-1 merge)
             df = dfs_to_merge[0]
             for df_next in dfs_to_merge[1:]:
                 # Determine merge key
-                merge_key = 'nsrrid' if 'nsrrid' in df.columns and 'nsrrid' in df_next.columns else self.subject_id_col
+                merge_key = 'subject_code'
                 
-                df = df.merge(df_next, on=merge_key, how='outer', suffixes=('', '_dup'))
+                # Use inner merge to keep only subjects present in both files
+                df = df.merge(df_next, on=merge_key, how='inner', suffixes=('', '_dup'))
                 
                 # Remove duplicate columns from merge
                 dup_cols = [col for col in df.columns if col.endswith('_dup')]
