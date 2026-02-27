@@ -540,6 +540,26 @@ channel_alternatives:
     - EKG #1
     - EKG #2
   
+  # ECG Left lead (for multi-lead ECG)
+  ECG-L:
+    - ECG L
+    - ECGL
+    - ECG_L
+    - EKG-L
+    - EKG L
+    - ECG1
+    - EKG1
+  
+  # ECG Right lead (for multi-lead ECG)
+  ECG-R:
+    - ECG R
+    - ECGR
+    - ECG_R
+    - EKG-R
+    - EKG R
+    - ECG2
+    - EKG2
+  
   # ==================== RESPIRATORY CHANNELS ====================
   # NOTE: Airflow/nasal pressure intentionally excluded (noisy)
   # Only using effort belts
@@ -677,6 +697,17 @@ channel_alternatives:
     - HR
     - Heart Rate
     - Heart Rate_CU
+  
+  RespRate:
+    - RespRate
+    - Resp_Rate
+    - Respiratory_Rate
+    - Respiratory Rate
+    - BreathRate
+    - Breath_Rate
+    - Breath Rate
+    - RR
+    - BR
   
   # ==================== EMG CHANNELS ====================
   
@@ -931,125 +962,12 @@ channel_alternatives:
     - Scalene
     - Should.
 
-  # ==================== ENVIRONMENTAL/OTHER CHANNELS ====================
-  
-  Position:
-    - Position
-    - POSITION
-    - Body
-    - Body Position
-    - Pos
-  
-  Light:
-    - Light
-    - LIGHT
-    - Ambient Light
-  
-  Sound:
-    - Sound
-    - SOUND
-    - Ambient Sound
-  
-  Pleth:
-    - Pleth
-    - Plethysmography
-    
-  # ==================== DEVICE/TECHNICAL CHANNELS ====================
-  
-  # CPAP/xPAP monitoring (STAGES)
-  CPAP_Pressure:
-    - xPAP_CPAP
-    - xPAP_IPAP
-    - xPAP_EPAP
-    - xPAP_MaxPress
-    - Press_Patient
-    - PressCheck
-  
-  CPAP_Limits:
-    - xPAP_IPAPMax
-    - xPAP_IPAPMin
-    - xPAP_EPAPMax
-    - xPAP_EPAPMin
-    - xPAP_PSMax
-    - xPAP_PSMin
-  
-  CPAP_Leak:
-    - Leak_Total
-    - Leak
-  
-  # Respiratory rate
-  RespRate:
-    - BreathRate
-    - RR
-    - Breath Rate
-    - Respiratory Rate
-  
-  # Derived HR
-  HR_Derived:
-    - DHR
-    - H.R.
-  
-  # Status/auxiliary
-  Status:
-    - Technical
-    - STAT
-    - OX stat
-    - SUM
-    - AUX
-    - NEW AIR
-    - NEWAIR
-    - CO2_EndTidal
-
-# ==================== SLEEPFM NAMING ====================
-# Standardized names used in HDF5 files for SleepFM
-
-sleepfm_naming:
-  # EEG - keep referenced format (confirmed compatible)
-  C3-M2: C3-M2
-  C4-M1: C4-M1
-  O1-M2: O1-M2
-  O2-M1: O2-M1
-  F3-M2: F3-M2
-  F4-M1: F4-M1
-  Fp1: Fp1
-  Fp2: Fp2
-  Fz: Fz
-  Cz: Cz
-  Pz: Pz
-  Oz: Oz
-  P3: P3
-  P4: P4
-  T3: T3
-  T4: T4
-  T5: T5
-  T6: T6
-  F7: F7
-  F8: F8
-  
-  # EOG
-  LOC: LOC
-  ROC: ROC
-  
-  # ECG
-  EKG: EKG
-  
-  # RESP (no FLOW)
-  Thor: Thor
-  ABD: ABD
-  SpO2: SpO2
-  Snore: Snore
-  HR: HR
-  
-  # EMG
-  CHIN: CHIN
-  LLEG: LLEG
-  RLEG: RLEG
-  Arms-L: Arms-L
-  Arms-R: Arms-R
-  Feet-L: Feet-L
-  Feet-R: Feet-R
-  Masseter: Masseter
-  EMG: EMG
+  # ==================== EXCLUDED CHANNELS ====================
+  # The following channels are NOT processed (technical/environmental):
+  # - Position, Light, Sound (environmental)
+  # - CPAP_Pressure, CPAP_Leak (device monitoring)
+  # - Status, Technical (auxiliary)
+  # These are automatically filtered out during processing
 
 # ==================== PRIORITY ORDER ====================
 # When multiple alternatives found, use this order

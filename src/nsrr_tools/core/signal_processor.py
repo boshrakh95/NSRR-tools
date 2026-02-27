@@ -102,6 +102,19 @@ class SignalProcessor:
             
             logger.info(f"  Found {len(channel_mapping)} channels across {len(modality_groups)} modalities")
             
+            # Apply SleepFM channel limits and prioritization
+            channel_mapping = self._apply_sleepfm_limits(channel_mapping, modality_groups)
+            
+            if not channel_mapping:
+                logger.warning(f"No channels remaining after applying SleepFM limits")
+                return {
+                    'success': False,
+                    'error': 'No channels after filtering',
+                    'channels_found': 0
+                }
+            
+            logger.info(f"  Selected {len(channel_mapping)} channels after applying SleepFM limits")
+            
             # Process each channel
             processed_channels = {}
             normalization_stats = {}
@@ -165,6 +178,80 @@ class SignalProcessor:
         raw = mne.io.read_raw_edf(str(edf_path), preload=False, verbose='ERROR')
         return raw
     
+    def _apply_sleepfm_limits(
+        self,
+        channel_mapping: Dict[str, str],
+        modality_groups: Dict[str, Dict[str, str]]
+    ) -> Dict[str, str]:
+        """Apply SleepFM channel limits and prioritization.
+        
+        Per SleepFM paper: BAS=10, ECG=2, EMG=4, RESP=7 channels max.
+        BAS combines EEG+EOG channels.
+        
+        Args:
+            channel_mapping: Dict of {std_name: raw_name}
+            modality_groups: Dict of {modality: {std_name: raw_name}}
+        
+        Returns:
+            Filtered channel_mapping respecting SleepFM limits
+        """
+        # Get SleepFM modality specs from config
+        sleepfm_modalities = self.config.modality_groups['sleepfm_modalities']
+        
+        # Group channels by SleepFM modality (BAS, EKG, EMG, RESP)
+        sleepfm_groups = {
+            'BAS': [],
+            'EKG': [],
+            'EMG': [],
+            'RESP': []
+        }
+        
+        for std_name in channel_mapping.keys():
+            # Determine which SleepFM modality this channel belongs to
+            if std_name in modality_groups.get('EEG', {}) or std_name in modality_groups.get('EOG', {}):
+                sleepfm_groups['BAS'].append(std_name)
+            elif std_name in modality_groups.get('ECG', {}):
+                sleepfm_groups['EKG'].append(std_name)
+            elif std_name in modality_groups.get('EMG', {}):
+                sleepfm_groups['EMG'].append(std_name)
+            elif std_name in modality_groups.get('RESP', {}):
+                sleepfm_groups['RESP'].append(std_name)
+        
+        # Apply limits with prioritization
+        filtered_channels = {}
+        
+        for sleepfm_mod, channels in sleepfm_groups.items():
+            max_channels = sleepfm_modalities[sleepfm_mod]['max_channels']
+            
+            if len(channels) > max_channels:
+                # Use priority order to select top N channels
+                priority_order = sleepfm_modalities[sleepfm_mod].get('priority_order', [])
+                
+                # Sort channels by priority
+                prioritized = []
+                for priority_ch in priority_order:
+                    if priority_ch in channels:
+                        prioritized.append(priority_ch)
+                
+                # Add any remaining channels not in priority list
+                for ch in channels:
+                    if ch not in prioritized:
+                        prioritized.append(ch)
+                
+                # Keep only top N
+                selected = prioritized[:max_channels]
+                logger.info(f"  {sleepfm_mod}: Limiting {len(channels)} → {max_channels} channels")
+                logger.debug(f"    Selected: {selected}")
+                logger.debug(f"    Dropped: {prioritized[max_channels:]}")
+                
+                channels = selected
+            
+            # Add selected channels to filtered mapping
+            for ch in channels:
+                filtered_channels[ch] = channel_mapping[ch]
+        
+        return filtered_channels
+    
     def _get_channel_modality(
         self,
         std_name: str,
@@ -216,7 +303,7 @@ class SignalProcessor:
         """
         # Get raw signal and sampling rate
         ch_idx = raw.ch_names.index(channel_name)
-        signal_data, times = raw[ch_idx, :]
+        signal_data, _ = raw[ch_idx, :]
         signal_data = signal_data.flatten()
         original_sr = raw.info['sfreq']
         

@@ -6,32 +6,17 @@ modalities:
     description: "Electroencephalography - Brain electrical activity"
     sleepfm_group: "BAS"  # BAS = Brain Activity Signals (includes EEG + EOG)
     channels:
-      - C3-M2
-      - C4-M1
-      - O1-M2
-      - O2-M1
-      - F3-M2
-      - F4-M1
-      - Fp1
-      - Fp2
-      - Fz
-      - Cz
-      - Pz
-      - Oz
-      - Fpz
-      - P3
-      - P4
-      - T3
-      - T4
-      - T5
-      - T6
-      - F7
-      - F8
-      - EEG
-      - M1
-      - M2
-      - A1
-      - A2
+      # Priority order based on SleepFM prevalence and clinical importance
+      - C3-M2          # Priority 1: Central, most common (99.85%)
+      - C4-M1          # Priority 2: Central, most common (99.85%)
+      - O1-M2          # Priority 3: Occipital
+      - O2-M1          # Priority 4: Occipital
+      - F3-M2          # Priority 5: Frontal
+      - F4-M1          # Priority 6: Frontal
+      - A1             # Priority 7: Reference (73.74%)
+      - A2             # Priority 8: Reference (73.74%)
+      - M1             # Priority 9: Mastoid reference (26.11%)
+      - M2             # Priority 10: Mastoid reference (26.11%)
     processing_params: eeg
     required: true  # At least one EEG channel required
     
@@ -39,8 +24,10 @@ modalities:
     description: "Electrooculography - Eye movement"
     sleepfm_group: "BAS"
     channels:
-      - LOC
-      - ROC
+      - LOC            # Priority 1: Left EOG (73.92%)
+      - ROC            # Priority 2: Right EOG (73.92%)
+      - E1             # Priority 3: Alternative left (26.08%)
+      - E2             # Priority 4: Alternative right (26.08%)
     processing_params: eog
     required: false
     
@@ -48,7 +35,9 @@ modalities:
     description: "Electrocardiography - Cardiac electrical activity"
     sleepfm_group: "EKG"
     channels:
-      - EKG
+      - EKG            # Priority 1: Main ECG
+      - ECG-L          # Priority 2: Left lead
+      - ECG-R          # Priority 3: Right lead (usually only 2 max)
     processing_params: ecg
     required: false
     
@@ -56,18 +45,10 @@ modalities:
     description: "Electromyography - Muscle electrical activity"
     sleepfm_group: "EMG"
     channels:
-      - CHIN
-      - LLEG
-      - RLEG
-      - EMG
-      - Arms-L
-      - Arms-R
-      - Feet-L
-      - Feet-R
-      - Masseter
-      - Temporalis
-      - Flexor
-      - SCM
+      - CHIN           # Priority 1: Chin EMG (73.77%)
+      - LLEG           # Priority 2: Left leg (73.92%)
+      - RLEG           # Priority 3: Right leg (73.92%)
+      - EMG            # Priority 4: Generic EMG (26.08%)
     processing_params: emg
     required: false
     
@@ -75,52 +56,71 @@ modalities:
     description: "Respiratory signals - Effort belts, SpO2, airflow"
     sleepfm_group: "RESP"
     channels:
-      - Thor
-      - ABD
-      - SpO2
-      - Snore
-      - HR
-      - Airflow
-      - Position
-      - Light
-      - Sound
-      - Pleth
-      - CPAP_Pressure
-      - CPAP_Limits
-      - CPAP_Leak
-      - RespRate
-      - HR_Derived
-      - Status
+      - Airflow        # Priority 1: Most important
+      - Thor           # Priority 2: Thoracic effort
+      - ABD            # Priority 3: Abdominal effort
+      - SpO2           # Priority 4: Oxygen saturation
+      - HR             # Priority 5: Heart rate from pulse oximetry
+      - Snore          # Priority 6: Snoring
+      - RespRate       # Priority 7: Respiratory rate
     processing_params: resp
     required: false
-    note: "Includes respiratory effort, SpO2, airflow, and auxiliary channels"
+    note: "Only physiological respiratory channels, no technical/device channels"
 
-# SleepFM modality groupings
+# SleepFM modality groupings (from paper: "BAS allowed up to ten channels, 
+# for ECG two channels, for EMG four channels and for respiratory seven channels")
 sleepfm_modalities:
   BAS:
     description: "Brain Activity Signals (EEG + EOG)"
     includes:
       - EEG
       - EOG
-    max_channels: 32  # For padding in SleepFM
+    max_channels: 10  # SleepFM paper specification
+    priority_order:   # When >10 channels, keep these in order
+      - C3-M2
+      - C4-M1
+      - LOC
+      - ROC
+      - O1-M2
+      - O2-M1
+      - F3-M2
+      - F4-M1
+      - A1
+      - A2
     
   RESP:
     description: "Respiratory signals"
     includes:
       - RESP
-    max_channels: 16
+    max_channels: 7   # SleepFM paper specification
+    priority_order:
+      - Airflow
+      - Thor
+      - ABD
+      - SpO2
+      - HR
+      - Snore
+      - RespRate
     
   EKG:
     description: "Cardiac signals"
     includes:
       - ECG
-    max_channels: 4
+    max_channels: 2   # SleepFM paper specification
+    priority_order:
+      - EKG
+      - ECG-L
     
   EMG:
     description: "Muscle activity"
     includes:
       - EMG
-    max_channels: 8
+    max_channels: 4   # SleepFM paper specification
+    priority_order:
+      - CHIN
+      - LLEG
+      - RLEG
+      - EMG
 
 # Minimum requirements for valid recordings
 minimum_requirements:

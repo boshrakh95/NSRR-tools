@@ -126,13 +126,15 @@ class Config:
     def get_sleepfm_name(self, channel_name: str) -> str:
         """Get SleepFM-compatible name for channel.
         
+        Standard names ARE SleepFM-compatible, so return as-is.
+        
         Args:
             channel_name: Standard channel name
             
         Returns:
-            SleepFM-compatible name
+            SleepFM-compatible name (same as standard)
         """
-        return self.channel_defs['sleepfm_naming'].get(channel_name, channel_name)
+        return channel_name
     
     def get_modality_channels(self, modality: str) -> list:
         """Get list of channels for a modality.

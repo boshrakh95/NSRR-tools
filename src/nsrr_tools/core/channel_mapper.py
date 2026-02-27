@@ -17,7 +17,6 @@ class ChannelMapper:
         """
         self.config = config
         self.channel_alternatives = config.channel_defs['channel_alternatives']
-        self.sleepfm_naming = config.channel_defs['sleepfm_naming']
         self.channel_priority = config.channel_defs['channel_priority']
         
         # Build reverse mapping: alternative_name -> standard_name
@@ -102,13 +101,15 @@ class ChannelMapper:
     def to_sleepfm_name(self, standard_name: str) -> str:
         """Convert standard name to SleepFM-compatible name.
         
+        Standard names ARE SleepFM-compatible, so return as-is.
+        
         Args:
             standard_name: Standard channel name
             
         Returns:
-            SleepFM-compatible name
+            SleepFM-compatible name (same as standard)
         """
-        return self.sleepfm_naming.get(standard_name, standard_name)
+        return standard_name
     
     def get_channel_mapping(self, detected_channels: Dict[str, str]) -> Dict[str, Dict[str, str]]:
         """Get full mapping: standard -> {found, sleepfm}.
