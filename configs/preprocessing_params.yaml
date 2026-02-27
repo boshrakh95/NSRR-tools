@@ -1,3 +1,32 @@
+# Preprocessing Configuration for NSRR Data
+# ==========================================
+# Configuration for EDF → HDF5 signal preprocessing
+
+# Output paths (relative to base_output)
+paths:
+  base_output: /scratch/boshra95/psg
+  
+  # Dataset-specific output directories
+  stages:
+    hdf5_signals: stages/derived/hdf5_signals
+    annotations: stages/derived/annotations
+    logs: stages/derived/logs
+  
+  shhs:
+    hdf5_signals: shhs/derived/hdf5_signals
+    annotations: shhs/derived/annotations
+    logs: shhs/derived/logs
+  
+  apples:
+    hdf5_signals: apples/derived/hdf5_signals
+    annotations: apples/derived/annotations
+    logs: apples/derived/logs
+  
+  mros:
+    hdf5_signals: mros/derived/hdf5_signals
+    annotations: mros/derived/annotations
+    logs: mros/derived/logs
+
 # Signal Processing Parameters
 # All parameters are configurable and dataset-agnostic
 
