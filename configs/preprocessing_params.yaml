@@ -39,7 +39,7 @@ channel_selection:
   # - minimal: Bare minimum for quick testing (BAS=2, EKG=1, EMG=1, RESP=0) [4 channels]
   # - custom: Use custom limits defined below
   
-  strategy: "sleepfm_full"  # Change this to "fast" for quick processing
+  strategy: "fast"  # "sleepfm_full", Change this to "fast" for quick processing
   
   # Custom limits (used only when strategy="custom")
   # Adjust these values as needed for your specific use case

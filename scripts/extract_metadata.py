@@ -34,8 +34,8 @@ def main():
     parser.add_argument(
         '--output',
         type=str,
-        default='/scratch/boshra95/psg_metadata',
-        help='Output base directory (default: /scratch/boshra95/psg_metadata)'
+        default=None,
+        help='Output base directory (default: from config unified.metadata path)'
     )
     parser.add_argument(
         '--force',
@@ -57,7 +57,18 @@ def main():
         level="INFO"
     )
     
-    output_dir = Path(args.output)
+    # Initialize config first
+    config = Config()
+    
+    # Determine output directory
+    if args.output:
+        output_dir = Path(args.output)
+        builder = MetadataBuilder(config, output_dir=output_dir)
+    else:
+        # Use config-based path (same as preprocess_signals.py expects)
+        builder = MetadataBuilder(config)
+        output_dir = builder.unified_path.parent
+    
     output_dir.mkdir(parents=True, exist_ok=True)
     
     log_file = output_dir / 'metadata_extraction.log'
@@ -67,15 +78,11 @@ def main():
     logger.info("NSRR Metadata Extraction")
     logger.info("="*80)
     logger.info(f"Datasets: {', '.join(args.datasets)}")
-    logger.info(f"Output: {output_dir}")
+    logger.info(f"Output: {builder.unified_path}")
     if args.limit:
         logger.info(f"Limit: {args.limit} subjects per dataset")
     logger.info(f"Force rebuild: {args.force}")
     logger.info(f"Use cache: {not args.no_cache}")
-    
-    # Initialize
-    config = Config()
-    builder = MetadataBuilder(config, output_dir=output_dir)
     
     # Build metadata
     try:

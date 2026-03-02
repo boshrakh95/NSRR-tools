@@ -39,8 +39,9 @@ class MetadataBuilder:
         if output_dir:
             self.unified_path = Path(output_dir) / 'unified_metadata.parquet'
         else:
-            unified_base = config.paths['paths']['unified_base']
-            self.unified_path = Path(unified_base) / 'unified_metadata.parquet'
+            # Use same path as preprocess_signals.py expects
+            unified_metadata_dir = config.paths['unified']['metadata']
+            self.unified_path = Path(unified_metadata_dir) / 'unified_metadata.parquet'
         
         self.unified_path.parent.mkdir(parents=True, exist_ok=True)
     
@@ -96,19 +97,41 @@ class MetadataBuilder:
         unified_df = pd.concat(all_metadata, ignore_index=True)
         logger.info(f"Combined metadata: {len(unified_df)} total subjects")
         
-        # Normalize mixed-type columns before saving (e.g., visit numbers)
-        # Convert columns with mixed int/str/nan to string for consistency
+        # Normalize mixed-type columns before saving
+        # Strategy:
+        # 1. Numeric columns (nsrr_*, po*, hw*, bp*, etc.) -> float
+        # 2. Boolean columns (has_*) -> boolean
+        # 3. All other object columns -> string (to handle mixed types like gender)
+        
+        numeric_prefixes = ['nsrr_', 'po', 'hw', 'bp', 'cv', 'ep', 'sl', 'tu', 'mh', 
+                           'fo', 'pq', 'm1', 'd1', 'vs', 'gi', 'pox']
+        
         for col in unified_df.columns:
             if unified_df[col].dtype == 'object':
-                # Check if column has mixed numeric and string types
-                sample = unified_df[col].dropna().head(100)
-                if len(sample) > 0:
-                    has_int = any(isinstance(x, (int, float)) for x in sample)
-                    has_str = any(isinstance(x, str) for x in sample)
-                    if has_int and has_str:
-                        # Mixed types - convert all to string
-                        unified_df[col] = unified_df[col].astype(str)
-                        unified_df[col] = unified_df[col].replace('nan', None)
+                # Check if this is a boolean column
+                if col.startswith('has_'):
+                    # Convert to boolean, handling string representations
+                    unified_df[col] = unified_df[col].map(lambda x: 
+                        True if x in [True, 'True', 'true', 1, '1'] 
+                        else False if x in [False, 'False', 'false', 0, '0'] 
+                        else None)
+                    continue
+                
+                # Check if this should be a numeric column
+                is_numeric_col = any(col.startswith(prefix) for prefix in numeric_prefixes)
+                
+                if is_numeric_col:
+                    # Try to convert to numeric, coercing errors to NaN
+                    try:
+                        unified_df[col] = pd.to_numeric(unified_df[col], errors='coerce')
+                    except Exception as e:
+                        logger.warning(f"Could not convert {col} to numeric: {e}")
+                else:
+                    # For all other object columns, convert to string to avoid mixed types
+                    # This handles cases like gender being "male" in one dataset and 0 in another
+                    unified_df[col] = unified_df[col].astype(str)
+                    unified_df[col] = unified_df[col].replace('nan', None)
+                    unified_df[col] = unified_df[col].replace('<NA>', None)
         
         # Add derived columns
         unified_df = self._add_derived_columns(unified_df)
