@@ -48,6 +48,28 @@ class SignalProcessor:
     COMPRESSION = 'gzip'
     COMPRESSION_LEVEL = 4
     
+    # Channel selection strategies
+    CHANNEL_STRATEGIES = {
+        'sleepfm_full': {
+            'BAS': 10,   # SleepFM paper specification
+            'EKG': 2,
+            'EMG': 4,
+            'RESP': 7
+        },
+        'fast': {
+            'BAS': 4,    # Essential EEG+EOG (e.g., C3-M2, C4-M1, LOC, ROC)
+            'EKG': 1,    # Single ECG lead
+            'EMG': 2,    # Chin + one leg
+            'RESP': 1    # Primary respiratory signal (Airflow or Thor)
+        },
+        'minimal': {
+            'BAS': 2,    # Minimal brain activity (e.g., C3-M2, C4-M1)
+            'EKG': 1,    # Single ECG lead
+            'EMG': 1,    # Chin only
+            'RESP': 0    # Skip respiratory for fastest processing
+        }
+    }
+    
     def __init__(self, config: Optional[Config] = None):
         """Initialize signal processor.
         
@@ -58,10 +80,30 @@ class SignalProcessor:
         self.channel_mapper = ChannelMapper(self.config)
         self.modality_detector = ModalityDetector(self.config)
         
+        # Get channel selection strategy
+        channel_config = self.config.preprocessing_params.get('channel_selection', {})
+        self.channel_strategy = channel_config.get('strategy', 'sleepfm_full')
+        
+        # Determine channel limits based on strategy
+        if self.channel_strategy == 'custom':
+            self.channel_limits = channel_config.get('custom_limits', self.CHANNEL_STRATEGIES['sleepfm_full'])
+        else:
+            self.channel_limits = self.CHANNEL_STRATEGIES.get(
+                self.channel_strategy, 
+                self.CHANNEL_STRATEGIES['sleepfm_full']
+            )
+        
         logger.info("SignalProcessor initialized")
         logger.info(f"  Target sampling rate: {self.TARGET_SR} Hz")
         logger.info(f"  Output dtype: {self.OUTPUT_DTYPE}")
         logger.info(f"  Compression: {self.COMPRESSION} (level {self.COMPRESSION_LEVEL})")
+        logger.info(f"  Channel selection strategy: {self.channel_strategy}")
+        logger.info(f"  Channel limits: BAS={self.channel_limits['BAS']}, "
+                   f"EKG={self.channel_limits['EKG']}, "
+                   f"EMG={self.channel_limits['EMG']}, "
+                   f"RESP={self.channel_limits['RESP']} "
+                   f"(total: {sum(self.channel_limits.values())} max)")
+
     
     def process_edf(
         self,
@@ -183,19 +225,22 @@ class SignalProcessor:
         channel_mapping: Dict[str, str],
         modality_groups: Dict[str, Dict[str, str]]
     ) -> Dict[str, str]:
-        """Apply SleepFM channel limits and prioritization.
+        """Apply channel limits and prioritization based on selected strategy.
         
-        Per SleepFM paper: BAS=10, ECG=2, EMG=4, RESP=7 channels max.
-        BAS combines EEG+EOG channels.
+        Supports flexible channel selection strategies:
+        - sleepfm_full: BAS=10, EKG=2, EMG=4, RESP=7 (SleepFM paper limits)
+        - fast: BAS=4, EKG=1, EMG=2, RESP=1 (8 channels for quick processing)
+        - minimal: BAS=2, EKG=1, EMG=1, RESP=0 (4 channels for fastest processing)
+        - custom: User-defined limits from config
         
         Args:
             channel_mapping: Dict of {std_name: raw_name}
             modality_groups: Dict of {modality: {std_name: raw_name}}
         
         Returns:
-            Filtered channel_mapping respecting SleepFM limits
+            Filtered channel_mapping respecting selected strategy limits
         """
-        # Get SleepFM modality specs from config
+        # Get priority order from config for proper channel selection
         sleepfm_modalities = self.config.modality_groups['sleepfm_modalities']
         
         # Group channels by SleepFM modality (BAS, EKG, EMG, RESP)
@@ -221,7 +266,14 @@ class SignalProcessor:
         filtered_channels = {}
         
         for sleepfm_mod, channels in sleepfm_groups.items():
-            max_channels = sleepfm_modalities[sleepfm_mod]['max_channels']
+            # Use channel limits from selected strategy
+            max_channels = self.channel_limits.get(sleepfm_mod, 0)
+            
+            # Skip modality if limit is 0 (e.g., RESP=0 in minimal mode)
+            if max_channels == 0:
+                if channels:
+                    logger.info(f"  {sleepfm_mod}: Skipping {len(channels)} channels (strategy={self.channel_strategy}, limit=0)")
+                continue
             
             if len(channels) > max_channels:
                 # Use priority order to select top N channels
@@ -240,7 +292,7 @@ class SignalProcessor:
                 
                 # Keep only top N
                 selected = prioritized[:max_channels]
-                logger.info(f"  {sleepfm_mod}: Limiting {len(channels)} → {max_channels} channels")
+                logger.info(f"  {sleepfm_mod}: Limiting {len(channels)} → {max_channels} channels (strategy={self.channel_strategy})")
                 logger.debug(f"    Selected: {selected}")
                 logger.debug(f"    Dropped: {prioritized[max_channels:]}")
                 

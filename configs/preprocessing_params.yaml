@@ -27,6 +27,32 @@ paths:
     annotations: mros/derived/annotations
     logs: mros/derived/logs
 
+# Channel Selection Strategy
+# ============================
+# Control how many channels to process per modality for faster processing
+# Change 'strategy' to switch between full processing and faster modes
+
+channel_selection:
+  # Strategy options: "sleepfm_full", "fast", "minimal"
+  # - sleepfm_full: Use SleepFM paper limits (BAS=10, EKG=2, EMG=4, RESP=7) [23 max channels]
+  # - fast: Reduced limits for faster processing (BAS=4, EKG=1, EMG=2, RESP=1) [8 channels]
+  # - minimal: Bare minimum for quick testing (BAS=2, EKG=1, EMG=1, RESP=0) [4 channels]
+  # - custom: Use custom limits defined below
+  
+  strategy: "sleepfm_full"  # Change this to "fast" for quick processing
+  
+  # Custom limits (used only when strategy="custom")
+  # Adjust these values as needed for your specific use case
+  custom_limits:
+    BAS: 6     # Brain Activity Signals (EEG + EOG combined)
+    EKG: 1     # Electrocardiography
+    EMG: 2     # Electromyography
+    RESP: 2    # Respiratory signals
+    # Total: 11 channels in this example
+  
+  # NOTE: Channels are selected by priority order from modality_groups.yaml
+  # Essential channels prioritized: C3-M2, C4-M1, LOC, ROC, EKG, CHIN, LLEG, RLEG, Thor, ABD
+
 # Signal Processing Parameters
 # All parameters are configurable and dataset-agnostic
 
