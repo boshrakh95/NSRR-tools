@@ -88,12 +88,14 @@ class MrOSAdapter(BaseNSRRAdapter):
             logger.warning(f"MrOS original path does not exist: {original_path}")
             return []
         
-        # Search for EDFs
-        for edf_path in original_path.rglob('*.edf'):
+        # Search for EDFs matching this visit only
+        # Files are named: mros-visit1-aa0001.edf or mros-visit2-aa0001.edf
+        visit_pattern = f'mros-visit{self.visit}-*.edf'
+        for edf_path in original_path.rglob(visit_pattern):
             subject_id = self._extract_base_subject_id(edf_path.stem)
             edf_files.append((subject_id, edf_path))
         
-        # Filter duplicates
+        # Filter duplicates (handles _1, _2 suffixes)
         edf_files = self._filter_duplicate_edfs(edf_files)
         logger.info(f"Found {len(edf_files)} MrOS visit{self.visit} EDF files")
         return edf_files
@@ -101,15 +103,23 @@ class MrOSAdapter(BaseNSRRAdapter):
     def _extract_base_subject_id(self, filename: str) -> str:
         """Extract base subject ID from EDF filename.
         
-        Removes _1, _2 suffixes from filenames.
+        MrOS filenames: mros-visit1-aa0001.edf -> aa0001
+        Handle duplicates: mros-visit1-aa0001_1.edf -> aa0001
         
         Args:
             filename: EDF filename without extension
         
         Returns:
-            Base subject ID
+            Base subject ID (just the subject part, e.g., 'aa0001')
         """
-        return filename.split('_')[0]
+        # Remove _1, _2 suffixes first if present
+        base = filename.split('_')[0]
+        # Extract subject ID from mros-visit{N}-{subject_id} format
+        parts = base.split('-')
+        if len(parts) >= 3 and parts[0] == 'mros' and parts[1].startswith('visit'):
+            return parts[2]  # Return just the subject ID
+        # Fallback: return the whole base
+        return base
     
     def _filter_duplicate_edfs(self, edf_files: List[Tuple[str, Path]]) -> List[Tuple[str, Path]]:
         """Filter duplicate EDFs, preferring base file over numbered versions.
@@ -155,8 +165,8 @@ class MrOSAdapter(BaseNSRRAdapter):
         if not visit_dir.exists():
             return None
         
-        # Look for XML file matching subject_id
-        xml_file = visit_dir / f'{subject_id}-nsrr.xml'
+        # Look for XML file matching subject_id - format is mros-visit2-aa2201-nsrr.xml
+        xml_file = visit_dir / f'mros-visit{self.visit}-{subject_id}-nsrr.xml'
         if xml_file.exists():
             return xml_file
         

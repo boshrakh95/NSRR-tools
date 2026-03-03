@@ -17,6 +17,7 @@ modalities:
       - A2             # Priority 8: Reference (73.74%)
       - M1             # Priority 9: Mastoid reference (26.11%)
       - M2             # Priority 10: Mastoid reference (26.11%)
+      - EEG            # Generic EEG channel (for datasets without specific electrode names)
     processing_params: eeg
     required: true  # At least one EEG channel required
     

@@ -976,6 +976,7 @@ channel_priority:
   C3-M2:
     - C3-M2
     - C3M2
+    - C3_M2         # APPLES uses underscore
     - EEG C3-M2
     - EEG_C3-M2    # STAGES uses underscore
     - C3-A2
@@ -987,6 +988,7 @@ channel_priority:
   C4-M1:
     - C4-M1
     - C4M1
+    - C4_M1         # APPLES uses underscore
     - EEG C4-M1
     - EEG_C4-M1    # STAGES uses underscore
     - C4-A1
@@ -998,6 +1000,7 @@ channel_priority:
   O1-M2:
     - O1-M2
     - O1M2
+    - O1_M2         # APPLES uses underscore
     - EEG O1-M2
     - EEG_O1-M2    # STAGES uses underscore
     - O1-A2
@@ -1009,6 +1012,7 @@ channel_priority:
   O2-M1:
     - O2-M1
     - O2M1
+    - O2_M1         # APPLES uses underscore
     - EEG O2-M1
     - EEG_O2-M1    # STAGES uses underscore
     - O2-A1

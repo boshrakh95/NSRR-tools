@@ -28,6 +28,7 @@ datasets:
     
   shhs:
     original: "${SCRATCH}/nsrr_downloads/shhs/polysomnography"
+    annotations: "${SCRATCH}/nsrr_downloads/shhs/polysomnography/annotations-events-nsrr"
     datasets: "${SCRATCH}/nsrr_downloads/shhs/datasets"
     derived: "${SCRATCH}/psg/shhs/derived"
     

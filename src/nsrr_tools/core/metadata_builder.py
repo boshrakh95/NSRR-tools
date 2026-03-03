@@ -240,9 +240,23 @@ class MetadataBuilder:
                 else:
                     dict_key = normalized_id
                 
+                # Find annotation file for this subject
+                # For adapters that need edf_path (STAGES, APPLES), pass it
+                try:
+                    if hasattr(adapter.find_annotation_file, '__code__') and \
+                       'edf_path' in adapter.find_annotation_file.__code__.co_varnames:
+                        annotation_path = adapter.find_annotation_file(subject_id, edf_path=edf_path)
+                    else:
+                        annotation_path = adapter.find_annotation_file(subject_id)
+                    annotation_path_str = str(annotation_path) if annotation_path else None
+                except Exception as e:
+                    logger.debug(f"Could not find annotation for {subject_id}: {e}")
+                    annotation_path_str = None
+                
                 # Store info (use dict_key for deduplication)
                 channel_info[dict_key] = {
                     'edf_path': str(edf_path),
+                    'annotation_path': annotation_path_str,
                     'num_channels': len(ch_names),
                     'duration_sec': duration,
                     'has_edf': True,
@@ -266,6 +280,7 @@ class MetadataBuilder:
                     
                 channel_info[dict_key] = {
                     'edf_path': str(edf_path),
+                    'annotation_path': None,
                     'has_edf': False,
                     'error': str(e)
                 }

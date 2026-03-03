@@ -114,11 +114,13 @@ class PreprocessingPipeline:
         logger.info(f"Loading metadata from {metadata_path}...")
         metadata_df = pd.read_parquet(metadata_path)
         
-        # Filter to dataset
-        dataset_df = metadata_df[metadata_df['dataset'] == dataset_name].copy()
+        # Filter to dataset (case-insensitive match)
+        dataset_name_upper = dataset_name.upper()
+        dataset_df = metadata_df[metadata_df['dataset'].str.upper() == dataset_name_upper].copy()
         
         if len(dataset_df) == 0:
             logger.warning(f"No subjects found for dataset {dataset_name}")
+            logger.debug(f"Available datasets in metadata: {metadata_df['dataset'].unique()}")
             return
         
         logger.info(f"Found {len(dataset_df)} subjects in metadata")
