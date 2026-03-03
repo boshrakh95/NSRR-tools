@@ -124,8 +124,8 @@ class SignalProcessor:
         logger.info(f"Processing {edf_path.name}...")
         
         try:
-            # Load EDF
-            raw = self._load_edf(edf_path)
+            # Load EDF (lazy first for channel detection)
+            raw = self._load_edf(edf_path, preload=False)
             
             # Detect and map channels
             if channel_mapping is None:
@@ -156,6 +156,15 @@ class SignalProcessor:
                 }
             
             logger.info(f"  Selected {len(channel_mapping)} channels after applying SleepFM limits")
+            
+            # Now preload only selected channels for faster processing
+            if len(channel_mapping) <= 20:
+                logger.debug(f"  Preloading {len(channel_mapping)} channels for faster processing")
+                try:
+                    raw.pick_channels(list(channel_mapping.values()), ordered=False)
+                    raw.load_data()
+                except Exception as e:
+                    logger.warning(f"  Could not preload channels, using lazy loading: {e}")
             
             # Process each channel
             processed_channels = {}
@@ -207,17 +216,18 @@ class SignalProcessor:
                 'channels_found': 0
             }
     
-    def _load_edf(self, edf_path: Path) -> mne.io.Raw:
+    def _load_edf(self, edf_path: Path, preload: bool = False) -> mne.io.Raw:
         """Load EDF file using MNE.
         
         Args:
             edf_path: Path to EDF file
+            preload: Whether to preload data into memory
         
         Returns:
             MNE Raw object
         """
-        # Load with MNE (preload=False for memory efficiency, we'll load channels one by one)
-        raw = mne.io.read_raw_edf(str(edf_path), preload=False, verbose='ERROR')
+        # Load with MNE - preload can be controlled by caller
+        raw = mne.io.read_raw_edf(str(edf_path), preload=preload, verbose='ERROR')
         return raw
     
     def _apply_sleepfm_limits(
@@ -390,37 +400,54 @@ class SignalProcessor:
         high: float,
         order: int = 4
     ) -> np.ndarray:
-        """Apply Butterworth bandpass filter.
+        """Apply Butterworth bandpass filter using MNE's optimized filtering.
+        
+        Uses FFT-based filtering for long signals (much faster than scipy for EEG data).
         
         Args:
             signal_data: Input signal
             sr: Sampling rate
             low: Low cutoff frequency (Hz)
             high: High cutoff frequency (Hz)
-            order: Filter order
+            order: Filter order (unused with FIR, kept for API compatibility)
         
         Returns:
             Filtered signal
         """
-        nyquist = sr / 2.0
-        low_norm = low / nyquist
-        high_norm = high / nyquist
-        
-        # Ensure cutoff frequencies are valid
-        low_norm = max(0.001, min(low_norm, 0.999))
-        high_norm = max(0.001, min(high_norm, 0.999))
-        
-        if low_norm >= high_norm:
-            logger.warning(f"Invalid filter range: [{low}, {high}] Hz at {sr} Hz SR")
-            return signal_data
-        
         try:
-            b, a = scipy_signal.butter(order, [low_norm, high_norm], btype='band')
-            filtered = scipy_signal.filtfilt(b, a, signal_data)
+            # Use MNE's optimized filtering (automatically uses FFT for long signals)
+            filtered = mne.filter.filter_data(
+                signal_data,
+                sr,
+                l_freq=low,
+                h_freq=high,
+                method='fir',
+                fir_design='firwin',
+                verbose=False
+            )
             return filtered
         except Exception as e:
-            logger.warning(f"Filter failed: {e}, returning unfiltered signal")
-            return signal_data
+            logger.warning(f"MNE filter failed: {e}, trying scipy fallback")
+            # Fallback to scipy if MNE fails
+            nyquist = sr / 2.0
+            low_norm = low / nyquist
+            high_norm = high / nyquist
+            
+            # Ensure cutoff frequencies are valid
+            low_norm = max(0.001, min(low_norm, 0.999))
+            high_norm = max(0.001, min(high_norm, 0.999))
+            
+            if low_norm >= high_norm:
+                logger.warning(f"Invalid filter range: [{low}, {high}] Hz at {sr} Hz SR")
+                return signal_data
+            
+            try:
+                b, a = scipy_signal.butter(order, [low_norm, high_norm], btype='band')
+                filtered = scipy_signal.filtfilt(b, a, signal_data)
+                return filtered
+            except Exception as e2:
+                logger.warning(f"Filter failed: {e2}, returning unfiltered signal")
+                return signal_data
     
     def _resample_signal(
         self,
@@ -430,7 +457,9 @@ class SignalProcessor:
     ) -> np.ndarray:
         """Resample signal to target sampling rate.
         
-        Uses linear interpolation for efficiency and quality.
+        Uses optimal resampling method based on rate ratio:
+        - Integer ratio: polyphase resampling (fastest, best quality)
+        - Non-integer: numpy interpolation (faster than scipy.interpolate.interp1d)
         
         Args:
             signal_data: Input signal
@@ -440,28 +469,36 @@ class SignalProcessor:
         Returns:
             Resampled signal
         """
-        original_length = len(signal_data)
-        duration = original_length / original_sr
+        # Check if ratio is close to integer for polyphase resampling
+        ratio = original_sr / target_sr
         
-        # Calculate new length
-        target_length = int(duration * target_sr)
-        
-        # Create time arrays
-        original_time = np.arange(original_length) / original_sr
-        target_time = np.arange(target_length) / target_sr
-        
-        # Linear interpolation (faster than scipy.signal.resample, good quality)
-        interpolator = interp1d(
-            original_time,
-            signal_data,
-            kind='linear',
-            bounds_error=False,
-            fill_value='extrapolate'
-        )
-        
-        resampled = interpolator(target_time)
-        
-        return resampled
+        if abs(ratio - round(ratio)) < 0.01 and ratio >= 1:  # Downsampling with integer ratio
+            # Use faster polyphase resampling for integer ratios
+            from scipy.signal import resample_poly
+            down = int(round(ratio))
+            up = 1
+            resampled = resample_poly(signal_data, up, down, padtype='line')
+            
+            # Adjust length to match expected (handle rounding)
+            target_length = int(len(signal_data) * target_sr / original_sr)
+            if len(resampled) > target_length:
+                resampled = resampled[:target_length]
+            elif len(resampled) < target_length:
+                # Pad if slightly short
+                resampled = np.pad(resampled, (0, target_length - len(resampled)), mode='edge')
+            
+            return resampled
+        else:
+            # Non-integer ratio: use numpy's interpolation (faster than interp1d)
+            original_length = len(signal_data)
+            target_length = int(original_length * target_sr / original_sr)
+            
+            # Use np.interp instead of interp1d (no function object overhead)
+            original_idx = np.arange(original_length)
+            target_idx = np.linspace(0, original_length - 1, target_length)
+            
+            resampled = np.interp(target_idx, original_idx, signal_data)
+            return resampled
     
     def _normalize_signal(
         self,
