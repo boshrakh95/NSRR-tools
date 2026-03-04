@@ -161,7 +161,8 @@ class SignalProcessor:
             if len(channel_mapping) <= 20:
                 logger.debug(f"  Preloading {len(channel_mapping)} channels for faster processing")
                 try:
-                    raw.pick_channels(list(channel_mapping.values()), ordered=False)
+                    # Use modern MNE API (pick instead of pick_channels)
+                    raw.pick(list(channel_mapping.values()))
                     raw.load_data()
                 except Exception as e:
                     logger.warning(f"  Could not preload channels, using lazy loading: {e}")
