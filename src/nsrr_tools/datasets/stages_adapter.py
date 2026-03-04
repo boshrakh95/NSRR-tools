@@ -217,7 +217,18 @@ class STAGESAdapter(BaseNSRRAdapter):
         """
         try:
             import pandas as pd
-            df = pd.read_csv(annotation_path)
+            # Try standard CSV parsing first
+            try:
+                df = pd.read_csv(annotation_path)
+            except pd.errors.ParserError:
+                # If that fails, try with quotechar and error handling
+                try:
+                    df = pd.read_csv(annotation_path, quotechar='"', on_bad_lines='skip')
+                    logger.warning(f"CSV {annotation_path.name} had parsing issues, skipped bad lines")
+                except Exception:
+                    # Last resort: read with Python engine
+                    df = pd.read_csv(annotation_path, engine='python', on_bad_lines='skip')
+                    logger.warning(f"CSV {annotation_path.name} parsed with Python engine, skipped bad lines")
         except Exception as e:
             logger.error(f"Error parsing CSV {annotation_path}: {e}")
             return {
@@ -249,12 +260,10 @@ class STAGESAdapter(BaseNSRRAdapter):
             start_time_str = row.get('Start Time', '')
             duration_sec = row.get('Duration (seconds)', 0)
             
-            # Try to extract stage label
-            stage_label = None
-            for label in stage_map.keys():
-                if label in event:
-                    stage_label = label
-                    break
+            # Try to extract stage label using exact match
+            # This prevents matching "apneas during REM" as a REM stage
+            event_stripped = str(event).strip()
+            stage_label = event_stripped if event_stripped in stage_map else None
             
             if stage_label:
                 # Parse start time (format like "21:34:38")
@@ -282,11 +291,32 @@ class STAGESAdapter(BaseNSRRAdapter):
                     'duration': float(duration_sec) if duration_sec else 0
                 })
         
-        # Sort stages by start time
+        # Handle day boundary: if we have times before and after midnight,
+        # assume recording started in evening (>12h) and ended next morning (<12h)
+        # Add 24h to all times after midnight to maintain chronological order
+        if stages:
+            # Find the earliest stage time (recording start)
+            min_start = min(s['start'] for s in stages)
+            max_start = max(s['start'] for s in stages)
+            
+            # If we have both evening times (>12h) and early morning times (<12h),
+            # we likely crossed midnight. Add 24h to the early morning times.
+            if min_start < 12 * 3600 and max_start > 12 * 3600:
+                for stage in stages:
+                    if stage['start'] < 12 * 3600:  # Before noon
+                        stage['start'] += 24 * 3600  # Add 24 hours
+        
+        # Sort stages by start time (now properly handles day boundary)
         stages.sort(key=lambda x: x['start'])
         
-        # Calculate total duration
+        # Normalize start times to be relative to recording start (0-based)
+        # This is essential for downstream processing that expects relative times
         if stages:
+            recording_start = stages[0]['start']
+            for stage in stages:
+                stage['start'] -= recording_start
+            
+            # Calculate total duration
             last_stage = stages[-1]
             total_duration = last_stage['start'] + last_stage.get('duration', 30)
         else:

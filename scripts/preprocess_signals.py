@@ -21,6 +21,15 @@ import pandas as pd
 from loguru import logger
 from tqdm import tqdm
 import yaml
+import gc
+
+# Try to import psutil for memory monitoring
+try:
+    import psutil
+    PSUTIL_AVAILABLE = True
+except ImportError:
+    PSUTIL_AVAILABLE = False
+    logger.warning("psutil not available - memory monitoring disabled")
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
@@ -32,6 +41,14 @@ from nsrr_tools.datasets.stages_adapter import STAGESAdapter
 from nsrr_tools.datasets.shhs_adapter import SHHSAdapter
 from nsrr_tools.datasets.apples_adapter import APPLESAdapter
 from nsrr_tools.datasets.mros_adapter import MrOSAdapter
+
+
+def get_memory_usage_mb() -> float:
+    """Get current memory usage in MB."""
+    if PSUTIL_AVAILABLE:
+        process = psutil.Process()
+        return process.memory_info().rss / (1024 ** 2)
+    return 0.0
 
 
 class PreprocessingPipeline:
@@ -217,10 +234,18 @@ class PreprocessingPipeline:
                     'dataset': dataset_name,
                     'status': 'success' if signal_result['success'] else 'failed',
                     'signal_channels': signal_result.get('channels_processed', 0),
+                    'signal_duration_hours': signal_result.get('duration_hours', 0),
                     'annotation_epochs': annotation_result.get('num_epochs', 0),
-                    'duration_hours': signal_result.get('duration_hours', 0),
+                    'annotation_scored_epochs': annotation_result.get('scored_epochs', 0),
+                    'annotation_unscored_epochs': annotation_result.get('unscored_epochs', 0),
+                    'annotation_scoring_coverage': annotation_result.get('scoring_coverage', 0.0),
+                    'annotation_duration_hours': annotation_result.get('duration_hours', 0),
                     'hdf5_size_mb': signal_result.get('output_size_mb', 0),
-                    'has_annotations': annotation_result.get('success', False)
+                    'has_annotations': annotation_result.get('success', False),
+                    # Synchronization info
+                    'sync_status': annotation_result.get('sync_status', 'no_annotation'),
+                    'sync_difference_sec': annotation_result.get('difference_sec', None),
+                    'sync_adjustment_epochs': annotation_result.get('adjustment_epochs', 0)
                 }
                 
                 if signal_result['success']:
@@ -238,6 +263,14 @@ class PreprocessingPipeline:
                     'status': 'failed',
                     'error': str(e)
                 })
+            
+            # Explicitly free memory after each subject
+            gc.collect()
+            
+            # Log memory usage periodically
+            if PSUTIL_AVAILABLE and (len(results) % 10 == 0):
+                mem_mb = get_memory_usage_mb()
+                logger.info(f"Memory usage after {len(results)} subjects: {mem_mb:.1f} MB")
         
         # Save summary
         summary_df = pd.DataFrame(results)
@@ -258,9 +291,39 @@ class PreprocessingPipeline:
             if len(successful) > 0:
                 logger.info(f"\nSuccessful subjects:")
                 logger.info(f"  Average channels: {successful['signal_channels'].mean():.1f}")
-                logger.info(f"  Average duration: {successful['duration_hours'].mean():.1f} hours")
+                logger.info(f"  Average signal duration: {successful['signal_duration_hours'].mean():.1f} hours")
                 logger.info(f"  With annotations: {successful['has_annotations'].sum()}")
                 logger.info(f"  Total HDF5 size: {successful['hdf5_size_mb'].sum():.1f} MB")
+                
+                # Synchronization summary
+                if 'sync_status' in successful.columns:
+                    annotated = successful[successful['has_annotations'] == True]
+                    if len(annotated) > 0:
+                        logger.info(f"\nSynchronization summary (annotated subjects):")
+                        sync_counts = annotated['sync_status'].value_counts()
+                        for status, count in sync_counts.items():
+                            logger.info(f"  {status}: {count} subjects")
+                        
+                        # Show average difference for those that needed adjustment
+                        adjusted = annotated[annotated['sync_status'].isin(['truncated', 'padded'])]
+                        if len(adjusted) > 0:
+                            avg_diff = adjusted['sync_difference_sec'].mean()
+                            avg_adj = adjusted['sync_adjustment_epochs'].mean()
+                            logger.info(f"  Average difference (adjusted): {avg_diff:.1f}s ({avg_adj:.1f} epochs)")
+                        
+                        # Scoring coverage statistics
+                        if 'annotation_scoring_coverage' in annotated.columns:
+                            avg_coverage = annotated['annotation_scoring_coverage'].mean()
+                            min_coverage = annotated['annotation_scoring_coverage'].min()
+                            max_coverage = annotated['annotation_scoring_coverage'].max()
+                            logger.info(f"\nAnnotation scoring coverage:")
+                            logger.info(f"  Average: {avg_coverage:.1%}")
+                            logger.info(f"  Range: {min_coverage:.1%} - {max_coverage:.1%}")
+                            
+                            # Flag low-coverage subjects
+                            low_coverage = annotated[annotated['annotation_scoring_coverage'] < 0.5]
+                            if len(low_coverage) > 0:
+                                logger.warning(f"  {len(low_coverage)} subjects with <50% scoring coverage")
         
         logger.info(f"\nSummary saved to: {summary_path}")
         logger.info(f"{'='*80}\n")

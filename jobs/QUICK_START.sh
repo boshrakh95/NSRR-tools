@@ -6,50 +6,59 @@
 # BEFORE FIRST RUN
 # ============================================
 
-# 1. Update SLURM account in job scripts
-sed -i 's/def-YOUR_ACCOUNT/def-ACTUAL_ACCOUNT/g' jobs/preprocess_signals_*.sh
-
-# 2. Verify metadata exists
+# 1. Verify metadata exists
 ls -lh /scratch/$USER/psg/unified/metadata/unified_metadata.parquet
 
-# 3. Create log directories
+# 2. Create log directories
 mkdir -p logs logs/array jobs/subject_lists
 
 # ============================================
-# OPTION A: PARALLEL PROCESSING (Recommended)
+# BASIC USAGE
 # ============================================
-# Good for: 100-1000 subjects per dataset
-# Resources: 16 cores, 64GB RAM, single node
 
-# Submit single dataset
+# Process single dataset (all subjects)
 sbatch jobs/preprocess_signals_parallel.sh stages
 
-# Submit all datasets
-bash jobs/submit_all_datasets.sh parallel
-
-# With limited subjects (testing)
+# Process single dataset (first 10 subjects for testing)
 sbatch jobs/preprocess_signals_parallel.sh stages 10
 
-# Monitor progress
-watch -n 30 ./jobs/check_progress.sh
+# Process all datasets
+bash jobs/submit_all_datasets.sh
+
+# Process all datasets (first 10 of each for testing)
+bash jobs/submit_all_datasets.sh 10
 
 # ============================================
-# OPTION B: ARRAY JOBS (For massive scale)
+# ADVANCED USAGE
 # ============================================
-# Good for: 1000+ subjects, distributed across nodes
-# Resources: 4 cores, 16GB per task, scales to 100s of nodes
 
-# Step 1: Generate subject list
-python scripts/generate_subject_list.py \
-    --dataset stages \
-    --output jobs/subject_lists/stages_subjects.txt
+# With debug logging
+sbatch jobs/preprocess_signals_parallel.sh stages 10 --log-level DEBUG
 
-# Step 2: Submit array job
-N=$(wc -l < jobs/subject_lists/stages_subjects.txt)
-sbatch --array=0-$((N-1))%50 jobs/preprocess_signals_array.sh stages
+# Reprocess existing files (no skip)
+sbatch jobs/preprocess_signals_parallel.sh stages --no-skip-existing
 
-# Or use helper (all datasets)
-bash jobs/submit_all_datasets.sh array
+# Custom config file
+sbatch jobs/preprocess_signals_parallel.sh stages --config configs/custom_preprocessing.yaml
+
+# Combine options
+sbatch jobs/preprocess_signals_parallel.sh stages 50 --log-level DEBUG
+
+# All datasets with debug logging
+bash jobs/submit_all_datasets.sh 10 --log-level DEBUG
+
+# ============================================
+# RESOURCE CUSTOMIZATION
+# ============================================
+
+# More memory (for large files)
+sbatch --mem=32000M jobs/preprocess_signals_parallel.sh stages
+
+# More time (for large datasets)
+sbatch --time=24:00:00 jobs/preprocess_signals_parallel.sh shhs
+
+# Different account
+sbatch --account=def-OTHERACCOUNT jobs/preprocess_signals_parallel.sh stages
 
 # ============================================
 # MONITORING
@@ -64,8 +73,8 @@ squeue -u $USER
 # Watch progress in real-time
 watch -n 30 './jobs/check_progress.sh'
 
-# Check specific job logs
-tail -f logs/preprocess_stages_<jobid>.out
+# Check specific job logs (replace JOBID)
+tail -f logs/preprocess_stages_JOBID.out
 
 # Check for errors
 grep -r "ERROR" logs/*.err
@@ -78,9 +87,9 @@ grep -r "ERROR" logs/*.err
 cat logs/preprocess_*.err | head -20
 
 # Out of memory
-sbatch --mem=128G jobs/preprocess_signals_parallel.sh <dataset>
+sbatch --mem=32000M jobs/preprocess_signals_parallel.sh <dataset>
 
-# Too slow
+# Too slow (check if channels are reasonable)
 # Edit configs/preprocessing_params.yaml:
 #   channel_selection:
 #     strategy: minimal  # Use 4 channels instead of 8
@@ -97,6 +106,12 @@ scancel <job_id>
 
 # Count output files
 find /scratch/$USER/psg/stages/derived/hdf5_signals -name "*.h5" | wc -l
+
+# Check specific output
+h5ls /scratch/$USER/psg/stages/derived/hdf5_signals/subject_001.h5
+
+# Validate HDF5 file
+python scripts/validate_hdf5.py /scratch/$USER/psg/stages/derived/hdf5_signals/subject_001.h5
 
 # Check total size
 du -sh /scratch/$USER/psg/*/derived/hdf5_signals

@@ -96,17 +96,38 @@ class AnnotationProcessor:
                     'num_epochs': 0
                 }
             
-            logger.info(f"  Found {len(stages)} stage epochs")
+            logger.info(f"  Found {len(stages)} stage annotations in file")
             logger.info(f"  Format: {annot_data.get('format', 'unknown')}")
             
             # Convert to epoch array
             stage_array = self._stages_to_array(stages)
+            original_epochs = len(stage_array)
+            
+            # Report epoch array statistics
+            scored_epochs = np.sum(stage_array >= 0)
+            unscored_epochs = np.sum(stage_array < 0)
+            logger.info(f"  Epoch array: {original_epochs} total epochs ({scored_epochs} scored, {unscored_epochs} unscored)")
+            
+            # Initialize sync info
+            sync_info = {
+                'sync_validated': False,
+                'signal_duration_sec': None,
+                'annotation_duration_sec': None,
+                'difference_sec': None,
+                'sync_status': 'not_validated',  # 'matched', 'truncated', 'padded', 'not_validated'
+                'adjustment_epochs': 0
+            }
             
             # Validate synchronization with EDF if requested
             if validate_sync and edf_path.exists():
                 sync_result = self._validate_synchronization(
                     stage_array, edf_path, annotation_path
                 )
+                
+                sync_info['sync_validated'] = True
+                sync_info['signal_duration_sec'] = sync_result.get('signal_duration')
+                sync_info['annotation_duration_sec'] = sync_result.get('annotation_duration')
+                sync_info['difference_sec'] = sync_result.get('difference')
                 
                 if sync_result['needs_adjustment']:
                     logger.warning(f"  Synchronization issue detected:")
@@ -118,19 +139,41 @@ class AnnotationProcessor:
                     stage_array = self._adjust_synchronization(
                         stage_array, sync_result
                     )
+                    
+                    # Determine adjustment type
+                    final_epochs = len(stage_array)
+                    if final_epochs < original_epochs:
+                        sync_info['sync_status'] = 'truncated'
+                        sync_info['adjustment_epochs'] = original_epochs - final_epochs
+                    elif final_epochs > original_epochs:
+                        sync_info['sync_status'] = 'padded'
+                        sync_info['adjustment_epochs'] = final_epochs - original_epochs
+                    else:
+                        sync_info['sync_status'] = 'adjusted'
+                else:
+                    sync_info['sync_status'] = 'matched'
             
             # Save as numpy array
             output_path.parent.mkdir(parents=True, exist_ok=True)
             np.save(output_path, stage_array)
+            
+            # Calculate scoring coverage statistics
+            scored_count = np.sum(stage_array >= 0)
+            unscored_count = np.sum(stage_array < 0)
+            scoring_coverage = scored_count / len(stage_array) if len(stage_array) > 0 else 0
             
             logger.success(f"  Saved {len(stage_array)} epochs to {output_path.name}")
             
             return {
                 'success': True,
                 'num_epochs': len(stage_array),
+                'scored_epochs': int(scored_count),
+                'unscored_epochs': int(unscored_count),
+                'scoring_coverage': float(scoring_coverage),
                 'duration_hours': len(stage_array) * self.EPOCH_DURATION / 3600,
                 'stage_distribution': self._get_stage_distribution(stage_array),
-                'output_size_kb': output_path.stat().st_size / 1024 if output_path.exists() else 0
+                'output_size_kb': output_path.stat().st_size / 1024 if output_path.exists() else 0,
+                **sync_info  # Include all synchronization information
             }
             
         except Exception as e:

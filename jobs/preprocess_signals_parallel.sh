@@ -1,153 +1,124 @@
 #!/bin/bash
 #SBATCH --job-name=preprocess_signals
-#SBATCH --account=def-YOUR_ACCOUNT  # CHANGE THIS to your CC account
-#SBATCH --time=12:00:00             # Max 12 hours per job
-#SBATCH --cpus-per-task=16          # 16 cores for parallel processing
-#SBATCH --mem=64G                   # 64GB RAM (adjust based on needs)
+#SBATCH --account=def-forouzan
+#SBATCH --time=01:45:00
+#SBATCH --cpus-per-task=6
+#SBATCH --mem=64000M
 #SBATCH --output=logs/preprocess_%x_%j.out
 #SBATCH --error=logs/preprocess_%x_%j.err
 
-# Preprocess NSRR EDF signals to HDF5 format with GNU parallel
-# Usage: sbatch jobs/preprocess_signals_parallel.sh <dataset>
-#   where dataset = stages | shhs | apples | mros | all
+# Preprocess NSRR EDF signals to HDF5 format
+# Usage: sbatch jobs/preprocess_signals_parallel.sh <dataset> [max_subjects] [--no-skip-existing] [--log-level LEVEL] [--config PATH]
+#   dataset: stages | shhs | apples | mros | all (required)
+#   max_subjects: limit number of subjects (optional, e.g., 10 for testing)
+#   --no-skip-existing: reprocess existing files (optional)
+#   --log-level: DEBUG | INFO | WARNING | ERROR (optional, default: INFO)
+#   --config: path to custom preprocessing_params.yaml (optional)
+#
+# Examples:
+#   sbatch jobs/preprocess_signals_parallel.sh stages
+#   sbatch jobs/preprocess_signals_parallel.sh stages 10
+#   sbatch jobs/preprocess_signals_parallel.sh stages 10 --log-level DEBUG
+#   sbatch jobs/preprocess_signals_parallel.sh all --no-skip-existing
 
 set -e
 
-# Configuration
-DATASET=${1:-all}               # Dataset to process (default: all)
-N_WORKERS=${SLURM_CPUS_PER_TASK:-8}  # Number of parallel workers
-MAX_SUBJECTS=${2:-}             # Optional: limit number of subjects
+# Parse arguments
+DATASET=${1:-stages}           # Dataset: stages | shhs | apples | mros | all
+MAX_SUBJECTS=""
+SKIP_EXISTING="--skip-existing"
+LOG_LEVEL="INFO"
+CONFIG_PATH=""
+
+# Parse remaining arguments
+shift 1  # Remove dataset argument
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --no-skip-existing)
+            SKIP_EXISTING=""
+            shift
+            ;;
+        --log-level)
+            LOG_LEVEL="$2"
+            shift 2
+            ;;
+        --config)
+            CONFIG_PATH="$2"
+            shift 2
+            ;;
+        [0-9]*)
+            MAX_SUBJECTS="$1"
+            shift
+            ;;
+        *)
+            echo "Unknown argument: $1"
+            exit 1
+            ;;
+    esac
+done
 
 # Setup paths
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )"
-cd "$SCRIPT_DIR"
-
-# Create logs directory
+cd /home/boshra95/NSRR-tools
 mkdir -p logs
 
-# Load modules (Compute Canada)
-module load python/3.11
-module load scipy-stack
-module load gcc/9.3.0
-
-# Activate conda environment
-source "$HOME/sleepfm_env/bin/activate"
-
-# Install GNU parallel if not available (session-local)
-if ! command -v parallel &> /dev/null; then
-    echo "Installing GNU parallel..."
-    mkdir -p "$HOME/.local/bin"
-    wget -O "$HOME/.local/bin/parallel" https://raw.githubusercontent.com/martinda/gnu-parallel/master/src/parallel
-    chmod +x "$HOME/.local/bin/parallel"
-    export PATH="$HOME/.local/bin:$PATH"
-fi
+# Activate virtual environment
+source .venv/bin/activate
 
 echo "========================================================================"
-echo "NSRR Signal Preprocessing - Parallel Processing"
+echo "NSRR Signal Preprocessing"
 echo "========================================================================"
-echo "Dataset:       $DATASET"
-echo "Workers:       $N_WORKERS"
 echo "Job ID:        $SLURM_JOB_ID"
 echo "Node:          $SLURM_NODELIST"
-echo "CPUs:          $SLURM_CPUS_PER_TASK"
-echo "Memory:        $SLURM_MEM_PER_NODE MB"
+echo "Dataset:       $DATASET"
 if [ -n "$MAX_SUBJECTS" ]; then
     echo "Max subjects:  $MAX_SUBJECTS"
 fi
+echo "Skip existing: $([ -n "$SKIP_EXISTING" ] && echo 'Yes' || echo 'No')"
+echo "Log level:     $LOG_LEVEL"
+if [ -n "$CONFIG_PATH" ]; then
+    echo "Config:        $CONFIG_PATH"
+fi
+echo "Start time:    $(date)"
 echo "========================================================================"
+echo ""
 
-# Function to process a single subject
-process_subject() {
-    local dataset=$1
-    local subject_id=$2
-    local edf_path=$3
-    
-    echo "[$(date +%H:%M:%S)] Processing $dataset: $subject_id"
-    
-    # Run preprocessing for this subject
-    python scripts/preprocess_single_subject.py \
-        --dataset "$dataset" \
-        --subject-id "$subject_id" \
-        --edf-path "$edf_path" \
-        --skip-existing \
-        2>&1 | grep -E "(SUCCESS|ERROR|WARNING)" || true
-}
+# Build Python command
+CMD="python scripts/preprocess_signals.py --dataset $DATASET"
 
-export -f process_subject
-
-# Get list of subjects to process
-if [ "$DATASET" = "all" ]; then
-    DATASETS="stages shhs apples mros"
-else
-    DATASETS="$DATASET"
+if [ -n "$MAX_SUBJECTS" ]; then
+    CMD="$CMD --max-subjects $MAX_SUBJECTS"
 fi
 
-# Process each dataset
-for ds in $DATASETS; do
-    echo ""
-    echo "Processing dataset: ${ds^^}"
-    echo "------------------------------------------------------------------------"
-    
-    # Get subject list from metadata
-    SUBJECT_LIST=$(python -c "
-import pandas as pd
-from pathlib import Path
-import sys
+if [ -n "$SKIP_EXISTING" ]; then
+    CMD="$CMD $SKIP_EXISTING"
+fi
 
-# Load metadata
-metadata_path = Path('/scratch/boshra95/psg/unified/metadata/unified_metadata.parquet')
-if not metadata_path.exists():
-    metadata_path = Path('/scratch/boshra95/psg_metadata/unified_metadata.parquet')
+if [ -n "$LOG_LEVEL" ]; then
+    CMD="$CMD --log-level $LOG_LEVEL"
+fi
 
-if not metadata_path.exists():
-    print('ERROR: Metadata not found', file=sys.stderr)
-    sys.exit(1)
+if [ -n "$CONFIG_PATH" ]; then
+    CMD="$CMD --config $CONFIG_PATH"
+fi
 
-df = pd.read_parquet(metadata_path)
-ds_df = df[(df['dataset'].str.upper() == '$ds'.upper()) & (df['has_edf'] == True)]
+# Run preprocessing
+echo "Running: $CMD"
+echo ""
 
-if len(ds_df) == 0:
-    print('ERROR: No subjects found', file=sys.stderr)
-    sys.exit(1)
+eval $CMD
 
-# Limit if requested
-max_subjects = '$MAX_SUBJECTS'
-if max_subjects:
-    ds_df = ds_df.head(int(max_subjects))
-
-# Output: dataset subject_id edf_path (one per line)
-for idx, row in ds_df.iterrows():
-    subject_id = row.get('subject_id', row.get('nsrrid', ''))
-    edf_path = row.get('edf_path', '')
-    if edf_path:
-        print(f'$ds {subject_id} {edf_path}')
-" 2>&1)
-    
-    if [ $? -ne 0 ]; then
-        echo "ERROR: Failed to read metadata for $ds"
-        continue
-    fi
-    
-    # Count subjects
-    N_SUBJECTS=$(echo "$SUBJECT_LIST" | wc -l)
-    echo "Found $N_SUBJECTS subjects to process"
-    
-    if [ $N_SUBJECTS -eq 0 ]; then
-        echo "No subjects to process for $ds"
-        continue
-    fi
-    
-    # Process in parallel using GNU parallel
-    echo "$SUBJECT_LIST" | parallel -j "$N_WORKERS" --colsep ' ' \
-        process_subject {1} {2} {3}
-    
-    echo "Completed $ds: $N_SUBJECTS subjects"
-done
+EXIT_CODE=$?
 
 echo ""
 echo "========================================================================"
-echo "All datasets completed!"
+echo "End time:      $(date)"
+if [ $EXIT_CODE -eq 0 ]; then
+    echo "Status:        SUCCESS"
+else
+    echo "Status:        FAILED (exit code: $EXIT_CODE)"
+fi
 echo "========================================================================"
 
-# Deactivate environment
 deactivate
+
+exit $EXIT_CODE

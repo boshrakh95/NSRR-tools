@@ -192,33 +192,37 @@ class MrOSAdapter(BaseNSRRAdapter):
         stages = []
         events = []
         
+        # Define stage mapping
+        stage_map = {
+            'Stage 1 sleep|1': 1,
+            'Stage 2 sleep|2': 2,
+            'Stage 3 sleep|3': 3,
+            'Stage 4 sleep|4': 4,
+            'REM sleep|5': 5,
+            'Wake|0': 0,
+            'Unscored|9': -1
+        }
+        
         for scored_event in root.findall('.//ScoredEvent'):
             event_type = scored_event.find('EventType')
             event_concept = scored_event.find('EventConcept')
             start = scored_event.find('Start')
             duration_elem = scored_event.find('Duration')
             
-            if event_concept is not None and 'Stage' in event_concept.text:
+            # Check if this is a sleep stage annotation
+            if event_concept is not None and event_concept.text in stage_map:
                 start_time = float(start.text) if start is not None else 0
+                duration = float(duration_elem.text) if duration_elem is not None else 30.0
                 stage_label = event_concept.text
-                
-                stage_map = {
-                    'Stage 1 sleep|1': 1,
-                    'Stage 2 sleep|2': 2,
-                    'Stage 3 sleep|3': 3,
-                    'Stage 4 sleep|4': 4,
-                    'REM sleep|5': 5,
-                    'Wake|0': 0,
-                    'Unscored|9': -1
-                }
-                
-                stage_num = stage_map.get(stage_label, -1)
+                stage_num = stage_map[stage_label]
                 stages.append({
                     'start': start_time,
+                    'duration': duration,
                     'stage': stage_num,
                     'label': stage_label
                 })
             else:
+                # Other events
                 if event_concept is not None and start is not None and duration_elem is not None:
                     events.append({
                         'type': event_type.text if event_type is not None else 'Unknown',

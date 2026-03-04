@@ -123,6 +123,7 @@ class SignalProcessor:
         """
         logger.info(f"Processing {edf_path.name}...")
         
+        raw = None  # Initialize for finally block
         try:
             # Load EDF (lazy first for channel detection)
             raw = self._load_edf(edf_path, preload=False)
@@ -216,6 +217,14 @@ class SignalProcessor:
                 'error': str(e),
                 'channels_found': 0
             }
+        finally:
+            # Explicitly close MNE Raw object to free memory
+            if raw is not None:
+                try:
+                    raw.close()
+                    del raw
+                except Exception:
+                    pass  # Ignore errors during cleanup
     
     def _load_edf(self, edf_path: Path, preload: bool = False) -> mne.io.Raw:
         """Load EDF file using MNE.
@@ -415,6 +424,19 @@ class SignalProcessor:
         Returns:
             Filtered signal
         """
+        # Ensure cutoff frequencies are valid (must be < Nyquist)
+        nyquist = sr / 2.0
+        
+        # MNE requires high_freq < Nyquist (strictly less than)
+        if high >= nyquist:
+            high = nyquist * 0.99  # Use 99% of Nyquist as safe upper limit
+            logger.debug(f"Adjusted high cutoff to {high:.1f} Hz (Nyquist={nyquist:.1f} Hz)")
+        
+        # Ensure low is also reasonable
+        if low >= high:
+            logger.warning(f"Invalid filter range: low={low} >= high={high} Hz at {sr} Hz SR")
+            return signal_data
+        
         try:
             # Use MNE's optimized filtering (automatically uses FFT for long signals)
             filtered = mne.filter.filter_data(
@@ -430,7 +452,6 @@ class SignalProcessor:
         except Exception as e:
             logger.warning(f"MNE filter failed: {e}, trying scipy fallback")
             # Fallback to scipy if MNE fails
-            nyquist = sr / 2.0
             low_norm = low / nyquist
             high_norm = high / nyquist
             

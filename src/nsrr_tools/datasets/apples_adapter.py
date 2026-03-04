@@ -207,16 +207,20 @@ class APPLESAdapter(BaseNSRRAdapter):
                 try:
                     if ':' in str(start_time):
                         parts = str(start_time).split(':')
-                        hours, mins, secs = int(parts[0]), int(parts[1]), int(parts[2])
+                        hours, mins, secs = int(parts[0]), int(parts[1]), float(parts[2])
                         start_seconds = hours * 3600 + mins * 60 + secs
                     else:
                         start_seconds = idx * 30  # Assume 30s epochs
                     
                     if ':' in str(stop_time):
                         parts = str(stop_time).split(':')
-                        hours, mins, secs = int(parts[0]), int(parts[1]), int(parts[2])
+                        hours, mins, secs = int(parts[0]), int(parts[1]), float(parts[2])
                         stop_seconds = hours * 3600 + mins * 60 + secs
                         duration = stop_seconds - start_seconds
+                        
+                        # Handle negative duration (day boundary crossing)
+                        if duration < 0:
+                            duration += 24 * 3600  # Add 24 hours
                     else:
                         duration = 30  # Default epoch duration
                 except:
@@ -236,6 +240,28 @@ class APPLESAdapter(BaseNSRRAdapter):
                     'start_time': start_time,
                     'stop_time': stop_time
                 })
+        
+        # Handle day boundary: if recording crosses midnight, adjust times
+        # Similar to STAGES adapter logic
+        if stages:
+            min_start = min(s['start'] for s in stages)
+            max_start = max(s['start'] for s in stages)
+            
+            # If we have both evening times (>12h) and early morning times (<12h),
+            # we likely crossed midnight. Add 24h to the early morning times.
+            if min_start < 12 * 3600 and max_start > 12 * 3600:
+                for stage in stages:
+                    if stage['start'] < 12 * 3600:  # Before noon (morning after midnight)
+                        stage['start'] += 24 * 3600  # Add 24 hours
+        
+        # Sort stages by start time (now properly handles day boundary)
+        stages.sort(key=lambda x: x['start'])
+        
+        # Normalize start times to be relative to recording start (0-based)
+        if stages:
+            recording_start = stages[0]['start']
+            for stage in stages:
+                stage['start'] -= recording_start
         
         # Calculate total duration
         if stages:

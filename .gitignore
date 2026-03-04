@@ -23,6 +23,7 @@ outputs/
 runs/
 *.log
 *.err
+*.out
 
 # NSRR data (do NOT commit)
 # datasets/
