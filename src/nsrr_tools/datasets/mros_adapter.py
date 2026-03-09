@@ -232,7 +232,14 @@ class MrOSAdapter(BaseNSRRAdapter):
                     })
         
         stages.sort(key=lambda x: x['start'])
-        total_duration = stages[-1]['start'] + 30 if stages else 0
+        
+        # Calculate total duration using actual duration of last stage (not assuming 30s!)
+        # MrOS XML files have variable-duration stages
+        if stages:
+            last_stage = stages[-1]
+            total_duration = last_stage['start'] + last_stage['duration']
+        else:
+            total_duration = 0
         
         return {
             'stages': stages,

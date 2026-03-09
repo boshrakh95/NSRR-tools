@@ -106,7 +106,7 @@ class AnnotationProcessor:
             # Report epoch array statistics
             scored_epochs = np.sum(stage_array >= 0)
             unscored_epochs = np.sum(stage_array < 0)
-            logger.info(f"  Epoch array: {original_epochs} total epochs ({scored_epochs} scored, {unscored_epochs} unscored)")
+            logger.info(f"  Annotation timespan: {original_epochs} epochs ({scored_epochs} scored, {unscored_epochs} unscored)")
             
             # Initialize sync info
             sync_info = {
@@ -131,9 +131,9 @@ class AnnotationProcessor:
                 
                 if sync_result['needs_adjustment']:
                     logger.warning(f"  Synchronization issue detected:")
-                    logger.warning(f"    Signal duration: {sync_result['signal_duration']:.1f}s")
-                    logger.warning(f"    Annotation duration: {sync_result['annotation_duration']:.1f}s")
-                    logger.warning(f"    Difference: {sync_result['difference']:.1f}s")
+                    logger.warning(f"    Signal duration: {sync_result['signal_duration']:.1f}s ({sync_result['signal_epochs']} epochs)")
+                    logger.warning(f"    Annotation duration: {sync_result['annotation_duration']:.1f}s ({sync_result['annotation_epochs']} epochs)")
+                    logger.warning(f"    Difference: {sync_result['difference']:.1f}s ({abs(sync_result['signal_epochs'] - sync_result['annotation_epochs'])} epochs)")
                     
                     # Adjust if possible
                     stage_array = self._adjust_synchronization(
@@ -314,8 +314,10 @@ class AnnotationProcessor:
         
         else:
             # Annotations are shorter - pad with unknown
-            logger.info(f"    Padding from {annotation_epochs} to {signal_epochs} epochs")
-            padding = np.full(signal_epochs - annotation_epochs, -1, dtype=np.int8)
+            padding_epochs = signal_epochs - annotation_epochs
+            logger.info(f"    Padding from {annotation_epochs} to {signal_epochs} epochs (+{padding_epochs} unscored at end)")
+            logger.debug(f"    Note: Annotations cover {annotation_epochs*30/3600:.1f}h, signal is {signal_epochs*30/3600:.1f}h")
+            padding = np.full(padding_epochs, -1, dtype=np.int8)
             return np.concatenate([stage_array, padding])
     
     def _get_stage_distribution(self, stage_array: np.ndarray) -> Dict[str, int]:
