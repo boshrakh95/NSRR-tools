@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=preprocess_signals
 #SBATCH --account=def-forouzan
-#SBATCH --time=5:00:00
+#SBATCH --time=2:00:00
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=9000M
 #SBATCH --output=logs/preprocess_%x_%j.out

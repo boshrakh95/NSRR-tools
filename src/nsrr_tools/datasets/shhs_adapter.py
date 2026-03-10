@@ -191,11 +191,12 @@ class SHHSAdapter(BaseNSRRAdapter):
         result = [(sid, path) for (sid, _), (path, _, _) in subject_visit_files.items()]
         return sorted(result, key=lambda x: (x[0], x[1].stem))
     
-    def find_annotation_file(self, subject_id: str) -> Optional[Path]:
+    def find_annotation_file(self, subject_id: str, edf_path: Optional[Path] = None) -> Optional[Path]:
         """Find SHHS annotation file (NSRR XML format).
         
         Args:
             subject_id: Subject identifier (nsrrid)
+            edf_path: Optional EDF path to match visit (extracts visit from filename)
         
         Returns:
             Path to XML annotation file, or None
@@ -204,8 +205,17 @@ class SHHSAdapter(BaseNSRRAdapter):
         if not annotations_path or not annotations_path.exists():
             return None
         
-        # Try both visit 1 and visit 2 patterns: shhs1-200001-nsrr.xml or shhs2-200001-nsrr.xml
-        for visit in [1, 2]:
+        # If EDF path provided, extract visit number to match correct annotation
+        visits_to_try = [1, 2]
+        if edf_path:
+            stem = edf_path.stem.lower()
+            if 'shhs1' in stem:
+                visits_to_try = [1]  # Only try visit 1
+            elif 'shhs2' in stem:
+                visits_to_try = [2]  # Only try visit 2
+        
+        # Try matching visit patterns: shhs1-200001-nsrr.xml or shhs2-200001-nsrr.xml
+        for visit in visits_to_try:
             xml_pattern = f'shhs{visit}-{subject_id}-nsrr.xml'
             for xml_path in annotations_path.rglob(xml_pattern):
                 return xml_path

@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=meta_all
-#SBATCH --time=00:20:00
+#SBATCH --time=02:20:00
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=16000M
 #SBATCH --account=def-forouzan
