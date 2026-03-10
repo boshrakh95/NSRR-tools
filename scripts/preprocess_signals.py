@@ -18,6 +18,7 @@ import sys
 from pathlib import Path
 from typing import Optional
 import pandas as pd
+import numpy as np
 from loguru import logger
 from tqdm import tqdm
 import yaml
@@ -89,7 +90,8 @@ class PreprocessingPipeline:
         self,
         dataset_name: str,
         max_subjects: Optional[int] = None,
-        skip_existing: bool = True
+        skip_existing: bool = True,
+        reprocess_annotations: bool = False
     ):
         """Process all subjects in a dataset.
         
@@ -97,6 +99,7 @@ class PreprocessingPipeline:
             dataset_name: Dataset name (stages, shhs, apples, mros)
             max_subjects: Maximum number of subjects to process (for testing)
             skip_existing: Skip subjects with existing output files
+            reprocess_annotations: Reprocess annotations even if they exist (keeps HDF5)
         """
         logger.info(f"\n{'='*80}")
         logger.info(f"Processing dataset: {dataset_name.upper()}")
@@ -180,16 +183,32 @@ class PreprocessingPipeline:
             hdf5_path = hdf5_dir / f"{subject_id}.h5"
             annot_path = annot_dir / f"{subject_id}_stages.npy"
             
-            # Skip if exists
-            if skip_existing and hdf5_path.exists() and annot_path.exists():
-                logger.debug(f"Skipping {subject_id} (outputs exist)")
-                results.append({
-                    'subject_id': subject_id,
-                    'dataset': dataset_name,
-                    'status': 'skipped',
-                    'reason': 'exists'
-                })
-                continue
+            # Skip logic
+            if skip_existing:
+                # If reprocessing annotations, only check if HDF5 exists
+                if reprocess_annotations:
+                    if hdf5_path.exists():
+                        logger.debug(f"Skipping signal processing for {subject_id} (HDF5 exists), will check annotations")
+                        skip_signal = True
+                    else:
+                        skip_signal = False
+                    skip_annotation = False  # Always reprocess annotations
+                else:
+                    # Normal skip: both must exist
+                    if hdf5_path.exists() and annot_path.exists():
+                        logger.debug(f"Skipping {subject_id} (outputs exist)")
+                        results.append({
+                            'subject_id': subject_id,
+                            'dataset': dataset_name,
+                            'status': 'skipped',
+                            'reason': 'exists'
+                        })
+                        continue
+                    skip_signal = hdf5_path.exists()
+                    skip_annotation = annot_path.exists()
+            else:
+                skip_signal = False
+                skip_annotation = False
             
             try:
                 # Get file paths from metadata
@@ -206,16 +225,27 @@ class PreprocessingPipeline:
                     })
                     continue
                 
-                # Process signal
-                signal_result = self.signal_processor.process_edf(
-                    edf_path=edf_path,
-                    output_path=hdf5_path
-                )
+                # Process signal (or load existing)
+                if not skip_signal:
+                    signal_result = self.signal_processor.process_edf(
+                        edf_path=edf_path,
+                        output_path=hdf5_path
+                    )
+                else:
+                    # Load existing HDF5 metadata for reporting
+                    logger.debug(f"Using existing HDF5 for {subject_id}")
+                    signal_result = {
+                        'success': True,
+                        'channels_processed': 0,  # Unknown from existing file
+                        'duration_hours': 0,      # Unknown from existing file
+                        'output_size_mb': hdf5_path.stat().st_size / (1024**2) if hdf5_path.exists() else 0,
+                        'note': 'existing_file'
+                    }
                 
                 # Process annotation if available
                 annotation_result = {'success': False, 'reason': 'no_annotation'}
                 
-                if annotation_path_str and annotation_path_str != 'None':
+                if not skip_annotation and annotation_path_str and annotation_path_str != 'None':
                     annotation_file = Path(annotation_path_str)
                     
                     if annotation_file.exists():
@@ -227,6 +257,21 @@ class PreprocessingPipeline:
                         )
                     else:
                         logger.debug(f"Annotation file not found for {subject_id}")
+                elif skip_annotation and annot_path.exists():
+                    # Load existing annotation metadata
+                    logger.debug(f"Using existing annotations for {subject_id}")
+                    annot_array = np.load(annot_path)
+                    scored = np.sum(annot_array >= 0)
+                    unscored = np.sum(annot_array < 0)
+                    annotation_result = {
+                        'success': True,
+                        'num_epochs': len(annot_array),
+                        'scored_epochs': int(scored),
+                        'unscored_epochs': int(unscored),
+                        'scoring_coverage': float(scored / len(annot_array)) if len(annot_array) > 0 else 0,
+                        'duration_hours': len(annot_array) * 30 / 3600,
+                        'note': 'existing_file'
+                    }
                 
                 # Combine results
                 result = {
@@ -359,6 +404,13 @@ def main():
     )
     
     parser.add_argument(
+        '--reprocess-annotations',
+        action='store_true',
+        default=False,
+        help='Reprocess annotations even if they exist (keeps existing HDF5 signals)'
+    )
+    
+    parser.add_argument(
         '--config',
         type=Path,
         default=None,
@@ -392,13 +444,15 @@ def main():
             pipeline.process_dataset(
                 dataset_name=dataset,
                 max_subjects=args.max_subjects,
-                skip_existing=args.skip_existing
+                skip_existing=args.skip_existing,
+                reprocess_annotations=args.reprocess_annotations
             )
     else:
         pipeline.process_dataset(
             dataset_name=args.dataset,
             max_subjects=args.max_subjects,
-            skip_existing=args.skip_existing
+            skip_existing=args.skip_existing,
+            reprocess_annotations=args.reprocess_annotations
         )
 
 
