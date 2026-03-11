@@ -1,0 +1,363 @@
+# Target Extraction Configuration
+# This file defines all classification targets, thresholds, and data sources
+# Created: 2026-03-10
+
+# Data paths
+paths:
+  raw_data: "/home/boshra95/scratch/nsrr_downloads"
+  derived_data: "/home/boshra95/scratch/psg"
+  unified_metadata: "/home/boshra95/scratch/psg/unified/metadata"
+  targets_output: "/home/boshra95/scratch/psg/unified/targets"
+
+# Clinical thresholds for classification
+# Based on validated clinical instruments and literature (see CLASSIFICATION_TARGETS_ANALYSIS.md)
+thresholds:
+  apnea_class:
+    type: "multiclass"
+    num_classes: 4
+    thresholds: [5, 15, 30]  # Boundaries: <5, 5-15, 15-30, >=30
+    class_labels:
+      0: "Normal (AHI < 5)"
+      1: "Mild (5 ≤ AHI < 15)"
+      2: "Moderate (15 ≤ AHI < 30)"
+      3: "Severe (AHI ≥ 30)"
+    rationale: "AASM ICSD-3 clinical severity classification"
+    
+  depression_class:
+    type: "multiclass"
+    num_classes: 4
+    scales:
+      bdi:  # BDI-II scale (0-63)
+        thresholds: [10, 16, 20]  # Adjusted: 1-10, 11-16, 17-20, 21+
+        class_labels:
+          0: "Normal (1-10)"
+          1: "Mild mood disturbance (11-16)"
+          2: "Borderline clinical (17-20)"
+          3: "Moderate to severe (21-40)"
+      phq9:  # PHQ-9 scale (0-27)
+        thresholds: [10, 14, 19]  # Comparable thresholds
+        class_labels:
+          0: "Minimal (0-9)"
+          1: "Mild (10-14)"
+          2: "Moderate (15-19)"
+          3: "Moderately severe to severe (20-27)"
+    rationale: "BDI-II: Beck 1996; PHQ-9: Kroenke 2001"
+    
+  sleepiness_class:
+    type: "multiclass"
+    num_classes: 3
+    thresholds: [10, 15]  # Boundaries: 0-10, 11-15, 16-24
+    class_labels:
+      0: "Normal (0-10)"
+      1: "Mild to Moderate (11-15)"
+      2: "Severe (16-24)"
+    rationale: "Johns 1991, ESS clinical interpretation"
+    
+  anxiety_binary:
+    threshold: 10.0  # GAD-7 >= 10 (moderate anxiety)
+    rationale: "Spitzer 2006 (89% sensitivity)"
+    
+  insomnia_binary:
+    threshold: 15.0  # ISI >= 15 (moderate insomnia)
+    rationale: "Bastien 2001, clinical intervention threshold"
+    
+  fatigue_binary:
+    threshold: 36.0  # FSS total >= 36 (mean >= 4.0)
+    rationale: "Krupp 1989, validated threshold"
+    
+  cvd_binary:
+    threshold: 1  # any_cvd == 1 (incident CVD event)
+    rationale: "Adjudicated cardiovascular events"
+    
+  rested_morning:
+    good_threshold: 4  # >= 4 indicates well-rested
+    poor_threshold: 2  # <= 2 indicates poorly rested
+    # 3 is ambiguous, treated as missing
+    rationale: "Subjective self-report, conservative thresholds"
+
+# Task definitions per dataset
+# Each task specifies: source files, columns, visit filters, priority
+tasks:
+  # ====================
+  # APPLES Dataset
+  # ====================
+  apples:
+    dataset_id: "apples"
+    subject_id_column: "appleid"  # Note: harmonized uses nsrrid, main uses appleid
+    
+    apnea_class:
+      enabled: true
+      priority: "tier1"
+      source_file: "apples-harmonized-dataset-0.1.0.csv"
+      column: "nsrr_ahi_chicago1999"
+      continuous_column: "nsrr_ahi_chicago1999"
+      visit_filter: 3  # DX visit (PSG visit)
+      visit_column: "visitn"
+      expected_distribution: [0.10, 0.25, 0.25, 0.40]  # Normal, Mild, Moderate, Severe
+      
+    depression_class:
+      enabled: true
+      priority: "tier1"
+      source_file: "apples-dataset-0.1.0.csv"
+      column: "bditotalscore"
+      continuous_column: "bditotalscore"
+      scale: "bdi"  # Use BDI thresholds
+      visit_filter: 1  # Baseline visit
+      visit_column: "visitn"
+      expected_distribution: [0.70, 0.15, 0.08, 0.07]  # Normal, Mild, Borderline, Moderate-Severe
+      
+    sleepiness_class:
+      enabled: true
+      priority: "tier1"
+      source_file: "apples-dataset-0.1.0.csv"
+      column: "esstotalscoreqc"
+      continuous_column: "esstotalscoreqc"
+      visit_filter: 3  # DX visit (PSG-matched)
+      visit_column: "visitn"
+      expected_distribution: [0.55, 0.30, 0.15]  # Normal, Mild-Moderate, Severe
+
+  # ====================
+  # SHHS Dataset
+  # ====================
+  shhs:
+    dataset_id: "shhs"
+    subject_id_column: "nsrrid"
+    
+    apnea_binary:
+      enabled: true
+      priority: "tier1"
+      source_files:
+        visit1: "shhs1-dataset-0.21.0.csv"
+        visit2: "shhs2-dataset-0.21.0.csv"
+      column: "rdi3p"
+      continuous_column: "rdi3p"
+      keep_both_visits: true  # Create separate samples per visit
+      expected_prevalence: [0.25, 0.35]
+      
+    cvd_binary:
+      enabled: true
+      priority: "tier2"
+      source_file: "shhs-cvd-summary-dataset-0.21.0.csv"
+      column: "any_cvd"
+      threshold_override: 1  # Binary outcome
+      expected_prevalence: [0.10, 0.20]
+      notes: "Subject-level outcome, not visit-specific"
+      
+    rested_morning:
+      enabled: true
+      priority: "tier3"
+      source_files:
+        visit1: "shhs1-dataset-0.21.0.csv"
+        visit2: "shhs2-dataset-0.21.0.csv"
+      columns:
+        visit1: "rest10"
+        visit2: "ms204c"
+      scale: [1, 5]
+      keep_both_visits: true
+
+  # ====================
+  # MrOS Dataset
+  # ====================
+  mros:
+    dataset_id: "mros"
+    subject_id_column: "nsrrid"
+    
+    apnea_binary:
+      enabled: true
+      priority: "tier1"
+      source_file: "mros-visit1-harmonized-0.6.0.csv"
+      column: "nsrr_ahi_hp3r_aasm15"
+      continuous_column: "nsrr_ahi_hp3r_aasm15"
+      visit: 1
+      expected_prevalence: [0.35, 0.45]
+      
+    insomnia_binary:
+      enabled: true
+      priority: "tier2"
+      source_file: "mros-visit1-dataset-0.6.0.csv"
+      column: "slisiscr"
+      continuous_column: "slisiscr"
+      visit: 1
+      expected_prevalence: [0.20, 0.30]
+      
+    sleepiness_binary:
+      enabled: true
+      priority: "tier1"
+      source_file: "mros-visit1-dataset-0.6.0.csv"
+      column: "epepwort"
+      continuous_column: "epepwort"
+      visit: 1
+      expected_prevalence: [0.25, 0.35]
+      
+    rested_morning:
+      enabled: true
+      priority: "tier3"
+      source_file: "mros-visit1-dataset-0.6.0.csv"
+      column: "poxqual3"
+      visit: 1
+      scale: [1, 5]
+
+  # ====================
+  # STAGES Dataset
+  # ====================
+  stages:
+    dataset_id: "stages"
+    subject_id_column: "nsrrid"
+    
+    depression_binary:
+      enabled: true
+      priority: "tier1"
+      source_file: "stages-dataset-0.3.0.csv"
+      column: "phq_1000"
+      continuous_column: "phq_1000"
+      threshold_override: 10.0  # PHQ-9 >= 10
+      expected_prevalence: [0.15, 0.25]
+      
+    anxiety_binary:
+      enabled: true
+      priority: "tier2"
+      source_file: "stages-dataset-0.3.0.csv"
+      column: "gad_0800"
+      continuous_column: "gad_0800"
+      expected_prevalence: [0.15, 0.20]
+      
+    fatigue_binary:
+      enabled: false  # Optional for now
+      priority: "tier3"
+      source_file: "stages-dataset-0.3.0.csv"
+      column: "fss_1000"
+      continuous_column: "fss_1000"
+      notes: "Total score 9-63, threshold >= 36"
+      
+    sleepiness_binary:
+      enabled: false  # Check if column exists
+      priority: "tier2"
+      source_file: "stages-dataset-0.3.0.csv"
+      column: "ess_0900"
+      continuous_column: "ess_0900"
+      notes: "Check availability in CSV"
+      
+    insomnia_binary:
+      enabled: true
+      priority: "tier2"
+      source_file: "STAGESPSGKeySRBDVariables2020-08-29 Deidentified.xlsx"
+      column: "ISI_total"  # Verify actual column name
+      continuous_column: "ISI_total"
+      expected_prevalence: [0.20, 0.30]
+      notes: "External XLSX file"
+      
+    apnea_binary:
+      enabled: false  # Skip for Phase 1
+      priority: "tier1"
+      notes: "Would require XML parsing or external XLSX. Skip initially."
+
+# Output schema for per-dataset CSV files
+output_schema:
+  per_dataset_csv:
+    columns:
+      - subject_id
+      - dataset
+      - visit
+      - apnea_binary
+      - ahi_score
+      - depression_binary
+      - phq9_score
+      - bdi_score
+      - sleepiness_binary
+      - ess_score
+      - anxiety_binary
+      - gad7_score
+      - insomnia_binary
+      - isi_score
+      - fatigue_binary
+      - fss_score
+      - cvd_binary
+      - rested_morning
+      - source_files
+    missing_value: ""  # Empty string for missing in CSV
+    
+  master_parquet:
+    columns:
+      - unified_id
+      - dataset
+      - subject_id
+      - visit
+      - apnea_binary
+      - ahi_score
+      - depression_binary
+      - depression_score
+      - sleepiness_binary
+      - ess_score
+      - anxiety_binary
+      - gad7_score
+      - insomnia_binary
+      - isi_score
+      - fatigue_binary
+      - fss_score
+      - cvd_binary
+      - rested_morning
+      - extraction_date
+    missing_binary: -1  # -1 for missing binary targets
+    missing_continuous: null  # NaN for missing continuous scores
+
+# Validation rules
+validation:
+  apnea_binary:
+    value_range: [0, 1]
+    ahi_range: [0, 200]  # Sanity check
+    
+  depression_binary:
+    value_range: [0, 1]
+    phq9_range: [0, 27]
+    bdi_range: [0, 63]
+    
+  sleepiness_binary:
+    value_range: [0, 1]
+    ess_range: [0, 24]
+    
+  anxiety_binary:
+    value_range: [0, 1]
+    gad7_range: [0, 21]
+    
+  insomnia_binary:
+    value_range: [0, 1]
+    isi_range: [0, 28]
+    
+  fatigue_binary:
+    value_range: [0, 1]
+    fss_range: [9, 63]
+    
+  cvd_binary:
+    value_range: [0, 1]
+    
+  rested_morning:
+    value_range: [0, 1]
+    scale_range: [1, 5]
+
+# Logging configuration
+logging:
+  log_file: "target_extraction.log"
+  log_dir: "/home/boshra95/scratch/psg/unified/targets"
+  level: "INFO"
+  
+# Execution phases
+execution:
+  phase1_tier1:
+    - apples.apnea_binary
+    - apples.depression_binary
+    - apples.sleepiness_binary
+    - shhs.apnea_binary
+    - mros.apnea_binary
+    - mros.sleepiness_binary
+    - stages.depression_binary
+    
+  phase2_tier2:
+    - stages.anxiety_binary
+    - mros.insomnia_binary
+    - stages.insomnia_binary
+    - shhs.cvd_binary
+    
+  phase3_tier3:
+    - shhs.rested_morning
+    - mros.rested_morning
+    # stages.rested_morning - need to find in external file
