@@ -62,15 +62,21 @@ def extract_shhs_targets(config: dict) -> pd.DataFrame:
     # LOAD DATA FILES
     # ===================================================================
     
-    # Load Visit 1 data
+    # Load harmonized data (for apnea - contains both visits)
+    harmonized_file = data_dir / 'shhs-harmonized-dataset-0.21.0.csv'
+    logger.info(f"Loading harmonized data: {harmonized_file}")
+    df_harmonized = pd.read_csv(harmonized_file, low_memory=False, encoding='latin-1')
+    logger.info(f"Harmonized records: {len(df_harmonized)}")
+    
+    # Load Visit 1 data (for ESS)
     visit1_file = data_dir / 'shhs1-dataset-0.21.0.csv'
-    logger.info(f"Loading Visit 1 data: {visit1_file}")
+    logger.info(f"Loading Visit 1 data (for ESS): {visit1_file}")
     df_v1 = pd.read_csv(visit1_file, low_memory=False, encoding='latin-1')
     logger.info(f"Visit 1 records: {len(df_v1)}")
     
-    # Load Visit 2 data
+    # Load Visit 2 data (for ESS)
     visit2_file = data_dir / 'shhs2-dataset-0.21.0.csv'
-    logger.info(f"Loading Visit 2 data: {visit2_file}")
+    logger.info(f"Loading Visit 2 data (for ESS): {visit2_file}")
     df_v2 = pd.read_csv(visit2_file, low_memory=False, encoding='latin-1')
     logger.info(f"Visit 2 records: {len(df_v2)}")
     
@@ -87,17 +93,21 @@ def extract_shhs_targets(config: dict) -> pd.DataFrame:
     logger.info("\n=== Task: apnea_class (Tier 1 - Multi-class) ===")
     
     task_config = shhs_config['tasks']['apnea_class']
-    apnea_col = task_config['column']  # rdi3p
+    apnea_col = task_config['column']  # nsrr_ahi_hp3r_aasm15
+    visit_col = task_config['visit_column']  # visitnumber
     apnea_thresholds = config['thresholds']['apnea_class']['thresholds']
     class_labels = config['thresholds']['apnea_class']['class_labels']
     
+    logger.info(f"Source: harmonized file")
     logger.info(f"Column: {apnea_col}")
+    logger.info(f"Visit column: {visit_col}")
     logger.info(f"Thresholds: {apnea_thresholds}")
     logger.info(f"Class labels: {class_labels}")
     
     # --- Process Visit 1 ---
     logger.info("\nProcessing Visit 1...")
-    df_v1_apnea = df_v1[[subject_id_col, apnea_col]].copy()
+    df_v1_apnea = df_harmonized[df_harmonized[visit_col] == 1][[subject_id_col, apnea_col]].copy()
+    logger.info(f"Visit 1 harmonized records: {len(df_v1_apnea)}")
     
     # Handle missing data (replace -9 with NaN)
     df_v1_apnea[apnea_col] = df_v1_apnea[apnea_col].replace(-9, pd.NA)
@@ -118,12 +128,13 @@ def extract_shhs_targets(config: dict) -> pd.DataFrame:
     # Create subject_id with visit suffix
     df_v1_apnea['subject_id'] = df_v1_apnea[subject_id_col].astype(str) + '_v1'
     df_v1_apnea['visit'] = 1
-    df_v1_apnea.rename(columns={apnea_col: 'rdi_score'}, inplace=True)
-    apnea_v1 = df_v1_apnea[['subject_id', 'visit', 'apnea_class', 'rdi_score']].copy()
+    df_v1_apnea.rename(columns={apnea_col: 'ahi_score'}, inplace=True)
+    apnea_v1 = df_v1_apnea[['subject_id', 'visit', 'apnea_class', 'ahi_score']].copy()
     
     # --- Process Visit 2 ---
     logger.info("\nProcessing Visit 2...")
-    df_v2_apnea = df_v2[[subject_id_col, apnea_col]].copy()
+    df_v2_apnea = df_harmonized[df_harmonized[visit_col] == 2][[subject_id_col, apnea_col]].copy()
+    logger.info(f"Visit 2 harmonized records: {len(df_v2_apnea)}")
     
     # Handle missing data
     df_v2_apnea[apnea_col] = df_v2_apnea[apnea_col].replace(-9, pd.NA)
@@ -144,8 +155,8 @@ def extract_shhs_targets(config: dict) -> pd.DataFrame:
     # Create subject_id with visit suffix
     df_v2_apnea['subject_id'] = df_v2_apnea[subject_id_col].astype(str) + '_v2'
     df_v2_apnea['visit'] = 2
-    df_v2_apnea.rename(columns={apnea_col: 'rdi_score'}, inplace=True)
-    apnea_v2 = df_v2_apnea[['subject_id', 'visit', 'apnea_class', 'rdi_score']].copy()
+    df_v2_apnea.rename(columns={apnea_col: 'ahi_score'}, inplace=True)
+    apnea_v2 = df_v2_apnea[['subject_id', 'visit', 'apnea_class', 'ahi_score']].copy()
     
     # Combine Visit 1 and Visit 2 apnea data
     apnea_targets = pd.concat([apnea_v1, apnea_v2], ignore_index=True)
@@ -319,7 +330,7 @@ def extract_shhs_targets(config: dict) -> pd.DataFrame:
         task_name = task_col.rsplit('_', 1)[0]  # Remove _class or _binary suffix
         # Map task names to score column names
         score_map = {
-            'apnea': 'rdi_score',
+            'apnea': 'ahi_score',
             'sleepiness': 'ess_score'
         }
         score_col = score_map.get(task_name)
@@ -392,7 +403,7 @@ def main():
         output_file = log_dir / 'shhs_targets.csv'
         
         # Define column order (consistent with APPLES)
-        column_order = ['subject_id', 'dataset', 'visit', 'apnea_class', 'rdi_score', 'sleepiness_class', 'ess_score', 'cvd_binary']
+        column_order = ['subject_id', 'dataset', 'visit', 'apnea_class', 'ahi_score', 'sleepiness_class', 'ess_score', 'cvd_binary']
         save_dataset_targets(targets, output_file, 'shhs', column_order)
         
         logger.info("\n" + "="*80)

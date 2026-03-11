@@ -127,11 +127,10 @@ tasks:
       apnea_class:
         enabled: true
         priority: "tier1"
-        source_files:
-          visit1: "shhs1-dataset-0.21.0.csv"
-          visit2: "shhs2-dataset-0.21.0.csv"
-        column: "rdi3p"
-        continuous_column: "rdi3p"
+        source_file: "shhs-harmonized-dataset-0.21.0.csv"  # Single harmonized file with both visits
+        visit_column: "visitnumber"  # Visit identifier in harmonized file
+        column: "nsrr_ahi_hp3r_aasm15"  # AASM 2015 criteria (consistent with APPLES)
+        continuous_column: "nsrr_ahi_hp3r_aasm15"
         keep_both_visits: true  # Create separate samples per visit
         expected_distribution:
           # [Normal <5, Mild 5-15, Moderate 15-30, Severe >=30]
@@ -187,40 +186,74 @@ tasks:
     dataset_id: "mros"
     subject_id_column: "nsrrid"
     
-    apnea_binary:
-      enabled: true
-      priority: "tier1"
-      source_file: "mros-visit1-harmonized-0.6.0.csv"
-      column: "nsrr_ahi_hp3r_aasm15"
-      continuous_column: "nsrr_ahi_hp3r_aasm15"
-      visit: 1
-      expected_prevalence: [0.35, 0.45]
-      
-    insomnia_binary:
-      enabled: true
-      priority: "tier2"
-      source_file: "mros-visit1-dataset-0.6.0.csv"
-      column: "slisiscr"
-      continuous_column: "slisiscr"
-      visit: 1
-      expected_prevalence: [0.20, 0.30]
-      
-    sleepiness_binary:
-      enabled: true
-      priority: "tier1"
-      source_file: "mros-visit1-dataset-0.6.0.csv"
-      column: "epepwort"
-      continuous_column: "epepwort"
-      visit: 1
-      expected_prevalence: [0.25, 0.35]
-      
-    rested_morning:
-      enabled: true
-      priority: "tier3"
-      source_file: "mros-visit1-dataset-0.6.0.csv"
-      column: "poxqual3"
-      visit: 1
-      scale: [1, 5]
+    tasks:
+      apnea_class:
+        enabled: true
+        priority: "tier1"
+        source_files:
+          visit1: "mros-visit1-harmonized-0.6.0.csv"
+          # Note: Visit 2 harmonized file does not exist - V2 AHI will be empty
+        column: "nsrr_ahi_hp3r_aasm15"
+        continuous_column: "nsrr_ahi_hp3r_aasm15"
+        keep_both_visits: true
+        expected_distribution:
+          # [Normal <5, Mild 5-15, Moderate 15-30, Severe >=30]
+          # Note: Only Visit 1 has harmonized AHI data
+          - [0.15, 0.25]  # Normal
+          - [0.25, 0.35]  # Mild  
+          - [0.20, 0.30]  # Moderate
+          - [0.20, 0.30]  # Severe
+        
+      sleepiness_class:
+        enabled: true
+        priority: "tier1"
+        source_files:
+          visit1: "mros-visit1-dataset-0.6.0.csv"
+          visit2: "mros-visit2-dataset-0.6.0.csv"
+        column: "epepwort"
+        continuous_column: "epepwort"
+        keep_both_visits: true
+        expected_distribution:
+          # [Normal 0-10, Mild-Moderate 11-15, Severe 16-24]
+          - [0.50, 0.65]  # Normal
+          - [0.25, 0.35]  # Mild-Moderate
+          - [0.10, 0.20]  # Severe
+        
+      insomnia_binary:
+        enabled: false  # ISI column (slisiscr) does not exist in MrOS dataset
+        priority: "tier2"
+        source_files:
+          visit1: "mros-visit1-dataset-0.6.0.csv"
+          visit2: "mros-visit2-dataset-0.6.0.csv"
+        column: "slisiscr"
+        continuous_column: "slisiscr"
+        keep_both_visits: true
+        expected_prevalence: [0.20, 0.30]
+        notes: "ISI score >= 15 indicates moderate+ insomnia - DISABLED: column not found"
+        
+      cvd_binary:
+        enabled: true
+        priority: "tier2"
+        source_files:
+          visit1: "mros-visit1-dataset-0.6.0.csv"
+          visit2: "mros-visit2-dataset-0.6.0.csv"
+        column: "cvchd"
+        threshold_override: 1
+        keep_both_visits: true
+        expected_prevalence: [0.10, 0.20]
+        notes: "CVD history (coronary heart disease)"
+        
+      rested_morning:
+        enabled: true
+        priority: "tier3"
+        source_files:
+          visit1: "mros-visit1-dataset-0.6.0.csv"
+          visit2: "mros-visit2-dataset-0.6.0.csv"
+        column: "poxqual3"
+        continuous_column: "poxqual3"
+        keep_both_visits: true
+        scale: [1, 5]
+        notes: "1-5 scale: >= 4 well-rested, <= 2 poorly rested, 3 ambiguous"
 
   # ====================
   # STAGES Dataset
