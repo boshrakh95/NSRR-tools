@@ -123,37 +123,43 @@ tasks:
     dataset_id: "shhs"
     subject_id_column: "nsrrid"
     
-    apnea_binary:
-      enabled: true
-      priority: "tier1"
-      source_files:
-        visit1: "shhs1-dataset-0.21.0.csv"
-        visit2: "shhs2-dataset-0.21.0.csv"
-      column: "rdi3p"
-      continuous_column: "rdi3p"
-      keep_both_visits: true  # Create separate samples per visit
-      expected_prevalence: [0.25, 0.35]
-      
-    cvd_binary:
-      enabled: true
-      priority: "tier2"
-      source_file: "shhs-cvd-summary-dataset-0.21.0.csv"
-      column: "any_cvd"
-      threshold_override: 1  # Binary outcome
-      expected_prevalence: [0.10, 0.20]
-      notes: "Subject-level outcome, not visit-specific"
-      
-    rested_morning:
-      enabled: true
-      priority: "tier3"
-      source_files:
-        visit1: "shhs1-dataset-0.21.0.csv"
-        visit2: "shhs2-dataset-0.21.0.csv"
-      columns:
-        visit1: "rest10"
-        visit2: "ms204c"
-      scale: [1, 5]
-      keep_both_visits: true
+    tasks:
+      apnea_class:
+        enabled: true
+        priority: "tier1"
+        source_files:
+          visit1: "shhs1-dataset-0.21.0.csv"
+          visit2: "shhs2-dataset-0.21.0.csv"
+        column: "rdi3p"
+        continuous_column: "rdi3p"
+        keep_both_visits: true  # Create separate samples per visit
+        expected_distribution:
+          # [Normal <5, Mild 5-15, Moderate 15-30, Severe >=30]
+          - [0.15, 0.25]  # Normal
+          - [0.25, 0.35]  # Mild
+          - [0.20, 0.30]  # Moderate
+          - [0.15, 0.25]  # Severe
+        
+      cvd_binary:
+        enabled: true
+        priority: "tier2"
+        source_file: "shhs-cvd-summary-dataset-0.21.0.csv"
+        column: "any_cvd"
+        threshold_override: 1  # Binary outcome
+        expected_prevalence: [0.10, 0.20]
+        notes: "Subject-level outcome, not visit-specific"
+        
+      rested_morning:
+        enabled: true
+        priority: "tier3"
+        source_files:
+          visit1: "shhs1-dataset-0.21.0.csv"
+          visit2: "shhs2-dataset-0.21.0.csv"
+        columns:
+          visit1: "rest10"
+          visit2: "ms204c"
+        scale: [1, 5]
+        keep_both_visits: true
 
   # ====================
   # MrOS Dataset
