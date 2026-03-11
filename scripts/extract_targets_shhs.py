@@ -28,7 +28,6 @@ from nsrr_tools.targets.extraction_utils import (
     compute_task_statistics,
     load_config_file,
     save_dataset_targets,
-    validate_score_range,
 )
 
 
@@ -51,7 +50,7 @@ def extract_shhs_targets(config: dict) -> pd.DataFrame:
     """
     dataset = 'shhs'
     shhs_config = config['tasks'][dataset]
-    data_dir = Path(config['data_dirs']['raw_nsrr_downloads']) / dataset / 'datasets'
+    data_dir = Path(config['paths']['raw_data']) / dataset / 'datasets'
     
     subject_id_col = shhs_config['subject_id_column']  # nsrrid
     
@@ -66,19 +65,19 @@ def extract_shhs_targets(config: dict) -> pd.DataFrame:
     # Load Visit 1 data
     visit1_file = data_dir / 'shhs1-dataset-0.21.0.csv'
     logger.info(f"Loading Visit 1 data: {visit1_file}")
-    df_v1 = pd.read_csv(visit1_file, low_memory=False)
+    df_v1 = pd.read_csv(visit1_file, low_memory=False, encoding='latin-1')
     logger.info(f"Visit 1 records: {len(df_v1)}")
     
     # Load Visit 2 data
     visit2_file = data_dir / 'shhs2-dataset-0.21.0.csv'
     logger.info(f"Loading Visit 2 data: {visit2_file}")
-    df_v2 = pd.read_csv(visit2_file, low_memory=False)
+    df_v2 = pd.read_csv(visit2_file, low_memory=False, encoding='latin-1')
     logger.info(f"Visit 2 records: {len(df_v2)}")
     
     # Load CVD data (subject-level, not visit-specific)
     cvd_file = data_dir / 'shhs-cvd-summary-dataset-0.21.0.csv'
     logger.info(f"Loading CVD data: {cvd_file}")
-    df_cvd = pd.read_csv(cvd_file, low_memory=False)
+    df_cvd = pd.read_csv(cvd_file, low_memory=False, encoding='latin-1')
     logger.info(f"CVD records: {len(df_cvd)}")
     
     # ===================================================================
@@ -90,7 +89,7 @@ def extract_shhs_targets(config: dict) -> pd.DataFrame:
     task_config = shhs_config['tasks']['apnea_class']
     apnea_col = task_config['column']  # rdi3p
     apnea_thresholds = config['thresholds']['apnea_class']['thresholds']
-    class_labels = config['thresholds']['apnea_class']['labels']
+    class_labels = config['thresholds']['apnea_class']['class_labels']
     
     logger.info(f"Column: {apnea_col}")
     logger.info(f"Thresholds: {apnea_thresholds}")
@@ -103,19 +102,14 @@ def extract_shhs_targets(config: dict) -> pd.DataFrame:
     # Handle missing data (replace -9 with NaN)
     df_v1_apnea[apnea_col] = df_v1_apnea[apnea_col].replace(-9, pd.NA)
     
-    # Validate score range
-    valid_v1 = df_v1_apnea[apnea_col].notna()
-    if valid_v1.sum() > 0:
-        min_val, max_val = df_v1_apnea.loc[valid_v1, apnea_col].min(), df_v1_apnea.loc[valid_v1, apnea_col].max()
-        validate_score_range(apnea_col, min_val, max_val, 0, 200)
-    
     # Apply multi-class threshold
     df_v1_apnea['apnea_class'] = df_v1_apnea[apnea_col].apply(
         lambda x: apply_multiclass_threshold(x, apnea_thresholds)
     )
     
     # Log statistics for Visit 1
-    class_dist_v1 = df_v1_apnea['apnea_class'][df_v1_apnea['apnea_class'] != ''].value_counts().sort_index()
+    valid_v1 = df_v1_apnea['apnea_class'] != ''
+    class_dist_v1 = df_v1_apnea['apnea_class'][valid_v1].value_counts().sort_index()
     logger.info(f"Visit 1 - Valid apnea classifications: {valid_v1.sum()}")
     for class_idx, count in class_dist_v1.items():
         class_name = class_labels[int(class_idx)]
@@ -134,19 +128,14 @@ def extract_shhs_targets(config: dict) -> pd.DataFrame:
     # Handle missing data
     df_v2_apnea[apnea_col] = df_v2_apnea[apnea_col].replace(-9, pd.NA)
     
-    # Validate score range
-    valid_v2 = df_v2_apnea[apnea_col].notna()
-    if valid_v2.sum() > 0:
-        min_val, max_val = df_v2_apnea.loc[valid_v2, apnea_col].min(), df_v2_apnea.loc[valid_v2, apnea_col].max()
-        validate_score_range(apnea_col, min_val, max_val, 0, 200)
-    
     # Apply multi-class threshold
     df_v2_apnea['apnea_class'] = df_v2_apnea[apnea_col].apply(
         lambda x: apply_multiclass_threshold(x, apnea_thresholds)
     )
     
     # Log statistics for Visit 2
-    class_dist_v2 = df_v2_apnea['apnea_class'][df_v2_apnea['apnea_class'] != ''].value_counts().sort_index()
+    valid_v2 = df_v2_apnea['apnea_class'] != ''
+    class_dist_v2 = df_v2_apnea['apnea_class'][valid_v2].value_counts().sort_index()
     logger.info(f"Visit 2 - Valid apnea classifications: {valid_v2.sum()}")
     for class_idx, count in class_dist_v2.items():
         class_name = class_labels[int(class_idx)]
@@ -181,9 +170,9 @@ def extract_shhs_targets(config: dict) -> pd.DataFrame:
     # Handle missing data
     df_cvd_proc[cvd_col] = df_cvd_proc[cvd_col].replace(-9, pd.NA)
     
-    # Apply binary threshold (any_cvd is already 0/1, but ensure consistency)
+    # Apply binary threshold (any_cvd is already 0/1, so use threshold of 0.5)
     df_cvd_proc['cvd_binary'] = df_cvd_proc[cvd_col].apply(
-        lambda x: apply_threshold(x, threshold=0.5, higher_is_positive=True)
+        lambda x: apply_threshold(x, threshold=0.5)
     )
     
     # Log statistics
@@ -263,20 +252,19 @@ def extract_shhs_targets(config: dict) -> pd.DataFrame:
     logger.info(f"Visit 1 records: {(targets['visit'] == 1).sum()}")
     logger.info(f"Visit 2 records: {(targets['visit'] == 2).sum()}")
     
-    for task in task_columns:
-        task_name = task.replace('_class', '').replace('_binary', '').upper()
-        valid_count = (targets[task] != '').sum()
-        missing_count = (targets[task] == '').sum()
-        logger.info(f"{task_name}: {valid_count} valid, {missing_count} missing")
-        
-        # Use compute_task_statistics for detailed logging
-        is_multiclass = task.endswith('_class')
-        compute_task_statistics(
-            targets[task],
-            task_name,
-            is_multiclass=is_multiclass,
-            class_labels=class_labels if is_multiclass else None
-        )
+    # Mark multi-class columns
+    is_multiclass = {
+        'apnea_class': True,
+        'cvd_binary': False
+    }
+    
+    # Compute statistics for all tasks
+    stats = compute_task_statistics(
+        targets,
+        task_columns,
+        dataset,
+        is_multiclass=is_multiclass
+    )
     
     return targets
 
@@ -299,9 +287,9 @@ def main():
     config = load_config_file(config_path)
     
     # Setup logging
-    log_dir = Path(config['output_dir']) / 'logs'
+    log_dir = Path(config['paths']['targets_output'])
     log_dir.mkdir(parents=True, exist_ok=True)
-    log_file = log_dir / 'shhs_extraction.log'
+    log_file = log_dir / 'extract_shhs.log'
     setup_logging(log_file)
     
     logger.info("Starting SHHS target extraction")
@@ -312,17 +300,24 @@ def main():
         targets = extract_shhs_targets(config)
         
         # Save targets
-        output_file = Path(config['output_dir']) / 'targets' / 'shhs_targets.csv'
-        save_dataset_targets(targets, output_file, 'SHHS')
+        output_file = log_dir / 'shhs_targets.csv'
         
-        logger.info("\n=== SHHS Target Extraction Complete ===")
-        logger.info(f"Output file: {output_file}")
-        logger.info(f"Log file: {log_file}")
+        # Define column order (consistent with APPLES)
+        column_order = ['subject_id', 'dataset', 'visit', 'apnea_class', 'rdi_score', 'cvd_binary']
+        save_dataset_targets(targets, output_file, 'shhs', column_order)
+        
+        logger.info("\n" + "="*80)
+        logger.info("✅ SHHS extraction completed successfully!")
+        logger.info(f"   Output: {output_file}")
+        logger.info(f"   Total subjects: {len(targets)}")
+        logger.info("="*80)
+        
+        return 0
         
     except Exception as e:
-        logger.exception(f"Error during SHHS target extraction: {e}")
-        sys.exit(1)
+        logger.exception(f"❌ Error during SHHS target extraction: {e}")
+        return 1
 
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())
