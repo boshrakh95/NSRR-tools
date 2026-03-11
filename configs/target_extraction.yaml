@@ -140,6 +140,25 @@ tasks:
           - [0.20, 0.30]  # Moderate
           - [0.15, 0.25]  # Severe
         
+      sleepiness_class:
+        enabled: true
+        priority: "tier1"
+        source_files:
+          visit1: "shhs1-dataset-0.21.0.csv"
+          visit2: "shhs2-dataset-0.21.0.csv"
+        columns:
+          visit1: "ess_s1"
+          visit2: "ess_s2"
+        continuous_columns:
+          visit1: "ess_s1"
+          visit2: "ess_s2"
+        keep_both_visits: true  # Create separate samples per visit
+        expected_distribution:
+          # [Normal 0-10, Mild-Moderate 11-15, Severe 16-24]
+          - [0.55, 0.70]  # Normal
+          - [0.20, 0.30]  # Mild-Moderate
+          - [0.10, 0.15]  # Severe
+        
       cvd_binary:
         enabled: true
         priority: "tier2"

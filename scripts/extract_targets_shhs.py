@@ -153,7 +153,81 @@ def extract_shhs_targets(config: dict) -> pd.DataFrame:
     logger.info(f"Valid apnea classifications (both visits): {(apnea_targets['apnea_class'] != '').sum()}")
     
     # ===================================================================
-    # TASK 2: CVD (BINARY) - Subject-level (applies to both visits)
+    # TASK 2: SLEEPINESS (MULTI-CLASS) - Visit 1 and Visit 2
+    # ===================================================================
+    
+    logger.info("\n=== Task: sleepiness_class (Tier 1 - Multi-class) ===")
+    
+    task_config = shhs_config['tasks']['sleepiness_class']
+    ess_col_v1 = task_config['columns']['visit1']  # ess_s1
+    ess_col_v2 = task_config['columns']['visit2']  # ess_s2
+    sleepiness_thresholds = config['thresholds']['sleepiness_class']['thresholds']
+    sleepiness_labels = config['thresholds']['sleepiness_class']['class_labels']
+    
+    logger.info(f"Visit 1 column: {ess_col_v1}")
+    logger.info(f"Visit 2 column: {ess_col_v2}")
+    logger.info(f"Thresholds: {sleepiness_thresholds}")
+    logger.info(f"Class labels: {sleepiness_labels}")
+    
+    # --- Process Visit 1 ---
+    logger.info("\nProcessing Visit 1 ESS...")
+    df_v1_ess = df_v1[[subject_id_col, ess_col_v1]].copy()
+    
+    # Handle missing data
+    df_v1_ess[ess_col_v1] = df_v1_ess[ess_col_v1].replace(-9, pd.NA)
+    
+    # Apply multi-class threshold
+    df_v1_ess['sleepiness_class'] = df_v1_ess[ess_col_v1].apply(
+        lambda x: apply_multiclass_threshold(x, sleepiness_thresholds)
+    )
+    
+    # Log statistics for Visit 1
+    valid_v1_ess = df_v1_ess['sleepiness_class'] != ''
+    class_dist_v1_ess = df_v1_ess['sleepiness_class'][valid_v1_ess].value_counts().sort_index()
+    logger.info(f"Visit 1 - Valid sleepiness classifications: {valid_v1_ess.sum()}")
+    for class_idx, count in class_dist_v1_ess.items():
+        class_name = sleepiness_labels[int(class_idx)]
+        logger.info(f"  Class {class_idx} ({class_name}): {count} ({count/valid_v1_ess.sum()*100:.1f}%)")
+    
+    # Create records with visit suffix
+    df_v1_ess['subject_id'] = df_v1_ess[subject_id_col].astype(str) + '_v1'
+    df_v1_ess['visit'] = 1
+    df_v1_ess.rename(columns={ess_col_v1: 'ess_score'}, inplace=True)
+    ess_v1 = df_v1_ess[['subject_id', 'visit', 'sleepiness_class', 'ess_score']].copy()
+    
+    # --- Process Visit 2 ---
+    logger.info("\nProcessing Visit 2 ESS...")
+    df_v2_ess = df_v2[[subject_id_col, ess_col_v2]].copy()
+    
+    # Handle missing data
+    df_v2_ess[ess_col_v2] = df_v2_ess[ess_col_v2].replace(-9, pd.NA)
+    
+    # Apply multi-class threshold
+    df_v2_ess['sleepiness_class'] = df_v2_ess[ess_col_v2].apply(
+        lambda x: apply_multiclass_threshold(x, sleepiness_thresholds)
+    )
+    
+    # Log statistics for Visit 2
+    valid_v2_ess = df_v2_ess['sleepiness_class'] != ''
+    class_dist_v2_ess = df_v2_ess['sleepiness_class'][valid_v2_ess].value_counts().sort_index()
+    logger.info(f"Visit 2 - Valid sleepiness classifications: {valid_v2_ess.sum()}")
+    for class_idx, count in class_dist_v2_ess.items():
+        class_name = sleepiness_labels[int(class_idx)]
+        logger.info(f"  Class {class_idx} ({class_name}): {count} ({count/valid_v2_ess.sum()*100:.1f}%)")
+    
+    # Create records with visit suffix
+    df_v2_ess['subject_id'] = df_v2_ess[subject_id_col].astype(str) + '_v2'
+    df_v2_ess['visit'] = 2
+    df_v2_ess.rename(columns={ess_col_v2: 'ess_score'}, inplace=True)
+    ess_v2 = df_v2_ess[['subject_id', 'visit', 'sleepiness_class', 'ess_score']].copy()
+    
+    # Combine Visit 1 and Visit 2 ESS data
+    ess_targets = pd.concat([ess_v1, ess_v2], ignore_index=True)
+    logger.info(f"\nTotal ESS records (both visits): {len(ess_targets)}")
+    logger.info(f"Valid ESS classifications (both visits): {(ess_targets['sleepiness_class'] != '').sum()}")
+    
+    # ===================================================================
+    # TASK 3: CVD (BINARY) - Subject-level (applies to both visits)
     # ===================================================================
     
     logger.info("\n=== Task: cvd_binary (Tier 2 - Binary) ===")
@@ -196,6 +270,13 @@ def extract_shhs_targets(config: dict) -> pd.DataFrame:
     # Start with apnea data (has subject_id with visit suffix)
     targets = apnea_targets.copy()
     
+    # Merge ESS data (should match on subject_id and visit)
+    targets = targets.merge(
+        ess_targets,
+        on=['subject_id', 'visit'],
+        how='left'
+    )
+    
     # Extract original nsrrid from subject_id for CVD merge
     targets['nsrrid_orig'] = targets['subject_id'].str.replace('_v[12]$', '', regex=True).astype(int)
     
@@ -212,7 +293,9 @@ def extract_shhs_targets(config: dict) -> pd.DataFrame:
     # Add dataset column
     targets['dataset'] = dataset
     
-    # Fill missing CVD with empty string (consistent with other tasks)
+    # Fill missing values with empty string (consistent with other tasks)
+    targets['sleepiness_class'] = targets['sleepiness_class'].fillna('')
+    targets['ess_score'] = targets['ess_score'].fillna('')
     targets['cvd_binary'] = targets['cvd_binary'].fillna('')
     
     # ===================================================================
@@ -234,7 +317,12 @@ def extract_shhs_targets(config: dict) -> pd.DataFrame:
         interleaved_cols.append(task_col)
         # Find corresponding score column
         task_name = task_col.rsplit('_', 1)[0]  # Remove _class or _binary suffix
-        score_col = f"{task_name}_score" if task_name == 'rdi' else None
+        # Map task names to score column names
+        score_map = {
+            'apnea': 'rdi_score',
+            'sleepiness': 'ess_score'
+        }
+        score_col = score_map.get(task_name)
         if score_col and score_col in score_columns:
             interleaved_cols.append(score_col)
     
@@ -255,6 +343,7 @@ def extract_shhs_targets(config: dict) -> pd.DataFrame:
     # Mark multi-class columns
     is_multiclass = {
         'apnea_class': True,
+        'sleepiness_class': True,
         'cvd_binary': False
     }
     
@@ -303,7 +392,7 @@ def main():
         output_file = log_dir / 'shhs_targets.csv'
         
         # Define column order (consistent with APPLES)
-        column_order = ['subject_id', 'dataset', 'visit', 'apnea_class', 'rdi_score', 'cvd_binary']
+        column_order = ['subject_id', 'dataset', 'visit', 'apnea_class', 'rdi_score', 'sleepiness_class', 'ess_score', 'cvd_binary']
         save_dataset_targets(targets, output_file, 'shhs', column_order)
         
         logger.info("\n" + "="*80)
