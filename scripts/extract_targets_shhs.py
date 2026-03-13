@@ -29,13 +29,14 @@ from nsrr_tools.targets.extraction_utils import (
     load_config_file,
     save_dataset_targets,
 )
+from nsrr_tools.utils.mount_utils import ensure_sshfs_mounted
 
 
 def setup_logging(log_file: Path) -> None:
     """Configure logging."""
     logger.remove()
     logger.add(sys.stderr, level="INFO")
-    logger.add(log_file, level="DEBUG", rotation="10 MB")
+    logger.add(log_file, level="DEBUG", mode="w")
 
 
 def extract_shhs_targets(config: dict) -> pd.DataFrame:
@@ -385,7 +386,15 @@ def main():
     # Load configuration
     config_path = Path(__file__).parent.parent / args.config
     config = load_config_file(config_path)
-    
+
+    # Ensure SSHFS scratch mount is alive before touching any paths
+    scratch_root = Path(config['paths']['raw_data']).parent  # cc_scratch/
+    ensure_sshfs_mounted(
+        mount_point=scratch_root,
+        remote="boshra95@fir.alliancecan.ca:/home/boshra95/scratch/",
+        options=["auto_cache", "reconnect", "compression=yes"],
+    )
+
     # Setup logging
     log_dir = Path(config['paths']['targets_output'])
     log_dir.mkdir(parents=True, exist_ok=True)

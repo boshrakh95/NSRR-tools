@@ -3,11 +3,17 @@
 # Created: 2026-03-10
 
 # Data paths
+# Cluster (Compute Canada): uncomment these and comment out the local ones
+#   raw_data: "/home/boshra95/scratch/nsrr_downloads"
+#   derived_data: "/home/boshra95/scratch/psg"
+#   unified_metadata: "/home/boshra95/scratch/psg/unified/metadata"
+#   targets_output: "/home/boshra95/scratch/psg/unified/targets"
+# Local PC (cc_scratch mirrors cluster scratch):
 paths:
-  raw_data: "/home/boshra95/scratch/nsrr_downloads"
-  derived_data: "/home/boshra95/scratch/psg"
-  unified_metadata: "/home/boshra95/scratch/psg/unified/metadata"
-  targets_output: "/home/boshra95/scratch/psg/unified/targets"
+  raw_data: "/Users/boshra/NSRR-workspace/cc_scratch/nsrr_downloads"
+  derived_data: "/Users/boshra/NSRR-workspace/cc_scratch/psg"
+  unified_metadata: "/Users/boshra/NSRR-workspace/cc_scratch/psg/unified/metadata"
+  targets_output: "/Users/boshra/NSRR-workspace/cc_scratch/psg/unified/targets"
 
 # Clinical thresholds for classification
 # Based on validated clinical instruments and literature (see CLASSIFICATION_TARGETS_ANALYSIS.md)
@@ -43,7 +49,7 @@ thresholds:
           3: "Moderately severe to severe (20-27)"
     rationale: "BDI-II: Beck 1996; PHQ-9: Kroenke 2001"
     
-  sleepiness_class:
+  sleepiness_class: #should be updated to binary, not many severe cases
     type: "multiclass"
     num_classes: 3
     thresholds: [10, 15]  # Boundaries: 0-10, 11-15, 16-24
@@ -70,10 +76,10 @@ thresholds:
     rationale: "Adjudicated cardiovascular events"
     
   rested_morning:
-    good_threshold: 4  # >= 4 indicates well-rested
-    poor_threshold: 2  # <= 2 indicates poorly rested
-    # 3 is ambiguous, treated as missing
-    rationale: "Subjective self-report, conservative thresholds"
+    good_threshold: 4  # >= 4 indicates well-rested (1)
+    poor_threshold: 3  # <= 3 indicates not well-rested (0); includes neutral answer
+    # All 5 answers are classified: 1-3 = not rested (0), 4-5 = well-rested (1)
+    rationale: "Subjective self-report; split at 4 to include all subjects"
 
 # Task definitions per dataset
 # Each task specifies: source files, columns, visit filters, priority
@@ -260,8 +266,8 @@ tasks:
   # ====================
   stages:
     dataset_id: "stages"
-    subject_id_column: "nsrrid"
-    
+    subject_id_column: "subject_code"  # STAGES uses subject_code, NOT nsrrid
+
     depression_binary:
       enabled: true
       priority: "tier1"
@@ -270,7 +276,7 @@ tasks:
       continuous_column: "phq_1000"
       threshold_override: 10.0  # PHQ-9 >= 10
       expected_prevalence: [0.15, 0.25]
-      
+
     anxiety_binary:
       enabled: true
       priority: "tier2"
@@ -278,7 +284,7 @@ tasks:
       column: "gad_0800"
       continuous_column: "gad_0800"
       expected_prevalence: [0.15, 0.20]
-      
+
     fatigue_binary:
       enabled: false  # Optional for now
       priority: "tier3"
@@ -286,24 +292,25 @@ tasks:
       column: "fss_1000"
       continuous_column: "fss_1000"
       notes: "Total score 9-63, threshold >= 36"
-      
+
     sleepiness_binary:
-      enabled: false  # Check if column exists
+      enabled: true  # ess_0900 confirmed present in stages-dataset-0.3.0.csv
       priority: "tier2"
       source_file: "stages-dataset-0.3.0.csv"
       column: "ess_0900"
       continuous_column: "ess_0900"
-      notes: "Check availability in CSV"
-      
+      threshold_override: 11.0  # ESS >= 11 standard clinical threshold
+      expected_prevalence: [0.20, 0.40]
+
     insomnia_binary:
       enabled: true
       priority: "tier2"
-      source_file: "STAGESPSGKeySRBDVariables2020-08-29 Deidentified.xlsx"
-      column: "ISI_total"  # Verify actual column name
-      continuous_column: "ISI_total"
+      source_file: "stages-dataset-0.3.0.csv"  # isi_score confirmed in main CSV
+      column: "isi_score"  # ISI total score in main CSV (not external XLSX)
+      continuous_column: "isi_score"
       expected_prevalence: [0.20, 0.30]
-      notes: "External XLSX file"
-      
+      notes: "isi_score confirmed present in stages-dataset-0.3.0.csv"
+
     apnea_binary:
       enabled: false  # Skip for Phase 1
       priority: "tier1"
@@ -395,7 +402,8 @@ validation:
 # Logging configuration
 logging:
   log_file: "target_extraction.log"
-  log_dir: "/home/boshra95/scratch/psg/unified/targets"
+  # log_dir: "/home/boshra95/scratch/psg/unified/targets"  # Compute Canada
+  log_dir: "/Users/boshra/NSRR-workspace/cc_scratch/psg/unified/targets"  # Local PC
   level: "INFO"
   
 # Execution phases

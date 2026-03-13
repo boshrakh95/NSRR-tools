@@ -24,7 +24,7 @@ def setup_logging(log_file: Path) -> None:
     """Configure logging with loguru."""
     logger.remove()
     logger.add(sys.stderr, level="INFO")
-    logger.add(log_file, level="DEBUG", rotation="10 MB")
+    logger.add(log_file, level="DEBUG", mode="w")
 
 
 def load_config(config_path: Path) -> Dict:
