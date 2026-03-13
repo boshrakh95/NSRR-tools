@@ -5,13 +5,13 @@ Extract Classification Targets for STAGES Dataset
 STAGES is a single-visit dataset. Subject ID column is `subject_code`
 (NOT nsrrid — see STAGES_DATA_NOTES.md and stages_adapter.py).
 
-Extracts (all from stages-dataset-0.3.0.csv unless noted):
+Extracts:
+- apnea_class        : AHI 4-class (STAGESPSGKeySRBDVariables XLSX) [<5, 5-15, 15-30, >=30]
 - depression_binary  : PHQ-9 (phq_1000) >= 10
 - anxiety_binary     : GAD-7 (gad_0800) >= 10
 - insomnia_binary    : ISI  (isi_score)  >= 15  [confirmed in main CSV]
 - sleepiness_binary  : ESS  (ess_0900)   >= 11  [confirmed in main CSV]
 - fatigue_binary     : FSS  (fss_1000)   >= 36  [disabled by default]
-- apnea_binary       : SKIPPED (requires XML parsing)
 
 Usage:
     python scripts/extract_targets_stages.py --config configs/target_extraction.yaml
@@ -27,6 +27,7 @@ from loguru import logger
 sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
 
 from nsrr_tools.targets.extraction_utils import (
+    apply_multiclass_threshold,
     apply_threshold,
     compute_task_statistics,
     load_config_file,
@@ -49,8 +50,8 @@ def extract_stages_targets(config: dict) -> pd.DataFrame:
     STAGES specifics:
     - Single visit per subject (visit column = 0)
     - Subject ID column: subject_code (not nsrrid)
-    - All questionnaire columns in stages-dataset-0.3.0.csv
-    - AHI not available from CSV (disabled)
+    - Questionnaire columns in stages-dataset-0.3.0.csv
+    - AHI from STAGESPSGKeySRBDVariables XLSX (merged on subject_code)
     """
     dataset = 'stages'
     stages_config = config['tasks'][dataset]
@@ -81,13 +82,82 @@ def extract_stages_targets(config: dict) -> pd.DataFrame:
             f"Expected subject_id_col '{subject_id_col}' not in STAGES CSV. "
             f"Available columns (first 20): {list(df.columns[:20])}"
         )
-    logger.info(f"Subject IDs found: {df[subject_id_col].notna().sum()} non-null")
+
+    # STAGES CSVs can have duplicate subject_codes — keep last (most complete)
+    n_before = len(df)
+    df = df.drop_duplicates(subset=[subject_id_col], keep='last')
+    if len(df) < n_before:
+        logger.info(f"Removed {n_before - len(df)} duplicate subject_codes (kept last)")
+    logger.info(f"Subject IDs after dedup: {df[subject_id_col].notna().sum()} non-null")
 
     # Replace -9 sentinel with NaN across all numeric columns (NSRR convention)
     df = df.replace(-9, pd.NA)
 
     # ===================================================================
-    # TASK 1: DEPRESSION (BINARY) — PHQ-9 >= 10
+    # TASK 1: APNEA CLASS (4-class) — AHI from PSG key XLSX
+    # ===================================================================
+    logger.info("\n" + "=" * 60)
+    logger.info("Task: apnea_class (AHI: <5, 5-15, 15-30, >=30)")
+    logger.info("=" * 60)
+
+    apnea_cfg = stages_config['apnea_class']
+    ahi_col = apnea_cfg['column']               # ahi
+    xlsx_id_col = apnea_cfg.get('xlsx_subject_id_column', subject_id_col)
+    psg_key_file = data_dir / apnea_cfg['source_file']
+
+    logger.info(f"PSG key file: {psg_key_file}")
+    logger.info(f"AHI column: {ahi_col},  subject ID column in XLSX: {xlsx_id_col}")
+
+    if not psg_key_file.exists():
+        raise FileNotFoundError(
+            f"PSG key XLSX not found: {psg_key_file}\n"
+            f"Expected: {apnea_cfg['source_file']} in {data_dir}"
+        )
+
+    df_psg = pd.read_excel(psg_key_file)
+    logger.info(f"PSG key loaded: {len(df_psg)} rows, columns: {list(df_psg.columns[:15])}")
+
+    if xlsx_id_col not in df_psg.columns:
+        raise ValueError(
+            f"Subject ID column '{xlsx_id_col}' not found in PSG key XLSX. "
+            f"Available columns: {list(df_psg.columns)}"
+        )
+    if ahi_col not in df_psg.columns:
+        raise ValueError(
+            f"AHI column '{ahi_col}' not found in PSG key XLSX. "
+            f"Available columns: {list(df_psg.columns)}"
+        )
+
+    # Deduplicate PSG key on subject ID
+    df_psg = df_psg.drop_duplicates(subset=[xlsx_id_col], keep='last')
+
+    # Merge AHI into main df (left join: keep all subjects, NaN for those without PSG)
+    df_psg_slim = df_psg[[xlsx_id_col, ahi_col]].copy()
+    if xlsx_id_col != subject_id_col:
+        df_psg_slim = df_psg_slim.rename(columns={xlsx_id_col: subject_id_col})
+    df = df.merge(df_psg_slim, on=subject_id_col, how='left')
+    logger.info(f"After merge: {df[ahi_col].notna().sum()} subjects have AHI")
+
+    df[ahi_col] = pd.to_numeric(df[ahi_col], errors='coerce')
+    validate_score_range(df, ahi_col, config['validation']['apnea_binary']['ahi_range'],
+                         dataset, 'apnea_class')
+
+    apnea_thresholds = config['thresholds']['apnea_class']['thresholds']  # [5, 15, 30]
+    df['apnea_class'] = df[ahi_col].apply(
+        lambda x: apply_multiclass_threshold(x, apnea_thresholds)
+    )
+    df['ahi_score'] = df[ahi_col].astype(str).replace(['nan', '<NA>'], '')
+
+    class_dist = df['apnea_class'][df['apnea_class'] != ''].value_counts().sort_index()
+    logger.info(f"  Class distribution: {dict(class_dist)}")
+    for cls, count in class_dist.items():
+        cls_name = config['thresholds']['apnea_class']['class_labels'][int(cls)]
+        logger.info(f"    Class {cls} ({cls_name}): {count}")
+    n_miss = (df['apnea_class'] == '').sum()
+    logger.info(f"  Missing AHI: {n_miss}")
+
+    # ===================================================================
+    # TASK 2: DEPRESSION (BINARY) — PHQ-9 >= 10
     # ===================================================================
     logger.info("\n" + "=" * 60)
     logger.info("Task: depression_binary (PHQ-9 >= 10)")
@@ -114,7 +184,7 @@ def extract_stages_targets(config: dict) -> pd.DataFrame:
         _log_binary_dist(df, 'depression_binary', "No depression / Depression")
 
     # ===================================================================
-    # TASK 2: ANXIETY (BINARY) — GAD-7 >= 10
+    # TASK 3: ANXIETY (BINARY) — GAD-7 >= 10
     # ===================================================================
     logger.info("\n" + "=" * 60)
     logger.info("Task: anxiety_binary (GAD-7 >= 10)")
@@ -141,7 +211,7 @@ def extract_stages_targets(config: dict) -> pd.DataFrame:
         _log_binary_dist(df, 'anxiety_binary', "No anxiety / Anxiety")
 
     # ===================================================================
-    # TASK 3: INSOMNIA (BINARY) — ISI >= 15
+    # TASK 4: INSOMNIA (BINARY) — ISI >= 15
     # ===================================================================
     logger.info("\n" + "=" * 60)
     logger.info("Task: insomnia_binary (ISI >= 15)")
@@ -165,12 +235,11 @@ def extract_stages_targets(config: dict) -> pd.DataFrame:
         df['insomnia_binary'] = df[ins_col].apply(
             lambda x: apply_threshold(x, ins_threshold)
         )
-        # Rename raw column to score column (avoid collision with binary column name)
         df['isi_score'] = df[ins_col].astype(str).replace(['nan', '<NA>'], '')
         _log_binary_dist(df, 'insomnia_binary', "No insomnia / Insomnia")
 
     # ===================================================================
-    # TASK 4: SLEEPINESS (BINARY) — ESS >= 11
+    # TASK 5: SLEEPINESS (BINARY) — ESS >= 11
     # ===================================================================
     logger.info("\n" + "=" * 60)
     logger.info("Task: sleepiness_binary (ESS >= 11)")
@@ -197,7 +266,7 @@ def extract_stages_targets(config: dict) -> pd.DataFrame:
         _log_binary_dist(df, 'sleepiness_binary', "Normal sleepiness / Excessive sleepiness")
 
     # ===================================================================
-    # TASK 5: FATIGUE (BINARY) — FSS >= 36 — disabled by default
+    # TASK 6: FATIGUE (BINARY) — FSS >= 36 — disabled by default
     # ===================================================================
     task_cfg = stages_config['fatigue_binary']
     fatigue_enabled = task_cfg.get('enabled', False)
@@ -225,15 +294,6 @@ def extract_stages_targets(config: dict) -> pd.DataFrame:
             _log_binary_dist(df, 'fatigue_binary', "No fatigue / Fatigue")
     else:
         logger.info("\n=== Task: fatigue_binary (SKIPPED — disabled in config) ===")
-        df['fatigue_binary'] = ''
-        df['fss_score'] = ''
-
-    # ===================================================================
-    # APNEA — ALWAYS SKIPPED
-    # ===================================================================
-    logger.info("\n=== Task: apnea_binary (SKIPPED — AHI not in CSV, requires XML) ===")
-    df['apnea_binary'] = ''
-    df['ahi_score'] = ''
 
     # ===================================================================
     # ASSEMBLE OUTPUT
@@ -248,12 +308,16 @@ def extract_stages_targets(config: dict) -> pd.DataFrame:
     targets['dataset'] = dataset
     targets['visit'] = 0  # single-visit dataset
 
-    for col in ['apnea_binary', 'ahi_score',
-                'depression_binary', 'phq9_score',
-                'sleepiness_binary', 'ess_score',
-                'anxiety_binary', 'gad7_score',
-                'insomnia_binary', 'isi_score',
-                'fatigue_binary', 'fss_score']:
+    # Active tasks only — no empty placeholder columns
+    active_cols = ['apnea_class', 'ahi_score',
+                   'depression_binary', 'phq9_score',
+                   'sleepiness_binary', 'ess_score',
+                   'anxiety_binary', 'gad7_score',
+                   'insomnia_binary', 'isi_score']
+    if fatigue_enabled:
+        active_cols += ['fatigue_binary', 'fss_score']
+
+    for col in active_cols:
         targets[col] = df[col].values if col in df.columns else ''
 
     # Fill any remaining NaN with empty string
@@ -273,7 +337,8 @@ def extract_stages_targets(config: dict) -> pd.DataFrame:
     binary_cols = [c for c in ['depression_binary', 'anxiety_binary',
                                 'insomnia_binary', 'sleepiness_binary',
                                 'fatigue_binary'] if c in targets.columns]
-    compute_task_statistics(targets, binary_cols, dataset, is_multiclass={})
+    compute_task_statistics(targets, binary_cols, dataset,
+                            is_multiclass={'apnea_class': True})
 
     return targets
 
@@ -343,15 +408,17 @@ def main():
 
         output_path = args.output or (log_dir / "stages_targets.csv")
 
+        fatigue_enabled = config['tasks']['stages']['fatigue_binary'].get('enabled', False)
         column_order = [
             'subject_id', 'dataset', 'visit',
-            'apnea_binary', 'ahi_score',
+            'apnea_class', 'ahi_score',
             'depression_binary', 'phq9_score',
             'sleepiness_binary', 'ess_score',
             'anxiety_binary', 'gad7_score',
             'insomnia_binary', 'isi_score',
-            'fatigue_binary', 'fss_score',
         ]
+        if fatigue_enabled:
+            column_order += ['fatigue_binary', 'fss_score']
 
         save_dataset_targets(targets_df, output_path, 'stages', column_order)
 

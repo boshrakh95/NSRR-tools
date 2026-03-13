@@ -311,10 +311,14 @@ tasks:
       expected_prevalence: [0.20, 0.30]
       notes: "isi_score confirmed present in stages-dataset-0.3.0.csv"
 
-    apnea_binary:
-      enabled: false  # Skip for Phase 1
+    apnea_class:
+      enabled: true
       priority: "tier1"
-      notes: "Would require XML parsing or external XLSX. Skip initially."
+      source_file: "STAGESPSGKeySRBDVariables2020-08-29 Deidentified.xlsx"
+      column: "ahi"             # AHI column in PSG key XLSX (confirmed via nocturn)
+      continuous_column: "ahi"
+      xlsx_subject_id_column: "s_code"  # ID col in the PSG key XLSX (confirmed from file)
+      expected_distribution: [0.10, 0.25, 0.30, 0.35]  # Normal, Mild, Moderate, Severe
 
 # Output schema for per-dataset CSV files
 output_schema:
