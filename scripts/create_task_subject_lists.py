@@ -80,7 +80,18 @@ DATASET_FILES = {
     'stages': 'stages_targets.csv',
 }
 
-ALL_TASKS = BINARY_TASKS + list(MULTICLASS_TASKS.keys())
+# ── Sleep staging ─────────────────────────────────────────────────────────────
+# Source: per-subject *_stages.npy in psg/{dataset}/derived/annotations/
+# Labels are per-30-sec-epoch arrays — NOT a single label per subject.
+# Output CSV has annotation_path + n_epochs instead of a label column.
+# Class values in files: 0=Wake, 1=N1, 2=N2, 3=N3, 5=REM
+#   Remap 5→4 happens in the DataLoader, not here.
+# Filename conventions:
+#   SHHS (multi-visit):  {subject_id}_v{visit}_stages.npy
+#   All others:          {subject_id}_stages.npy  (visit inferred from master_targets)
+STAGING_DATASETS = ['apples', 'shhs', 'mros', 'stages']
+
+ALL_TASKS = BINARY_TASKS + list(MULTICLASS_TASKS.keys()) + ['sleep_staging']
 
 
 def setup_logging(log_file: Path) -> None:
@@ -193,6 +204,109 @@ def log_task_stats(task: str, df: pd.DataFrame, num_classes: int = 2) -> dict:
     }
 
 
+# ── Sleep staging ─────────────────────────────────────────────────────────────
+
+def build_sleep_staging_subject_list(
+    derived_root: Path,
+    master: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Scan annotations dirs for *_stages.npy files and cross-reference with master.
+
+    Returns DataFrame with columns:
+        unified_id, dataset, subject_id, visit, annotation_path, n_epochs
+    annotation_path is absolute.
+    Subjects present in annotations but missing from master are warned and skipped.
+    """
+    import re
+    import numpy as np
+
+    rows = []
+
+    # Build a lookup from master: (dataset, subject_id, visit) → unified_id
+    master_index = {
+        (row['dataset'], str(row['subject_id']), int(row['visit'])): row['unified_id']
+        for _, row in master.iterrows()
+    }
+
+    for dataset in STAGING_DATASETS:
+        ann_dir = derived_root / dataset / 'derived' / 'annotations'
+        if not ann_dir.exists():
+            logger.warning(f'  [{dataset}] annotations dir not found: {ann_dir}')
+            continue
+
+        npy_files = sorted(
+            p for p in ann_dir.glob('*_stages.npy')
+            if not p.name.startswith('._')
+        )
+        logger.info(f'  [{dataset}] found {len(npy_files):,} staging files')
+
+        matched = skipped = 0
+        for npy_path in npy_files:
+            stem = npy_path.stem  # e.g. "200001_v1_stages" or "AA0001_stages"
+
+            # Parse subject_id and visit from filename
+            # Pattern 1: {subject_id}_v{visit}_stages  (SHHS multi-visit)
+            m = re.match(r'^(.+)_v(\d+)_stages$', stem)
+            if m:
+                subject_id = m.group(1)
+                visit = int(m.group(2))
+            else:
+                # Pattern 2: {subject_id}_stages  (single-visit or visit not in filename)
+                m2 = re.match(r'^(.+)_stages$', stem)
+                if not m2:
+                    logger.warning(f'  [{dataset}] unexpected filename: {npy_path.name} — skipping')
+                    skipped += 1
+                    continue
+                subject_id = m2.group(1)
+                # Infer visit from master: find any matching (dataset, subject_id) row
+                candidates = [
+                    v for (ds, sid, v) in master_index if ds == dataset and sid == subject_id
+                ]
+                if not candidates:
+                    logger.debug(f'  [{dataset}] {subject_id}: not in master — skipping')
+                    skipped += 1
+                    continue
+                visit = candidates[0]  # take the first (usually only one)
+
+            unified_id = master_index.get((dataset, subject_id, visit))
+            if unified_id is None:
+                logger.debug(f'  [{dataset}] ({subject_id}, v{visit}) not in master — skipping')
+                skipped += 1
+                continue
+
+            try:
+                arr = np.load(npy_path, mmap_mode='r')
+                n_epochs = int(arr.shape[0])
+            except Exception as e:
+                logger.warning(f'  [{dataset}] failed to read {npy_path.name}: {e}')
+                skipped += 1
+                continue
+
+            rows.append({
+                'unified_id':       unified_id,
+                'dataset':          dataset,
+                'subject_id':       subject_id,
+                'visit':            visit,
+                'annotation_path':  str(npy_path),
+                'n_epochs':         n_epochs,
+            })
+            matched += 1
+
+        logger.info(f'  [{dataset}] matched={matched:,}  skipped={skipped:,}')
+
+    if not rows:
+        return pd.DataFrame()
+
+    df = pd.DataFrame(rows)
+    total_epochs = df['n_epochs'].sum()
+    logger.info(
+        f'  sleep_staging: N={len(df):,} subjects  '
+        f'total_epochs={total_epochs:,} (~{total_epochs*30/3600:.0f} h)'
+    )
+    return df.reset_index(drop=True)
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main() -> int:
@@ -291,6 +405,37 @@ def main() -> int:
         logger.info(f'  Saved: {out_path}')
         if stats:
             summary_rows.append(stats)
+
+    # ── Sleep staging ────────────────────────────────────────────────────────
+    if 'sleep_staging' in args.tasks:
+        logger.info('\n' + '=' * 80)
+        logger.info('Sleep staging  (source: psg/*/derived/annotations/*_stages.npy)')
+        logger.info('=' * 80)
+
+        # master must be loaded for unified_id lookup
+        if master is None:
+            if not master_path.exists():
+                logger.error(f'master_targets.parquet not found: {master_path}')
+                return 1
+            master = pd.read_parquet(master_path)
+
+        derived_root = Path(config['paths']['derived_data'])
+        df_staging = build_sleep_staging_subject_list(derived_root, master)
+
+        if not df_staging.empty:
+            out_path = out_dir / 'sleep_staging_subjects.csv'
+            df_staging.to_csv(out_path, index=False)
+            logger.info(f'  Saved: {out_path}')
+            summary_rows.append({
+                'task':        'sleep_staging',
+                'n_total':     len(df_staging),
+                'num_classes': 5,
+                'balance':     'per-epoch (see annotation_path)',
+                'datasets':    ','.join(
+                    f"{k}:{v}" for k, v in
+                    df_staging['dataset'].value_counts().to_dict().items()
+                ),
+            })
 
     # ── Summary ───────────────────────────────────────────────────────────────
     if summary_rows:

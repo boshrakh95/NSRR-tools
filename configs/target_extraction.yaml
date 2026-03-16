@@ -2,18 +2,20 @@
 # This file defines all classification targets, thresholds, and data sources
 # Created: 2026-03-10
 
+#  NOTE: if switching between local and cluster execution, update the "paths" and "logging" sections accordingly (comment/uncomment as needed) to point to the correct data directories.
+
 # Data paths
-# Cluster (Compute Canada): uncomment these and comment out the local ones
-#   raw_data: "/home/boshra95/scratch/nsrr_downloads"
-#   derived_data: "/home/boshra95/scratch/psg"
-#   unified_metadata: "/home/boshra95/scratch/psg/unified/metadata"
-#   targets_output: "/home/boshra95/scratch/psg/unified/targets"
-# Local PC (cc_scratch mirrors cluster scratch):
 paths:
-  raw_data: "/Users/boshra/NSRR-workspace/cc_scratch/nsrr_downloads"
-  derived_data: "/Users/boshra/NSRR-workspace/cc_scratch/psg"
-  unified_metadata: "/Users/boshra/NSRR-workspace/cc_scratch/psg/unified/metadata"
-  targets_output: "/Users/boshra/NSRR-workspace/cc_scratch/psg/unified/targets"
+# Local PC (cc_scratch mirrors cluster scratch):
+  # raw_data: "/Users/boshra/NSRR-workspace/cc_scratch/nsrr_downloads"
+  # derived_data: "/Users/boshra/NSRR-workspace/cc_scratch/psg"
+  # unified_metadata: "/Users/boshra/NSRR-workspace/cc_scratch/psg/unified/metadata"
+  # targets_output: "/Users/boshra/NSRR-workspace/cc_scratch/psg/unified/targets"
+# Cluster (Compute Canada): uncomment these and comment out the local ones
+  raw_data: "/home/boshra95/scratch/nsrr_downloads"
+  derived_data: "/home/boshra95/scratch/psg"
+  unified_metadata: "/home/boshra95/scratch/psg/unified/metadata"
+  targets_output: "/home/boshra95/scratch/psg/unified/targets"
 
 # Clinical thresholds for classification
 # Based on validated clinical instruments and literature (see CLASSIFICATION_TARGETS_ANALYSIS.md)
@@ -406,8 +408,8 @@ validation:
 # Logging configuration
 logging:
   log_file: "target_extraction.log"
-  # log_dir: "/home/boshra95/scratch/psg/unified/targets"  # Compute Canada
-  log_dir: "/Users/boshra/NSRR-workspace/cc_scratch/psg/unified/targets"  # Local PC
+  log_dir: "/home/boshra95/scratch/psg/unified/targets"  # Compute Canada
+  # log_dir: "/Users/boshra/NSRR-workspace/cc_scratch/psg/unified/targets"  # Local PC
   level: "INFO"
   
 # Execution phases
