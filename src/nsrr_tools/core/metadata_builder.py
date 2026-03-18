@@ -171,9 +171,14 @@ class MetadataBuilder:
             return pd.read_parquet(cache_file)
         
         # Load phenotype data
+        # MrOS: load both visits at once so each visit becomes a separate row
         try:
-            pheno_df = adapter.load_metadata()
-            logger.info(f"  Loaded {len(pheno_df)} subjects from metadata CSV")
+            if dataset_name.lower() == 'mros' and hasattr(adapter, 'load_metadata_all_visits'):
+                pheno_df = adapter.load_metadata_all_visits()
+                logger.info(f"  Loaded {len(pheno_df)} MrOS rows (both visits)")
+            else:
+                pheno_df = adapter.load_metadata()
+                logger.info(f"  Loaded {len(pheno_df)} subjects from metadata CSV")
         except Exception as e:
             logger.error(f"  Failed to load metadata: {e}")
             return None
@@ -202,8 +207,9 @@ class MetadataBuilder:
             try:
                 # Normalize subject ID to match phenotype format (dataset-specific)
                 if dataset_name.lower() == 'mros':
-                    # MrOS: "mros-visit1-aa0001" -> "AA0001"
+                    # MrOS EDF stem: "mros-visit1-aa0001" -> normalized_id "AA0001", visit 1
                     normalized_id = subject_id.split('-')[-1].upper()
+                    visit = 2 if 'visit2' in str(edf_path).lower() else 1
                 else:
                     # APPLES/SHHS/STAGES: use subject_id as-is (already extracted by adapter)
                     normalized_id = subject_id
@@ -230,12 +236,14 @@ class MetadataBuilder:
                         rates = [sfreqs.get(found_ch, 0) for std_ch, found_ch in channels.items()]
                         modality_sfreqs[f'{mod}_sfreq'] = max(rates) if rates else 0
                 
-                # For SHHS: Include visit in key to avoid overwriting multi-visit subjects
-                # For others: Use normalized_id directly
+                # For SHHS and MrOS: include visit in key (multi-visit datasets)
+                # For others: use normalized_id directly
                 if dataset_name.lower() == 'shhs':
-                    # Extract visit from EDF path (shhs1 or shhs2)
+                    # visit already determined from EDF path above for non-MrOS
                     visit = 2 if 'shhs2' in str(edf_path).lower() else 1
-                    # Use composite key: nsrrid_visit (to be consistent with merge logic)
+                    dict_key = (normalized_id, visit)
+                elif dataset_name.lower() == 'mros':
+                    # visit already extracted from EDF path above
                     dict_key = (normalized_id, visit)
                 else:
                     dict_key = normalized_id
@@ -275,6 +283,8 @@ class MetadataBuilder:
                 if dataset_name.lower() == 'shhs':
                     visit = 2 if 'shhs2' in str(edf_path).lower() else 1
                     dict_key = (normalized_id, visit)
+                elif dataset_name.lower() == 'mros':
+                    dict_key = (normalized_id, visit)
                 else:
                     dict_key = normalized_id
                     
@@ -288,9 +298,9 @@ class MetadataBuilder:
         # Merge with phenotype data
         channel_df = pd.DataFrame.from_dict(channel_info, orient='index')
         
-        # For SHHS: Extract merge_key and visit from tuple index
-        # For others: Index is already the merge_key
-        if dataset_name.lower() == 'shhs':
+        # For SHHS and MrOS: extract merge_key and visit from tuple index
+        # For others: index is already the merge_key
+        if dataset_name.lower() in ('shhs', 'mros'):
             # Index is tuple (nsrrid, visit)
             channel_df['merge_key'] = [idx[0] for idx in channel_df.index]
             channel_df['psg_visit'] = [idx[1] for idx in channel_df.index]
@@ -301,16 +311,25 @@ class MetadataBuilder:
         id_col = adapter.get_subject_id_column()
         
         if dataset_name.lower() == 'mros':
-            # MrOS: Simple merge on subject_id (normalized from EDF filename)
+            # MrOS: Visit-aware merge — same pattern as SHHS.
+            # pheno_df has psg_visit column (from load_metadata_all_visits).
+            # channel_df has psg_visit column (from tuple index extraction above).
+            pheno_df[id_col] = pheno_df[id_col].astype(str).str.upper()
+            # Always inner: MrOS metadata CSVs contain all cohort participants, not just
+            # PSG subjects. Only keep rows that have a matched EDF (visit-aware).
             merged_df = pheno_df.merge(
                 channel_df,
-                left_on=id_col,
-                right_on='merge_key',
-                how='inner' if limit else 'left'
+                left_on=[id_col, 'psg_visit'],
+                right_on=['merge_key', 'psg_visit'],
+                how='inner'
             ).copy()
-            
-            # Use original ID as subject_id (single visit per subject)
-            merged_df['subject_id'] = merged_df[id_col].astype(str)
+
+            # Composite subject_id: AA0001_v1, AA0001_v2 — treats each visit as a distinct subject
+            merged_df['subject_id'] = (
+                merged_df[id_col].astype(str) + '_v' + merged_df['psg_visit'].astype(str)
+            )
+            logger.info(f"  MrOS visits: {merged_df['psg_visit'].value_counts().sort_index().to_dict()}")
+            logger.info(f"  Created {len(merged_df)} unique visit records with composite subject_ids")
         
         elif dataset_name.lower() == 'apples':
             # APPLES: Multi-step merge strategy with visit 1 baseline data
@@ -477,6 +496,11 @@ class MetadataBuilder:
         # Cache the results (but not when testing with limit)
         if not limit:
             cache_file.parent.mkdir(parents=True, exist_ok=True)
+            # Fix mixed-type object columns (e.g. MrOS epread has '3','A',NaN)
+            # PyArrow cannot infer a numeric type when strings like 'A' are present.
+            # Cast all remaining object columns to string so the parquet write succeeds.
+            for col in merged_df.select_dtypes(include='object').columns:
+                merged_df[col] = merged_df[col].astype(str)
             merged_df.to_parquet(cache_file, index=False)
             logger.info(f"  Cached metadata to {cache_file}")
         

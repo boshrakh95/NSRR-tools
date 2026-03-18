@@ -1,0 +1,172 @@
+# ============================================================
+# Phase 0 — Context-Length Sweep Configuration
+# ============================================================
+# Switch between CC cluster and local Mac by commenting/uncommenting
+# the appropriate path blocks.
+
+# ── Embedding Extraction ─────────────────────────────────────────────────────
+embedding:
+  # Frozen SleepFM encoder
+  checkpoint_dir: "/home/boshra95/sleepfm-clinical/sleepfm/checkpoints/model_base"
+  # Local Mac:
+  # checkpoint_dir: "/Users/boshra/NSRR-workspace/sleepfm-clinical/sleepfm/checkpoints/model_base"
+
+  # Where to save [T, 4, 128] .npy files (one per subject)
+  output_dir: "/scratch/boshra95/psg/unified/embeddings/sleepfm_5sec"
+  # Local Mac:
+  # output_dir: "/Users/boshra/NSRR-workspace/cc_scratch/psg/unified/embeddings/sleepfm_5sec"
+
+  # Chunk batching during extraction (number of 5-min chunks per GPU forward pass)
+  # Higher = more GPU-efficient; lower = less RAM. 16 works for A100/V100.
+  chunk_batch_size: 16
+
+  # Datasets to extract embeddings for (order doesn't matter)
+  datasets:
+    - apples
+    - shhs
+    - mros
+    - stages
+
+# ── HDF5 Signal Data ─────────────────────────────────────────────────────────
+data:
+  # Root directory containing {dataset}/derived/hdf5_signals/*.h5
+  hdf5_dir: "/scratch/boshra95/psg"
+  # Local Mac:
+  # hdf5_dir: "/Users/boshra/NSRR-workspace/cc_scratch/psg"
+
+  # SleepFM signal parameters (must match model_base/config.json)
+  sampling_freq: 128      # Hz — all signals resampled to this
+  chunk_seconds: 300      # 5-minute chunks (300 × 128 = 38400 samples)
+  patch_size: 640         # samples per 5-sec patch (640 / 128 Hz = 5 sec)
+  patches_per_chunk: 60   # 38400 / 640
+
+  # SleepFM modality channel limits (from model_base/config.json)
+  # Input to model is zero-padded to these sizes; mask marks padding.
+  max_channels:
+    BAS: 10   # Brain Activity Signals: EEG + EOG
+    RESP: 7   # Respiratory signals
+    EKG: 2    # Cardiac
+    EMG: 4    # Muscle
+
+  # Channel priority order per SleepFM modality.
+  # These are our STANDARDIZED names (as stored in HDF5 keys).
+  # Channels are selected in this order up to max_channels[modality].
+  channel_priority:
+    BAS:
+      - C3-M2
+      - C4-M1
+      - LOC
+      - ROC
+      - O1-M2
+      - O2-M1
+      - F3-M2
+      - F4-M1
+      - A1
+      - A2
+    RESP:
+      - Airflow
+      - Thor
+      - ABD
+      - SpO2
+      - HR
+      - Snore
+      - RespRate
+    EKG:
+      - EKG
+      - ECG-L
+      - ECG-R
+    EMG:
+      - CHIN
+      - LLEG
+      - RLEG
+      - EMG
+
+# ── Context-Window Dataset ───────────────────────────────────────────────────
+dataset:
+  # Embedding files (output of extract_sleepfm_embeddings.py)
+  embedding_dir: "/scratch/boshra95/psg/unified/embeddings/sleepfm_5sec"
+  # Local Mac:
+  # embedding_dir: "/Users/boshra/NSRR-workspace/cc_scratch/psg/unified/embeddings/sleepfm_5sec"
+
+  # Master targets parquet (for seq2label tasks)
+  label_source: "/scratch/boshra95/psg/unified/targets/master_targets.parquet"
+  # Local Mac:
+  # label_source: "/Users/boshra/NSRR-workspace/cc_scratch/psg/unified/targets/master_targets.parquet"
+
+  # Per-task subject CSV directory
+  task_subject_dir: "/scratch/boshra95/psg/unified/targets/task_subjects"
+  # Local Mac:
+  # task_subject_dir: "/Users/boshra/NSRR-workspace/cc_scratch/psg/unified/targets/task_subjects"
+
+  # Sleep staging annotation .npy files
+  sleep_stage_dir: "/scratch/boshra95/psg"
+  # Local Mac:
+  # sleep_stage_dir: "/Users/boshra/NSRR-workspace/cc_scratch/psg"
+
+  # Context lengths to sweep (will be expanded to patch counts at runtime)
+  # Each entry is a duration string: Ns = seconds, Nm = minutes
+  context_lengths:
+    - "30s"    #   6 patches
+    - "2m"     #  24 patches
+    - "5m"     #  60 patches
+    - "10m"    # 120 patches
+    - "20m"    # 240 patches
+    - "40m"    # 480 patches
+    - "80m"    # 960 patches
+
+  # --- Per-experiment settings (change these per run) ---
+  task: "apnea_binary"          # column in master_targets.parquet, or "sleep_staging"
+  task_type: "seq2label"        # "seq2label" | "seq2seq"
+
+  datasets:
+    - apples
+    - shhs
+    - mros
+    - stages
+
+  # Validation window strategy for seq2label tasks:
+  #   "center"  — fixed window centered on the recording mid-point
+  #   "random"  — same as training (for quick sanity checks only)
+  val_strategy: "center"
+
+  # Train/val/test split ratios and seed
+  train_split: 0.70
+  val_split:   0.15
+  test_split:  0.15
+  split_seed:  42
+
+# ── Sequence Head Model ──────────────────────────────────────────────────────
+model:
+  # Input feature dimension = 4 modalities × 128 embed_dim
+  input_dim: 512          # 4 × 128; change to 128 if using single-modality ablation
+
+  head_type: "lstm"       # "mean_pool" | "lstm" | "transformer" | "mamba"
+  task_type: "seq2label"  # mirrors dataset.task_type
+
+  hidden_dim: 256
+  num_layers: 2
+  dropout: 0.3
+  num_classes: 2          # set automatically from task at runtime
+
+# ── Training ─────────────────────────────────────────────────────────────────
+training:
+  epochs: 30
+  lr: 1.0e-3
+  weight_decay: 1.0e-4
+  optimizer: "adam"
+  scheduler: "cosine"
+  early_stopping_patience: 5
+  device: "cuda"          # "cuda" | "cpu"
+  mixed_precision: true
+
+  # Class weights for seq2seq sleep staging (Wake, N1, N2, N3, REM).
+  # null = uniform weights for seq2label tasks.
+  class_weights: null
+
+# ── Logging & Output ─────────────────────────────────────────────────────────
+logging:
+  results_dir: "/scratch/boshra95/psg/unified/results/phase0"
+  # Local Mac:
+  # results_dir: "/Users/boshra/NSRR-workspace/cc_scratch/psg/unified/results/phase0"
+
+  log_every_n_steps: 10

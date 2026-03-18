@@ -55,11 +55,12 @@ def get_memory_usage_mb() -> float:
 class PreprocessingPipeline:
     """Main preprocessing pipeline for NSRR data."""
     
-    def __init__(self, config_path: Optional[Path] = None):
+    def __init__(self, config_path: Optional[Path] = None, mros_visit: Optional[int] = None):
         """Initialize pipeline.
-        
+
         Args:
             config_path: Path to preprocessing config YAML (optional)
+            mros_visit: Which MrOS visit to process (1 or 2), or None for all.
         """
         # Load configurations
         self.config = Config()
@@ -76,12 +77,12 @@ class PreprocessingPipeline:
         # Initialize processors
         self.signal_processor = SignalProcessor(self.config)
         
-        # Initialize adapters
+        # Initialize adapters (MrOS visit is configurable via --mros-visit)
         self.adapters = {
             'stages': STAGESAdapter(self.config),
             'shhs': SHHSAdapter(self.config),
             'apples': APPLESAdapter(self.config),
-            'mros': MrOSAdapter(self.config)
+            'mros': MrOSAdapter(self.config, visit=mros_visit),
         }
         
         logger.info("Preprocessing pipeline initialized")
@@ -212,8 +213,21 @@ class PreprocessingPipeline:
             
             try:
                 # Get file paths from metadata
-                edf_path = Path(row['edf_path'])
-                annotation_path_str = row.get('annotation_path', None)
+                edf_path_val = row.get('edf_path', None)
+                if edf_path_val is None or (not isinstance(edf_path_val, str) and pd.isna(edf_path_val)):
+                    logger.warning(f"No EDF path in metadata for {subject_id}, skipping")
+                    results.append({'subject_id': subject_id, 'dataset': dataset_name,
+                                    'status': 'failed', 'reason': 'no_edf_path_in_metadata'})
+                    continue
+                edf_path = Path(edf_path_val)
+                annotation_path_raw = row.get('annotation_path', None)
+                # Treat float NaN and the string 'nan' (from astype(str) conversion) as missing
+                if annotation_path_raw is None or \
+                   (isinstance(annotation_path_raw, float) and pd.isna(annotation_path_raw)) or \
+                   annotation_path_raw == 'nan':
+                    annotation_path_str = None
+                else:
+                    annotation_path_str = annotation_path_raw
                 
                 if not edf_path.exists():
                     logger.warning(f"EDF not found for {subject_id}: {edf_path}")
@@ -424,7 +438,16 @@ def main():
         choices=['DEBUG', 'INFO', 'SUCCESS', 'WARNING', 'ERROR'],
         help='Logging level'
     )
-    
+
+    parser.add_argument(
+        '--mros-visit',
+        type=int,
+        default=None,
+        choices=[1, 2],
+        help='For MrOS only: which visit to preprocess (1 or 2). '
+             'If omitted, processes all visits found in unified_metadata.'
+    )
+
     args = parser.parse_args()
     
     # Configure logging
@@ -436,7 +459,7 @@ def main():
     )
     
     # Initialize pipeline
-    pipeline = PreprocessingPipeline(config_path=args.config)
+    pipeline = PreprocessingPipeline(config_path=args.config, mros_visit=args.mros_visit)
     
     # Process datasets
     if args.dataset == 'all':

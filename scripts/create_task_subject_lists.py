@@ -271,6 +271,10 @@ def build_sleep_staging_subject_list(
 
             unified_id = master_index.get((dataset, subject_id, visit))
             if unified_id is None:
+                # Fallback: try composite subject_id (MrOS stores subject_id as AA0001_v1)
+                composite_id = f"{subject_id}_v{visit}"
+                unified_id = master_index.get((dataset, composite_id, visit))
+            if unified_id is None:
                 logger.debug(f'  [{dataset}] ({subject_id}, v{visit}) not in master — skipping')
                 skipped += 1
                 continue
@@ -440,7 +444,14 @@ def main() -> int:
     # ── Summary ───────────────────────────────────────────────────────────────
     if summary_rows:
         summary_path = targets_dir / 'task_subject_summary.tsv'
-        summary_df = pd.DataFrame(summary_rows)
+        new_df = pd.DataFrame(summary_rows)
+        if summary_path.exists():
+            existing = pd.read_csv(summary_path, sep='\t')
+            # Replace rows for tasks we just ran, keep the rest
+            existing = existing[~existing['task'].isin(new_df['task'])]
+            summary_df = pd.concat([existing, new_df], ignore_index=True)
+        else:
+            summary_df = new_df
         summary_df.to_csv(summary_path, sep='\t', index=False)
         logger.info(f'\nSummary saved: {summary_path}')
         logger.info('\n' + '=' * 80)

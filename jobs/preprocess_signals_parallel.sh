@@ -1,9 +1,9 @@
 #!/bin/bash
 #SBATCH --job-name=preprocess_signals
 #SBATCH --account=def-forouzan
-#SBATCH --time=2:00:00
-#SBATCH --cpus-per-task=4
-#SBATCH --mem=9000M
+#SBATCH --time=26:00:00
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=30000M
 #SBATCH --output=logs/preprocess_%x_%j.out
 #SBATCH --error=logs/preprocess_%x_%j.err
 
@@ -32,6 +32,7 @@ SKIP_EXISTING="--skip-existing"
 REPROCESS_ANNOTATIONS=""       # "" (default: off) | "--reprocess-annotations" (uncomment to enable)
 LOG_LEVEL="INFO"
 CONFIG_PATH=""
+MROS_VISIT=""                  # "" (all visits) | "1" | "2"
 
 # Parse remaining arguments
 shift 1  # Remove dataset argument
@@ -55,6 +56,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --config)
             CONFIG_PATH="$2"
+            shift 2
+            ;;
+        --mros-visit)
+            MROS_VISIT="$2"
             shift 2
             ;;
         [0-9]*)
@@ -83,6 +88,9 @@ echo "Node:          $SLURM_NODELIST"
 echo "Dataset:       $DATASET"
 if [ -n "$MAX_SUBJECTS" ]; then
     echo "Max subjects:  $MAX_SUBJECTS"
+fi
+if [ -n "$MROS_VISIT" ]; then
+    echo "MrOS visit:    $MROS_VISIT"
 fi
 echo "Skip existing: $([ -n "$SKIP_EXISTING" ] && echo 'Yes' || echo 'No')"
 echo "Reprocess annot: $([ -n "$REPROCESS_ANNOTATIONS" ] && echo 'Yes' || echo 'No')"
@@ -115,6 +123,10 @@ fi
 
 if [ -n "$CONFIG_PATH" ]; then
     CMD="$CMD --config $CONFIG_PATH"
+fi
+
+if [ -n "$MROS_VISIT" ]; then
+    CMD="$CMD --mros-visit $MROS_VISIT"
 fi
 
 # Run preprocessing

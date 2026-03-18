@@ -27,20 +27,24 @@ from .base_adapter import BaseNSRRAdapter
 class MrOSAdapter(BaseNSRRAdapter):
     """Adapter for MrOS dataset."""
     
-    def __init__(self, config, visit: int = 1):
+    def __init__(self, config, visit=None):
         """Initialize MrOS adapter.
-        
+
         Args:
             config: Config object
-            visit: Visit number (1 or 2)
+            visit: Visit number (1 or 2), or None to handle both visits.
+                   Use None in the metadata builder and preprocessing pipeline
+                   when you want to discover/process all visits automatically.
         """
         super().__init__(config, 'mros')
-        self.visit = visit
-        
-        # Metadata files (from nocturn)
+        self.visit = visit  # None = all visits
+
+        # Metadata files for single-visit access (used by load_metadata()).
+        # When visit is None, call load_metadata_all_visits() instead.
+        _v = visit if visit is not None else 1
         self.metadata_files = {
-            'harmonized': f'mros-visit{visit}-harmonized-0.6.0.csv',
-            'main': f'mros-visit{visit}-dataset-0.6.0.csv',
+            'harmonized': f'mros-visit{_v}-harmonized-0.6.0.csv',
+            'main': f'mros-visit{_v}-dataset-0.6.0.csv',
         }
         
         # Subject ID column
@@ -88,16 +92,24 @@ class MrOSAdapter(BaseNSRRAdapter):
             logger.warning(f"MrOS original path does not exist: {original_path}")
             return []
         
-        # Search for EDFs matching this visit only
-        # Files are named: mros-visit1-aa0001.edf or mros-visit2-aa0001.edf
-        visit_pattern = f'mros-visit{self.visit}-*.edf'
-        for edf_path in original_path.rglob(visit_pattern):
-            subject_id = self._extract_base_subject_id(edf_path.stem)
-            edf_files.append((subject_id, edf_path))
-        
-        # Filter duplicates (handles _1, _2 suffixes)
-        edf_files = self._filter_duplicate_edfs(edf_files)
-        logger.info(f"Found {len(edf_files)} MrOS visit{self.visit} EDF files")
+        # Search for EDFs — one visit or both depending on self.visit.
+        # IMPORTANT: deduplicate per visit separately so visit1 and visit2 files
+        # for the same subject are both kept (the dedup only removes _1/_2 suffix
+        # duplicates within the same recording, not across visits).
+        visits_to_scan = [1, 2] if self.visit is None else [self.visit]
+        for v in visits_to_scan:
+            visit_pattern = f'mros-visit{v}-*.edf'
+            visit_files = []
+            for edf_path in original_path.rglob(visit_pattern):
+                subject_id = self._extract_base_subject_id(edf_path.stem)
+                visit_files.append((subject_id, edf_path))
+            # Deduplicate within this visit only (handles _1, _2 suffix duplicates)
+            visit_files = self._filter_duplicate_edfs(visit_files)
+            logger.info(f"  MrOS visit{v}: {len(visit_files)} EDF files found")
+            edf_files.extend(visit_files)
+
+        visit_label = "all visits" if self.visit is None else f"visit{self.visit}"
+        logger.info(f"Found {len(edf_files)} MrOS EDF files ({visit_label})")
         return edf_files
     
     def _extract_base_subject_id(self, filename: str) -> str:
@@ -146,30 +158,36 @@ class MrOSAdapter(BaseNSRRAdapter):
         result = [(sid, path) for sid, (path, _) in subject_files.items()]
         return sorted(result, key=lambda x: x[0])
     
-    def find_annotation_file(self, subject_id: str) -> Optional[Path]:
+    def find_annotation_file(self, subject_id: str, edf_path=None) -> Optional[Path]:
         """Find MrOS annotation file.
-        
+
         Args:
-            subject_id: Subject identifier (nsrrid)
-        
+            subject_id: Subject identifier (nsrrid, bare e.g. 'aa0001')
+            edf_path: Path to the EDF file — used to infer visit when self.visit is None
+
         Returns:
             Path to annotation file, or None
         """
         annotations_path = self.dataset_paths.get('annotations')
         if not annotations_path or not annotations_path.exists():
             return None
-        
-        # MrOS annotations are in visit-specific subdirectories
-        # File format: mros-visit{N}-{nsrrid}-nsrr.xml
-        visit_dir = annotations_path / f'visit{self.visit}'
-        if not visit_dir.exists():
-            return None
-        
-        # Look for XML file matching subject_id - format is mros-visit2-aa2201-nsrr.xml
-        xml_file = visit_dir / f'mros-visit{self.visit}-{subject_id}-nsrr.xml'
-        if xml_file.exists():
-            return xml_file
-        
+
+        # Determine which visit(s) to check
+        if self.visit is not None:
+            visits = [self.visit]
+        elif edf_path is not None:
+            visits = [2 if 'visit2' in str(edf_path).lower() else 1]
+        else:
+            visits = [1, 2]  # try both as last resort
+
+        for v in visits:
+            visit_dir = annotations_path / f'visit{v}'
+            if not visit_dir.exists():
+                continue
+            xml_file = visit_dir / f'mros-visit{v}-{subject_id}-nsrr.xml'
+            if xml_file.exists():
+                return xml_file
+
         return None
     
     def parse_annotations(self, annotation_path: Path) -> Dict[str, Any]:
@@ -294,6 +312,64 @@ class MrOSAdapter(BaseNSRRAdapter):
         
         return df
     
+    def load_metadata_all_visits(self) -> pd.DataFrame:
+        """Load and merge MrOS metadata for both visits, adding a psg_visit column.
+
+        This is used by the metadata builder when visit=None so that both visit-1
+        and visit-2 subjects get separate rows in unified_metadata.parquet,
+        matching the pattern used by SHHS.
+
+        Returns:
+            DataFrame with columns including nsrrid and psg_visit (1 or 2).
+        """
+        datasets_path = self.dataset_paths['datasets']
+        frames = []
+
+        for v in [1, 2]:
+            files = {
+                'harmonized': f'mros-visit{v}-harmonized-0.6.0.csv',
+                'main': f'mros-visit{v}-dataset-0.6.0.csv',
+            }
+            dfs = []
+            for file_key, filename in files.items():
+                file_path = datasets_path / filename
+                if file_path.exists():
+                    try:
+                        df = pd.read_csv(file_path, low_memory=False)
+                        logger.info(f"  Loaded MrOS visit{v} {file_key}: {len(df)} rows")
+                        dfs.append(df)
+                    except Exception as e:
+                        logger.error(f"  Error loading visit{v} {file_key}: {e}")
+                else:
+                    logger.warning(f"  Not found: {file_path}")
+
+            if not dfs:
+                logger.warning(f"  No metadata files found for MrOS visit {v} — skipping")
+                continue
+
+            visit_df = dfs[0]
+            for df_next in dfs[1:]:
+                visit_df = visit_df.merge(
+                    df_next, on=self.subject_id_col, how='outer', suffixes=('', '_dup')
+                )
+                visit_df = visit_df.drop(
+                    columns=[c for c in visit_df.columns if c.endswith('_dup')]
+                )
+
+            visit_df = visit_df.copy()  # defragment before adding column
+            visit_df['psg_visit'] = v
+            frames.append(visit_df)
+            logger.info(f"  MrOS visit{v}: {len(visit_df)} subjects")
+
+        if not frames:
+            logger.error("No MrOS metadata found for any visit")
+            return pd.DataFrame()
+
+        combined = pd.concat(frames, ignore_index=True)
+        logger.info(f"  MrOS all visits combined: {len(combined)} rows "
+                    f"(visit breakdown: {combined['psg_visit'].value_counts().sort_index().to_dict()})")
+        return combined
+
     def get_subject_id_column(self) -> str:
         """Get the name of the subject ID column.
         
