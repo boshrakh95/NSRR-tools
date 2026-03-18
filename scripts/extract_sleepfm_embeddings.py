@@ -280,17 +280,27 @@ def find_hdf5_files(hdf5_dir: str, datasets: list, limit: int = None) -> list:
     return subjects
 
 
+def slice_subjects(subjects: list, start_idx: int, end_idx: int | None, limit: int | None) -> list:
+    """Apply --start-idx / --end-idx / --limit slicing."""
+    subjects = subjects[start_idx:end_idx]
+    if limit:
+        subjects = subjects[:limit]
+    return subjects
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Main
 # ─────────────────────────────────────────────────────────────────────────────
 
 def main():
     parser = argparse.ArgumentParser(description="Extract SleepFM embeddings (Phase 0 Step 1)")
-    parser.add_argument("--config",    required=True, help="Path to phase0_config.yaml")
-    parser.add_argument("--datasets",  nargs="+",     help="Override datasets list from config")
-    parser.add_argument("--limit",     type=int,      help="Process only first N subjects (debug)")
-    parser.add_argument("--no-skip",   action="store_true", help="Re-extract even if .npy exists")
-    parser.add_argument("--cpu",       action="store_true", help="Force CPU (debugging only)")
+    parser.add_argument("--config",      required=True, help="Path to phase0_config.yaml")
+    parser.add_argument("--datasets",    nargs="+",     help="Override datasets list from config")
+    parser.add_argument("--limit",       type=int,      help="Process only first N subjects (debug)")
+    parser.add_argument("--start-idx",   type=int,      default=0,    help="First subject index (for parallel jobs)")
+    parser.add_argument("--end-idx",     type=int,      default=None, help="Last subject index exclusive (for parallel jobs)")
+    parser.add_argument("--no-skip",     action="store_true", help="Re-extract even if .npy exists")
+    parser.add_argument("--cpu",         action="store_true", help="Force CPU (debugging only)")
     args = parser.parse_args()
 
     # ── Config ────────────────────────────────────────────────────────────────
@@ -323,8 +333,12 @@ def main():
 
     # ── Discover subjects ─────────────────────────────────────────────────────
     logger.info(f"Scanning HDF5 files in: {hdf5_dir}")
-    subjects = find_hdf5_files(hdf5_dir, datasets, limit=args.limit)
-    logger.info(f"Total subjects to process: {len(subjects)}")
+    all_subjects = find_hdf5_files(hdf5_dir, datasets, limit=None)
+    subjects = slice_subjects(all_subjects, args.start_idx, args.end_idx, args.limit)
+    logger.info(
+        f"Total available: {len(all_subjects)} | "
+        f"This job: [{args.start_idx}:{args.end_idx}] = {len(subjects)} subjects"
+    )
 
     # ── Extraction loop ───────────────────────────────────────────────────────
     n_ok = n_skip = n_err = 0
