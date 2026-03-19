@@ -1,118 +1,167 @@
 #!/usr/bin/env python3
 """
-context_window_dataset.py — Phase 0, Step 2
+context_window_dataset.py — Phase 0, Step 2 (redesigned)
 
 PyTorch Dataset that serves fixed-length context windows of SleepFM embeddings
 for the context-length sweep experiments.
 
-INPUT
-─────
+CORE DESIGN PRINCIPLE
+─────────────────────
+The sweep compares performance at different context lengths L.  For the comparison
+to be valid, every point on the curve must answer the SAME set of prediction
+questions — only the amount of context given as input differs.
+
+  seq2seq  (sleep staging):
+    Index unit = (subject, anchor_epoch_t).
+    For every 30-sec epoch t the model is asked: "given the past L seconds
+    ending at t, what is the sleep stage of epoch t?"
+    __len__ is FIXED regardless of L.  Only the window width changes.
+
+  seq2label (night-level tasks):
+    Index unit = (subject, window_k).
+    K = min(K_max, n_available_windows) non-overlapping windows per subject.
+    K_max is the same at every context length, so __len__ is approximately
+    equal across the sweep (exact equality only breaks at full_night where K=1).
+
+INPUT FILES
+───────────
   {embedding_dir}/{dataset}/{subject_id}.npy
     dtype  : float16
     shape  : [T, 4, 128]   T = total 5-sec patches for the full night
 
-  For seq2label: subject CSV with columns [unified_id, dataset, subject_id, visit, label]
-  For seq2seq:   sleep_staging_subjects.csv with [unified_id, ..., annotation_path, n_epochs]
+  seq2label : subject CSV  [unified_id, dataset, subject_id, visit, label]
+  seq2seq   : subject CSV  [unified_id, dataset, subject_id, visit,
+                             annotation_path, n_epochs]
+              annotation   : .npy  (n_epochs,) int8  — 30-sec epoch stages
 
-OUTPUT (per __getitem__)
-────────────────────────
-  embeddings : float32 tensor  [N, 512]   N = context_patches, 512 = 4×128
-  mask       : bool tensor     [N]        True = padded position (recording shorter than N)
-  label      : int64 tensor    []         scalar for seq2label
-               int64 tensor    [N]        per-patch stage for seq2seq
+OUTPUT PER __getitem__
+──────────────────────
+  x    : float32 tensor  [N, 512]   N = context_patches, 512 = 4×128
+  mask : bool tensor     [N]        True = padded position (no real signal)
+  y    : int64 tensor    []         scalar class label
+
+  For seq2seq (anchor-based):
+    N patches ending at anchor_t (past-only causal window).
+    LEFT-padded when the recording start is less than N patches before anchor_t.
+    y = stage of anchor_t epoch.
+
+  For seq2label (K-window):
+    N patches starting at window_start.
+    RIGHT-padded when the recording is shorter than window_start + N.
+    y = night-level label from subject CSV.
 
 CONTEXT LENGTH STRINGS
 ──────────────────────
-  "30s" →   6 patches   (6 × 5s = 30s)
-  "2m"  →  24 patches
-  "5m"  →  60 patches
-  "10m" → 120 patches
-  "20m" → 240 patches
-  "40m" → 480 patches
-  "80m" → 960 patches
+  "30s"        →    6 patches   (6 × 5s = 30s)
+  "2m"         →   24 patches
+  "5m"         →   60 patches
+  "10m"        → 120 patches
+  "20m"        → 240 patches
+  "40m"        → 480 patches
+  "80m"        → 960 patches
+  "full_night" → all patches up to anchor_t (seq2seq) or whole night (seq2label)
 
-SLEEP STAGING LABEL ALIGNMENT
-──────────────────────────────
-  Annotations are stored as 30-sec epochs (one value per epoch).
-  We expand to 5-sec resolution by repeating each label 6×.
-  Then we truncate to min(T_embedding, T_annotation) to avoid off-by-one
-  discrepancies at recording edges.
+  "full_night" produces variable-length tensors across subjects / anchors.
+  Use dataset.collate_fn as the DataLoader collate_fn when context="full_night"
+  to zero-pad within each batch to the longest sample in that batch.
 
-  Stage remapping: 5 (REM in NSRR/AASM convention) → 4
-  Final classes: 0=Wake, 1=N1, 2=N2, 3=N3, 4=REM
+MINIMUM PAST CONTEXT (seq2seq only)
+────────────────────────────────────
+  Anchors very close to the recording start are excluded when they would provide
+  too little past context to be informative.
 
-WINDOW SAMPLING
-───────────────
-  Train split : random start position (data augmentation)
-  Val/Test split:
-    seq2label → center window (deterministic, no randomness)
-    seq2seq   → center window (same)
-  Recordings shorter than N patches → zero-padded, mask marks padding.
+    min_past = max(PATCHES_PER_EPOCH, min(N // min_past_denom, max_min_past))
+
+  Defaults: min_past_denom=8, max_min_past=240 patches (20 min).
+  Results:
+    30s  →  6 patches (30s)    80m  → 120 patches (10m)
+    10m  → 15 patches (1.25m)  full_night → 240 patches (20m, capped)
 """
 
 import re
+import warnings
 from pathlib import Path
+from typing import List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
 import torch
+import torch.nn.functional as F
 from torch.utils.data import Dataset
 
 # ── Constants ─────────────────────────────────────────────────────────────────
-PATCH_SECONDS = 5          # each embedding patch = 5 seconds
-PATCHES_PER_EPOCH = 6      # 30-sec sleep-staging epoch / 5-sec patch
-REM_ORIGINAL = 5
-REM_REMAPPED = 4
-EMBED_DIM = 128
-N_MODALITIES = 4
-FLAT_DIM = N_MODALITIES * EMBED_DIM  # 512
+PATCH_SECONDS    = 5           # each embedding patch = 5 seconds
+PATCHES_PER_EPOCH = 6          # 30-sec sleep epoch / 5-sec patch
+REM_ORIGINAL     = 5
+REM_REMAPPED     = 4
+EMBED_DIM        = 128
+N_MODALITIES     = 4
+FLAT_DIM         = N_MODALITIES * EMBED_DIM   # 512
+FULL_NIGHT_SENTINEL = -1       # internal sentinel for full_night context length
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
-def parse_context_length(s: str) -> int:
+def parse_context_length(s) -> int:
     """Convert context-length string to number of 5-sec patches.
 
+    Returns FULL_NIGHT_SENTINEL (-1) for "full_night".
+
     Examples:
-        "30s" → 6
-        "2m"  → 24
-        "10m" → 120
+        "30s"        → 6
+        "2m"         → 24
+        "10m"        → 120
+        "full_night" → -1
     """
-    s = s.strip()
+    if isinstance(s, int):
+        return s
+    s = s.strip().lower()
+    if s == "full_night":
+        return FULL_NIGHT_SENTINEL
     m = re.fullmatch(r"(\d+(?:\.\d+)?)(s|m)", s)
     if m is None:
-        raise ValueError(f"Cannot parse context length: {s!r}. Expected e.g. '30s', '10m'.")
+        raise ValueError(
+            f"Cannot parse context length: {s!r}. "
+            "Expected e.g. '30s', '10m', or 'full_night'."
+        )
     value, unit = float(m.group(1)), m.group(2)
     seconds = value if unit == "s" else value * 60
     patches = seconds / PATCH_SECONDS
     if not patches.is_integer():
-        raise ValueError(f"Context length {s!r} → {seconds}s is not divisible by {PATCH_SECONDS}s patch size.")
+        raise ValueError(
+            f"Context length {s!r} → {seconds}s is not divisible by "
+            f"{PATCH_SECONDS}s patch size."
+        )
     return int(patches)
 
 
-def _expand_stage_labels(epoch_labels: np.ndarray, n_patches: int) -> np.ndarray:
-    """Expand 30-sec epoch labels to 5-sec patch resolution.
+def _compute_min_past(N: int, denom: int = 8, max_patches: int = 240) -> int:
+    """Minimum past patches required before an anchor is included.
 
-    Args:
-        epoch_labels : (n_epochs,) int array of sleep stages
-        n_patches    : number of embedding patches in the recording
+    Scales with context length to avoid wasting data at the night start for
+    long contexts while still excluding degenerate zero-context anchors for
+    short contexts.
 
-    Returns:
-        (min(n_patches, n_epochs * PATCHES_PER_EPOCH),) int8 array
-        with 5→4 remapping applied.
+    Formula: max(PATCHES_PER_EPOCH, min(N // denom, max_patches))
+    For full_night (N=-1): use max_patches directly.
     """
-    # Remap REM: 5 → 4
-    labels = epoch_labels.copy()
-    labels[labels == REM_ORIGINAL] = REM_REMAPPED
+    if N == FULL_NIGHT_SENTINEL:
+        return max_patches
+    return max(PATCHES_PER_EPOCH, min(N // denom, max_patches))
 
-    # Repeat each epoch label PATCHES_PER_EPOCH times (30s → 5s resolution)
-    expanded = np.repeat(labels, PATCHES_PER_EPOCH)  # (n_epochs * 6,)
 
-    # Align with embedding length
-    T = min(len(expanded), n_patches)
-    return expanded[:T].astype(np.int8)
+def _remap_stages(arr: np.ndarray) -> np.ndarray:
+    """Remap REM stage 5 → 4 in-place (copy). Returns int8 array."""
+    out = arr.copy().astype(np.int8)
+    out[out == REM_ORIGINAL] = REM_REMAPPED
+    return out
+
+
+def _load_emb_shape(path: Path) -> int:
+    """Return T (number of patches) without loading the full array."""
+    return np.load(path, mmap_mode="r").shape[0]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -120,18 +169,17 @@ def _expand_stage_labels(epoch_labels: np.ndarray, n_patches: int) -> np.ndarray
 # ─────────────────────────────────────────────────────────────────────────────
 
 class ContextWindowDataset(Dataset):
-    """Fixed-length context-window dataset over SleepFM embeddings.
+    """Fixed-length (or full-night) context-window dataset over SleepFM embeddings.
 
     Args:
         cfg            : Phase 0 config dict (from phase0_config.yaml).
         split          : "train", "val", or "test".
-        context_length : Duration string e.g. "10m", or int (number of patches).
+        context_length : Duration string e.g. "10m", "full_night", or int (patches).
         task           : Task name matching the subject CSV filename stem
                          (e.g. "apnea_binary") or "sleep_staging".
         task_type      : "seq2label" or "seq2seq".
-        datasets       : Optional list of datasets to restrict to. Defaults to
-                         all datasets in the subject CSV.
-        seed           : RNG seed for train-split random window sampling.
+        datasets       : Optional list of dataset names to restrict to.
+        seed           : RNG seed for window/split sampling.
     """
 
     def __init__(
@@ -141,27 +189,32 @@ class ContextWindowDataset(Dataset):
         context_length,
         task: str = None,
         task_type: str = None,
-        datasets: list = None,
+        datasets: Optional[List[str]] = None,
         seed: int = 42,
     ):
-        assert split in ("train", "val", "test"), f"Unknown split: {split}"
+        assert split in ("train", "val", "test"), f"Unknown split: {split!r}"
 
-        ds_cfg   = cfg["dataset"]
-        task     = task     or ds_cfg["task"]
-        task_type= task_type or ds_cfg["task_type"]
+        ds_cfg    = cfg["dataset"]
+        task      = task      or ds_cfg["task"]
+        task_type = task_type or ds_cfg["task_type"]
+        assert task_type in ("seq2label", "seq2seq"), f"Unknown task_type: {task_type!r}"
 
-        assert task_type in ("seq2label", "seq2seq"), f"Unknown task_type: {task_type}"
-
-        self.embedding_dir = Path(ds_cfg["embedding_dir"])
         self.split         = split
         self.task_type     = task_type
         self.seed          = seed
+        self.embedding_dir = Path(cfg["dataset"]["embedding_dir"])
 
-        # Parse context length
-        if isinstance(context_length, int):
-            self.N = context_length
-        else:
-            self.N = parse_context_length(context_length)
+        # Parse context length (may be sentinel for full_night)
+        self.N = parse_context_length(context_length)
+        self.is_full_night = (self.N == FULL_NIGHT_SENTINEL)
+
+        # min_past config (seq2seq only)
+        min_past_denom   = ds_cfg.get("min_past_denom",   8)
+        max_min_past     = ds_cfg.get("max_min_past_patches", 240)
+        self._min_past   = _compute_min_past(self.N, min_past_denom, max_min_past)
+
+        # K_max for seq2label
+        self._K_max = ds_cfg.get("windows_per_subject", 5)
 
         # ── Load subject list ──────────────────────────────────────────────
         task_subject_dir = Path(ds_cfg["task_subject_dir"])
@@ -171,125 +224,271 @@ class ContextWindowDataset(Dataset):
 
         df = pd.read_csv(csv_path)
 
-        # Filter by dataset
         if datasets:
             df = df[df["dataset"].isin(datasets)].reset_index(drop=True)
 
-        # Filter to subjects that have an embedding file
-        mask = df.apply(
-            lambda r: (self.embedding_dir / r["dataset"] / f"{r['subject_id']}.npy").exists(),
+        # Keep only subjects with an embedding file
+        has_emb = df.apply(
+            lambda r: (
+                self.embedding_dir / r["dataset"] / f"{r['subject_id']}.npy"
+            ).exists(),
             axis=1,
         )
-        n_total = len(df)
-        df = df[mask].reset_index(drop=True)
-        n_missing = n_total - len(df)
+        n_before = len(df)
+        df = df[has_emb].reset_index(drop=True)
+        n_missing = n_before - len(df)
         if n_missing > 0:
-            import warnings
             warnings.warn(
-                f"{n_missing}/{n_total} subjects have no embedding file and will be skipped.",
+                f"{n_missing}/{n_before} subjects have no embedding file — skipped.",
                 stacklevel=2,
             )
 
-        # ── Train/val/test split ───────────────────────────────────────────
-        rng = np.random.default_rng(cfg["dataset"]["split_seed"])
+        # ── Train / val / test split (subject-level) ───────────────────────
+        rng = np.random.default_rng(ds_cfg["split_seed"])
         idx = np.arange(len(df))
         rng.shuffle(idx)
 
         n      = len(idx)
-        n_train = int(n * cfg["dataset"]["train_split"])
-        n_val   = int(n * cfg["dataset"]["val_split"])
+        n_train = int(n * ds_cfg["train_split"])
+        n_val   = int(n * ds_cfg["val_split"])
 
         if split == "train":
             idx = idx[:n_train]
         elif split == "val":
             idx = idx[n_train : n_train + n_val]
-        else:  # test
+        else:
             idx = idx[n_train + n_val :]
 
         self.df = df.iloc[idx].reset_index(drop=True)
 
-        # For seq2label: pre-read scalar labels from CSV
-        # For seq2seq:   annotation_path is used per __getitem__
-        if task_type == "seq2label":
+        # ── Build flat index ───────────────────────────────────────────────
+        # Each entry: (subject_row_idx, aux_int, label_int)
+        #   seq2seq   aux_int = anchor_patch_end  (exclusive, i.e., last patch+1)
+        #   seq2label aux_int = window_start
+        if task_type == "seq2seq":
+            self._index = self._build_seq2seq_index()
+        else:
             if "label" not in self.df.columns:
                 raise ValueError(
                     f"seq2label requires a 'label' column in {csv_path}. "
-                    f"Found columns: {list(self.df.columns)}"
+                    f"Found: {list(self.df.columns)}"
                 )
+            self._index = self._build_seq2label_index()
+
+    # ── Index builders ─────────────────────────────────────────────────────
+
+    def _build_seq2seq_index(self) -> List[Tuple[int, int, int]]:
+        """Build (row_idx, anchor_patch_end, stage_label) for every valid anchor."""
+        index = []
+        for row_idx, row in self.df.iterrows():
+            npy_path = self.embedding_dir / row["dataset"] / f"{row['subject_id']}.npy"
+            T = _load_emb_shape(npy_path)
+
+            # Load stage annotations (small array — OK to load here)
+            ann_path = Path(row["annotation_path"])
+            if not ann_path.exists():
+                warnings.warn(f"Annotation not found: {ann_path} — subject skipped.")
+                continue
+            raw_stages = np.load(ann_path)        # (n_epochs,) int8
+            stages     = _remap_stages(raw_stages)
+
+            # Align: embedding patches vs annotation epochs
+            # Each epoch = PATCHES_PER_EPOCH patches; total aligned patches:
+            T_ann = len(stages) * PATCHES_PER_EPOCH
+            T_eff = min(T, T_ann)                 # usable length
+
+            n_epochs = T_eff // PATCHES_PER_EPOCH
+
+            for epoch_idx in range(n_epochs):
+                anchor_patch_end = (epoch_idx + 1) * PATCHES_PER_EPOCH
+                # anchor_patch_end is the index AFTER the last patch of this epoch
+                # past context available = anchor_patch_end patches
+
+                if anchor_patch_end < self._min_past:
+                    continue                       # too close to recording start
+
+                label = int(stages[epoch_idx])
+                if label < 0 or label > 4:
+                    continue                       # unknown / artefact stage
+
+                index.append((row_idx, anchor_patch_end, label))
+
+        return index
+
+    def _build_seq2label_index(self) -> List[Tuple[int, int, int]]:
+        """Build (row_idx, window_start, label) for K windows per subject."""
+        index = []
+        rng   = np.random.default_rng(self.seed)
+
+        for row_idx, row in self.df.iterrows():
+            npy_path = self.embedding_dir / row["dataset"] / f"{row['subject_id']}.npy"
+            T     = _load_emb_shape(npy_path)
+            label = int(row["label"])
+
+            if self.is_full_night:
+                # One window: start = 0, covers the whole night
+                index.append((row_idx, 0, label))
+                continue
+
+            N = self.N
+            if T < N:
+                # Recording shorter than one window: one zero-padded window
+                index.append((row_idx, 0, label))
+                continue
+
+            n_windows = T // N                    # non-overlapping windows
+            K = min(self._K_max, n_windows)
+
+            if self.split == "train":
+                # K random start positions (without replacement)
+                starts = sorted(
+                    rng.choice(n_windows, size=K, replace=False).tolist()
+                )
+                starts = [s * N for s in starts]
+            else:
+                # K evenly spaced windows (deterministic)
+                positions = np.linspace(0, n_windows - 1, K, dtype=int)
+                starts = [int(p) * N for p in positions]
+
+            for s in starts:
+                index.append((row_idx, s, label))
+
+        return index
+
+    # ── Dataset interface ──────────────────────────────────────────────────
 
     def __len__(self) -> int:
-        return len(self.df)
+        return len(self._index)
 
     def __getitem__(self, idx: int):
-        row = self.df.iloc[idx]
+        row_idx, aux, label = self._index[idx]
+        row = self.df.iloc[row_idx]
 
-        # ── Load embedding ─────────────────────────────────────────────────
         npy_path = self.embedding_dir / row["dataset"] / f"{row['subject_id']}.npy"
-        emb = np.load(npy_path)          # (T, 4, 128) float16
-        T = emb.shape[0]
+        emb = np.load(npy_path)           # (T, 4, 128) float16
+        T   = emb.shape[0]
 
-        # ── Get label / stage sequence ─────────────────────────────────────
-        if self.task_type == "seq2label":
-            label_val = int(row["label"])
-            stage_seq = None
-        else:  # seq2seq
-            raw_stages = np.load(row["annotation_path"])  # (n_epochs,) int8
-            stage_seq  = _expand_stage_labels(raw_stages, T)  # (T_aligned,) int8
-            T_aligned  = len(stage_seq)
-            # Trim embedding to aligned length so indices always match
-            emb = emb[:T_aligned]
-            T   = T_aligned
-            label_val = None
-
-        # ── Sample window ──────────────────────────────────────────────────
-        N = self.N
-        if T >= N:
-            # Enough data: pick a window
-            if self.split == "train":
-                rng = np.random.default_rng(self.seed + idx)
-                start = int(rng.integers(0, T - N + 1))
-            else:
-                start = max(0, (T - N) // 2)  # center window
-            window_emb    = emb[start : start + N]           # (N, 4, 128)
-            window_mask   = np.zeros(N, dtype=bool)
-            if stage_seq is not None:
-                window_stages = stage_seq[start : start + N]  # (N,)
+        if self.task_type == "seq2seq":
+            x, mask = self._get_seq2seq_window(emb, T, anchor_patch_end=aux)
         else:
-            # Shorter than N: zero-pad on the right
-            pad = N - T
-            window_emb  = np.concatenate(
-                [emb, np.zeros((pad, N_MODALITIES, EMBED_DIM), dtype=np.float16)], axis=0
-            )
-            window_mask = np.array([False] * T + [True] * pad, dtype=bool)
-            if stage_seq is not None:
-                window_stages = np.concatenate(
-                    [stage_seq, np.full(pad, -1, dtype=np.int8)], axis=0
-                )
+            x, mask = self._get_seq2label_window(emb, T, window_start=aux)
 
-        # ── Build output tensors ───────────────────────────────────────────
-        # Flatten modality dim: (N, 4, 128) → (N, 512)
-        x = torch.from_numpy(window_emb.astype(np.float32).reshape(N, FLAT_DIM))
-        m = torch.from_numpy(window_mask)
+        x_t = torch.from_numpy(x)
+        m_t = torch.from_numpy(mask)
+        y_t = torch.tensor(label, dtype=torch.long)
+        return x_t, m_t, y_t
 
-        if self.task_type == "seq2label":
-            y = torch.tensor(label_val, dtype=torch.long)
+    # ── Window extraction ──────────────────────────────────────────────────
+
+    def _get_seq2seq_window(
+        self, emb: np.ndarray, T: int, anchor_patch_end: int
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """Extract past-only window ending at anchor_patch_end.
+
+        Window covers [anchor_patch_end - N : anchor_patch_end].
+        Left-padded when anchor_patch_end < N (early-night anchors).
+
+        Returns:
+            x    : (N, 512) float32
+            mask : (N,)     bool — True = left-padded position
+        """
+        if self.is_full_night:
+            N = anchor_patch_end            # use all available past context
         else:
-            y = torch.from_numpy(window_stages.astype(np.int64))
+            N = self.N
 
-        return x, m, y
+        win_start = anchor_patch_end - N    # may be negative
 
-    # ── Convenience ───────────────────────────────────────────────────────────
+        if win_start >= 0:
+            # Normal case: slice directly from embedding
+            window = emb[win_start : anchor_patch_end]   # (N, 4, 128)
+            mask   = np.zeros(N, dtype=bool)
+        else:
+            # Recording starts after the window start: left-pad
+            pad_len = -win_start
+            real_len = anchor_patch_end        # = N - pad_len
+            window = np.concatenate([
+                np.zeros((pad_len, N_MODALITIES, EMBED_DIM), dtype=np.float16),
+                emb[:real_len],
+            ], axis=0)                         # (N, 4, 128)
+            mask = np.array([True] * pad_len + [False] * real_len, dtype=bool)
+
+        x = window.astype(np.float32).reshape(N, FLAT_DIM)
+        return x, mask
+
+    def _get_seq2label_window(
+        self, emb: np.ndarray, T: int, window_start: int
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """Extract window of length N starting at window_start.
+
+        Right-padded when the recording ends before window_start + N.
+
+        Returns:
+            x    : (N, 512) float32
+            mask : (N,)     bool — True = right-padded position
+        """
+        if self.is_full_night:
+            N = T                           # whole recording, no padding needed
+        else:
+            N = self.N
+
+        end = window_start + N
+        if end <= T:
+            window = emb[window_start : end]   # (N, 4, 128)
+            mask   = np.zeros(N, dtype=bool)
+        else:
+            real_len = T - window_start
+            pad_len  = N - real_len
+            window = np.concatenate([
+                emb[window_start : T],
+                np.zeros((pad_len, N_MODALITIES, EMBED_DIM), dtype=np.float16),
+            ], axis=0)
+            mask = np.array([False] * real_len + [True] * pad_len, dtype=bool)
+
+        x = window.astype(np.float32).reshape(N, FLAT_DIM)
+        return x, mask
+
+    # ── full_night collate ─────────────────────────────────────────────────
+
+    @staticmethod
+    def collate_fn(batch):
+        """Pad variable-length full_night samples to the longest in the batch.
+
+        Use as: DataLoader(..., collate_fn=ContextWindowDataset.collate_fn)
+        Only needed when context_length="full_night".
+        """
+        xs, masks, ys = zip(*batch)
+        max_N = max(x.shape[0] for x in xs)
+
+        padded_x    = []
+        padded_mask = []
+        for x, mask in zip(xs, masks):
+            n = x.shape[0]
+            if n < max_N:
+                pad = max_N - n
+                x    = F.pad(x,    (0, 0, 0, pad))          # right-pad time dim
+                mask = F.pad(mask, (0, pad), value=True)
+            padded_x.append(x)
+            padded_mask.append(mask)
+
+        return (
+            torch.stack(padded_x),
+            torch.stack(padded_mask),
+            torch.stack(ys),
+        )
+
+    # ── Convenience ───────────────────────────────────────────────────────
 
     @property
     def num_classes(self) -> int:
-        """Infer number of classes from the label column or task type."""
         if self.task_type == "seq2seq":
-            return 5  # Wake, N1, N2, N3, REM
+            return 5   # Wake, N1, N2, N3, REM
         return int(self.df["label"].max()) + 1
 
     def __repr__(self) -> str:
+        ctx = "full_night" if self.is_full_night else f"{self.N} patches ({self.N * PATCH_SECONDS}s)"
         return (
             f"ContextWindowDataset("
-            f"split={self.split}, N={self.N} patches ({self.N * PATCH_SECONDS}s), "
-            f"task_type={self.task_type}, n_subjects={len(self.df)})"
+            f"split={self.split}, context={ctx}, "
+            f"task_type={self.task_type}, n_items={len(self._index)})"
         )

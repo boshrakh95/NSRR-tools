@@ -2,43 +2,62 @@
 """
 train_context_sweep.py — Phase 0, Step 4
 
-Sweeps over all context lengths defined in phase0_config.yaml, training a
-lightweight sequence head on frozen SleepFM embeddings for a single task.
+Sweeps over context lengths defined in phase0_config.yaml, training a
+lightweight sequence head on frozen SleepFM embeddings.
 
-For each context length:
+For each context length L:
   1. Build DataLoaders from ContextWindowDataset
   2. Instantiate the configured head (MeanPool / LSTM / Transformer)
-  3. Train with early stopping; save best checkpoint
-  4. Evaluate on test set; save metrics
+  3. Train with early stopping on val loss; save best checkpoint
+  4. Evaluate on val and test sets; save metrics.json
   5. Append one row to summary.csv
+
+BOTH task types (seq2label and anchor-based seq2seq) now produce scalar labels
+so the training loop is identical for all tasks.
+
+CONTEXT LENGTH NOTES
+────────────────────
+  Fixed lengths (30s–80m): standard DataLoader, fixed tensor size.
+
+  full_night: produces variable-length tensors (T varies per subject/anchor).
+    DataLoader uses ContextWindowDataset.collate_fn to pad within each batch.
+    Transformer head is automatically skipped for full_night (O(N²) memory).
+    full_night may have fewer training examples (K=1 window per subject for
+    seq2label) — consider --full-night-epochs to run for more epochs.
 
 USAGE
 ─────
   python scripts/train_context_sweep.py --config configs/phase0_config.yaml
 
-  # Override task / head from command line:
-  python scripts/train_context_sweep.py \
-      --config configs/phase0_config.yaml \
-      --task apnea_binary --task-type seq2label --head lstm
+  # Override task / head:
+  python scripts/train_context_sweep.py \\
+      --config configs/phase0_config.yaml \\
+      --task sleep_staging --task-type seq2seq --head lstm
 
-  # Resume a partial sweep (already-finished context lengths are skipped):
-  python scripts/train_context_sweep.py --config configs/phase0_config.yaml
+  # Run only specific context lengths:
+  python scripts/train_context_sweep.py \\
+      --config configs/phase0_config.yaml --context 5m 10m full_night
+
+  # Already-done context lengths are skipped automatically (safe to resubmit).
 
 OUTPUT
 ──────
   {results_dir}/{task}_{head_type}/
-    context_{len}/
+    context_{L}/
       best_model.pt   — state dict of best val-loss checkpoint
-      metrics.json    — train/val/test metrics for this context length
-    summary.csv       — one row per context length (appended across runs)
+      metrics.json    — full train/val/test metrics for this L
+    summary.csv       — one row per completed context length (appended)
 
-METRICS
-───────
-  seq2label : AUROC, balanced_accuracy, macro_f1, per-class recall
-  seq2seq   : per-class accuracy, macro_f1, cohen_kappa (ignores label=-1)
+METRICS (all tasks)
+───────────────────
+  accuracy, balanced_accuracy, macro_f1, per-class recall
+  binary tasks:      auroc
+  multi-class tasks: macro OvR auroc
+  sleep staging:     additionally cohen_kappa
 """
 
 import argparse
+import csv
 import json
 import sys
 import time
@@ -57,10 +76,11 @@ sys.path.insert(0, str(_ROOT / "src"))
 from nsrr_tools.datasets.context_window_dataset import (
     ContextWindowDataset,
     parse_context_length,
+    FULL_NIGHT_SENTINEL,
 )
 from nsrr_tools.models.sequence_head import build_head
 
-# ── optional metric deps (sklearn) ─────────────────────────────────────────
+# ── optional sklearn metrics ───────────────────────────────────────────────
 try:
     from sklearn.metrics import (
         balanced_accuracy_score,
@@ -71,69 +91,54 @@ try:
     HAS_SKLEARN = True
 except ImportError:
     HAS_SKLEARN = False
-    warnings.warn("scikit-learn not found; AUROC and some metrics will be skipped.")
+    warnings.warn("scikit-learn not found — AUROC and some metrics will be skipped.")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Metric helpers
+# Metrics
 # ─────────────────────────────────────────────────────────────────────────────
 
-def compute_metrics_seq2label(
-    logits: np.ndarray,   # (N, C)
-    targets: np.ndarray,  # (N,)
+def compute_metrics(
+    logits:      np.ndarray,   # (N, C)
+    targets:     np.ndarray,   # (N,)
     num_classes: int,
+    task:        str,
 ) -> dict:
+    """Compute classification metrics from raw logits and integer targets."""
     preds = logits.argmax(axis=1)
-    metrics = {}
+    m = {"accuracy": float((preds == targets).mean())}
 
-    if HAS_SKLEARN:
-        metrics["balanced_accuracy"] = float(balanced_accuracy_score(targets, preds))
-        metrics["macro_f1"] = float(f1_score(targets, preds, average="macro", zero_division=0))
+    if not HAS_SKLEARN:
+        return m
 
-        # Per-class recall
-        for c in range(num_classes):
-            mask = targets == c
-            if mask.any():
-                metrics[f"recall_class{c}"] = float((preds[mask] == c).mean())
-            else:
-                metrics[f"recall_class{c}"] = float("nan")
+    m["balanced_accuracy"] = float(balanced_accuracy_score(targets, preds))
+    m["macro_f1"] = float(f1_score(targets, preds, average="macro", zero_division=0))
 
-        # AUROC
-        probs = torch.softmax(torch.from_numpy(logits), dim=-1).numpy()
-        try:
-            if num_classes == 2:
-                metrics["auroc"] = float(roc_auc_score(targets, probs[:, 1]))
-            else:
-                metrics["auroc"] = float(
-                    roc_auc_score(targets, probs, multi_class="ovr", average="macro")
-                )
-        except ValueError:
-            metrics["auroc"] = float("nan")
+    # Per-class recall
+    for c in range(num_classes):
+        mask = targets == c
+        if mask.any():
+            m[f"recall_class{c}"] = float((preds[mask] == c).mean())
+        else:
+            m[f"recall_class{c}"] = float("nan")
 
-    metrics["accuracy"] = float((preds == targets).mean())
-    return metrics
+    # AUROC
+    probs = torch.softmax(torch.from_numpy(logits), dim=-1).numpy()
+    try:
+        if num_classes == 2:
+            m["auroc"] = float(roc_auc_score(targets, probs[:, 1]))
+        else:
+            m["auroc"] = float(
+                roc_auc_score(targets, probs, multi_class="ovr", average="macro")
+            )
+    except ValueError:
+        m["auroc"] = float("nan")
 
+    # Cohen's kappa — extra diagnostic for sleep staging
+    if task == "sleep_staging":
+        m["cohen_kappa"] = float(cohen_kappa_score(targets, preds))
 
-def compute_metrics_seq2seq(
-    logits: np.ndarray,   # (N_total_patches, C)
-    targets: np.ndarray,  # (N_total_patches,)  -1 = padded (ignored)
-) -> dict:
-    valid   = targets != -1
-    preds   = logits[valid].argmax(axis=1)
-    targets = targets[valid]
-
-    metrics = {"n_valid_patches": int(valid.sum())}
-    metrics["accuracy"] = float((preds == targets).mean())
-
-    if HAS_SKLEARN:
-        metrics["macro_f1"]    = float(f1_score(targets, preds, average="macro", zero_division=0))
-        metrics["cohen_kappa"] = float(cohen_kappa_score(targets, preds))
-
-        for c in np.unique(targets):
-            m = targets == c
-            metrics[f"recall_class{c}"] = float((preds[m] == c).mean())
-
-    return metrics
+    return m
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -141,18 +146,17 @@ def compute_metrics_seq2seq(
 # ─────────────────────────────────────────────────────────────────────────────
 
 def run_epoch(
-    model: nn.Module,
-    loader: DataLoader,
+    model:     nn.Module,
+    loader:    DataLoader,
     optimizer,
     criterion: nn.Module,
-    device: torch.device,
+    device:    torch.device,
     scaler,
-    task_type: str,
-    train: bool,
+    train:     bool,
 ):
-    """Run one epoch. Returns (avg_loss, all_logits_np, all_targets_np)."""
+    """One epoch.  Returns (avg_loss, logits_np, targets_np)."""
     model.train(train)
-    total_loss = 0.0
+    total_loss  = 0.0
     all_logits  = []
     all_targets = []
 
@@ -163,13 +167,8 @@ def run_epoch(
             y    = y.to(device, non_blocking=True)
 
             with torch.autocast(device_type=device.type, enabled=(scaler is not None)):
-                logits = model(x, mask)   # (B, C) or (B, N, C)
-
-                if task_type == "seq2label":
-                    loss = criterion(logits, y)
-                else:
-                    B, N, C = logits.shape
-                    loss = criterion(logits.reshape(B * N, C), y.reshape(B * N))
+                logits = model(x, mask)          # (B, C)
+                loss   = criterion(logits, y)
 
             if train:
                 optimizer.zero_grad()
@@ -181,15 +180,9 @@ def run_epoch(
                     loss.backward()
                     optimizer.step()
 
-            total_loss += loss.item() * x.size(0)
-
-            if task_type == "seq2label":
-                all_logits.append(logits.detach().cpu().float().numpy())
-                all_targets.append(y.detach().cpu().numpy())
-            else:
-                B, N, C = logits.shape
-                all_logits.append(logits.detach().cpu().float().numpy().reshape(B * N, C))
-                all_targets.append(y.detach().cpu().numpy().reshape(B * N))
+            total_loss  += loss.item() * x.size(0)
+            all_logits.append(logits.detach().cpu().float().numpy())
+            all_targets.append(y.detach().cpu().numpy())
 
     avg_loss   = total_loss / max(len(loader.dataset), 1)
     logits_np  = np.concatenate(all_logits,  axis=0)
@@ -202,30 +195,40 @@ def run_epoch(
 # ─────────────────────────────────────────────────────────────────────────────
 
 def train_one_context(
-    cfg: dict,
-    context_length: str,
-    task: str,
-    task_type: str,
-    head_type: str,
-    out_dir: Path,
-    device: torch.device,
+    cfg:             dict,
+    context_length:  str,
+    task:            str,
+    task_type:       str,
+    head_type:       str,
+    out_dir:         Path,
+    device:          torch.device,
     datasets_filter: list,
+    extra_epochs:    int,
 ):
     t_cfg = cfg["training"]
-    m_cfg = dict(cfg["model"])
     N     = parse_context_length(context_length)
+    is_full_night = (N == FULL_NIGHT_SENTINEL)
+
+    # Transformer is O(N²) — skip for full_night
+    if is_full_night and head_type == "transformer":
+        print(f"  [SKIP] Transformer head not supported for full_night context.")
+        return None
 
     print(f"\n{'='*60}")
-    print(f"Context: {context_length} ({N} patches = {N*5}s)")
+    print(f"Context: {context_length}")
     print(f"{'='*60}")
 
-    # ── Datasets & loaders ────────────────────────────────────────────────
+    # ── Datasets ──────────────────────────────────────────────────────────
     def make_ds(split):
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             return ContextWindowDataset(
-                cfg=cfg, split=split, context_length=context_length,
-                task=task, task_type=task_type, datasets=datasets_filter,
+                cfg=cfg,
+                split=split,
+                context_length=context_length,
+                task=task,
+                task_type=task_type,
+                datasets=datasets_filter,
             )
 
     train_ds = make_ds("train")
@@ -233,42 +236,58 @@ def train_one_context(
     test_ds  = make_ds("test")
 
     num_classes = train_ds.num_classes
-    m_cfg["num_classes"] = num_classes
-    m_cfg["head_type"]   = head_type
-    m_cfg["task_type"]   = task_type
-    cfg_patched = {**cfg, "model": m_cfg}
-
-    print(f"  Train: {len(train_ds)} | Val: {len(val_ds)} | Test: {len(test_ds)}")
+    print(f"  Items — train: {len(train_ds)} | val: {len(val_ds)} | test: {len(test_ds)}")
     print(f"  num_classes: {num_classes}")
 
+    # ── DataLoaders ────────────────────────────────────────────────────────
+    collate = ContextWindowDataset.collate_fn if is_full_night else None
     num_workers = min(4, max(1, len(train_ds) // 64))
-    train_loader = DataLoader(train_ds, batch_size=32, shuffle=True,
-                              num_workers=num_workers, pin_memory=device.type == "cuda")
-    val_loader   = DataLoader(val_ds,   batch_size=64, shuffle=False,
-                              num_workers=num_workers, pin_memory=device.type == "cuda")
-    test_loader  = DataLoader(test_ds,  batch_size=64, shuffle=False,
-                              num_workers=num_workers, pin_memory=device.type == "cuda")
 
-    # ── Model ─────────────────────────────────────────────────────────────
-    model = build_head(cfg_patched).to(device)
+    train_loader = DataLoader(
+        train_ds, batch_size=32, shuffle=True,
+        num_workers=num_workers, pin_memory=(device.type == "cuda"),
+        collate_fn=collate,
+    )
+    val_loader = DataLoader(
+        val_ds, batch_size=64, shuffle=False,
+        num_workers=num_workers, pin_memory=(device.type == "cuda"),
+        collate_fn=collate,
+    )
+    test_loader = DataLoader(
+        test_ds, batch_size=64, shuffle=False,
+        num_workers=num_workers, pin_memory=(device.type == "cuda"),
+        collate_fn=collate,
+    )
+
+    # ── Model ──────────────────────────────────────────────────────────────
+    m_cfg = dict(cfg["model"])
+    m_cfg["num_classes"] = num_classes
+    m_cfg["head_type"]   = head_type
+    model = build_head({**cfg, "model": m_cfg}).to(device)
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    print(f"  Head params: {n_params:,}")
+    print(f"  Trainable params: {n_params:,}")
 
-    # ── Loss ──────────────────────────────────────────────────────────────
-    criterion = nn.CrossEntropyLoss(ignore_index=-1 if task_type == "seq2seq" else -100)
+    # ── Loss ───────────────────────────────────────────────────────────────
+    class_weights = t_cfg.get("class_weights")
+    if class_weights is not None:
+        w = torch.tensor(class_weights, dtype=torch.float32, device=device)
+        criterion = nn.CrossEntropyLoss(weight=w)
+    else:
+        criterion = nn.CrossEntropyLoss()
 
-    # ── Optimizer & scheduler ─────────────────────────────────────────────
-    lr  = float(t_cfg["lr"])
-    wd  = float(t_cfg["weight_decay"])
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=wd)
-
-    epochs = t_cfg["epochs"]
+    # ── Optimizer & scheduler ──────────────────────────────────────────────
+    optimizer = torch.optim.Adam(
+        model.parameters(),
+        lr=float(t_cfg["lr"]),
+        weight_decay=float(t_cfg["weight_decay"]),
+    )
+    epochs = t_cfg["epochs"] + extra_epochs
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
 
     use_amp = t_cfg.get("mixed_precision", True) and device.type == "cuda"
     scaler  = torch.cuda.amp.GradScaler() if use_amp else None
 
-    # ── Training loop ─────────────────────────────────────────────────────
+    # ── Training loop ──────────────────────────────────────────────────────
     patience      = t_cfg.get("early_stopping_patience", 5)
     best_val_loss = float("inf")
     no_improve    = 0
@@ -280,16 +299,17 @@ def train_one_context(
     t0 = time.time()
     for epoch in range(1, epochs + 1):
         train_loss, _, _ = run_epoch(
-            model, train_loader, optimizer, criterion, device, scaler, task_type, train=True
+            model, train_loader, optimizer, criterion, device, scaler, train=True
         )
         val_loss, _, _ = run_epoch(
-            model, val_loader, None, criterion, device, None, task_type, train=False
+            model, val_loader, None, criterion, device, None, train=False
         )
         scheduler.step()
 
         history.append({"epoch": epoch, "train_loss": train_loss, "val_loss": val_loss})
 
-        if val_loss < best_val_loss:
+        improved = val_loss < best_val_loss
+        if improved:
             best_val_loss = val_loss
             no_improve    = 0
             torch.save(model.state_dict(), ckpt_path)
@@ -310,41 +330,39 @@ def train_one_context(
     elapsed = time.time() - t0
     print(f"  Training time: {elapsed/60:.1f} min")
 
-    # ── Test evaluation ───────────────────────────────────────────────────
+    # ── Evaluation ─────────────────────────────────────────────────────────
     model.load_state_dict(torch.load(ckpt_path, map_location=device))
 
     _, val_logits,  val_targets  = run_epoch(
-        model, val_loader,  None, criterion, device, None, task_type, train=False
+        model, val_loader,  None, criterion, device, None, train=False
     )
     _, test_logits, test_targets = run_epoch(
-        model, test_loader, None, criterion, device, None, task_type, train=False
+        model, test_loader, None, criterion, device, None, train=False
     )
 
-    if task_type == "seq2label":
-        val_metrics  = compute_metrics_seq2label(val_logits,  val_targets,  num_classes)
-        test_metrics = compute_metrics_seq2label(test_logits, test_targets, num_classes)
-    else:
-        val_metrics  = compute_metrics_seq2seq(val_logits,  val_targets)
-        test_metrics = compute_metrics_seq2seq(test_logits, test_targets)
+    val_metrics  = compute_metrics(val_logits,  val_targets,  num_classes, task)
+    test_metrics = compute_metrics(test_logits, test_targets, num_classes, task)
 
     metrics = {
         "context_length":    context_length,
-        "context_patches":   N,
         "task":              task,
         "task_type":         task_type,
         "head_type":         head_type,
         "num_classes":       num_classes,
+        "n_train":           len(train_ds),
+        "n_val":             len(val_ds),
+        "n_test":            len(test_ds),
         "best_val_loss":     best_val_loss,
-        "training_time_min": elapsed / 60,
         "n_epochs_run":      len(history),
+        "training_time_min": elapsed / 60,
         "val":               val_metrics,
         "test":              test_metrics,
     }
 
     with open(out_dir / "metrics.json", "w") as f:
         json.dump(metrics, f, indent=2)
-    print(f"  Test: {test_metrics}")
 
+    print(f"  Test: {test_metrics}")
     return metrics
 
 
@@ -353,7 +371,7 @@ def train_one_context(
 # ─────────────────────────────────────────────────────────────────────────────
 
 def append_to_summary(summary_path: Path, metrics: dict):
-    import csv
+    """Append one row (flattened val/test dicts) to summary.csv."""
     row = {k: v for k, v in metrics.items() if not isinstance(v, dict)}
     for split in ("val", "test"):
         for k, v in metrics.get(split, {}).items():
@@ -372,14 +390,18 @@ def append_to_summary(summary_path: Path, metrics: dict):
 
 def main():
     parser = argparse.ArgumentParser(description="Phase 0 context-length sweep")
-    parser.add_argument("--config",    required=True)
-    parser.add_argument("--task",      default=None)
-    parser.add_argument("--task-type", default=None, dest="task_type")
-    parser.add_argument("--head",      default=None, dest="head_type",
+    parser.add_argument("--config",    required=True, help="Path to phase0_config.yaml")
+    parser.add_argument("--task",      default=None,  help="Override dataset.task")
+    parser.add_argument("--task-type", default=None,  dest="task_type",
+                        help="seq2label | seq2seq")
+    parser.add_argument("--head",      default=None,  dest="head_type",
                         help="mean_pool | lstm | transformer")
-    parser.add_argument("--context",   default=None, nargs="+",
-                        help="Run only specific context lengths e.g. --context 5m 10m")
-    parser.add_argument("--datasets",  default=None, nargs="+")
+    parser.add_argument("--context",   default=None,  nargs="+",
+                        help="Run only these context lengths e.g. --context 5m 10m full_night")
+    parser.add_argument("--datasets",  default=None,  nargs="+",
+                        help="Restrict to these datasets (for debugging)")
+    parser.add_argument("--full-night-epochs", default=0, type=int, dest="full_night_epochs",
+                        help="Extra epochs to add for full_night (compensates fewer samples)")
     parser.add_argument("--cpu",       action="store_true")
     args = parser.parse_args()
 
@@ -407,9 +429,14 @@ def main():
 
     for ctx in context_lengths:
         ctx_dir = exp_dir / f"context_{ctx}"
+
+        # Skip already-done (safe to resubmit)
         if (ctx_dir / "metrics.json").exists():
-            print(f"\n[SKIP] {ctx} — already done.")
+            print(f"\n[SKIP] {ctx} — metrics.json already exists.")
             continue
+
+        # Transformer can't handle full_night — reported inside train_one_context
+        extra = args.full_night_epochs if ctx == "full_night" else 0
 
         try:
             metrics = train_one_context(
@@ -421,15 +448,17 @@ def main():
                 out_dir=ctx_dir,
                 device=device,
                 datasets_filter=args.datasets,
+                extra_epochs=extra,
             )
-            append_to_summary(summary_path, metrics)
+            if metrics is not None:
+                append_to_summary(summary_path, metrics)
         except Exception as exc:
             print(f"\n[ERROR] context={ctx}: {exc}")
             import traceback; traceback.print_exc()
 
     print(f"\n{'='*60}")
     print(f"Sweep complete. Results: {exp_dir}")
-    print(f"Summary CSV:     {summary_path}")
+    print(f"Summary:         {summary_path}")
 
 
 if __name__ == "__main__":

@@ -4,18 +4,31 @@ sequence_head.py — Phase 0, Step 3
 
 Lightweight sequence heads that sit on top of frozen SleepFM embeddings.
 
-All heads share the same interface:
+All heads share the same interface and always output (B, num_classes):
 
-    Input:  x    (B, N, input_dim)   — context window of flattened embeddings
-            mask (B, N)  bool        — True = padded patch (ignored)
-    Output: logits  (B, num_classes)             for seq2label
-                    (B, N, num_classes)           for seq2seq
+    Input:  x    (B, N, 512)   — context window of flattened embeddings
+            mask (B, N)  bool  — True = padded patch (no real signal)
+    Output: logits (B, num_classes)
+
+Both task types (seq2label and anchor-based seq2seq) now produce a scalar
+label, so a single output shape covers all cases.
 
 Available heads
 ───────────────
-  MeanPool       : masked mean → linear. Baseline. Seq2label only.
-  LSTMHead       : BiLSTM → last state (seq2label) or all states (seq2seq).
-  TransformerHead: CLS token or all tokens → linear.
+  MeanPool       : masked mean over time → linear.
+                   No temporal order used. Useful baseline.
+
+  LSTMHead       : BiLSTM, last valid hidden state → linear.
+                   Processes the full context window left-to-right and
+                   right-to-left; final state concatenates both directions.
+                   For the anchor-based staging task the window is already
+                   past-only (causal by construction), so BiLSTM is valid —
+                   there is no future leakage.  A unidirectional LSTM would
+                   be more appropriate for the final causal model (Phase 1+).
+
+  TransformerHead: CLS token + sinusoidal PE → transformer encoder → linear.
+                   Full self-attention within the window.  Capped at 80m
+                   (960 patches) due to O(N²) memory; skip for full_night.
 
 Factory
 ───────
@@ -33,16 +46,15 @@ import torch.nn as nn
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _masked_mean(x: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
-    """Compute mean over non-padded positions.
+    """Masked mean over time (non-padded positions only).
 
     Args:
         x    : (B, N, D)
-        mask : (B, N) bool — True = padded (excluded from mean)
+        mask : (B, N) bool — True = padded (excluded)
 
     Returns:
         (B, D)
     """
-    # Invert: valid = ~mask
     valid = (~mask).float().unsqueeze(-1)   # (B, N, 1)
     denom = valid.sum(dim=1).clamp(min=1)   # (B, 1)
     return (x * valid).sum(dim=1) / denom   # (B, D)
@@ -53,9 +65,10 @@ def _masked_mean(x: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
 # ─────────────────────────────────────────────────────────────────────────────
 
 class MeanPoolHead(nn.Module):
-    """Masked mean-pool over time → linear classifier.
+    """Masked temporal mean-pool → linear classifier.
 
-    Suitable for seq2label only (returns a single logit vector per sample).
+    No temporal order is used.  Treats the context window as a bag of patches.
+    Fast, parameter-light baseline.
     """
 
     def __init__(self, input_dim: int, num_classes: int, dropout: float = 0.0):
@@ -72,32 +85,27 @@ class MeanPoolHead(nn.Module):
         Returns:
             logits (B, num_classes)
         """
-        pooled = _masked_mean(x, mask)           # (B, input_dim)
+        pooled = _masked_mean(x, mask)            # (B, input_dim)
         return self.fc(self.dropout(pooled))
 
 
 class LSTMHead(nn.Module):
-    """Bidirectional LSTM sequence head.
+    """BiLSTM → last valid hidden state → linear classifier.
 
-    seq2label: uses last valid hidden state (via sequence length) → linear.
-    seq2seq:   uses all timestep outputs → linear (one per patch).
-
-    Note: padded patches are handled via pack_padded_sequence for efficiency.
+    Uses pack_padded_sequence to skip padded patches during the RNN pass.
+    The last valid hidden state is the concatenation of the final forward
+    and backward states, giving the head access to the whole window.
     """
 
     def __init__(
         self,
-        input_dim: int,
-        hidden_dim: int,
-        num_layers: int,
+        input_dim:   int,
+        hidden_dim:  int,
+        num_layers:  int,
         num_classes: int,
-        dropout: float = 0.0,
-        task_type: str = "seq2label",
+        dropout:     float = 0.0,
     ):
         super().__init__()
-        self.task_type  = task_type
-        self.hidden_dim = hidden_dim
-
         self.lstm = nn.LSTM(
             input_size=input_dim,
             hidden_size=hidden_dim,
@@ -107,77 +115,58 @@ class LSTMHead(nn.Module):
             dropout=dropout if num_layers > 1 else 0.0,
         )
         self.dropout = nn.Dropout(dropout)
-        # BiLSTM doubles hidden dim
-        self.fc = nn.Linear(hidden_dim * 2, num_classes)
+        self.fc      = nn.Linear(hidden_dim * 2, num_classes)  # ×2 for BiLSTM
 
     def forward(self, x: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
         """
         Args:
             x    : (B, N, input_dim)
-            mask : (B, N) bool  True=padded
+            mask : (B, N) bool  — True = padded
 
         Returns:
-            seq2label : (B, num_classes)
-            seq2seq   : (B, N, num_classes)
+            logits (B, num_classes)
         """
-        B, N, _ = x.shape
-        # Sequence lengths (number of valid patches per sample)
-        lengths = (~mask).long().sum(dim=1).cpu()       # (B,)
-        lengths = lengths.clamp(min=1)                   # avoid 0-length
+        lengths = (~mask).long().sum(dim=1).cpu().clamp(min=1)  # (B,)
 
         packed = nn.utils.rnn.pack_padded_sequence(
             x, lengths, batch_first=True, enforce_sorted=False
         )
-        out_packed, (h_n, _) = self.lstm(packed)
-
-        if self.task_type == "seq2label":
-            # Concatenate final forward and backward hidden states
-            # h_n shape: (num_layers * 2, B, hidden_dim)
-            fwd = h_n[-2]   # last layer, forward
-            bwd = h_n[-1]   # last layer, backward
-            h = torch.cat([fwd, bwd], dim=-1)             # (B, hidden_dim*2)
-            return self.fc(self.dropout(h))
-
-        else:  # seq2seq
-            out, _ = nn.utils.rnn.pad_packed_sequence(
-                out_packed, batch_first=True, total_length=N
-            )  # (B, N, hidden_dim*2)
-            return self.fc(self.dropout(out))             # (B, N, num_classes)
+        _, (h_n, _) = self.lstm(packed)
+        # h_n : (num_layers * 2, B, hidden_dim)
+        # Last layer: forward = h_n[-2], backward = h_n[-1]
+        h = torch.cat([h_n[-2], h_n[-1]], dim=-1)   # (B, hidden_dim * 2)
+        return self.fc(self.dropout(h))
 
 
 class TransformerHead(nn.Module):
-    """Transformer encoder head with a prepended CLS token.
+    """Transformer encoder with a prepended CLS token → linear classifier.
 
-    seq2label: CLS token output → linear.
-    seq2seq:   all patch token outputs → linear.
+    Sinusoidal positional encoding (non-trainable).  Pre-LN for stability.
+    CLS token output → classifier.
 
-    Uses sinusoidal positional encoding.
+    Memory note: attention is O(N²) in sequence length.
+    Practical limit ≈ 80m context (960 patches) on a 16 GB GPU at batch 32.
+    Do not use with full_night context.
     """
 
     def __init__(
         self,
-        input_dim: int,
-        hidden_dim: int,
-        num_layers: int,
-        num_heads: int,
+        input_dim:   int,
+        hidden_dim:  int,
+        num_layers:  int,
+        num_heads:   int,
         num_classes: int,
-        dropout: float = 0.0,
-        task_type: str = "seq2label",
-        max_seq_len: int = 2048,
+        dropout:     float = 0.0,
+        max_seq_len: int   = 2048,
     ):
         super().__init__()
-        self.task_type = task_type
-        self.hidden_dim = hidden_dim
 
-        # Project from embedding dim to transformer hidden dim
         self.input_proj = (
             nn.Identity() if input_dim == hidden_dim
             else nn.Linear(input_dim, hidden_dim)
         )
-
         self.cls_token = nn.Parameter(torch.zeros(1, 1, hidden_dim))
 
-        # Sinusoidal positional encoding (non-trainable)
         self.register_buffer(
             "pos_enc", self._make_pos_enc(max_seq_len + 1, hidden_dim)
         )
@@ -188,15 +177,15 @@ class TransformerHead(nn.Module):
             dim_feedforward=hidden_dim * 4,
             dropout=dropout,
             batch_first=True,
-            norm_first=True,   # Pre-LN for training stability
+            norm_first=True,    # Pre-LN — more stable than Post-LN
         )
         self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
-        self.dropout = nn.Dropout(dropout)
-        self.fc = nn.Linear(hidden_dim, num_classes)
+        self.dropout     = nn.Dropout(dropout)
+        self.fc          = nn.Linear(hidden_dim, num_classes)
 
     @staticmethod
     def _make_pos_enc(max_len: int, d_model: int) -> torch.Tensor:
-        pe = torch.zeros(max_len, d_model)
+        pe  = torch.zeros(max_len, d_model)
         pos = torch.arange(max_len).unsqueeze(1).float()
         div = torch.exp(
             torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model)
@@ -209,39 +198,31 @@ class TransformerHead(nn.Module):
         """
         Args:
             x    : (B, N, input_dim)
-            mask : (B, N) bool  True=padded
+            mask : (B, N) bool  — True = padded
 
         Returns:
-            seq2label : (B, num_classes)
-            seq2seq   : (B, N, num_classes)
+            logits (B, num_classes)
         """
         B, N, _ = x.shape
-        x = self.input_proj(x)                          # (B, N, hidden_dim)
+        x = self.input_proj(x)                           # (B, N, hidden_dim)
 
-        # Prepend CLS token
-        cls = self.cls_token.expand(B, -1, -1)          # (B, 1, hidden_dim)
-        x = torch.cat([cls, x], dim=1)                  # (B, N+1, hidden_dim)
+        # Prepend CLS token and add positional encoding
+        cls = self.cls_token.expand(B, -1, -1)           # (B, 1, hidden_dim)
+        x   = torch.cat([cls, x], dim=1)                 # (B, N+1, hidden_dim)
+        x   = x + self.pos_enc[:, : N + 1, :]
 
-        # Positional encoding
-        x = x + self.pos_enc[:, : N + 1, :]
-
-        # Key padding mask: True=ignore
-        # CLS token (position 0) is never masked
+        # Key-padding mask: True = ignore position
+        # CLS (position 0) is never masked
         cls_mask = torch.zeros(B, 1, dtype=torch.bool, device=mask.device)
-        key_mask = torch.cat([cls_mask, mask], dim=1)   # (B, N+1)
+        key_mask = torch.cat([cls_mask, mask], dim=1)    # (B, N+1)
 
-        # PyTorch's bool key_padding_mask validation imports sympy (not always installed).
-        # Convert to float additive mask (0.0 = attend, -inf = ignore) to avoid this.
+        # Convert bool mask → float additive mask to avoid sympy import inside
+        # PyTorch's bool-mask validation path
         key_mask_f = key_mask.float().masked_fill(key_mask, float("-inf"))
-        out = self.transformer(x, src_key_padding_mask=key_mask_f)  # (B, N+1, hidden_dim)
 
-        if self.task_type == "seq2label":
-            cls_out = out[:, 0, :]                      # (B, hidden_dim)
-            return self.fc(self.dropout(cls_out))
-
-        else:  # seq2seq — skip CLS, use patch tokens
-            patch_out = out[:, 1:, :]                   # (B, N, hidden_dim)
-            return self.fc(self.dropout(patch_out))      # (B, N, num_classes)
+        out     = self.transformer(x, src_key_padding_mask=key_mask_f)
+        cls_out = out[:, 0, :]                           # (B, hidden_dim)
+        return self.fc(self.dropout(cls_out))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -249,27 +230,27 @@ class TransformerHead(nn.Module):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def build_head(cfg: dict) -> nn.Module:
-    """Instantiate the appropriate head from the phase0_config model section.
+    """Instantiate the configured head from phase0_config.
+
+    Reads cfg["model"].  num_classes must be patched in before calling
+    (train_context_sweep.py does this from the dataset).
 
     Args:
-        cfg : Full phase0_config dict (reads cfg["model"] and cfg["dataset"]).
+        cfg : Full phase0_config dict.
 
     Returns:
-        nn.Module implementing the chosen head.
+        nn.Module with forward(x, mask) → logits (B, num_classes).
     """
-    m_cfg     = cfg["model"]
-    head_type = m_cfg["head_type"]
-    task_type = m_cfg.get("task_type") or cfg["dataset"]["task_type"]
+    m         = cfg["model"]
+    head_type = m["head_type"]
 
-    input_dim  = m_cfg["input_dim"]
-    num_classes= m_cfg["num_classes"]
-    hidden_dim = m_cfg["hidden_dim"]
-    num_layers = m_cfg["num_layers"]
-    dropout    = m_cfg["dropout"]
+    input_dim   = m["input_dim"]
+    num_classes = m["num_classes"]
+    hidden_dim  = m["hidden_dim"]
+    num_layers  = m["num_layers"]
+    dropout     = m["dropout"]
 
     if head_type == "mean_pool":
-        if task_type != "seq2label":
-            raise ValueError("MeanPoolHead only supports seq2label.")
         return MeanPoolHead(input_dim, num_classes, dropout)
 
     elif head_type == "lstm":
@@ -279,12 +260,10 @@ def build_head(cfg: dict) -> nn.Module:
             num_layers=num_layers,
             num_classes=num_classes,
             dropout=dropout,
-            task_type=task_type,
         )
 
     elif head_type == "transformer":
-        # num_heads must divide hidden_dim
-        num_heads = m_cfg.get("num_heads", 8)
+        num_heads = m.get("num_heads", 8)
         return TransformerHead(
             input_dim=input_dim,
             hidden_dim=hidden_dim,
@@ -292,7 +271,6 @@ def build_head(cfg: dict) -> nn.Module:
             num_heads=num_heads,
             num_classes=num_classes,
             dropout=dropout,
-            task_type=task_type,
         )
 
     else:

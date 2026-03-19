@@ -103,19 +103,20 @@ dataset:
   # Local Mac:
   # sleep_stage_dir: "/Users/boshra/NSRR-workspace/cc_scratch/psg"
 
-  # Context lengths to sweep (will be expanded to patch counts at runtime)
-  # Each entry is a duration string: Ns = seconds, Nm = minutes
+  # Context lengths to sweep (duration strings: Ns = seconds, Nm = minutes)
+  # "full_night" = all patches up to anchor (seq2seq) or whole recording (seq2label)
   context_lengths:
-    - "30s"    #   6 patches
-    - "2m"     #  24 patches
-    - "5m"     #  60 patches
-    - "10m"    # 120 patches
-    - "20m"    # 240 patches
-    - "40m"    # 480 patches
-    - "80m"    # 960 patches
+    - "30s"         #    6 patches
+    - "2m"          #   24 patches
+    - "5m"          #   60 patches
+    - "10m"         #  120 patches
+    - "20m"         #  240 patches
+    - "40m"         #  480 patches
+    - "80m"         #  960 patches
+    - "full_night"  #  all patches (variable per subject)
 
   # --- Per-experiment settings (change these per run) ---
-  task: "apnea_binary"          # column in master_targets.parquet, or "sleep_staging"
+  task: "apnea_binary"          # CSV filename stem, or "sleep_staging"
   task_type: "seq2label"        # "seq2label" | "seq2seq"
 
   datasets:
@@ -124,30 +125,38 @@ dataset:
     - mros
     - stages
 
-  # Validation window strategy for seq2label tasks:
-  #   "center"  — fixed window centered on the recording mid-point
-  #   "random"  — same as training (for quick sanity checks only)
-  val_strategy: "center"
-
   # Train/val/test split ratios and seed
   train_split: 0.70
   val_split:   0.15
   test_split:  0.15
   split_seed:  42
 
+  # ── seq2label windowing ───────────────────────────────────────────────────
+  # K non-overlapping windows per subject per epoch.
+  # K = min(windows_per_subject, n_available_windows).
+  # For full_night, K is naturally 1.
+  windows_per_subject: 5
+
+  # ── seq2seq anchor filtering ──────────────────────────────────────────────
+  # Anchors near the recording start are skipped if they have too little past
+  # context.  min_past = max(6, min(N // min_past_denom, max_min_past_patches))
+  # Results: 30s→6p, 10m→15p, 40m→60p, 80m→120p, full_night→240p (20 min cap).
+  min_past_denom:       8
+  max_min_past_patches: 240
+
 # ── Sequence Head Model ──────────────────────────────────────────────────────
 model:
   # Input feature dimension = 4 modalities × 128 embed_dim
-  input_dim: 512          # 4 × 128; change to 128 if using single-modality ablation
+  input_dim: 512      # 4 × 128; change to 128 for single-modality ablation
 
-  head_type: "lstm"       # "mean_pool" | "lstm" | "transformer" | "mamba"
-  task_type: "seq2label"  # mirrors dataset.task_type
+  head_type: "lstm"   # "mean_pool" | "lstm" | "transformer"
+  # NOTE: transformer is automatically skipped for full_night (O(N²) memory)
 
   hidden_dim: 256
   num_layers: 2
-  num_heads: 8        # for transformer head (must divide hidden_dim)
-  dropout: 0.3
-  num_classes: 2          # set automatically from task at runtime
+  num_heads:  8       # transformer only; must divide hidden_dim
+  dropout:    0.3
+  num_classes: 2      # patched automatically from dataset at runtime
 
 # ── Training ─────────────────────────────────────────────────────────────────
 training:
@@ -160,8 +169,9 @@ training:
   device: "cuda"          # "cuda" | "cpu"
   mixed_precision: true
 
-  # Class weights for seq2seq sleep staging (Wake, N1, N2, N3, REM).
-  # null = uniform weights for seq2label tasks.
+  # Optional class weights (list of floats, one per class).
+  # Useful for imbalanced tasks (e.g. sleep staging: N1 is rare).
+  # null = uniform weights.
   class_weights: null
 
 # ── Logging & Output ─────────────────────────────────────────────────────────

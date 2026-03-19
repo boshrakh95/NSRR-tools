@@ -86,89 +86,130 @@ SleepFM repo modules can be imported without installing them as a package.
 
 ---
 
-## Step 2 — Context-Window Dataset ✓
+## Design Decisions (Finalised after discussion)
+
+### Context lengths
+```
+L ∈ {30s, 2m, 5m, 10m, 20m, 40m, 80m, full_night}
+```
+`full_night` = all available patches up to anchor t (staging) or the whole night
+(seq2label). This tests whether the plateau observed at 80m holds for the full night.
+
+The Transformer head is capped at **80m** (960 patches) due to O(N²) attention memory.
+MeanPool and LSTM handle `full_night` without issue (O(N)).
+
+### Train/val/test split strategy
+Random subject-level shuffle using `split_seed` (70/15/15).
+**Future improvement**: pre-compute stratified splits (by label distribution) and save
+to JSON files for full reproducibility, as in the original SleepFM codebase.
+
+### Window sampling — the key methodological decision
+
+The goal of Phase 0 is to produce a **performance-vs-context-length curve** where
+every point on the curve is a fair comparison. This requires:
+
+> **Same set of predictions at every context length; only the amount of input context differs.**
+
+#### seq2seq (sleep staging) — anchor-based sampling
+- Index = **(subject, anchor_epoch_t)**, one per 30-sec epoch per subject
+- `__len__` = total anchor epochs across all subjects (~960 per 8h night)
+- This is **fixed regardless of context length L** — fair comparison guaranteed
+- Input: L patches ending at anchor t (past-only causal window)
+- Label: **scalar** stage of epoch t (not the whole sequence)
+- For `full_night`: input = all patches from recording start up to t
+- Early-in-night anchors with L > available past: zero-pad the beginning
+
+This directly answers: *"does giving more past context improve prediction of this epoch?"*
+
+#### seq2label (night-level tasks) — K-window sampling
+- Index = **(subject, window_k)**, K random non-overlapping windows per subject
+- `K = min(K_max, n_available_windows)` where `K_max=5` by default
+- For `full_night`: K naturally = 1 (only one window exists); this is accepted
+- This keeps training set size **approximately equal** across context lengths:
+  - 30s → K=5 per subject (out of ~960 available windows)
+  - 80m → K=5 per subject (out of ~5 available windows)
+  - full_night → K=1 per subject
+- **Fairness note**: full_night gets 5x fewer gradient updates per epoch than shorter
+  contexts. For Phase 0 this is acceptable (paper note: train full_night for 5x more
+  epochs or equal total steps if needed for fair comparison).
+- Val/Test: same K windows but with deterministic positions (evenly spaced)
+
+---
+
+## Step 2 — Context-Window Dataset (redesigned)
 
 `src/nsrr_tools/datasets/context_window_dataset.py`
 
 - Loads `[T, 4, 128]` embedding → flattens modality dim → `[T, 512]` at item-load time
-- Parses context length string via `parse_context_length()`: `"10m"` → 120 patches
+- Parses context length string via `parse_context_length()`: `"10m"` → 120 patches;
+  `"full_night"` → special sentinel value -1 (resolved per-subject at load time)
 - Filters subjects to those that have an embedding `.npy` file (warns on missing)
 - Train/val/test split: shuffle with `split_seed`, then slice by ratio (70/15/15)
-- Window sampling:
-  - Train: random start (seeded per sample for reproducibility)
-  - Val/Test: center window `start = (T - N) // 2`
-- Recordings shorter than N: zero-pad on the right; mask `True` for padded positions
-- Two modes:
-  - `seq2label`: reads `label` column from subject CSV; returns `(x [N,512], mask [N], label scalar)`
-  - `seq2seq`: loads annotation `.npy` (30-sec epochs), expands to 5-sec resolution (repeat×6),
-    truncates to `min(T_embedding, T_annotation)`, returns `(x [N,512], mask [N], stages [N])`
-- Stage remapping: 5 (original NSRR REM) → 4; padded positions labeled -1
 
-### Smoke-test
-```
-python scripts/test_context_window_dataset.py \
-    --config configs/phase0_config.yaml \
-    --task apnea_binary --context 10m --datasets apples
-```
-Or use the `👽 Phase0 Step2` launch configs in `launch.json`.
+**seq2seq mode (anchor-based)**:
+- Builds index of `(subject_row, anchor_patch_idx)` pairs during `__init__`
+- `anchor_patch_idx` = multiples of 6 (one per 30-sec epoch); excludes epochs with
+  unknown labels (-1 after remapping)
+- Input: N patches ending at anchor (zero-padded at start if recording too short)
+- Mask: True for left-pad positions
+- Label: scalar stage of anchor epoch (int64)
+- Stage remapping: 5 → 4; unknown/artefact stages skipped as valid anchors
+
+**seq2label mode (K-window)**:
+- Builds index of `(subject_row, window_start)` pairs during `__init__`
+- Windows are non-overlapping; K = min(K_max, n_available_windows)
+- Train: K windows randomly placed (seeded); Val/Test: K windows evenly spaced
+- Input: N patches from window_start (zero-padded if recording shorter than N)
+- Mask: True for pad positions
+- Label: scalar from subject CSV `label` column
+
+Returns: `(x [N,512], mask [N], label scalar)` for both modes.
 
 ---
 
-## Step 3 — Sequence Head ✓
+## Step 3 — Sequence Head (to be revised)
 
 `src/nsrr_tools/models/sequence_head.py`
 
-Input always `[batch, N, 512]`, mask `[batch, N]` bool (True=padded). Output:
+Both task types now return a **scalar label** (seq2seq becomes anchor-predicts-one-epoch).
+So all heads output `(B, C)` — no `(B, N, C)` seq2seq mode needed.
 
-| Head | seq2label | seq2seq |
+Input always `[batch, N, 512]`, mask `[batch, N]` bool (True=padded). Output `(B, C)`.
+
+| Head | Mechanism | full_night support |
 |---|---|---|
-| `MeanPoolHead` | masked mean → linear → (B, C) | N/A |
-| `LSTMHead` | BiLSTM, last valid state → linear → (B, C) | all states → linear → (B, N, C) |
-| `TransformerHead` | CLS token → linear → (B, C) | patch tokens → linear → (B, N, C) |
+| `MeanPoolHead` | masked mean of all N patches → linear | yes |
+| `LSTMHead` | causal LSTM, last valid hidden state → linear | yes |
+| `TransformerHead` | CLS token + sinusoidal PE → transformer → linear | capped at 80m |
 
-Key design choices:
-- `LSTMHead`: uses `pack_padded_sequence` to skip padding efficiently
-- `TransformerHead`: Pre-LN (`norm_first=True`), sinusoidal positional encoding, CLS prepended
-- `build_head(cfg)` factory reads `cfg["model"]` and returns the configured head
+For staging (causal task): `LSTMHead` is most appropriate (processes patches left-to-right,
+last state sees all context). `TransformerHead` uses full self-attention which technically
+leaks future context — fine for Phase 0 sweep but not for final model.
 
-Config fields used: `head_type`, `task_type`, `input_dim`, `hidden_dim`, `num_layers`,
-`num_heads` (transformer only), `dropout`, `num_classes`.
+Config fields: `head_type`, `input_dim`, `hidden_dim`, `num_layers`, `num_heads`,
+`dropout`, `num_classes`.
 
 ---
 
-## Step 4 — Training Script ✓
+## Step 4 — Training Script (to be revised)
 
 `scripts/train_context_sweep.py`
 
-Loops over all context lengths in config; trains head; saves metrics. Skips already-done
-context lengths on resubmit. GPU job: `jobs/train_context_sweep_gpu.sh`.
+Same structure as before; simplified because both task types now produce scalar labels.
+Loss: `CrossEntropyLoss()` (no ignore_index needed — anchor selection already excludes
+unknown-stage epochs).
 
-Metrics:
-- seq2label: AUROC, balanced accuracy, macro F1, per-class recall
-- seq2seq: per-class accuracy, macro F1, Cohen's kappa (ignores padded label=-1)
-
-Output:
-```
-{results_dir}/{task}_{head_type}/
-  context_30s/  best_model.pt  metrics.json
-  context_2m/   ...
-  context_5m/   ...
-  ...
-  summary.csv   — one row per context length
-```
-
-Key design:
-- Early stopping on val loss (patience=5)
-- Cosine LR scheduler
-- Mixed precision (AMP) on GPU
-- `ignore_index=-1` in CrossEntropyLoss for seq2seq padded positions
-- `--context 5m 10m` to run specific lengths only
-- `--datasets apples` to restrict datasets (for debugging)
+Metrics (same for both tasks, since both are now classification with scalar labels):
+- AUROC (binary) or macro OvR AUROC (multi-class)
+- Balanced accuracy, macro F1, per-class recall
+- For staging: additionally Cohen's kappa
 
 ---
 
 ## Open Questions
 
 - [ ] Multi-visit subjects (SHHS, MrOS): treat each visit as independent subject (current plan)
-- [ ] Class imbalance (seq2label): try weighted cross-entropy first, then compare to oversampling
-- [ ] Modality ablations (Phase 0B): drop one modality at extraction time or zero out at dataset time?
+- [ ] Class imbalance: weighted cross-entropy vs oversampling
+- [ ] Modality ablations (Phase 0B): zero out modality at dataset time (post-embedding)
+- [ ] Transformer head for full_night: skip entirely or use efficient attention (linformer/flash)?
+- [ ] Coverage sweep for seq2label (start/middle/end/full night region): Phase 0 extension
