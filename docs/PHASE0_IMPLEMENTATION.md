@@ -86,55 +86,84 @@ SleepFM repo modules can be imported without installing them as a package.
 
 ---
 
-## Step 2 — Context-Window Dataset (TODO)
+## Step 2 — Context-Window Dataset ✓
 
 `src/nsrr_tools/datasets/context_window_dataset.py`
 
-- Loads `[T, 4, 128]` embedding → flattens modality dim → `[T, 512]`
-- Parses context length string (`"10m"` → 120 patches)
-- Samples N consecutive patches:
-  - Train: random start
-  - Val/Test: center of recording (for seq2label); or sliding windows (for seq2seq)
-- Pads recordings shorter than N with zeros (mask returned)
+- Loads `[T, 4, 128]` embedding → flattens modality dim → `[T, 512]` at item-load time
+- Parses context length string via `parse_context_length()`: `"10m"` → 120 patches
+- Filters subjects to those that have an embedding `.npy` file (warns on missing)
+- Train/val/test split: shuffle with `split_seed`, then slice by ratio (70/15/15)
+- Window sampling:
+  - Train: random start (seeded per sample for reproducibility)
+  - Val/Test: center window `start = (T - N) // 2`
+- Recordings shorter than N: zero-pad on the right; mask `True` for padded positions
 - Two modes:
-  - `seq2label`: returns `(embeddings [N,512], mask [N], label int)`
-  - `seq2seq`: returns `(embeddings [N,512], mask [N], stage_labels [N] int)`
+  - `seq2label`: reads `label` column from subject CSV; returns `(x [N,512], mask [N], label scalar)`
+  - `seq2seq`: loads annotation `.npy` (30-sec epochs), expands to 5-sec resolution (repeat×6),
+    truncates to `min(T_embedding, T_annotation)`, returns `(x [N,512], mask [N], stages [N])`
+- Stage remapping: 5 (original NSRR REM) → 4; padded positions labeled -1
 
-Sleep staging labels come from `{sleep_stage_dir}/{dataset}/derived/annotations/{subject_id}_stages.npy`
-(already extracted by `preprocess_signals.py`). One label per 30-sec epoch → maps to
-6 consecutive patches (30s / 5s = 6). Stage class 5 (original REM) is remapped to 4.
+### Smoke-test
+```
+python scripts/test_context_window_dataset.py \
+    --config configs/phase0_config.yaml \
+    --task apnea_binary --context 10m --datasets apples
+```
+Or use the `👽 Phase0 Step2` launch configs in `launch.json`.
 
 ---
 
-## Step 3 — Sequence Head (TODO)
+## Step 3 — Sequence Head ✓
 
 `src/nsrr_tools/models/sequence_head.py`
 
-Input always `[batch, N, 512]`. Output depends on task:
+Input always `[batch, N, 512]`, mask `[batch, N]` bool (True=padded). Output:
 
 | Head | seq2label | seq2seq |
 |---|---|---|
-| MeanPool | avg pool → linear | N/A |
-| LSTMHead | last hidden state → linear | all timestep outputs → linear |
-| TransformerHead | CLS token → linear | all tokens → linear |
+| `MeanPoolHead` | masked mean → linear → (B, C) | N/A |
+| `LSTMHead` | BiLSTM, last valid state → linear → (B, C) | all states → linear → (B, N, C) |
+| `TransformerHead` | CLS token → linear → (B, C) | patch tokens → linear → (B, N, C) |
+
+Key design choices:
+- `LSTMHead`: uses `pack_padded_sequence` to skip padding efficiently
+- `TransformerHead`: Pre-LN (`norm_first=True`), sinusoidal positional encoding, CLS prepended
+- `build_head(cfg)` factory reads `cfg["model"]` and returns the configured head
+
+Config fields used: `head_type`, `task_type`, `input_dim`, `hidden_dim`, `num_layers`,
+`num_heads` (transformer only), `dropout`, `num_classes`.
 
 ---
 
-## Step 4 — Training Script (TODO)
+## Step 4 — Training Script ✓
 
 `scripts/train_context_sweep.py`
 
-Loops over context lengths, trains head, saves metrics. Metrics:
+Loops over all context lengths in config; trains head; saves metrics. Skips already-done
+context lengths on resubmit. GPU job: `jobs/train_context_sweep_gpu.sh`.
+
+Metrics:
 - seq2label: AUROC, balanced accuracy, macro F1, per-class recall
-- seq2seq: per-class accuracy, macro F1, Cohen's kappa
+- seq2seq: per-class accuracy, macro F1, Cohen's kappa (ignores padded label=-1)
 
 Output:
 ```
-results/phase0/{task}_{head_type}/
-  context_5m/  best_model.pt  metrics.csv
-  context_10m/ ...
-  summary.csv
+{results_dir}/{task}_{head_type}/
+  context_30s/  best_model.pt  metrics.json
+  context_2m/   ...
+  context_5m/   ...
+  ...
+  summary.csv   — one row per context length
 ```
+
+Key design:
+- Early stopping on val loss (patience=5)
+- Cosine LR scheduler
+- Mixed precision (AMP) on GPU
+- `ignore_index=-1` in CrossEntropyLoss for seq2seq padded positions
+- `--context 5m 10m` to run specific lengths only
+- `--datasets apples` to restrict datasets (for debugging)
 
 ---
 

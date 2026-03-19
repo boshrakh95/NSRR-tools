@@ -145,6 +145,7 @@ model:
 
   hidden_dim: 256
   num_layers: 2
+  num_heads: 8        # for transformer head (must divide hidden_dim)
   dropout: 0.3
   num_classes: 2          # set automatically from task at runtime
 
