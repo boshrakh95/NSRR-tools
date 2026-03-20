@@ -204,6 +204,8 @@ def train_one_context(
     device:          torch.device,
     datasets_filter: list,
     extra_epochs:    int,
+    limit:           int,
+    max_items:       int,
 ):
     t_cfg = cfg["training"]
     N     = parse_context_length(context_length)
@@ -229,6 +231,8 @@ def train_one_context(
                 task=task,
                 task_type=task_type,
                 datasets=datasets_filter,
+                limit=limit,
+                max_items=max_items,
             )
 
     train_ds = make_ds("train")
@@ -268,9 +272,19 @@ def train_one_context(
     print(f"  Trainable params: {n_params:,}")
 
     # ── Loss ───────────────────────────────────────────────────────────────
-    class_weights = t_cfg.get("class_weights")
-    if class_weights is not None:
-        w = torch.tensor(class_weights, dtype=torch.float32, device=device)
+    class_weights_cfg = t_cfg.get("class_weights")
+    if class_weights_cfg == "auto":
+        # Inverse-frequency weights from training labels
+        train_labels = np.array([entry[2] for entry in train_ds._index])
+        counts = np.bincount(train_labels, minlength=num_classes).astype(float)
+        counts = np.where(counts == 0, 1.0, counts)   # avoid /0
+        w_auto = len(train_labels) / (num_classes * counts)
+        w_auto = w_auto / w_auto.sum() * num_classes  # normalize so mean=1
+        print(f"  Auto class weights: {np.round(w_auto, 3).tolist()}")
+        w = torch.tensor(w_auto, dtype=torch.float32, device=device)
+        criterion = nn.CrossEntropyLoss(weight=w)
+    elif class_weights_cfg is not None:
+        w = torch.tensor(class_weights_cfg, dtype=torch.float32, device=device)
         criterion = nn.CrossEntropyLoss(weight=w)
     else:
         criterion = nn.CrossEntropyLoss()
@@ -290,6 +304,7 @@ def train_one_context(
     # ── Training loop ──────────────────────────────────────────────────────
     patience      = t_cfg.get("early_stopping_patience", 5)
     best_val_loss = float("inf")
+    best_val_acc  = float("nan")
     no_improve    = 0
     history       = []
 
@@ -298,30 +313,39 @@ def train_one_context(
 
     t0 = time.time()
     for epoch in range(1, epochs + 1):
-        train_loss, _, _ = run_epoch(
+        train_loss, train_logits, train_targets = run_epoch(
             model, train_loader, optimizer, criterion, device, scaler, train=True
         )
-        val_loss, _, _ = run_epoch(
+        val_loss, val_logits, val_targets = run_epoch(
             model, val_loader, None, criterion, device, None, train=False
         )
         scheduler.step()
 
-        history.append({"epoch": epoch, "train_loss": train_loss, "val_loss": val_loss})
+        train_acc = float((train_logits.argmax(1) == train_targets).mean())
+        val_acc   = float((val_logits.argmax(1)   == val_targets).mean())
+
+        history.append({
+            "epoch": epoch,
+            "train_loss": train_loss, "train_acc": train_acc,
+            "val_loss": val_loss,     "val_acc": val_acc,
+        })
 
         improved = val_loss < best_val_loss
         if improved:
             best_val_loss = val_loss
+            best_val_acc  = val_acc
             no_improve    = 0
             torch.save(model.state_dict(), ckpt_path)
         else:
             no_improve += 1
 
-        if epoch % 5 == 0 or epoch == 1:
-            print(
-                f"  Epoch {epoch:3d}/{epochs} | "
-                f"train={train_loss:.4f} | val={val_loss:.4f} | "
-                f"best={best_val_loss:.4f} | patience={no_improve}/{patience}"
-            )
+        # if epoch % 5 == 0 or epoch == 1: # to print every n epochs and the first epoch 
+        print(
+            f"  Epoch {epoch:3d}/{epochs} | "
+            f"loss: train={train_loss:.4f}  val={val_loss:.4f}  best={best_val_loss:.4f} | "
+            f"acc: train={train_acc:.3f}  val={val_acc:.3f}  best_val={best_val_acc:.3f} | "
+            f"patience={no_improve}/{patience}"
+        )
 
         if no_improve >= patience:
             print(f"  Early stop at epoch {epoch}.")
@@ -400,6 +424,10 @@ def main():
                         help="Run only these context lengths e.g. --context 5m 10m full_night")
     parser.add_argument("--datasets",  default=None,  nargs="+",
                         help="Restrict to these datasets (for debugging)")
+    parser.add_argument("--limit",     default=None,  type=int,
+                        help="Max subjects per split (for debugging, e.g. --limit 20)")
+    parser.add_argument("--max-items", default=None,  type=int, dest="max_items",
+                        help="Max total items per split after index build (for debugging, e.g. --max-items 200)")
     parser.add_argument("--full-night-epochs", default=0, type=int, dest="full_night_epochs",
                         help="Extra epochs to add for full_night (compensates fewer samples)")
     parser.add_argument("--cpu",       action="store_true")
@@ -449,6 +477,8 @@ def main():
                 device=device,
                 datasets_filter=args.datasets,
                 extra_epochs=extra,
+                limit=args.limit,
+                max_items=args.max_items,
             )
             if metrics is not None:
                 append_to_summary(summary_path, metrics)

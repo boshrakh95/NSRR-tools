@@ -191,6 +191,8 @@ class ContextWindowDataset(Dataset):
         task_type: str = None,
         datasets: Optional[List[str]] = None,
         seed: int = 42,
+        limit: Optional[int] = None,
+        max_items: Optional[int] = None,
     ):
         assert split in ("train", "val", "test"), f"Unknown split: {split!r}"
 
@@ -261,10 +263,16 @@ class ContextWindowDataset(Dataset):
 
         self.df = df.iloc[idx].reset_index(drop=True)
 
+        # Debug limit: keep only first N subjects
+        if limit is not None:
+            self.df = self.df.iloc[:limit].reset_index(drop=True)
+
         # ── Build flat index ───────────────────────────────────────────────
         # Each entry: (subject_row_idx, aux_int, label_int)
         #   seq2seq   aux_int = anchor_patch_end  (exclusive, i.e., last patch+1)
         #   seq2label aux_int = window_start
+        self._max_items = max_items
+
         if task_type == "seq2seq":
             self._index = self._build_seq2seq_index()
         else:
@@ -274,6 +282,10 @@ class ContextWindowDataset(Dataset):
                     f"Found: {list(self.df.columns)}"
                 )
             self._index = self._build_seq2label_index()
+
+        # Cap total items (for quick training-loop debug)
+        if max_items is not None and len(self._index) > max_items:
+            self._index = self._index[:max_items]
 
     # ── Index builders ─────────────────────────────────────────────────────
 

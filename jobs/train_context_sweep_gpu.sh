@@ -37,25 +37,27 @@ export PYTHONPATH="/home/boshra95/sleepfm-clinical:/home/boshra95/sleepfm-clinic
 
 # ── Job parameters ────────────────────────────────────────────────────────────
 CONFIG="configs/phase0_config.yaml"
-TASK=${TASK:-""}      # empty = use config default
-HEAD=${HEAD:-""}      # empty = use config default
+TASK=${TASK:-""}           # empty = use config default
+TASK_TYPE=${TASK_TYPE:-""} # empty = use config default
+HEAD=${HEAD:-""}           # empty = use config default
 
 echo "========================================================================"
 echo "Phase 0 Step 4 — Context-Length Sweep"
 echo "========================================================================"
-echo "Job ID:  $SLURM_JOB_ID"
-echo "Node:    $SLURM_NODELIST"
-echo "GPU:     $(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null || echo 'N/A')"
-echo "Task:    ${TASK:-'(from config)'}"
-echo "Head:    ${HEAD:-'(from config)'}"
-echo "Start:   $(date)"
+echo "Job ID:    $SLURM_JOB_ID"
+echo "Node:      $SLURM_NODELIST"
+echo "GPU:       $(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null || echo 'N/A')"
+echo "Task:      ${TASK:-'(from config)'}  type=${TASK_TYPE:-'(from config)'}"
+echo "Head:      ${HEAD:-'(from config)'}"
+echo "Start:     $(date)"
 echo "========================================================================"
 echo ""
 
 # ── Build command ─────────────────────────────────────────────────────────────
 CMD="python scripts/train_context_sweep.py --config $CONFIG"
-[ -n "$TASK" ] && CMD="$CMD --task $TASK"
-[ -n "$HEAD" ] && CMD="$CMD --head $HEAD"
+[ -n "$TASK"      ] && CMD="$CMD --task $TASK"
+[ -n "$TASK_TYPE" ] && CMD="$CMD --task-type $TASK_TYPE"
+[ -n "$HEAD"      ] && CMD="$CMD --head $HEAD"
 
 echo "Running: $CMD"
 echo ""

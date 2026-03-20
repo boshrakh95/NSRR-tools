@@ -108,7 +108,7 @@ dataset:
   context_lengths:
     - "30s"         #    6 patches
     - "2m"          #   24 patches
-    - "5m"          #   60 patches
+    # - "5m"          #   60 patches
     - "10m"         #  120 patches
     - "20m"         #  240 patches
     - "40m"         #  480 patches
@@ -153,14 +153,14 @@ model:
   # NOTE: transformer is automatically skipped for full_night (O(N²) memory)
 
   hidden_dim: 256
-  num_layers: 2
+  num_layers: 3
   num_heads:  8       # transformer only; must divide hidden_dim
   dropout:    0.3
   num_classes: 2      # patched automatically from dataset at runtime
 
 # ── Training ─────────────────────────────────────────────────────────────────
 training:
-  epochs: 30
+  epochs: 50
   lr: 1.0e-3
   weight_decay: 1.0e-4
   optimizer: "adam"
@@ -169,10 +169,11 @@ training:
   device: "cuda"          # "cuda" | "cpu"
   mixed_precision: true
 
-  # Optional class weights (list of floats, one per class).
-  # Useful for imbalanced tasks (e.g. sleep staging: N1 is rare).
-  # null = uniform weights.
-  class_weights: null
+  # Class weights for imbalanced tasks.
+  # "auto" = inverse-frequency weights computed from training split labels.
+  # null   = uniform (use for balanced tasks: apnea_binary, insomnia_binary, rested_morning).
+  # list   = manual, one float per class.
+  class_weights: "auto"
 
 # ── Logging & Output ─────────────────────────────────────────────────────────
 logging:

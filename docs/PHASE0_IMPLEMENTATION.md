@@ -206,6 +206,19 @@ Metrics (same for both tasks, since both are now classification with scalar labe
 
 ---
 
+## Known Data Notes
+
+**APPLES: 1104 HDF5 files out of 1516 subjects in metadata**
+- The NSRR APPLES archive contains only 1104 EDFs, not 1516.
+- The remaining ~412 subjects appear in clinical metadata but have no recording on NSRR
+  (withdrawals, failed recordings, or excluded before distribution).
+- Of the 1104 with HDF5: 1103 produced embeddings; APL0419 was skipped (recording too
+  short: ~3.2 min < one 5-min chunk).
+- For apnea_binary: 1103/1223 eligible subjects have embeddings; the 120-subject warning
+  in ContextWindowDataset is expected and correct — not a pipeline bug.
+
+---
+
 ## Open Questions
 
 - [ ] Multi-visit subjects (SHHS, MrOS): treat each visit as independent subject (current plan)
