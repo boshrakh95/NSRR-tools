@@ -107,13 +107,13 @@ dataset:
   # "full_night" = all patches up to anchor (seq2seq) or whole recording (seq2label)
   context_lengths:
     - "30s"         #    6 patches
-    - "2m"          #   24 patches
+    # - "2m"          #   24 patches
     # - "5m"          #   60 patches
     - "10m"         #  120 patches
-    - "20m"         #  240 patches
+    # - "20m"         #  240 patches
     - "40m"         #  480 patches
-    - "80m"         #  960 patches
-    - "full_night"  #  all patches (variable per subject)
+    # - "80m"         #  960 patches
+    # - "full_night"  #  all patches (variable per subject)
 
   # --- Per-experiment settings (change these per run) ---
   task: "apnea_binary"          # CSV filename stem, or "sleep_staging"
@@ -153,21 +153,21 @@ model:
   # NOTE: transformer is automatically skipped for full_night (O(N²) memory)
 
   hidden_dim: 256
-  num_layers: 3
+  num_layers: 2
   num_heads:  8       # transformer only; must divide hidden_dim
   dropout:    0.3
   num_classes: 2      # patched automatically from dataset at runtime
 
 # ── Training ─────────────────────────────────────────────────────────────────
 training:
-  epochs: 50
+  epochs: 30
   lr: 1.0e-3
   weight_decay: 1.0e-4
   optimizer: "adam"
   scheduler: "cosine"
-  early_stopping_patience: 5
+  early_stopping_patience: 10
   device: "cuda"          # "cuda" | "cpu"
-  mixed_precision: true
+  mixed_precision: false  # LSTMs are unstable with float16; disable AMP
 
   # Class weights for imbalanced tasks.
   # "auto" = inverse-frequency weights computed from training split labels.

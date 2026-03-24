@@ -153,6 +153,7 @@ def run_epoch(
     device:    torch.device,
     scaler,
     train:     bool,
+    max_grad_norm: float = 1.0,
 ):
     """One epoch.  Returns (avg_loss, logits_np, targets_np)."""
     model.train(train)
@@ -174,10 +175,13 @@ def run_epoch(
                 optimizer.zero_grad()
                 if scaler is not None:
                     scaler.scale(loss).backward()
+                    scaler.unscale_(optimizer)
+                    nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
                     scaler.step(optimizer)
                     scaler.update()
                 else:
                     loss.backward()
+                    nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
                     optimizer.step()
 
             total_loss  += loss.item() * x.size(0)

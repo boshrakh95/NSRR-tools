@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=ctx_sweep
 #SBATCH --account=def-forouzan_gpu
-#SBATCH --time=08:00:00
+#SBATCH --time=05:00:00
 #SBATCH --gpus=nvidia_h100_80gb_hbm3_1g.10gb:1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32000M

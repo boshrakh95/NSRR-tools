@@ -78,6 +78,7 @@ MINIMUM PAST CONTEXT (seq2seq only)
     10m  → 15 patches (1.25m)  full_night → 240 patches (20m, capped)
 """
 
+import json
 import re
 import warnings
 from pathlib import Path
@@ -164,6 +165,42 @@ def _load_emb_shape(path: Path) -> int:
     return np.load(path, mmap_mode="r").shape[0]
 
 
+def _build_shape_cache(embedding_dir: Path) -> dict:
+    """
+    Scan all .npy files under embedding_dir and return {rel_key: T} where
+    rel_key = "{dataset}/{subject_id}".
+
+    The result is written to {embedding_dir}/shape_cache.json so subsequent
+    calls return immediately.  The cache is invalidated (rebuilt) only if
+    new files appear that are not in the stored cache.
+    """
+
+
+    cache_path = embedding_dir / "shape_cache.json"
+
+    # If cache exists, load and return immediately — skip filesystem scan.
+    # Delete shape_cache.json manually if you add new embedding files.
+    if cache_path.exists():
+        with open(cache_path) as f:
+            return json.load(f)
+
+    # Cache missing: scan all .npy files and build it from scratch.
+    print(f"  [shape_cache] Building cache (first run) …", flush=True)
+    all_files = {
+        f"{p.parent.name}/{p.stem}": p
+        for p in embedding_dir.rglob("*.npy")
+    }
+    cached = {
+        key: int(np.load(path, mmap_mode="r").shape[0])
+        for key, path in sorted(all_files.items())
+    }
+    with open(cache_path, "w") as f:
+        json.dump(cached, f)
+    print(f"  [shape_cache] Cache saved → {cache_path} ({len(cached)} entries)", flush=True)
+
+    return cached
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Dataset
 # ─────────────────────────────────────────────────────────────────────────────
@@ -218,6 +255,26 @@ class ContextWindowDataset(Dataset):
         # K_max for seq2label
         self._K_max = ds_cfg.get("windows_per_subject", 5)
 
+        # ── Shape cache (avoids per-subject .npy header reads on slow FS) ──
+        self._shape_cache = _build_shape_cache(self.embedding_dir)
+
+        # ── NaN blocklist (subjects with corrupt embedding files) ──────────
+        blocklist_path = self.embedding_dir / "nan_blocklist.txt"
+        if blocklist_path.exists():
+            with open(blocklist_path) as f:
+                self._nan_blocklist = {
+                    line.split("\t")[0].strip()
+                    for line in f if line.strip()
+                }
+            if self._nan_blocklist:
+                warnings.warn(
+                    f"NaN blocklist loaded: {len(self._nan_blocklist)} subjects will be "
+                    f"excluded (see {blocklist_path}).",
+                    stacklevel=2,
+                )
+        else:
+            self._nan_blocklist = set()
+
         # ── Load subject list ──────────────────────────────────────────────
         task_subject_dir = Path(ds_cfg["task_subject_dir"])
         csv_path = task_subject_dir / f"{task}_subjects.csv"
@@ -244,6 +301,20 @@ class ContextWindowDataset(Dataset):
                 f"{n_missing}/{n_before} subjects have no embedding file — skipped.",
                 stacklevel=2,
             )
+
+        # Remove subjects with known NaN embeddings
+        if self._nan_blocklist:
+            is_blocked = df.apply(
+                lambda r: f"{r['dataset']}/{r['subject_id']}" in self._nan_blocklist,
+                axis=1,
+            )
+            n_blocked = is_blocked.sum()
+            df = df[~is_blocked].reset_index(drop=True)
+            if n_blocked > 0:
+                warnings.warn(
+                    f"{n_blocked} subjects removed (NaN blocklist).",
+                    stacklevel=2,
+                )
 
         # ── Train / val / test split (subject-level) ───────────────────────
         rng = np.random.default_rng(ds_cfg["split_seed"])
@@ -293,8 +364,8 @@ class ContextWindowDataset(Dataset):
         """Build (row_idx, anchor_patch_end, stage_label) for every valid anchor."""
         index = []
         for row_idx, row in self.df.iterrows():
-            npy_path = self.embedding_dir / row["dataset"] / f"{row['subject_id']}.npy"
-            T = _load_emb_shape(npy_path)
+            cache_key = f"{row['dataset']}/{row['subject_id']}"
+            T = self._shape_cache[cache_key]
 
             # Load stage annotations (small array — OK to load here)
             ann_path = Path(row["annotation_path"])
@@ -333,8 +404,8 @@ class ContextWindowDataset(Dataset):
         rng   = np.random.default_rng(self.seed)
 
         for row_idx, row in self.df.iterrows():
-            npy_path = self.embedding_dir / row["dataset"] / f"{row['subject_id']}.npy"
-            T     = _load_emb_shape(npy_path)
+            cache_key = f"{row['dataset']}/{row['subject_id']}"
+            T     = self._shape_cache[cache_key]
             label = int(row["label"])
 
             if self.is_full_night:
@@ -377,7 +448,9 @@ class ContextWindowDataset(Dataset):
         row = self.df.iloc[row_idx]
 
         npy_path = self.embedding_dir / row["dataset"] / f"{row['subject_id']}.npy"
-        emb = np.load(npy_path)           # (T, 4, 128) float16
+        # mmap_mode='r': OS pages in only the slices we access (~6KB per item
+        # for 30s context) instead of loading the full ~5MB file every call.
+        emb = np.load(npy_path, mmap_mode="r")   # (T, 4, 128) float16
         T   = emb.shape[0]
 
         if self.task_type == "seq2seq":
