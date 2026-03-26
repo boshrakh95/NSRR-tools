@@ -59,6 +59,7 @@ METRICS (all tasks)
 import argparse
 import csv
 import json
+import os
 import sys
 import time
 import warnings
@@ -69,6 +70,13 @@ import torch
 import torch.nn as nn
 import yaml
 from torch.utils.data import DataLoader
+
+try:
+    import wandb
+    HAS_WANDB = True
+except ImportError:
+    HAS_WANDB = False
+    warnings.warn("wandb not installed — run tracking disabled.")
 
 # ── local imports ──────────────────────────────────────────────────────────
 _ROOT = Path(__file__).resolve().parent.parent
@@ -210,6 +218,9 @@ def train_one_context(
     extra_epochs:    int,
     limit:           int,
     max_items:       int,
+    use_wandb:       bool = False,
+    wandb_project:   str  = "nsrr-phase0",
+    wandb_entity:    str  = None,
 ):
     t_cfg = cfg["training"]
     N     = parse_context_length(context_length)
@@ -246,6 +257,32 @@ def train_one_context(
     num_classes = train_ds.num_classes
     print(f"  Items — train: {len(train_ds)} | val: {len(val_ds)} | test: {len(test_ds)}")
     print(f"  num_classes: {num_classes}")
+
+    # ── W&B run ────────────────────────────────────────────────────────────
+    wb_run = None
+    if use_wandb and HAS_WANDB:
+        wb_run = wandb.init(
+            project=wandb_project,
+            entity=wandb_entity,
+            name=f"{task}_{head_type}_{context_length}",
+            group=f"{task}_{head_type}",
+            tags=[task, head_type, context_length, task_type],
+            config={
+                "task":           task,
+                "task_type":      task_type,
+                "head_type":      head_type,
+                "context_length": context_length,
+                "n_train":        len(train_ds),
+                "n_val":          len(val_ds),
+                "n_test":         len(test_ds),
+                **{k: v for k, v in cfg["training"].items()
+                   if not isinstance(v, (list, dict))},
+                **{k: v for k, v in cfg["model"].items()
+                   if not isinstance(v, (list, dict))},
+            },
+            dir=os.environ.get("WANDB_DIR", "/tmp"),
+            reinit=True,
+        )
 
     # ── DataLoaders ────────────────────────────────────────────────────────
     collate = ContextWindowDataset.collate_fn if is_full_night else None
@@ -343,13 +380,22 @@ def train_one_context(
         else:
             no_improve += 1
 
-        # if epoch % 5 == 0 or epoch == 1: # to print every n epochs and the first epoch 
+        # if epoch % 5 == 0 or epoch == 1: # to print every n epochs and the first epoch
         print(
             f"  Epoch {epoch:3d}/{epochs} | "
             f"loss: train={train_loss:.4f}  val={val_loss:.4f}  best={best_val_loss:.4f} | "
             f"acc: train={train_acc:.3f}  val={val_acc:.3f}  best_val={best_val_acc:.3f} | "
             f"patience={no_improve}/{patience}"
         )
+
+        if wb_run is not None:
+            wb_run.log({
+                "train/loss": train_loss,
+                "val/loss":   val_loss,
+                "train/acc":  train_acc,
+                "val/acc":    val_acc,
+                "lr":         optimizer.param_groups[0]["lr"],
+            }, step=epoch)
 
         if no_improve >= patience:
             print(f"  Early stop at epoch {epoch}.")
@@ -391,6 +437,14 @@ def train_one_context(
         json.dump(metrics, f, indent=2)
 
     print(f"  Test: {test_metrics}")
+
+    if wb_run is not None:
+        wb_run.summary.update({f"val/{k}":  v for k, v in val_metrics.items()})
+        wb_run.summary.update({f"test/{k}": v for k, v in test_metrics.items()})
+        wb_run.summary["training_time_min"] = elapsed / 60
+        wb_run.summary["n_epochs_run"]      = len(history)
+        wb_run.finish()
+
     return metrics
 
 
@@ -434,7 +488,13 @@ def main():
                         help="Max total items per split after index build (for debugging, e.g. --max-items 200)")
     parser.add_argument("--full-night-epochs", default=0, type=int, dest="full_night_epochs",
                         help="Extra epochs to add for full_night (compensates fewer samples)")
-    parser.add_argument("--cpu",       action="store_true")
+    parser.add_argument("--cpu",           action="store_true")
+    parser.add_argument("--wandb-project", default="nsrr-phase0", dest="wandb_project",
+                        help="W&B project name (default: nsrr-phase0)")
+    parser.add_argument("--wandb-entity",  default=None, dest="wandb_entity",
+                        help="W&B entity/team (default: your personal account)")
+    parser.add_argument("--no-wandb",      action="store_true", dest="no_wandb",
+                        help="Disable W&B logging")
     args = parser.parse_args()
 
     with open(args.config) as f:
@@ -445,6 +505,11 @@ def main():
     head_type = args.head_type or cfg["model"]["head_type"]
 
     context_lengths = args.context or cfg["dataset"]["context_lengths"]
+
+    use_wandb = HAS_WANDB and not args.no_wandb
+    if use_wandb:
+        # Non-interactive login — reads WANDB_API_KEY from environment
+        wandb.login(relogin=False)
 
     device = torch.device(
         "cpu" if args.cpu else ("cuda" if torch.cuda.is_available() else "cpu")
@@ -483,6 +548,9 @@ def main():
                 extra_epochs=extra,
                 limit=args.limit,
                 max_items=args.max_items,
+                use_wandb=use_wandb,
+                wandb_project=args.wandb_project,
+                wandb_entity=args.wandb_entity,
             )
             if metrics is not None:
                 append_to_summary(summary_path, metrics)

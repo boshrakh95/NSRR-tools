@@ -239,6 +239,7 @@ class ContextWindowDataset(Dataset):
         assert task_type in ("seq2label", "seq2seq"), f"Unknown task_type: {task_type!r}"
 
         self.split         = split
+        self.task          = task
         self.task_type     = task_type
         self.seed          = seed
         self.embedding_dir = Path(cfg["dataset"]["embedding_dir"])
@@ -564,10 +565,29 @@ class ContextWindowDataset(Dataset):
 
     # ── Convenience ───────────────────────────────────────────────────────
 
+    # Known fixed class counts per task — prevents under-counting with small
+    # subsets (e.g. --limit 2 may only contain one class).
+    _TASK_NUM_CLASSES = {
+        "sleep_staging":    5,   # Wake, N1, N2, N3, REM (seq2seq)
+        "apnea_binary":     2,
+        "apnea_class":      4,
+        "anxiety_binary":   2,
+        "cvd_binary":       2,
+        "depression_binary":2,
+        "depression_class": 4,
+        "insomnia_binary":  2,
+        "rested_morning":   2,
+        "sleepiness_binary":2,
+        "sleepiness_class": 3,
+    }
+
     @property
     def num_classes(self) -> int:
+        if self.task in self._TASK_NUM_CLASSES:
+            return self._TASK_NUM_CLASSES[self.task]
+        # Fallback: infer from data (may under-count with small subsets)
         if self.task_type == "seq2seq":
-            return 5   # Wake, N1, N2, N3, REM
+            return 5
         return int(self.df["label"].max()) + 1
 
     def __repr__(self) -> str:

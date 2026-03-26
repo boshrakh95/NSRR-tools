@@ -20,6 +20,15 @@
 #   sbatch --export=ALL,TASK=apnea_binary,HEAD=transformer jobs/train_context_sweep_gpu.sh
 #   sbatch --export=ALL,TASK=sleep_staging,HEAD=lstm       jobs/train_context_sweep_gpu.sh
 #
+#   # Filter to specific datasets (space-separated, quoted):
+#   sbatch --export=ALL,TASK=sleep_staging,HEAD=lstm,DATASETS="shhs1 shhs2" jobs/train_context_sweep_gpu.sh
+#
+#   # Disable W&B for a run:
+#   sbatch --export=ALL,...,NO_WANDB=1 jobs/train_context_sweep_gpu.sh
+#
+# W&B setup: store your API key in ~/.wandb_key (chmod 600).
+#   The script loads it automatically — no interactive prompts.
+#
 # Or single default run (uses task/head from phase0_config.yaml):
 #   sbatch jobs/train_context_sweep_gpu.sh
 
@@ -35,11 +44,21 @@ source /home/boshra95/sleepfm_env/bin/activate
 
 export PYTHONPATH="/home/boshra95/sleepfm-clinical:/home/boshra95/sleepfm-clinical/sleepfm:$PYTHONPATH"
 
+# ── W&B setup (non-interactive) ───────────────────────────────────────────────
+# Store your key once: echo "your_key_here" > ~/.wandb_key && chmod 600 ~/.wandb_key
+[ -f ~/.wandb_key ] && export WANDB_API_KEY=$(cat ~/.wandb_key)
+export WANDB_DIR=/tmp/wandb_${SLURM_JOB_ID}   # node-local tmp, auto-cleaned
+mkdir -p "$WANDB_DIR"
+
 # ── Job parameters ────────────────────────────────────────────────────────────
 CONFIG="configs/phase0_config.yaml"
-TASK=${TASK:-""}           # empty = use config default
-TASK_TYPE=${TASK_TYPE:-""} # empty = use config default
-HEAD=${HEAD:-""}           # empty = use config default
+TASK=${TASK:-""}            # empty = use config default
+TASK_TYPE=${TASK_TYPE:-""}  # empty = use config default
+HEAD=${HEAD:-""}            # empty = use config default
+CONTEXT=${CONTEXT:-""}      # single context length, e.g. "30s" or "10m"
+DATASETS=${DATASETS:-""}    # space-separated dataset names, e.g. "shhs mros"
+WANDB_PROJECT=${WANDB_PROJECT:-"nsrr-phase0"}
+NO_WANDB=${NO_WANDB:-""}
 
 echo "========================================================================"
 echo "Phase 0 Step 4 — Context-Length Sweep"
@@ -49,15 +68,21 @@ echo "Node:      $SLURM_NODELIST"
 echo "GPU:       $(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null || echo 'N/A')"
 echo "Task:      ${TASK:-'(from config)'}  type=${TASK_TYPE:-'(from config)'}"
 echo "Head:      ${HEAD:-'(from config)'}"
+echo "Datasets:  ${DATASETS:-'(all)'}"
+echo "W&B:       ${NO_WANDB:+disabled}${NO_WANDB:-project=$WANDB_PROJECT}"
 echo "Start:     $(date)"
 echo "========================================================================"
 echo ""
 
 # ── Build command ─────────────────────────────────────────────────────────────
 CMD="python scripts/train_context_sweep.py --config $CONFIG"
-[ -n "$TASK"      ] && CMD="$CMD --task $TASK"
-[ -n "$TASK_TYPE" ] && CMD="$CMD --task-type $TASK_TYPE"
-[ -n "$HEAD"      ] && CMD="$CMD --head $HEAD"
+[ -n "$TASK"           ] && CMD="$CMD --task $TASK"
+[ -n "$TASK_TYPE"      ] && CMD="$CMD --task-type $TASK_TYPE"
+[ -n "$HEAD"           ] && CMD="$CMD --head $HEAD"
+[ -n "$CONTEXT"        ] && CMD="$CMD --context $CONTEXT"
+[ -n "$DATASETS"       ] && CMD="$CMD --datasets $DATASETS"
+[ -n "$WANDB_PROJECT"  ] && CMD="$CMD --wandb-project $WANDB_PROJECT"
+[ -n "$NO_WANDB"       ] && CMD="$CMD --no-wandb"
 
 echo "Running: $CMD"
 echo ""
