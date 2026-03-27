@@ -407,6 +407,9 @@ def train_one_context(
     # ── Evaluation ─────────────────────────────────────────────────────────
     model.load_state_dict(torch.load(ckpt_path, map_location=device))
 
+    _, train_logits, train_targets = run_epoch(
+        model, train_loader, None, criterion, device, None, train=False
+    )
     _, val_logits,  val_targets  = run_epoch(
         model, val_loader,  None, criterion, device, None, train=False
     )
@@ -414,8 +417,9 @@ def train_one_context(
         model, test_loader, None, criterion, device, None, train=False
     )
 
-    val_metrics  = compute_metrics(val_logits,  val_targets,  num_classes, task)
-    test_metrics = compute_metrics(test_logits, test_targets, num_classes, task)
+    train_metrics = compute_metrics(train_logits, train_targets, num_classes, task)
+    val_metrics   = compute_metrics(val_logits,   val_targets,   num_classes, task)
+    test_metrics  = compute_metrics(test_logits,  test_targets,  num_classes, task)
 
     metrics = {
         "context_length":    context_length,
@@ -429,6 +433,7 @@ def train_one_context(
         "best_val_loss":     best_val_loss,
         "n_epochs_run":      len(history),
         "training_time_min": elapsed / 60,
+        "train":             train_metrics,
         "val":               val_metrics,
         "test":              test_metrics,
     }
@@ -436,11 +441,14 @@ def train_one_context(
     with open(out_dir / "metrics.json", "w") as f:
         json.dump(metrics, f, indent=2)
 
-    print(f"  Test: {test_metrics}")
+    print(f"  Train: {train_metrics}")
+    print(f"  Val:   {val_metrics}")
+    print(f"  Test:  {test_metrics}")
 
     if wb_run is not None:
-        wb_run.summary.update({f"val/{k}":  v for k, v in val_metrics.items()})
-        wb_run.summary.update({f"test/{k}": v for k, v in test_metrics.items()})
+        wb_run.summary.update({f"train/{k}": v for k, v in train_metrics.items()})
+        wb_run.summary.update({f"val/{k}":   v for k, v in val_metrics.items()})
+        wb_run.summary.update({f"test/{k}":  v for k, v in test_metrics.items()})
         wb_run.summary["training_time_min"] = elapsed / 60
         wb_run.summary["n_epochs_run"]      = len(history)
         wb_run.finish()

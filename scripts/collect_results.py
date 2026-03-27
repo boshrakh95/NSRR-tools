@@ -33,34 +33,34 @@ TASK_ORDER = [
 
 HEAD_ORDER = ["lstm", "transformer", "mean_pool"]
 
-# Metrics shown per task type
-BINARY_METRICS   = ["test_auroc", "test_balanced_accuracy", "test_macro_f1",
-                    "test_recall_class0", "test_recall_class1"]
-MULTICLASS_METRICS = ["test_auroc", "test_balanced_accuracy", "test_macro_f1",
-                      "test_cohen_kappa"]
-STAGING_METRICS  = ["test_auroc", "test_balanced_accuracy", "test_macro_f1",
-                    "test_cohen_kappa",
-                    "test_recall_class0", "test_recall_class1",
-                    "test_recall_class2", "test_recall_class3", "test_recall_class4"]
+# Core metrics shown per task type (applied to each split: train / val / test)
+BINARY_CORE     = ["auroc", "balanced_accuracy", "macro_f1",
+                   "recall_class0", "recall_class1"]
+MULTICLASS_CORE = ["auroc", "balanced_accuracy", "macro_f1", "cohen_kappa"]
+STAGING_CORE    = ["auroc", "balanced_accuracy", "macro_f1", "cohen_kappa",
+                   "recall_class0", "recall_class1",
+                   "recall_class2", "recall_class3", "recall_class4"]
+
+SPLITS = ["train", "val", "test"]
 
 STAGING_CLASS_NAMES = {
-    "test_recall_class0": "Wake",
-    "test_recall_class1": "N1",
-    "test_recall_class2": "N2",
-    "test_recall_class3": "N3",
-    "test_recall_class4": "REM",
+    "recall_class0": "Wake",
+    "recall_class1": "N1",
+    "recall_class2": "N2",
+    "recall_class3": "N3",
+    "recall_class4": "REM",
 }
 
 METRIC_DISPLAY = {
-    "test_auroc":            "AUROC",
-    "test_balanced_accuracy":"Bal-Acc",
-    "test_macro_f1":         "Macro-F1",
-    "test_cohen_kappa":      "Kappa",
-    "test_recall_class0":    "Rec-0",
-    "test_recall_class1":    "Rec-1",
-    "test_recall_class2":    "Rec-2",
-    "test_recall_class3":    "Rec-3",
-    "test_recall_class4":    "Rec-4",
+    "auroc":            "AUROC",
+    "balanced_accuracy":"Bal-Acc",
+    "macro_f1":         "Macro-F1",
+    "cohen_kappa":      "Kappa",
+    "recall_class0":    "Rec-0",
+    "recall_class1":    "Rec-1",
+    "recall_class2":    "Rec-2",
+    "recall_class3":    "Rec-3",
+    "recall_class4":    "Rec-4",
 }
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -99,20 +99,20 @@ def fmt(val, pct=True) -> str:
     return f"{val:.3f}"
 
 
-def metrics_for_task(task: str, num_classes: int) -> list:
+def core_metrics_for_task(task: str, num_classes: int) -> list:
     if task == "sleep_staging":
-        return STAGING_METRICS
+        return STAGING_CORE
     elif num_classes == 2:
-        return BINARY_METRICS
+        return BINARY_CORE
     else:
-        return MULTICLASS_METRICS
+        return MULTICLASS_CORE
 
 
-def display_name(col: str, task: str) -> str:
-    """Return human-readable column header."""
-    if task == "sleep_staging" and col in STAGING_CLASS_NAMES:
-        return STAGING_CLASS_NAMES[col]
-    return METRIC_DISPLAY.get(col, col)
+def display_name(metric: str, task: str) -> str:
+    """Return human-readable metric name (without split prefix)."""
+    if task == "sleep_staging" and metric in STAGING_CLASS_NAMES:
+        return STAGING_CLASS_NAMES[metric]
+    return METRIC_DISPLAY.get(metric, metric)
 
 
 # ── Markdown generation ───────────────────────────────────────────────────────
@@ -132,44 +132,65 @@ def build_markdown(master: pd.DataFrame) -> str:
     sections = []
     sections.append("# Phase 0 Results\n")
     sections.append(
-        "_All metrics are on the **test** split (%). "
-        "Best context per task highlighted with ← if AUROC is highest._\n"
+        "_All metrics in %. "
+        "Columns grouped as Train / Val / Test. "
+        "Best context per head highlighted with ← (by test AUROC)._\n"
     )
 
-    for task in master["task"].unique():
+    for task in TASK_ORDER:
         task_df = master[master["task"] == task]
-        task_type = task_df["task_type"].iloc[0]
+        if task_df.empty:
+            continue
+        task_type   = task_df["task_type"].iloc[0]
         num_classes = int(task_df["num_classes"].iloc[0])
-        metrics = metrics_for_task(task, num_classes)
+        core        = core_metrics_for_task(task, num_classes)
 
         sections.append(f"---\n## {task}  `{task_type}` · {num_classes} classes\n")
 
         for head in HEAD_ORDER:
-            head_df = task_df[task_df["head_type"] == head]
+            head_df = task_df[task_df["head_type"] == head].copy()
             if head_df.empty:
                 continue
 
-            # Sort by context
-            head_df = head_df.copy()
             head_df["_ord"] = head_df["context_length"].map(
                 lambda c: CONTEXT_ORDER.index(c) if c in CONTEXT_ORDER else 99
             )
             head_df = head_df.sort_values("_ord")
 
-            col_headers = ["Context", "N-test"] + [display_name(m, task) for m in metrics]
+            # Build column headers: Context | N-train | metric×split...
+            # Only include splits that are present in the data
+            available_splits = [
+                s for s in SPLITS
+                if any(f"{s}_{m}" in head_df.columns for m in core)
+            ]
+
+            col_headers = ["Context", "N-train", "N-val", "N-test"]
+            for split in available_splits:
+                for m in core:
+                    col = f"{split}_{m}"
+                    if col in head_df.columns:
+                        label = f"{split[0].upper()}-{display_name(m, task)}"
+                        col_headers.append(label)
+
+            best_auroc_idx = (
+                head_df["test_auroc"].idxmax()
+                if "test_auroc" in head_df.columns else None
+            )
+
             rows = []
-
-            best_auroc_idx = head_df["test_auroc"].idxmax() if "test_auroc" in head_df else None
-
             for _, row in head_df.iterrows():
                 r = {
                     "Context": row["context_length"],
+                    "N-train": f"{int(row['n_train']):,}",
+                    "N-val":   f"{int(row['n_val']):,}",
                     "N-test":  f"{int(row['n_test']):,}",
                 }
-                for m in metrics:
-                    val = row.get(m, float("nan"))
-                    r[display_name(m, task)] = fmt(val)
-                # Mark best AUROC row
+                for split in available_splits:
+                    for m in core:
+                        col = f"{split}_{m}"
+                        if col in head_df.columns:
+                            label = f"{split[0].upper()}-{display_name(m, task)}"
+                            r[label] = fmt(row.get(col, float("nan")))
                 if row.name == best_auroc_idx:
                     r["Context"] = row["context_length"] + " ←"
                 rows.append(r)
@@ -214,12 +235,14 @@ def main():
     print("PHASE 0 — QUICK SUMMARY  (test AUROC %)")
     print("=" * 72)
 
-    pivot_cols = ["task", "head_type", "context_length", "test_auroc",
+    pivot_cols = ["task", "head_type", "context_length",
+                  "train_auroc", "val_auroc", "test_auroc",
                   "test_balanced_accuracy", "n_test"]
     available  = [c for c in pivot_cols if c in master.columns]
     summary    = master[available].copy()
-    summary["test_auroc"]            = (summary["test_auroc"] * 100).round(1)
-    summary["test_balanced_accuracy"]= (summary["test_balanced_accuracy"] * 100).round(1)
+    for col in ["train_auroc", "val_auroc", "test_auroc", "test_balanced_accuracy"]:
+        if col in summary.columns:
+            summary[col] = (summary[col] * 100).round(1)
 
     print(summary.to_string(index=False))
     print()
