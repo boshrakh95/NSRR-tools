@@ -1,10 +1,11 @@
 #!/bin/bash
 #SBATCH --job-name=ctx_sweep
 #SBATCH --account=def-forouzan_gpu
-#SBATCH --time=05:00:00
+#SBATCH --time=07:00:00
 #SBATCH --gpus=nvidia_h100_80gb_hbm3_1g.10gb:1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32000M
+#SBATCH --exclude=fc11006
 #SBATCH --output=/home/boshra95/NSRR-tools/logs/sweep_%x_%j.out
 #SBATCH --error=/home/boshra95/NSRR-tools/logs/sweep_%x_%j.err
 
@@ -39,10 +40,17 @@ mkdir -p logs
 
 # ── Environment ───────────────────────────────────────────────────────────────
 module load python/3.11 2>/dev/null || true
+# module load cuda 2>/dev/null || true
 
 source /home/boshra95/sleepfm_env/bin/activate
 
 export PYTHONPATH="/home/boshra95/sleepfm-clinical:/home/boshra95/sleepfm-clinical/sleepfm:$PYTHONPATH"
+
+# Fail fast if CUDA is not available — avoids silent CPU fallback
+python -c "import torch; assert torch.cuda.is_available(), 'CUDA not available on node $SLURM_NODELIST'" || {
+    echo "ERROR: CUDA not available. Cancel and resubmit with --exclude=$SLURM_NODELIST"
+    exit 1
+}
 
 # ── W&B setup (non-interactive) ───────────────────────────────────────────────
 # Store your key once: echo "your_key_here" > ~/.wandb_key && chmod 600 ~/.wandb_key

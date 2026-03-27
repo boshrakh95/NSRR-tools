@@ -112,7 +112,7 @@ dataset:
     - "10m"         #  120 patches
     # - "20m"         #  240 patches
     - "40m"         #  480 patches
-    # - "80m"         #  960 patches
+    - "80m"         #  960 patches
     # - "full_night"  #  all patches (variable per subject)
 
   # --- Per-experiment settings (change these per run) ---
