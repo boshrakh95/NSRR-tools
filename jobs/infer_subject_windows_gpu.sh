@@ -1,0 +1,109 @@
+#!/bin/bash
+#SBATCH --job-name=infer_windows
+#SBATCH --account=def-forouzan_gpu
+#SBATCH --time=00:45:00
+#SBATCH --gpus=nvidia_h100_80gb_hbm3_1g.10gb:1
+#SBATCH --cpus-per-task=4
+#SBATCH --mem=32000M
+#SBATCH --exclude=fc11006
+#SBATCH --output=/home/boshra95/NSRR-tools/logs/infer_%x_%j.out
+#SBATCH --error=/home/boshra95/NSRR-tools/logs/infer_%x_%j.err
+
+# Phase 0 — Subject-level inference (all windows)
+#
+# Loads a trained checkpoint and runs inference on ALL non-overlapping windows
+# per subject (no K=5 cap).  Saves a parquet of per-window probabilities for
+# downstream majority-voting / mean-prob aggregation.
+#
+# Usage examples:
+#   sbatch --export=ALL,TASK=apnea_binary,TASK_TYPE=seq2label,HEAD=lstm,CONTEXT=10m \
+#       jobs/infer_subject_windows_gpu.sh
+#
+#   sbatch --export=ALL,TASK=cvd_binary,TASK_TYPE=seq2label,HEAD=lstm,CONTEXT=30s,DATASETS="shhs mros apples" \
+#       jobs/infer_subject_windows_gpu.sh
+#
+#   # Run on val split instead of test:
+#   sbatch --export=ALL,...,SPLIT=val jobs/infer_subject_windows_gpu.sh
+#
+#   # Reproduce training eval exactly (K=5 windows, no --all-windows):
+#   sbatch --export=ALL,...,NO_ALL_WINDOWS=1 jobs/infer_subject_windows_gpu.sh
+#
+# Time guide (all-windows, test split, H100):
+#   30s context: ~9.5M items → ~20 min  → use --time=01:00:00
+#   10m context: ~475k items → ~3  min  → default 1h is fine
+#   40m context: ~120k items → <1  min  → default 1h is fine
+
+set -e
+
+cd /home/boshra95/NSRR-tools
+mkdir -p logs
+
+# ── Environment ───────────────────────────────────────────────────────────────
+module load python/3.11 2>/dev/null || true
+
+source /home/boshra95/sleepfm_env/bin/activate
+
+export PYTHONPATH="/home/boshra95/sleepfm-clinical:/home/boshra95/sleepfm-clinical/sleepfm:$PYTHONPATH"
+
+# Fail fast if CUDA is not available
+python -c "import torch; assert torch.cuda.is_available(), 'CUDA not available on node $SLURM_NODELIST'" || {
+    echo "ERROR: CUDA not available. Cancel and resubmit with --exclude=$SLURM_NODELIST"
+    exit 1
+}
+
+# ── Job parameters ────────────────────────────────────────────────────────────
+CONFIG="configs/phase0_config.yaml"
+TASK=${TASK:-""}
+TASK_TYPE=${TASK_TYPE:-"seq2label"}
+HEAD=${HEAD:-"lstm"}
+CONTEXT=${CONTEXT:-""}
+SPLIT=${SPLIT:-"test"}
+DATASETS=${DATASETS:-""}
+NO_ALL_WINDOWS=${NO_ALL_WINDOWS:-""}   # set to 1 to use K=5 (training eval mode)
+BATCH_SIZE=${BATCH_SIZE:-512}
+
+echo "========================================================================"
+echo "Phase 0 — Subject-level inference (all windows)"
+echo "========================================================================"
+echo "Job ID:      $SLURM_JOB_ID"
+echo "Node:        $SLURM_NODELIST"
+echo "GPU:         $(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null || echo 'N/A')"
+echo "Task:        ${TASK}  type=${TASK_TYPE}"
+echo "Head:        ${HEAD}"
+echo "Context:     ${CONTEXT}"
+echo "Split:       ${SPLIT}"
+echo "Datasets:    ${DATASETS:-'(all)'}"
+echo "All windows: ${NO_ALL_WINDOWS:-yes}$([ -n "$NO_ALL_WINDOWS" ] && echo 'no (K=5)')"
+echo "Start:       $(date)"
+echo "========================================================================"
+echo ""
+
+# ── Build command ─────────────────────────────────────────────────────────────
+CMD="python scripts/infer_subject_windows.py --config $CONFIG"
+[ -n "$TASK"           ] && CMD="$CMD --task $TASK"
+[ -n "$TASK_TYPE"      ] && CMD="$CMD --task-type $TASK_TYPE"
+[ -n "$HEAD"           ] && CMD="$CMD --head $HEAD"
+[ -n "$CONTEXT"        ] && CMD="$CMD --context $CONTEXT"
+[ -n "$SPLIT"          ] && CMD="$CMD --split $SPLIT"
+[ -n "$DATASETS"       ] && CMD="$CMD --datasets $DATASETS"
+[ -n "$NO_ALL_WINDOWS" ] && CMD="$CMD --no-all-windows"
+CMD="$CMD --batch-size $BATCH_SIZE"
+
+echo "Running: $CMD"
+echo ""
+eval $CMD
+
+EXIT_CODE=$?
+
+echo ""
+echo "========================================================================"
+echo "End time: $(date)"
+if [ $EXIT_CODE -eq 0 ]; then
+    echo "Status: SUCCESS"
+else
+    echo "Status: FAILED (exit code: $EXIT_CODE)"
+fi
+echo "========================================================================"
+
+deactivate
+exit $EXIT_CODE
