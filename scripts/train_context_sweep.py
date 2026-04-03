@@ -8,12 +8,33 @@ lightweight sequence head on frozen SleepFM embeddings.
 For each context length L:
   1. Build DataLoaders from ContextWindowDataset
   2. Instantiate the configured head (MeanPool / LSTM / Transformer)
-  3. Train with early stopping on val loss; save best checkpoint
-  4. Evaluate on val and test sets; save metrics.json
-  5. Append one row to summary.csv
+  3. Train with early stopping on a configurable val metric; save best checkpoint
+  4. Evaluate train/val/test on the best checkpoint; save metrics.json
+  5. Append one row (val + test metrics) to summary.csv
 
 BOTH task types (seq2label and anchor-based seq2seq) now produce scalar labels
 so the training loop is identical for all tasks.
+
+CLASS IMBALANCE HANDLING
+────────────────────────
+  class_weights (config: training.class_weights):
+    "auto"  = inverse-frequency weights on training labels (recommended default)
+    null    = uniform CE loss (use only for balanced tasks)
+    [w0,w1] = manual per-class weights
+
+  weighted_sampler (config: training.weighted_sampler):
+    false (default) = random shuffle; true = WeightedRandomSampler so each
+    training batch is approximately class-balanced. Skipped for full_night.
+    Can be combined with class_weights for very severe imbalance.
+
+  early_stopping_monitor (config: training.early_stopping_monitor):
+    "val_auroc"             — recommended; threshold-independent, robust to imbalance
+    "val_balanced_accuracy" — direct average recall across classes
+    "val_macro_f1"          — useful when equal weight across classes matters
+    "val_loss"              — original behaviour (lower is better)
+
+  Per-epoch log shows balanced_accuracy (not raw accuracy) and the monitor
+  metric; a '*' marks epochs where the checkpoint was updated.
 
 CONTEXT LENGTH NOTES
 ────────────────────
@@ -44,13 +65,13 @@ OUTPUT
 ──────
   {results_dir}/{task}_{head_type}/
     context_{L}/
-      best_model.pt   — state dict of best val-loss checkpoint
-      metrics.json    — full train/val/test metrics for this L
-    summary.csv       — one row per completed context length (appended)
+      best_model.pt        — state dict of checkpoint with best val monitor metric
+      metrics.json         — train/val/test metrics + early_stopping_monitor used
+    summary.csv            — one row per completed context length (val + test metrics)
 
 METRICS (all tasks)
 ───────────────────
-  accuracy, balanced_accuracy, macro_f1, per-class recall
+  balanced_accuracy, macro_f1, per-class recall, accuracy
   binary tasks:      auroc
   multi-class tasks: macro OvR auroc
   sleep staging:     additionally cohen_kappa
@@ -69,7 +90,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import yaml
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, WeightedRandomSampler
 
 try:
     import wandb
@@ -147,6 +168,44 @@ def compute_metrics(
         m["cohen_kappa"] = float(cohen_kappa_score(targets, preds))
 
     return m
+
+
+def compute_monitor_metric(
+    monitor:     str,
+    logits:      np.ndarray,
+    targets:     np.ndarray,
+    loss:        float,
+    num_classes: int,
+) -> float:
+    """Return the scalar tracked for early stopping / checkpoint selection.
+
+    monitor values:
+      "val_loss"              — lower is better
+      "val_auroc"             — higher is better
+      "val_balanced_accuracy" — higher is better
+      "val_macro_f1"          — higher is better
+    """
+    if monitor == "val_loss":
+        return loss
+    if not HAS_SKLEARN:
+        return float("nan")
+    preds = logits.argmax(axis=1)
+    if monitor == "val_balanced_accuracy":
+        return float(balanced_accuracy_score(targets, preds))
+    if monitor == "val_macro_f1":
+        return float(f1_score(targets, preds, average="macro", zero_division=0))
+    if monitor == "val_auroc":
+        probs = torch.softmax(torch.from_numpy(logits), dim=-1).numpy()
+        try:
+            if num_classes == 2:
+                return float(roc_auc_score(targets, probs[:, 1]))
+            return float(roc_auc_score(targets, probs, multi_class="ovr", average="macro"))
+        except ValueError:
+            return float("nan")
+    raise ValueError(
+        f"Unknown early_stopping_monitor: {monitor!r}. "
+        "Choose from: val_loss, val_auroc, val_balanced_accuracy, val_macro_f1"
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -284,15 +343,51 @@ def train_one_context(
             reinit=True,
         )
 
+    # ── Class weights (computed before DataLoaders so sampler can reuse) ───
+    train_labels      = np.array([entry[2] for entry in train_ds._index])
+    class_weights_cfg = t_cfg.get("class_weights")
+    w_auto            = None   # kept for WeightedRandomSampler if configured
+
+    if class_weights_cfg == "auto":
+        counts = np.bincount(train_labels, minlength=num_classes).astype(float)
+        counts = np.where(counts == 0, 1.0, counts)
+        w_auto = len(train_labels) / (num_classes * counts)
+        w_auto = w_auto / w_auto.sum() * num_classes   # normalize so mean=1
+        print(f"  Auto class weights: {np.round(w_auto, 3).tolist()}")
+        w = torch.tensor(w_auto, dtype=torch.float32, device=device)
+        criterion = nn.CrossEntropyLoss(weight=w)
+    elif class_weights_cfg is not None:
+        w_auto = np.array(class_weights_cfg, dtype=float)
+        w = torch.tensor(w_auto, dtype=torch.float32, device=device)
+        criterion = nn.CrossEntropyLoss(weight=w)
+    else:
+        criterion = nn.CrossEntropyLoss()
+
     # ── DataLoaders ────────────────────────────────────────────────────────
-    collate = ContextWindowDataset.collate_fn if is_full_night else None
+    collate     = ContextWindowDataset.collate_fn if is_full_night else None
     num_workers = min(4, max(1, len(train_ds) // 64))
 
-    train_loader = DataLoader(
-        train_ds, batch_size=32, shuffle=True,
-        num_workers=num_workers, pin_memory=(device.type == "cuda"),
-        collate_fn=collate,
+    use_sampler = (
+        t_cfg.get("weighted_sampler", False)
+        and w_auto is not None
+        and not is_full_night   # full_night has 1 window/subject; resampling adds no value
     )
+    if use_sampler:
+        sample_weights = torch.tensor(w_auto[train_labels], dtype=torch.float32)
+        sampler        = WeightedRandomSampler(sample_weights, len(sample_weights), replacement=True)
+        train_loader   = DataLoader(
+            train_ds, batch_size=32, shuffle=False, sampler=sampler,
+            num_workers=num_workers, pin_memory=(device.type == "cuda"),
+            collate_fn=collate,
+        )
+        print(f"  WeightedRandomSampler: enabled")
+    else:
+        train_loader = DataLoader(
+            train_ds, batch_size=32, shuffle=True,
+            num_workers=num_workers, pin_memory=(device.type == "cuda"),
+            collate_fn=collate,
+        )
+
     val_loader = DataLoader(
         val_ds, batch_size=64, shuffle=False,
         num_workers=num_workers, pin_memory=(device.type == "cuda"),
@@ -312,24 +407,6 @@ def train_one_context(
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"  Trainable params: {n_params:,}")
 
-    # ── Loss ───────────────────────────────────────────────────────────────
-    class_weights_cfg = t_cfg.get("class_weights")
-    if class_weights_cfg == "auto":
-        # Inverse-frequency weights from training labels
-        train_labels = np.array([entry[2] for entry in train_ds._index])
-        counts = np.bincount(train_labels, minlength=num_classes).astype(float)
-        counts = np.where(counts == 0, 1.0, counts)   # avoid /0
-        w_auto = len(train_labels) / (num_classes * counts)
-        w_auto = w_auto / w_auto.sum() * num_classes  # normalize so mean=1
-        print(f"  Auto class weights: {np.round(w_auto, 3).tolist()}")
-        w = torch.tensor(w_auto, dtype=torch.float32, device=device)
-        criterion = nn.CrossEntropyLoss(weight=w)
-    elif class_weights_cfg is not None:
-        w = torch.tensor(class_weights_cfg, dtype=torch.float32, device=device)
-        criterion = nn.CrossEntropyLoss(weight=w)
-    else:
-        criterion = nn.CrossEntropyLoss()
-
     # ── Optimizer & scheduler ──────────────────────────────────────────────
     optimizer = torch.optim.Adam(
         model.parameters(),
@@ -343,11 +420,14 @@ def train_one_context(
     scaler  = torch.cuda.amp.GradScaler() if use_amp else None
 
     # ── Training loop ──────────────────────────────────────────────────────
-    patience      = t_cfg.get("early_stopping_patience", 5)
-    best_val_loss = float("inf")
-    best_val_acc  = float("nan")
-    no_improve    = 0
-    history       = []
+    patience  = t_cfg.get("early_stopping_patience", 5)
+    monitor   = t_cfg.get("early_stopping_monitor", "val_loss")
+    monitor_higher_is_better = (monitor != "val_loss")
+    best_monitor = float("-inf") if monitor_higher_is_better else float("inf")
+    monitor_label = monitor.replace("val_", "")   # e.g. "auroc", "balanced_accuracy"
+
+    no_improve = 0
+    history    = []
 
     out_dir.mkdir(parents=True, exist_ok=True)
     ckpt_path = out_dir / "best_model.pt"
@@ -362,20 +442,30 @@ def train_one_context(
         )
         scheduler.step()
 
-        train_acc = float((train_logits.argmax(1) == train_targets).mean())
-        val_acc   = float((val_logits.argmax(1)   == val_targets).mean())
+        # Balanced accuracy per epoch (meaningful for imbalanced tasks)
+        if HAS_SKLEARN:
+            train_bal_acc = float(balanced_accuracy_score(train_targets, train_logits.argmax(1)))
+            val_bal_acc   = float(balanced_accuracy_score(val_targets,   val_logits.argmax(1)))
+        else:
+            train_bal_acc = float((train_logits.argmax(1) == train_targets).mean())
+            val_bal_acc   = float((val_logits.argmax(1)   == val_targets).mean())
+
+        val_monitor = compute_monitor_metric(monitor, val_logits, val_targets, val_loss, num_classes)
 
         history.append({
-            "epoch": epoch,
-            "train_loss": train_loss, "train_acc": train_acc,
-            "val_loss": val_loss,     "val_acc": val_acc,
+            "epoch":         epoch,
+            "train_loss":    train_loss,    "val_loss":    val_loss,
+            "train_bal_acc": train_bal_acc, "val_bal_acc": val_bal_acc,
+            f"val_{monitor_label}": val_monitor,
         })
 
-        improved = val_loss < best_val_loss
+        improved = (
+            val_monitor > best_monitor if monitor_higher_is_better
+            else val_monitor < best_monitor
+        )
         if improved:
-            best_val_loss = val_loss
-            best_val_acc  = val_acc
-            no_improve    = 0
+            best_monitor = val_monitor
+            no_improve   = 0
             torch.save(model.state_dict(), ckpt_path)
         else:
             no_improve += 1
@@ -383,18 +473,20 @@ def train_one_context(
         # if epoch % 5 == 0 or epoch == 1: # to print every n epochs and the first epoch
         print(
             f"  Epoch {epoch:3d}/{epochs} | "
-            f"loss: train={train_loss:.4f}  val={val_loss:.4f}  best={best_val_loss:.4f} | "
-            f"acc: train={train_acc:.3f}  val={val_acc:.3f}  best_val={best_val_acc:.3f} | "
+            f"loss: train={train_loss:.4f}  val={val_loss:.4f} | "
+            f"bal_acc: train={train_bal_acc:.3f}  val={val_bal_acc:.3f} | "
+            f"{monitor_label}: val={val_monitor:.4f}  best={best_monitor:.4f}{'*' if improved else ''} | "
             f"patience={no_improve}/{patience}"
         )
 
         if wb_run is not None:
             wb_run.log({
-                "train/loss": train_loss,
-                "val/loss":   val_loss,
-                "train/acc":  train_acc,
-                "val/acc":    val_acc,
-                "lr":         optimizer.param_groups[0]["lr"],
+                "train/loss":     train_loss,
+                "val/loss":       val_loss,
+                "train/bal_acc":  train_bal_acc,
+                "val/bal_acc":    val_bal_acc,
+                f"val/{monitor_label}": val_monitor,
+                "lr":             optimizer.param_groups[0]["lr"],
             }, step=epoch)
 
         if no_improve >= patience:
@@ -430,7 +522,8 @@ def train_one_context(
         "n_train":           len(train_ds),
         "n_val":             len(val_ds),
         "n_test":            len(test_ds),
-        "best_val_loss":     best_val_loss,
+        "early_stopping_monitor": monitor,
+        "best_val_monitor":       best_monitor,
         "n_epochs_run":      len(history),
         "training_time_min": elapsed / 60,
         "train":             train_metrics,

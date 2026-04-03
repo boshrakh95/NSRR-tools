@@ -175,6 +175,19 @@ training:
   # list   = manual, one float per class.
   class_weights: "auto"
 
+  # Metric used to select the best checkpoint and trigger early stopping.
+  # "val_loss"              — original behaviour (lower is better)
+  # "val_auroc"             — recommended for imbalanced binary/multiclass tasks
+  # "val_balanced_accuracy" — good alternative; directly measures per-class recall
+  # "val_macro_f1"          — useful when you care equally about all classes
+  early_stopping_monitor: "val_auroc"
+
+  # Balanced batch sampling via WeightedRandomSampler.
+  # When true, each training batch is resampled so all classes appear equally often.
+  # Complements class_weights (both can be active); for extreme imbalance using both
+  # is common.  Automatically disabled for full_night context (1 window/subject).
+  weighted_sampler: false
+
 # ── Logging & Output ─────────────────────────────────────────────────────────
 logging:
   results_dir: "/scratch/boshra95/psg/unified/results/phase0"
