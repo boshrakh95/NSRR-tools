@@ -191,49 +191,47 @@ def fmt(val, pct=True) -> str:
     return f"{val * 100:.1f}" if pct else str(val)
 
 
-def to_markdown(results_df: pd.DataFrame, task: str, head: str, strategy: str) -> str:
+HEADER_MAP = {
+    "seg_auroc":                  "Seg-AUROC",
+    "seg_balanced_accuracy":      "Seg-BalAcc",
+    "seg_macro_f1":               "Seg-F1",
+    "seg_cohen_kappa":            "Seg-Kappa",
+    "mean_prob_auroc":            "MP-AUROC",
+    "mean_prob_balanced_accuracy":"MP-BalAcc",
+    "mean_prob_macro_f1":         "MP-F1",
+    "mean_prob_cohen_kappa":      "MP-Kappa",
+    "majority_auroc":             "MV-AUROC",
+    "majority_balanced_accuracy": "MV-BalAcc",
+    "majority_macro_f1":          "MV-F1",
+    "majority_cohen_kappa":       "MV-Kappa",
+}
+
+
+def _split_to_markdown(results_df: pd.DataFrame, strategy: str) -> str:
+    """Render per-context tables for one split's results_df."""
     lines = [
-        f"# Window-count analysis: `{task}` · `{head}`\n",
         f"_Window selection: **{strategy}**. "
-        "Metrics in %. AUROC from mean-prob for all subject-level methods._\n",
-        "---\n",
+        "Metrics in %. MP = mean-prob aggregation. MV = majority-vote._\n",
     ]
 
     ctx_order = [c for c in CONTEXT_ORDER if c in results_df["context_length"].unique()]
     other     = [c for c in results_df["context_length"].unique() if c not in ctx_order]
-    contexts  = ctx_order + other
 
-    for ctx in contexts:
+    for ctx in ctx_order + other:
         cdf = results_df[results_df["context_length"] == ctx]
         if cdf.empty:
             continue
 
         lines.append(f"## Context: `{ctx}`\n")
 
-        # Determine columns to show
-        metric_cols = []
-        for prefix in ["seg", "mean_prob", "majority"]:
-            for m in ["auroc", "balanced_accuracy", "macro_f1", "cohen_kappa"]:
-                col = f"{prefix}_{m}"
-                if col in cdf.columns and not cdf[col].isna().all():
-                    metric_cols.append(col)
+        metric_cols = [
+            f"{p}_{m}"
+            for p in ["seg", "mean_prob", "majority"]
+            for m in ["auroc", "balanced_accuracy", "macro_f1", "cohen_kappa"]
+            if f"{p}_{m}" in cdf.columns and not cdf[f"{p}_{m}"].isna().all()
+        ]
 
-        header_map = {
-            "seg_auroc":                  "Seg-AUROC",
-            "seg_balanced_accuracy":      "Seg-BalAcc",
-            "seg_macro_f1":               "Seg-F1",
-            "seg_cohen_kappa":            "Seg-Kappa",
-            "mean_prob_auroc":            "MP-AUROC",
-            "mean_prob_balanced_accuracy":"MP-BalAcc",
-            "mean_prob_macro_f1":         "MP-F1",
-            "mean_prob_cohen_kappa":      "MP-Kappa",
-            "majority_auroc":             "MV-AUROC",
-            "majority_balanced_accuracy": "MV-BalAcc",
-            "majority_macro_f1":          "MV-F1",
-            "majority_cohen_kappa":       "MV-Kappa",
-        }
-
-        headers = ["K", "N-subj", "N-seg"] + [header_map.get(c, c) for c in metric_cols]
+        headers = ["K", "N-subj", "N-seg"] + [HEADER_MAP.get(c, c) for c in metric_cols]
         lines.append("| " + " | ".join(headers) + " |")
         lines.append("| " + " | ".join(["---"] * len(headers)) + " |")
 
@@ -246,6 +244,15 @@ def to_markdown(results_df: pd.DataFrame, task: str, head: str, strategy: str) -
         lines.append("")
 
     return "\n".join(lines)
+
+
+def to_markdown(results_df: pd.DataFrame, task: str, head: str, strategy: str) -> str:
+    """Legacy wrapper kept for compatibility."""
+    header = [
+        f"# Window-count analysis: `{task}` · `{head}`\n",
+        "---\n",
+    ]
+    return "\n".join(header) + _split_to_markdown(results_df, strategy)
 
 
 # ── Plotting ──────────────────────────────────────────────────────────────────
@@ -332,8 +339,9 @@ def main():
     parser.add_argument("--plot-metric", default="auroc", dest="plot_metric",
                         choices=["auroc", "balanced_accuracy", "macro_f1"],
                         help="Metric to plot (default: auroc)")
-    parser.add_argument("--split",  default="test",
-                        choices=["train", "val", "test"])
+    parser.add_argument("--splits", nargs="+", default=["test"],
+                        choices=["train", "val", "test"],
+                        help="Splits to analyse (default: test). Use --splits val test for both.")
     parser.add_argument("--results-dir", type=Path,
                         default=Path("/scratch/boshra95/psg/unified/results/phase0"),
                         dest="results_dir")
@@ -345,95 +353,117 @@ def main():
         print("Run infer_subject_windows.py first.")
         return
 
-    # Find available parquets
-    parquets = sorted(inf_dir.glob(f"context_*/{args.split}_windows.parquet"))
-    if args.contexts:
-        parquets = [p for p in parquets if any(
-            p.parent.name == f"context_{c}" for c in args.contexts
-        )]
-    if not parquets:
-        print(f"No {args.split}_windows.parquet found under {inf_dir}")
-        return
+    # Parse K values once
+    raw_k = args.k_values or [str(k) for k in DEFAULT_K_VALUES]
+    k_values = ["all" if v == "all" else int(v) for v in raw_k]
 
-    print(f"Task: {args.task}  Head: {args.head}  Split: {args.split}")
-    print(f"Found {len(parquets)} context(s): "
-          f"{[p.parent.name.replace('context_','') for p in parquets]}")
+    print(f"Task: {args.task}  Head: {args.head}  Splits: {args.splits}")
     print()
 
-    # Parse K values
-    raw_k = args.k_values or [str(k) for k in DEFAULT_K_VALUES]
-    k_values = []
-    for v in raw_k:
-        k_values.append("all" if v == "all" else int(v))
+    # ── Process each split independently ─────────────────────────────────────
+    all_md_sections = [
+        f"# Window-count analysis: `{args.task}` · `{args.head}`\n",
+        f"_Window selection: **{args.window_strategy}**. Metrics in %._\n",
+    ]
 
-    all_rows = []
+    for split in args.splits:
+        parquets = sorted(inf_dir.glob(f"context_*/{split}_windows.parquet"))
+        if args.contexts:
+            parquets = [p for p in parquets if any(
+                p.parent.name == f"context_{c}" for c in args.contexts
+            )]
 
-    for parquet_path in parquets:
-        ctx = parquet_path.parent.name.replace("context_", "")
-        print(f"── Context: {ctx} ─────────────────────────────────────────")
+        if not parquets:
+            print(f"[{split}] No {split}_windows.parquet found — skipping.")
+            print()
+            continue
 
-        # Read parquet and get metadata
-        df = pd.read_parquet(parquet_path)
-        prob_cols   = [c for c in df.columns if c.startswith("prob_class")]
-        num_classes = len(prob_cols)
+        print(f"{'='*60}")
+        print(f"  SPLIT: {split.upper()}")
+        print(f"  Contexts: {[p.parent.name.replace('context_','') for p in parquets]}")
+        print(f"{'='*60}")
 
-        # Infer task from path (already have it from args)
-        task = args.task
+        split_rows = []
 
-        # Load num_classes from metrics.json for safety
-        metrics_json = parquet_path.parent / "metrics.json"  # not always present
-        seg_metrics_json = args.results_dir / f"{task}_{args.head}" / f"context_{ctx}" / "metrics.json"
-        if seg_metrics_json.exists():
-            with open(seg_metrics_json) as f:
-                num_classes = json.load(f)["num_classes"]
+        for parquet_path in parquets:
+            ctx = parquet_path.parent.name.replace("context_", "")
+            print(f"\n── Context: {ctx} ──")
 
-        n_subjects = df.groupby(["subject_id", "dataset"]).ngroups
-        max_k      = df.groupby(["subject_id", "dataset"]).size().max()
-        print(f"  Subjects: {n_subjects:,} | Max windows/subject: {max_k}")
+            df = pd.read_parquet(parquet_path)
+            prob_cols   = [c for c in df.columns if c.startswith("prob_class")]
+            num_classes = len(prob_cols)
 
-        for k_val in k_values:
-            k_int = max_k if k_val == "all" else int(k_val)
-            if k_int > max_k:
-                print(f"  [skip] K={k_val} > max available ({max_k})")
-                continue
+            seg_metrics_json = (args.results_dir / f"{args.task}_{args.head}"
+                                / f"context_{ctx}" / "metrics.json")
+            if seg_metrics_json.exists():
+                with open(seg_metrics_json) as f:
+                    num_classes = json.load(f)["num_classes"]
 
-            row = evaluate_at_k(df, k_val, num_classes, task, args.window_strategy)
-            row["context_length"] = ctx
-            all_rows.append(row)
+            n_subjects = df.groupby(["subject_id", "dataset"]).ngroups
+            max_k      = df.groupby(["subject_id", "dataset"]).size().max()
+            print(f"  Subjects: {n_subjects:,} | Max windows/subject: {max_k}")
 
-            # Print brief line
-            seg_auc  = row.get("seg_auroc",       float("nan"))
-            mp_auc   = row.get("mean_prob_auroc",  float("nan"))
-            mv_auc   = row.get("majority_auroc",   float("nan"))
-            print(f"  K={str(k_val):<4}  "
-                  f"seg={seg_auc*100:.1f}%  "
-                  f"mean-prob={mp_auc*100:.1f}%  "
-                  f"maj-vote={mv_auc*100:.1f}%  "
-                  f"(n_seg={row['n_segments']:,})")
+            for k_val in k_values:
+                k_int = max_k if k_val == "all" else int(k_val)
+                if k_int > max_k:
+                    print(f"  [skip] K={k_val} > max available ({max_k})")
+                    continue
+
+                row = evaluate_at_k(df, k_val, num_classes, args.task,
+                                    args.window_strategy)
+                row["context_length"] = ctx
+                row["split"]          = split
+                split_rows.append(row)
+
+                # Print full metrics for all methods
+                METRICS = ["auroc", "balanced_accuracy", "macro_f1", "cohen_kappa"]
+                MNAMES  = {"auroc": "AUROC", "balanced_accuracy": "BalAcc",
+                           "macro_f1": "MacroF1", "cohen_kappa": "Kappa"}
+                prefixes = [("seg",       "Segment   "),
+                            ("mean_prob", "Mean-prob "),
+                            ("majority",  "Maj-vote  ")]
+
+                print(f"\n  K={k_val}  "
+                      f"(n_subjects={row['n_subjects']:,}  "
+                      f"n_segments={row['n_segments']:,})")
+                for prefix, label in prefixes:
+                    parts = []
+                    for m in METRICS:
+                        col = f"{prefix}_{m}"
+                        val = row.get(col)
+                        if val is not None and not (
+                            isinstance(val, float) and np.isnan(val)
+                        ):
+                            parts.append(f"{MNAMES[m]}={val*100:.1f}%")
+                    if parts:
+                        print(f"    {label}: " + "  ".join(parts))
+
         print()
 
-    if not all_rows:
-        print("No results to save.")
-        return
+        if not split_rows:
+            continue
 
-    results_df = pd.DataFrame(all_rows)
+        split_df = pd.DataFrame(split_rows)
 
-    # ── Save CSV ──────────────────────────────────────────────────────────────
-    out_csv = inf_dir / "window_analysis.csv"
-    results_df.to_csv(out_csv, index=False)
-    print(f"CSV saved: {out_csv}")
+        # Save per-split CSV
+        out_csv = inf_dir / f"window_analysis_{split}.csv"
+        split_df.to_csv(out_csv, index=False)
+        print(f"CSV saved: {out_csv}")
 
-    # ── Save Markdown ─────────────────────────────────────────────────────────
-    md = to_markdown(results_df, args.task, args.head, args.window_strategy)
+        # Collect markdown section for this split
+        all_md_sections.append(f"\n---\n# Split: {split.upper()}\n")
+        all_md_sections.append(_split_to_markdown(split_df, args.window_strategy))
+
+        # Plot per split
+        if args.plot:
+            out_fig = (args.results_dir / "figures" /
+                       f"{args.task}_{args.head}_{split}_window_sweep_{args.plot_metric}.png")
+            plot_window_sweep(split_df, args.task, args.head, args.plot_metric, out_fig)
+
+    # ── Save combined markdown (all splits, separate sections) ────────────────
     out_md = inf_dir / "window_analysis.md"
-    out_md.write_text(md)
-    print(f"Markdown saved: {out_md}")
-
-    # ── Plot ──────────────────────────────────────────────────────────────────
-    if args.plot:
-        out_fig = args.results_dir / "figures" / \
-                  f"{args.task}_{args.head}_window_sweep_{args.plot_metric}.png"
-        plot_window_sweep(results_df, args.task, args.head, args.plot_metric, out_fig)
+    out_md.write_text("\n".join(all_md_sections))
+    print(f"\nMarkdown saved: {out_md}")
 
 
 if __name__ == "__main__":
