@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=ctx_sweep
 #SBATCH --account=def-forouzan_gpu
-#SBATCH --time=1:00:00
+#SBATCH --time=03:00:00
 #SBATCH --gpus=nvidia_h100_80gb_hbm3_1g.10gb:1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32000M
@@ -65,6 +65,9 @@ TASK_TYPE=${TASK_TYPE:-""}  # empty = use config default
 HEAD=${HEAD:-""}            # empty = use config default
 CONTEXT=${CONTEXT:-""}      # single context length, e.g. "30s" or "10m"
 DATASETS=${DATASETS:-""}    # space-separated dataset names, e.g. "shhs mros"
+BATCH_SIZE=${BATCH_SIZE:-""}  # training batch size (default: 32); reduce for long contexts
+LR=${LR:-""}                  # learning rate override, e.g. LR=1e-4
+RUN_TAG=${RUN_TAG:-""}        # suffix for experiment folder, e.g. RUN_TAG=lr1e4
 WANDB_PROJECT=${WANDB_PROJECT:-"nsrr-phase0"}
 NO_WANDB=${NO_WANDB:-""}
 
@@ -89,6 +92,9 @@ CMD="python scripts/train_context_sweep.py --config $CONFIG"
 [ -n "$HEAD"           ] && CMD="$CMD --head $HEAD"
 [ -n "$CONTEXT"        ] && CMD="$CMD --context $CONTEXT"
 [ -n "$DATASETS"       ] && CMD="$CMD --datasets $DATASETS"
+[ -n "$BATCH_SIZE"     ] && CMD="$CMD --batch-size $BATCH_SIZE"
+[ -n "$LR"             ] && CMD="$CMD --lr $LR"
+[ -n "$RUN_TAG"        ] && CMD="$CMD --run-tag $RUN_TAG"
 [ -n "$WANDB_PROJECT"  ] && CMD="$CMD --wandb-project $WANDB_PROJECT"
 [ -n "$NO_WANDB"       ] && CMD="$CMD --no-wandb"
 

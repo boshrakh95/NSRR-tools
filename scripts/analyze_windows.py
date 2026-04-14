@@ -345,9 +345,12 @@ def main():
     parser.add_argument("--results-dir", type=Path,
                         default=Path("/scratch/boshra95/psg/unified/results/phase0"),
                         dest="results_dir")
+    parser.add_argument("--run-tag",    default="", dest="run_tag",
+                        help="Must match the --run-tag used during training/inference (default: no suffix).")
     args = parser.parse_args()
 
-    inf_dir = args.results_dir / "inference" / f"{args.task}_{args.head}"
+    exp_id  = f"{args.task}_{args.head}" + (f"_{args.run_tag}" if args.run_tag else "")
+    inf_dir = args.results_dir / "inference" / exp_id
     if not inf_dir.exists():
         print(f"No inference directory found: {inf_dir}")
         print("Run infer_subject_windows.py first.")
@@ -361,10 +364,8 @@ def main():
     print()
 
     # ── Process each split independently ─────────────────────────────────────
-    all_md_sections = [
-        f"# Window-count analysis: `{args.task}` · `{args.head}`\n",
-        f"_Window selection: **{args.window_strategy}**. Metrics in %._\n",
-    ]
+    # split_contents: {split_name -> markdown string for that split's tables}
+    split_contents: dict = {}
 
     for split in args.splits:
         parquets = sorted(inf_dir.glob(f"context_*/{split}_windows.parquet"))
@@ -393,7 +394,7 @@ def main():
             prob_cols   = [c for c in df.columns if c.startswith("prob_class")]
             num_classes = len(prob_cols)
 
-            seg_metrics_json = (args.results_dir / f"{args.task}_{args.head}"
+            seg_metrics_json = (args.results_dir / exp_id
                                 / f"context_{ctx}" / "metrics.json")
             if seg_metrics_json.exists():
                 with open(seg_metrics_json) as f:
@@ -451,8 +452,7 @@ def main():
         print(f"CSV saved: {out_csv}")
 
         # Collect markdown section for this split
-        all_md_sections.append(f"\n---\n# Split: {split.upper()}\n")
-        all_md_sections.append(_split_to_markdown(split_df, args.window_strategy))
+        split_contents[split] = _split_to_markdown(split_df, args.window_strategy)
 
         # Plot per split
         if args.plot:
@@ -462,7 +462,30 @@ def main():
 
     # ── Save combined markdown (all splits, separate sections) ────────────────
     out_md = inf_dir / "window_analysis.md"
-    out_md.write_text("\n".join(all_md_sections))
+
+    # Load existing split sections from disk so we don't lose splits not in this run
+    import re
+    existing_contents: dict = {}
+    if out_md.exists():
+        existing = out_md.read_text()
+        for m in re.finditer(r'\n---\n# Split: (\w+)\n(.*?)(?=\n---\n# Split: |\Z)',
+                             existing, re.DOTALL):
+            existing_contents[m.group(1).lower()] = m.group(2)
+
+    # Merge: new run overrides, old splits are preserved
+    existing_contents.update(split_contents)
+
+    # Write header + splits in a fixed order: val then test
+    lines = [
+        f"# Window-count analysis: `{args.task}` · `{args.head}`\n",
+        f"_Window selection: **{args.window_strategy}**. Metrics in %._\n",
+    ]
+    for split in ["val", "test"] + [s for s in existing_contents if s not in ("val", "test")]:
+        if split in existing_contents:
+            lines.append(f"\n---\n# Split: {split.upper()}\n")
+            lines.append(existing_contents[split])
+
+    out_md.write_text("\n".join(lines))
     print(f"\nMarkdown saved: {out_md}")
 
 

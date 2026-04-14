@@ -152,8 +152,8 @@ model:
   head_type: "lstm"   # "mean_pool" | "lstm" | "transformer"
   # NOTE: transformer is automatically skipped for full_night (O(N²) memory)
 
-  hidden_dim: 256
-  num_layers: 2
+  hidden_dim: 128
+  num_layers: 1
   num_heads:  8       # transformer only; must divide hidden_dim
   dropout:    0.3
   num_classes: 2      # patched automatically from dataset at runtime
@@ -161,9 +161,9 @@ model:
 # ── Training ─────────────────────────────────────────────────────────────────
 training:
   epochs: 30
-  lr: 1.0e-3
-  weight_decay: 1.0e-4
-  optimizer: "adam"
+  lr: 1.0e-4  # NOTE:all experiments wihout lr specified in their folder name used 1.0e-4
+  weight_decay: 1.0e-3 # NOTE: all experiments wihout lr specified in their folder name used 1.0e-4
+  optimizer: "adamw" # NOTE: all experiments wihout lr specified in their folder name used adam 
   scheduler: "cosine"
   early_stopping_patience: 10
   device: "cuda"          # "cuda" | "cpu"

@@ -280,7 +280,10 @@ def train_one_context(
     use_wandb:       bool = False,
     wandb_project:   str  = "nsrr-phase0",
     wandb_entity:    str  = None,
+    batch_size:      int  = 32,
 ):
+    train_batch_size = batch_size
+    eval_batch_size  = batch_size * 2
     t_cfg = cfg["training"]
     N     = parse_context_length(context_length)
     is_full_night = (N == FULL_NIGHT_SENTINEL)
@@ -323,8 +326,8 @@ def train_one_context(
         wb_run = wandb.init(
             project=wandb_project,
             entity=wandb_entity,
-            name=f"{task}_{head_type}_{context_length}",
-            group=f"{task}_{head_type}",
+            name=f"{exp_id}_{context_length}",
+            group=exp_id,
             tags=[task, head_type, context_length, task_type],
             config={
                 "task":           task,
@@ -376,25 +379,25 @@ def train_one_context(
         sample_weights = torch.tensor(w_auto[train_labels], dtype=torch.float32)
         sampler        = WeightedRandomSampler(sample_weights, len(sample_weights), replacement=True)
         train_loader   = DataLoader(
-            train_ds, batch_size=32, shuffle=False, sampler=sampler,
+            train_ds, batch_size=train_batch_size, shuffle=False, sampler=sampler,
             num_workers=num_workers, pin_memory=(device.type == "cuda"),
             collate_fn=collate,
         )
         print(f"  WeightedRandomSampler: enabled")
     else:
         train_loader = DataLoader(
-            train_ds, batch_size=32, shuffle=True,
+            train_ds, batch_size=train_batch_size, shuffle=True,
             num_workers=num_workers, pin_memory=(device.type == "cuda"),
             collate_fn=collate,
         )
 
     val_loader = DataLoader(
-        val_ds, batch_size=64, shuffle=False,
+        val_ds, batch_size=eval_batch_size, shuffle=False,
         num_workers=num_workers, pin_memory=(device.type == "cuda"),
         collate_fn=collate,
     )
     test_loader = DataLoader(
-        test_ds, batch_size=64, shuffle=False,
+        test_ds, batch_size=eval_batch_size, shuffle=False,
         num_workers=num_workers, pin_memory=(device.type == "cuda"),
         collate_fn=collate,
     )
@@ -596,6 +599,13 @@ def main():
                         help="W&B entity/team (default: your personal account)")
     parser.add_argument("--no-wandb",      action="store_true", dest="no_wandb",
                         help="Disable W&B logging")
+    parser.add_argument("--batch-size",    default=None, type=int, dest="batch_size",
+                        help="Training batch size (default: 32). Val/test use 2× this value.")
+    parser.add_argument("--lr",            default=None, type=float,
+                        help="Override training.lr from config (e.g. --lr 1e-4)")
+    parser.add_argument("--run-tag",       default="", dest="run_tag",
+                        help="Suffix appended to experiment folder name, e.g. 'lr1e4'. "
+                             "Allows multiple runs without overwriting. Default: no suffix.")
     args = parser.parse_args()
 
     with open(args.config) as f:
@@ -604,6 +614,11 @@ def main():
     task      = args.task      or cfg["dataset"]["task"]
     task_type = args.task_type or cfg["dataset"]["task_type"]
     head_type = args.head_type or cfg["model"]["head_type"]
+    train_batch_size = args.batch_size or 32
+
+    # Apply LR override before passing cfg into training
+    if args.lr is not None:
+        cfg["training"]["lr"] = args.lr
 
     context_lengths = args.context or cfg["dataset"]["context_lengths"]
 
@@ -621,7 +636,8 @@ def main():
     print(f"Context lengths: {context_lengths}")
 
     results_dir  = Path(cfg["logging"]["results_dir"])
-    exp_dir      = results_dir / f"{task}_{head_type}"
+    exp_id       = f"{task}_{head_type}" + (f"_{args.run_tag}" if args.run_tag else "")
+    exp_dir      = results_dir / exp_id
     summary_path = exp_dir / "summary.csv"
     exp_dir.mkdir(parents=True, exist_ok=True)
 
@@ -652,6 +668,7 @@ def main():
                 use_wandb=use_wandb,
                 wandb_project=args.wandb_project,
                 wandb_entity=args.wandb_entity,
+                batch_size=train_batch_size,
             )
             if metrics is not None:
                 append_to_summary(summary_path, metrics)
