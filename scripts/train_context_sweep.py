@@ -281,9 +281,12 @@ def train_one_context(
     wandb_project:   str  = "nsrr-phase0",
     wandb_entity:    str  = None,
     batch_size:      int  = 32,
+    exp_id:          str  = None,
 ):
     train_batch_size = batch_size
     eval_batch_size  = batch_size * 2
+    if exp_id is None:
+        exp_id = f"{task}_{head_type}"
     t_cfg = cfg["training"]
     N     = parse_context_length(context_length)
     is_full_night = (N == FULL_NIGHT_SENTINEL)
@@ -669,6 +672,7 @@ def main():
                 wandb_project=args.wandb_project,
                 wandb_entity=args.wandb_entity,
                 batch_size=train_batch_size,
+                exp_id=exp_id,
             )
             if metrics is not None:
                 append_to_summary(summary_path, metrics)
