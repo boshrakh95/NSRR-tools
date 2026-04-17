@@ -152,8 +152,8 @@ model:
   head_type: "lstm"   # "mean_pool" | "lstm" | "transformer"
   # NOTE: transformer is automatically skipped for full_night (O(N²) memory)
 
-  hidden_dim: 128
-  num_layers: 1
+  hidden_dim: 128 #256 #128
+  num_layers: 1 #2 #1
   num_heads:  8       # transformer only; must divide hidden_dim
   dropout:    0.3
   num_classes: 2      # patched automatically from dataset at runtime

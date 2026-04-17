@@ -1,11 +1,11 @@
 #!/bin/bash
 #SBATCH --job-name=ctx_sweep
 #SBATCH --account=def-forouzan_gpu
-#SBATCH --time=05:00:00
+#SBATCH --time=12:00:00
 #SBATCH --gpus=nvidia_h100_80gb_hbm3_1g.10gb:1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32000M
-#SBATCH --exclude=fc11006,fc11013
+#SBATCH --exclude=fc11006,fc11013,fc11010
 #SBATCH --output=/home/boshra95/NSRR-tools/logs/sweep_%x_%j.out
 #SBATCH --error=/home/boshra95/NSRR-tools/logs/sweep_%x_%j.err
 

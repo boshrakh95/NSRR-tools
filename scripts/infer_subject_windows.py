@@ -128,8 +128,9 @@ def main():
                         help="seq2label | seq2seq")
     parser.add_argument("--head",       required=True, dest="head_type",
                         help="lstm | transformer | mean_pool")
-    parser.add_argument("--context",    required=True, nargs="+",
-                        help="One or more context lengths, e.g. --context 30s 10m 40m 80m")
+    parser.add_argument("--context",    default=None, nargs="+",
+                        help="One or more context lengths, e.g. --context 30s 10m 40m 80m. "
+                             "If omitted, auto-discovers all available checkpoints.")
     parser.add_argument("--split",      default="test",
                         choices=["train", "val", "test"],
                         help="Which split to run inference on (default: test)")
@@ -154,9 +155,19 @@ def main():
     )
 
     all_windows = not args.no_all_windows
-    contexts    = args.context   # list of one or more strings
     results_dir = Path(cfg["logging"]["results_dir"])
     exp_id      = f"{args.task}_{args.head_type}" + (f"_{args.run_tag}" if args.run_tag else "")
+
+    if args.context:
+        contexts = args.context
+    else:
+        found = sorted(p.parent.name for p in
+                       (results_dir / exp_id).glob("context_*/best_model.pt"))
+        if not found:
+            print(f"ERROR: No checkpoints found under {results_dir / exp_id}/context_*/")
+            sys.exit(1)
+        contexts = [d.replace("context_", "") for d in found]
+        print(f"  Auto-discovered contexts: {contexts}")
 
     print("=" * 68)
     print("Phase 0 — Subject-level inference")

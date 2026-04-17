@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=infer_windows
 #SBATCH --account=def-forouzan_gpu
-#SBATCH --time=00:10:00
+#SBATCH --time=01:30:00
 #SBATCH --gpus=nvidia_h100_80gb_hbm3_1g.10gb:1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32000M
@@ -78,7 +78,7 @@ echo "Node:        $SLURM_NODELIST"
 echo "GPU:         $(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null || echo 'N/A')"
 echo "Task:        ${TASK}  type=${TASK_TYPE}"
 echo "Head:        ${HEAD}"
-echo "Contexts:    ${CONTEXTS}"
+echo "Contexts:    ${CONTEXTS:-'(auto-discover)'}"
 echo "Split:       ${SPLIT}"
 echo "Datasets:    ${DATASETS:-'(all)'}"
 echo "All windows: ${NO_ALL_WINDOWS:-yes}$([ -n "$NO_ALL_WINDOWS" ] && echo 'no (K=5)')"
