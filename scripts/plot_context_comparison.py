@@ -41,8 +41,38 @@ _ROOT = Path(__file__).resolve().parent.parent
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-CONTEXT_ORDER = ["30s", "10m", "40m", "80m"]
-CONTEXT_LABELS = {"30s": "30s", "10m": "10m", "40m": "40m", "80m": "80m"}
+# Canonical sort order — extended to cover all context lengths used in Phase 0.
+# Any context not listed here is appended at the end, sorted by duration.
+CONTEXT_ORDER = ["30s", "2m", "5m", "10m", "20m", "40m", "80m", "120m", "200m", "full_night"]
+
+SEQ2SEQ_TASKS = {"sleep_staging"}  # subject-level aggregation is not meaningful for these
+
+
+def _ctx_to_seconds(ctx: str) -> float:
+    """Convert a context length string to seconds for sorting."""
+    if ctx == "full_night":
+        return float("inf")
+    if ctx.endswith("s"):
+        return float(ctx[:-1])
+    if ctx.endswith("m"):
+        return float(ctx[:-1]) * 60
+    return float("inf")
+
+
+def _active_ctx_order(seg_df: pd.DataFrame, subj_df: pd.DataFrame,
+                      task: str, head: str) -> list:
+    """Return the sorted context lengths that actually appear in the data
+    for this (task, head) pair."""
+    ctxs: set = set()
+    if not seg_df.empty:
+        mask = (seg_df["task"] == task) & (seg_df["head_type"] == head)
+        ctxs.update(seg_df.loc[mask, "context_length"].dropna().tolist())
+    if not subj_df.empty:
+        mask = (subj_df["task"] == task) & (subj_df["head_type"] == head)
+        ctxs.update(subj_df.loc[mask, "context_length"].dropna().tolist())
+    known   = [c for c in CONTEXT_ORDER if c in ctxs]
+    unknown = sorted(ctxs - set(CONTEXT_ORDER), key=_ctx_to_seconds)
+    return known + unknown
 
 TASK_ORDER = [
     "sleep_staging",
@@ -84,38 +114,119 @@ METRIC_TITLE = {
 
 # ── Data loading ──────────────────────────────────────────────────────────────
 
-def load_segment_results(results_dir: Path) -> pd.DataFrame:
-    """Load segment-level results from summary.csv files."""
+def _parse_exp_name(exp_name: str) -> tuple[str, str]:
+    """Extract (task, head) from an experiment folder name, handling run tags
+    and parenthetical suffixes.
+
+    Examples:
+      apnea_binary_lstm                   → ("apnea_binary",    "lstm")
+      sleepiness_binary_lstm_lr1e4        → ("sleepiness_binary","lstm")
+      apnea_binary_transformer_lr1e4      → ("apnea_binary",    "transformer")
+      depression_binary_lstm(only_apples) → ("depression_binary","lstm")
+      anxiety_binary_mean_pool            → ("anxiety_binary",  "mean_pool")
+    """
+    for head in HEAD_ORDER:
+        marker = f"_{head}"
+        idx = exp_name.find(marker)
+        if idx == -1:
+            continue
+        after = exp_name[idx + len(marker):]
+        # Valid boundary: end of string, start of run-tag (_), or parenthetical
+        if after == "" or after.startswith("_") or after.startswith("("):
+            return exp_name[:idx], head
+    return exp_name, "unknown"
+
+
+def _folder_run_tag(folder_name: str) -> str:
+    """Return the run tag embedded in an experiment folder name.
+
+    Examples:
+      apnea_binary_lstm                      → ""
+      apnea_binary_lstm_lr1e4                → "lr1e4"
+      sleepiness_binary_transformer_lr1e4    → "lr1e4"
+      sleepiness_binary_transformer(old)     → "(old)"   [parenthetical = special tag]
+      depression_binary_lstm(only_apples)    → "(only_apples)"
+    """
+    # Folders with parenthetical markers are non-standard; give them a unique
+    # non-empty tag so they are excluded from both "" and "lr1e4" filters.
+    paren_idx = folder_name.find("(")
+    if paren_idx != -1:
+        return folder_name[paren_idx:]
+
+    for head in HEAD_ORDER:
+        if folder_name.endswith(f"_{head}"):
+            return ""
+        marker = f"_{head}_"
+        idx = folder_name.find(marker)
+        if idx != -1:
+            return folder_name[idx + len(marker):]
+    return ""
+
+
+def _read_summary_csv(path: Path) -> pd.DataFrame:
+    """Read a summary.csv robustly, handling a mixed-format issue where newer
+    training runs insert an extra 'best_val_monitor' field before 'n_epochs_run'
+    that the original header doesn't declare."""
+    import io
+    lines = path.read_text().splitlines()
+    if not lines:
+        return pd.DataFrame()
+    header = lines[0].split(",")
+    n_header = len(header)
+    has_extra = any(len(l.split(",")) > n_header for l in lines[1:] if l.strip())
+    if has_extra and "best_val_loss" in header:
+        idx = header.index("best_val_loss")
+        header.insert(idx, "best_val_monitor")
+        # Old-format rows (one field short) get NaN in best_val_monitor automatically
+        text = ",".join(header) + "\n" + "\n".join(lines[1:])
+        return pd.read_csv(io.StringIO(text), on_bad_lines="skip")
+    return pd.read_csv(io.StringIO("\n".join(lines)))
+
+
+def load_segment_results(results_dir: Path, run_tag: str | None = None) -> pd.DataFrame:
+    """Load segment-level results from summary.csv files.
+
+    run_tag: if not None, only load folders whose run tag matches exactly.
+             Pass "" to load only untagged experiments (e.g. apnea_binary_lstm).
+    """
     frames = []
     for csv in results_dir.glob("*/summary.csv"):
-        frames.append(pd.read_csv(csv))
+        if run_tag is not None and _folder_run_tag(csv.parent.name) != run_tag:
+            continue
+        try:
+            frames.append(_read_summary_csv(csv))
+        except Exception as e:
+            print(f"  Warning: skipping {csv} ({e})")
     if not frames:
         return pd.DataFrame()
-    return pd.concat(frames, ignore_index=True)
+    df = pd.concat(frames, ignore_index=True)
+    # summary.csv accumulates a new row on every rerun of the same context;
+    # keep the first occurrence (earliest training run) per (task, head, context).
+    df = df.drop_duplicates(subset=["task", "head_type", "context_length"],
+                            keep="first")
+    return df
 
 
-def load_subject_results(results_dir: Path) -> pd.DataFrame:
-    """Load subject-level results from subject_metrics.json files."""
+def load_subject_results(results_dir: Path, run_tag: str | None = None) -> pd.DataFrame:
+    """Load subject-level results from subject_metrics.json files.
+
+    run_tag: same semantics as load_segment_results.
+    """
     import json
     inf_dir = results_dir / "inference"
     rows = []
     for jf in sorted(inf_dir.glob("**/subject_metrics.json")):
+        exp_name = jf.parent.parent.name
+        if run_tag is not None and _folder_run_tag(exp_name) != run_tag:
+            continue
         try:
             with open(jf) as f:
                 m = json.load(f)
         except Exception:
             continue
 
-        exp_name = jf.parent.parent.name
-        ctx      = jf.parent.name.replace("context_", "")
-
-        for head in HEAD_ORDER:
-            if exp_name.endswith(f"_{head}"):
-                task = exp_name[: -(len(head) + 1)]
-                break
-        else:
-            task = exp_name
-            head = "unknown"
+        ctx = jf.parent.name.replace("context_", "")
+        task, head = _parse_exp_name(exp_name)
 
         for method in ("mean_prob", "majority_vote"):
             sub = m.get(method, {})
@@ -134,27 +245,22 @@ def load_subject_results(results_dir: Path) -> pd.DataFrame:
 
 # ── Plotting ──────────────────────────────────────────────────────────────────
 
-def _ctx_positions(contexts: list) -> list:
-    """Map context labels to numeric x positions in CONTEXT_ORDER."""
-    return [CONTEXT_ORDER.index(c) if c in CONTEXT_ORDER else i
-            for i, c in enumerate(contexts)]
-
-
 def plot_task_head(ax, task: str, head: str, metric: str,
-                   seg_df: pd.DataFrame, subj_df: pd.DataFrame):
+                   seg_df: pd.DataFrame, subj_df: pd.DataFrame,
+                   ctx_order: list) -> bool:
     """Draw all lines for one (task, head) panel onto ax."""
+    pos = {c: i for i, c in enumerate(ctx_order)}
     drawn_any = False
 
     # ── Segment-level (K=5) ──────────────────────────────────────────────────
     if not seg_df.empty:
         t = seg_df[(seg_df["task"] == task) & (seg_df["head_type"] == head)].copy()
-        t["_ord"] = t["context_length"].map(
-            lambda c: CONTEXT_ORDER.index(c) if c in CONTEXT_ORDER else 99
-        )
+        t = t[t["context_length"].isin(ctx_order)].copy()
+        t["_ord"] = t["context_length"].map(pos)
         t = t.sort_values("_ord")
         col = f"test_{metric}"
         if col in t.columns and not t[col].isna().all():
-            xs = _ctx_positions(t["context_length"].tolist())
+            xs = t["_ord"].tolist()
             ys = t[col].values * 100
             s = LINE_STYLES["seg_k5"]
             ax.plot(xs, ys, color=s["color"], marker=s["marker"],
@@ -163,7 +269,7 @@ def plot_task_head(ax, task: str, head: str, metric: str,
             drawn_any = True
 
     # ── Subject-level ────────────────────────────────────────────────────────
-    if not subj_df.empty:
+    if not subj_df.empty and task not in SEQ2SEQ_TASKS:
         for method, style_key in [("mean_prob", "subj_mean"),
                                    ("majority_vote", "subj_majority")]:
             t = subj_df[
@@ -173,14 +279,13 @@ def plot_task_head(ax, task: str, head: str, metric: str,
             ].copy()
             if t.empty:
                 continue
-            t["_ord"] = t["context_length"].map(
-                lambda c: CONTEXT_ORDER.index(c) if c in CONTEXT_ORDER else 99
-            )
+            t = t[t["context_length"].isin(ctx_order)].copy()
+            t["_ord"] = t["context_length"].map(pos)
             t = t.sort_values("_ord")
             col = f"subj_{metric}"
             if col not in t.columns or t[col].isna().all():
                 continue
-            xs = _ctx_positions(t["context_length"].tolist())
+            xs = t["_ord"].tolist()
             ys = t[col].values * 100
             s = LINE_STYLES[style_key]
             ax.plot(xs, ys, color=s["color"], marker=s["marker"],
@@ -195,9 +300,13 @@ def make_single_figure(task: str, head: str, metric: str,
                         seg_df: pd.DataFrame, subj_df: pd.DataFrame,
                         out_path: Path, show: bool = False):
     """One figure for a single (task, head, metric)."""
+    ctx_order = _active_ctx_order(seg_df, subj_df, task, head)
+    if not ctx_order:
+        return
+
     fig, ax = plt.subplots(figsize=(7, 4.5))
 
-    drawn = plot_task_head(ax, task, head, metric, seg_df, subj_df)
+    drawn = plot_task_head(ax, task, head, metric, seg_df, subj_df, ctx_order)
     if not drawn:
         plt.close(fig)
         return
@@ -206,8 +315,8 @@ def make_single_figure(task: str, head: str, metric: str,
                  fontsize=12, fontweight="bold")
     ax.set_xlabel("Context length", fontsize=11)
     ax.set_ylabel(METRIC_YLABELS.get(metric, metric), fontsize=11)
-    ax.set_xticks(range(len(CONTEXT_ORDER)))
-    ax.set_xticklabels(CONTEXT_ORDER)
+    ax.set_xticks(range(len(ctx_order)))
+    ax.set_xticklabels(ctx_order)
     ax.yaxis.set_major_formatter(mticker.FormatStrFormatter("%.1f"))
     ax.legend(fontsize=9, loc="best")
     ax.grid(True, alpha=0.3)
@@ -236,12 +345,13 @@ def make_summary_figure(tasks: list, head: str, metric: str,
 
     for i, task in enumerate(tasks):
         ax = axes_flat[i]
-        drawn = plot_task_head(ax, task, head, metric, seg_df, subj_df)
+        ctx_order = _active_ctx_order(seg_df, subj_df, task, head)
+        drawn = plot_task_head(ax, task, head, metric, seg_df, subj_df, ctx_order)
         ax.set_title(task.replace("_", " "), fontsize=10, fontweight="bold")
         ax.set_xlabel("Context", fontsize=9)
         ax.set_ylabel(METRIC_YLABELS.get(metric, metric), fontsize=9)
-        ax.set_xticks(range(len(CONTEXT_ORDER)))
-        ax.set_xticklabels(CONTEXT_ORDER, fontsize=8)
+        ax.set_xticks(range(len(ctx_order)))
+        ax.set_xticklabels(ctx_order, fontsize=8)
         ax.yaxis.set_major_formatter(mticker.FormatStrFormatter("%.1f"))
         ax.grid(True, alpha=0.3)
         if i == 0:
@@ -286,10 +396,14 @@ def main():
                         help="Display interactively instead of saving")
     parser.add_argument("--summary-only", action="store_true", dest="summary_only",
                         help="Only produce the multi-task summary figure, skip per-task figures")
+    parser.add_argument("--run-tag", default=None, dest="run_tag",
+                        help="Only include experiments with this run tag "
+                             "(e.g. 'lr1e4').  Pass '' to include only untagged runs. "
+                             "Default: include all.")
     args = parser.parse_args()
 
-    seg_df  = load_segment_results(args.results_dir)
-    subj_df = load_subject_results(args.results_dir)
+    seg_df  = load_segment_results(args.results_dir, run_tag=args.run_tag)
+    subj_df = load_subject_results(args.results_dir, run_tag=args.run_tag)
 
     if seg_df.empty and subj_df.empty:
         print("No results found. Run training and/or inference first.")
@@ -318,15 +432,17 @@ def main():
     print(f"Heads:  {heads}")
     print()
 
+    tag_suffix = f"_{args.run_tag}" if args.run_tag else ""
+
     for head in heads:
         # Per-task individual figures
         if not args.summary_only:
             for task in tasks:
-                out = fig_dir / f"{task}_{head}_{metric}.png"
+                out = fig_dir / f"{task}_{head}{tag_suffix}_{metric}.png"
                 make_single_figure(task, head, metric, seg_df, subj_df, out, args.show)
 
         # Summary grid figure
-        out = fig_dir / f"summary_{head}_{metric}.png"
+        out = fig_dir / f"summary_{head}{tag_suffix}_{metric}.png"
         make_summary_figure(tasks, head, metric, seg_df, subj_df, out, args.show)
 
     print("\nDone.")

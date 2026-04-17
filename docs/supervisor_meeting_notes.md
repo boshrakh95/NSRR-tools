@@ -206,26 +206,66 @@ This answers: *"how many windows per subject are needed before performance satur
 
 ## Current Results (Summary)
 
-Early results across tasks and context lengths:
+*Updated April 2026. Best test AUROC = segment-level K=5 eval from training. Subject-level AUROC = mean-probability aggregation over all windows (from inference). Sleep staging subject-level is not reported — each anchor has its own label so night-level aggregation is not meaningful.*
 
-| Task | Head | Best test AUROC | Best context | Status |
-|------|------|----------------|-------------|--------|
-| Sleep staging | LSTM | **0.939** | 10m | ✓ inference + analysis done |
-| Apnea binary | Transformer (lr=1e-4) | **0.800** | 120m | inference in progress |
-| Apnea binary | LSTM (lr=1e-4) | 0.771 | 120m | partial inference |
-| CVD binary | LSTM | ~0.665 | 120m | inference in progress |
-| Depression binary | LSTM | ~0.643 | 120m | inference done (4 contexts) |
-| Sleepiness binary | LSTM | ~0.611 | varies | training done |
-| Insomnia binary | LSTM | ~0.583 | 40m | inference pending |
-| Rested morning | LSTM | ~0.540 | 10m | inference done (3 contexts) |
+| Task | Best head | Best test AUROC (K=5) | Best context | Subject-level AUROC | Status |
+|------|-----------|----------------------|-------------|---------------------|--------|
+| Sleep staging | Transformer (lr1e4) | **0.940** | 40m | — (seq2seq) | ✓ complete |
+| Apnea binary | Transformer (lr1e4) | **0.800** | 120m | **0.846** @ 120m | ✓ inference + analysis done |
+| Apnea binary | LSTM (lr1e4) | 0.771 | 120m | 0.820 @ 120m | ✓ inference + analysis done |
+| CVD binary | LSTM | 0.670 | 120m | 0.685 @ 120m | ✓ inference + analysis done |
+| CVD binary | Transformer | 0.655 | 40m† | 0.687 @ 80m | ✓ inference done (10m, 80m only) |
+| Sleepiness binary | Transformer (lr1e4) | 0.624 | 80m | 0.631 @ 80m | ✓ inference + analysis done |
+| Sleepiness binary | LSTM (lr1e4) | 0.620 | 80m | 0.625 @ 120m | ✓ inference + analysis done |
+| Depression binary | LSTM | 0.643 | 120m | 0.657 @ 120m | ✓ inference + analysis done |
+| Insomnia binary | Transformer (lr1e4) | 0.595 | 40m | 0.612 @ 40m | ✓ inference + analysis done |
+| Insomnia binary | LSTM | 0.591 | 80m | 0.609 @ 40m | ✓ inference + analysis done |
+| Anxiety binary | LSTM | 0.592 | 120m | 0.629 @ 30s | ✓ inference + analysis done |
+| Rested morning | Transformer (lr1e4) | 0.577 | 120m | 0.594 @ 120m | ✓ inference + analysis done |
+| Rested morning | LSTM | 0.540 | 10m | 0.567 @ 30s | ✓ inference + analysis done |
 
-**Key observations so far**:
+†CVD transformer 40m was trained with a different architecture config (hidden_dim=256 vs 128 for other contexts) — treat this data point with caution.
 
-- Sleep staging shows a clear improvement from 30s → 10m (0.927 → 0.939) then plateaus — suggesting that ~10 minutes of past context is sufficient for epoch-level staging.
-- Apnea shows a consistent upward trend from 30s → 120m (0.685 → 0.800), with no plateau yet — longer context keeps helping.
-- CVD binary is relatively flat across contexts (~0.64–0.67), suggesting either the PSG signal doesn't encode much incremental CVD information with longer context, or the label quality is limiting.
-- Weaker tasks (sleepiness, insomnia, rested morning, depression) show limited improvement with context and generally lower peak AUROC — suggesting noisy labels or a mismatch between the PSG signal and the questionnaire-derived label.
-- This **task-specific variation is exactly the Phase 0 finding we expected**: different tasks need different amounts of context, and some tasks may not benefit from longer context at all.
+**Key observations**:
+
+- **Sleep staging** improves from 30s → 40m (LSTM: 0.927→0.939, Transformer: similar), then plateaus. ~10–40 minutes of past context is sufficient for epoch-level staging. LSTM and Transformer reach near-identical performance.
+- **Apnea** shows a consistent upward trend from 30s → 120m (Transformer: 0.720→0.800, no plateau yet). Subject-level aggregation further boosts this to 0.846 — longer context keeps helping, and aggregating across the full night amplifies the benefit.
+- **CVD binary** is relatively flat (~0.65–0.69). Subject-level aggregation helps modestly. Likely limited by label quality (prevalent disease history, not incident events).
+- **Sleepiness, depression, insomnia** plateau early and top out around 0.60–0.66 AUROC. Subject-level aggregation gives marginal gains. Consistent with noisy questionnaire-derived labels.
+- **Anxiety and rested morning** are near-random — single-question subjective items, likely too noisy regardless of context.
+- The **task-specific context sensitivity is the core Phase 0 finding**: apnea needs long context; staging saturates at medium context; label-noisy tasks show no context benefit at all.
+
+---
+
+## Planned Experiment: MC Dropout Context Ablation
+
+**Motivation**: The context-sweep curves (AUROC vs context length L) show that performance often improves as L grows. But this could reflect two very different mechanisms:
+
+1. **Genuine temporal information gain** — longer signal contains physiologically informative structure that shorter windows cannot capture.
+2. **Variance reduction** — more windows of the same length reduce prediction noise through aggregation, with no additional information per unit time.
+
+Distinguishing these is critical: if the gain is purely from variance reduction, then Ideas 1–2 (learning to select context length) are partly invalidated — the optimal strategy would just be "always use many short windows," not "use one long window."
+
+**Experimental design** (three-way comparison at the same total GPU memory budget):
+
+| Condition | How it works | What it measures |
+|-----------|-------------|-----------------|
+| **(A) Baseline** | Single deterministic forward pass at context length L | Single-window performance; our current Phase 0 result |
+| **(B) MC Dropout × K** | K stochastic forward passes with dropout active, same context length L; majority vote over K predictions | Effect of variance reduction alone, without added temporal coverage |
+| **(C) Long context** | Single forward pass at context length K × L | Effect of genuine temporal information from a longer window |
+
+**Interpretation logic**:
+- If **(B) ≈ (C)**: the benefit attributed to longer context is mostly variance reduction from repeated aggregation — the model is not using the extra temporal structure.
+- If **(C) >> (B)**: longer context provides genuine new information that cannot be recovered by re-reading the same shorter window multiple times.
+- If **(B) > (A)** but **(C) ≈ (A)**: variance reduction helps but longer context does not — consider a multi-pass inference strategy instead of architecture changes.
+
+**Why MC Dropout?** Standard inference uses a single deterministic pass (dropout disabled). Enabling dropout at inference time makes each pass a different random sub-network, producing stochastically varied predictions. Majority-voting over K such passes reduces variance without changing the temporal coverage of the input — isolating the aggregation effect from the information effect.
+
+**Connection to Phase 1**:
+- If (C) >> (B) for apnea (the task most sensitive to context), this strongly supports the AMTA+CSL and early-exit ideas — the model genuinely needs longer context, and learning to select it is valuable.
+- If (B) ≈ (C), then a simpler MC-dropout inference procedure at test time may be sufficient, and the research direction shifts from context-selection to uncertainty-aware inference.
+
+**Implementation notes**: Dropout is already present in the LSTM and Transformer heads during training. Enabling it at inference time requires only toggling `model.train()` or a custom `enable_mc_dropout()` function that sets only dropout layers to training mode while keeping BatchNorm frozen. K=10–20 stochastic passes is typically sufficient for stable majority-vote estimates.
 
 ---
 

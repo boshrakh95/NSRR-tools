@@ -69,6 +69,11 @@ except ImportError:
 DEFAULT_K_VALUES = [1, 5, 10, 20, 50, "all"]
 CONTEXT_ORDER    = ["30s", "10m", "40m", "80m"]
 
+# Tasks where subject-level aggregation (mean-prob / majority-vote) is
+# meaningless: each anchor has its own label, so there is no single
+# night-level ground truth to aggregate toward.
+SEQ2SEQ_TASKS = {"sleep_staging"}
+
 # ── Window selection ──────────────────────────────────────────────────────────
 
 def select_windows(grp: pd.DataFrame, k: int, strategy: str) -> pd.DataFrame:
@@ -207,11 +212,15 @@ HEADER_MAP = {
 }
 
 
-def _split_to_markdown(results_df: pd.DataFrame, strategy: str) -> str:
+def _split_to_markdown(results_df: pd.DataFrame, strategy: str,
+                       task: str = "") -> str:
     """Render per-context tables for one split's results_df."""
+    seq2seq = task in SEQ2SEQ_TASKS
     lines = [
         f"_Window selection: **{strategy}**. "
-        "Metrics in %. MP = mean-prob aggregation. MV = majority-vote._\n",
+        + ("Metrics in %. Segment-level only (seq2seq task)._\n"
+           if seq2seq else
+           "Metrics in %. MP = mean-prob aggregation. MV = majority-vote._\n"),
     ]
 
     ctx_order = [c for c in CONTEXT_ORDER if c in results_df["context_length"].unique()]
@@ -224,9 +233,10 @@ def _split_to_markdown(results_df: pd.DataFrame, strategy: str) -> str:
 
         lines.append(f"## Context: `{ctx}`\n")
 
+        prefixes = ["seg"] if seq2seq else ["seg", "mean_prob", "majority"]
         metric_cols = [
             f"{p}_{m}"
-            for p in ["seg", "mean_prob", "majority"]
+            for p in prefixes
             for m in ["auroc", "balanced_accuracy", "macro_f1", "cohen_kappa"]
             if f"{p}_{m}" in cdf.columns and not cdf[f"{p}_{m}"].isna().all()
         ]
@@ -270,11 +280,12 @@ def plot_window_sweep(results_df: pd.DataFrame, task: str, head: str,
     fig, axes = plt.subplots(nrows, ncols, figsize=(5.5 * ncols, 4 * nrows), squeeze=False)
     axes_flat = axes.flatten()
 
-    methods = [
+    all_methods = [
         (f"seg_{metric}",       "Segment-level",    "#4C72B0", "o", "--"),
         (f"mean_prob_{metric}", "Subject mean-prob", "#DD8452", "s", "-"),
         (f"majority_{metric}",  "Subject maj-vote",  "#55A868", "^", ":"),
     ]
+    methods = all_methods[:1] if task in SEQ2SEQ_TASKS else all_methods
 
     for i, ctx in enumerate(contexts):
         ax   = axes_flat[i]
@@ -452,7 +463,7 @@ def main():
         print(f"CSV saved: {out_csv}")
 
         # Collect markdown section for this split
-        split_contents[split] = _split_to_markdown(split_df, args.window_strategy)
+        split_contents[split] = _split_to_markdown(split_df, args.window_strategy, task=args.task)
 
         # Plot per split
         if args.plot:
