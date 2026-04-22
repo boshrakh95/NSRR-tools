@@ -157,6 +157,15 @@ tasks:
       num_classes: 4
       notes: "Integer prefix of string value; 0=Non-rand included as class 0"
 
+    osa_binary_apples_postqc:
+      enabled: true
+      priority: "tier2"
+      source_file: "apples-dataset-0.1.0.csv"
+      column: "osaseveritypostqc"
+      visit_filter: 1
+      visit_column: "visitn"
+      notes: "Derived from osa_severity_apples: Non-rand+Mild(0,1)=0, Moderate+Severe(2,3)=1"
+
     depression_extreme_binary:
       enabled: true
       priority: "tier2"

@@ -311,11 +311,28 @@ def extract_apples_targets(config: dict) -> pd.DataFrame:
             except (ValueError, IndexError):
                 return ''
 
+        def _osa_to_binary(cls_str):
+            """Non-rand(0)+Mild(1) → 0, Moderate(2)+Severe(3) → 1."""
+            if cls_str == '':
+                return ''
+            try:
+                c = int(cls_str)
+                return '1' if c >= 2 else '0'
+            except ValueError:
+                return ''
+
         df_bl_main['osa_severity_apples'] = df_bl_main[osa_col].apply(_parse_osa_severity)
-        targets = _merge_left_on_appleid(targets, df_bl_main, ['osa_severity_apples'])
+        df_bl_main['osa_binary_apples_postqc'] = df_bl_main['osa_severity_apples'].apply(_osa_to_binary)
+        targets = _merge_left_on_appleid(
+            targets, df_bl_main, ['osa_severity_apples', 'osa_binary_apples_postqc']
+        )
         targets['osa_severity_apples'] = targets['osa_severity_apples'].fillna('')
+        targets['osa_binary_apples_postqc'] = targets['osa_binary_apples_postqc'].fillna('')
         dist = targets['osa_severity_apples'][targets['osa_severity_apples'] != ''].value_counts().sort_index()
-        logger.info(f"  Class distribution: {dict(dist)}")
+        pos = (targets['osa_binary_apples_postqc'] == '1').sum()
+        neg = (targets['osa_binary_apples_postqc'] == '0').sum()
+        logger.info(f"  4-class distribution: {dict(dist)}")
+        logger.info(f"  binary (mod+sev=1): pos={pos}, neg={neg}")
 
     # --- depression_extreme_binary (main baseline, BDI ≤9 vs ≥20) ---
     task_cfg = apples_cfg.get('depression_extreme_binary', {})
@@ -470,6 +487,7 @@ def main():
             'sleepiness_class', 'ess_score',
             'sleep_efficiency_binary', 'eff_score',
             'osa_severity_apples',
+            'osa_binary_apples_postqc',
             'depression_extreme_binary',
             'sex_binary',
             'age_value',

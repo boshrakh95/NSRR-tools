@@ -52,6 +52,7 @@ BINARY_TASKS = [
     'sleep_efficiency_binary',
     'psqi_binary',
     'depression_extreme_binary',
+    'osa_binary_apples_postqc',
 ]
 
 # ── Multiclass tasks ──────────────────────────────────────────────────────────

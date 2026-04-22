@@ -20,6 +20,7 @@ All new task blocks in the adapters are guarded by `enabled: true/false` so runn
 | `psqi_binary` | binary | MrOS | `pqpsqi` (main v1+v2) | > 5 → 1 |
 | `depression_extreme_binary` | binary | APPLES, STAGES | BDI (APPLES): ≤9=0, ≥20=1; PHQ-9 (STAGES): ≤4=0, ≥15=1; middle dropped | extreme-group |
 | `osa_severity_apples` | 4-class | APPLES | `osaseveritypostqc` (main v1, string parse) | 0=Non-rand, 1=Mild, 2=Moderate, 3=Severe |
+| `osa_binary_apples_postqc` | binary | APPLES | derived from `osa_severity_apples` | Non-rand+Mild (0,1) → 0, Moderate+Severe (2,3) → 1 |
 | `sex_binary` | binary | APPLES, SHHS, STAGES | `nsrr_sex` (harmonized); female=1, male=0 | N/A |
 | `age_regression` | regression (float) | APPLES, SHHS, MrOS, STAGES | `nsrr_age` (harmonized) | N/A |
 | `bmi_regression` | regression (float) | APPLES, SHHS, MrOS, STAGES | `nsrr_bmi` (harmonized) | N/A |
@@ -101,7 +102,10 @@ python scripts/create_task_subject_lists.py \
 ### `osaseveritypostqc` string parsing
 - String format: `"N) description"` — extract integer prefix via `int(str(val).split(')')[0].strip())`.
 - 0 = Non-randomized (included as class 0 per Q2 decision).
-- Stored in per-dataset CSV as `osa_severity_apples`; NOT in master (handled as `MULTICLASS_TASKS`).
+- **Two tasks produced from the same source column:**
+  - `osa_severity_apples` (4-class) — stored in per-dataset CSV only; handled via `MULTICLASS_TASKS` → `osa_severity_apples_subjects.csv`.
+  - `osa_binary_apples_postqc` (binary) — Non-rand+Mild (classes 0,1) → 0, Moderate+Severe (classes 2,3) → 1; stored in per-dataset CSV AND master parquet; handled via `BINARY_TASKS` → `osa_binary_apples_postqc_subjects.csv`.
+- Binary computed in the adapter inside the `osa_severity_apples` block via `_osa_to_binary()`; both columns merged together in a single `_merge_left_on_appleid` call.
 
 ### Regression storage
 - `age_value` and `bmi_value` stored as string floats in per-dataset CSVs (`''` = missing).
@@ -132,6 +136,7 @@ depression_class, bdi_score,
 sleepiness_class, ess_score,
 sleep_efficiency_binary, eff_score,
 osa_severity_apples,
+osa_binary_apples_postqc,
 depression_extreme_binary,
 sex_binary,
 age_value,
@@ -194,3 +199,4 @@ bmi_value
 - [ ] Master: `age_value` and `bmi_value` are float columns (not int)
 - [ ] Task lists: `age_regression_subjects.csv` and `bmi_regression_subjects.csv` present
 - [ ] Task lists: `osa_severity_apples_subjects.csv` has 4 distinct label values
+- [ ] Task lists: `osa_binary_apples_postqc_subjects.csv` present; labels ∈ {0, 1}

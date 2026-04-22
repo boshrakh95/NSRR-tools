@@ -75,6 +75,7 @@ _MASTER_COLUMNS = [
     'sleep_efficiency_binary', 'eff_score',
     'psqi_binary', 'psqi_score',
     'depression_extreme_binary',
+    'osa_binary_apples_postqc',
     'age_value',
     'bmi_value',
     'extraction_date',
@@ -155,7 +156,7 @@ def load_dataset(csv_path: Path, dataset_name: str) -> pd.DataFrame:
                 'cvd_binary', 'rested_morning',
                 # v2 binary
                 'sex_binary', 'sleep_efficiency_binary', 'psqi_binary',
-                'depression_extreme_binary']:
+                'depression_extreme_binary', 'osa_binary_apples_postqc']:
         if col in df.columns and col not in out.columns:
             out[col] = df[col].apply(_binary_str_to_int)
 
