@@ -37,10 +37,18 @@ All column names mentioned in the design guide were verified against actual data
 | `poxqual3` | MrOS | main (both visits) | ✅ | Rested morning 1–5 scale |
 | `rest10` / `ms204c` | SHHS | shhs1 / shhs2 main | ✅ | Rested morning |
 | `refreshinamhp` | APPLES | main | ✅ | Note: lowercase in actual CSV |
+| `nsrr_age` | SHHS, MrOS, APPLES, STAGES | **harmonized** | ✅ | Use harmonized — same column name everywhere |
+| `nsrr_age_gt89` | SHHS, MrOS | harmonized | ✅ | Flag for subjects with age capped at 90 |
+| `nsrr_sex` | SHHS, APPLES, STAGES | **harmonized** | ✅ | MrOS is all-male → excluded from sex task |
+| `nsrr_bmi` | SHHS, MrOS, APPLES, STAGES | **harmonized** | ✅ | APPLES: populated at visit 1 only |
+| `gender` | MrOS v1 | main | ✅ | Backup for MrOS if harmonized unavailable |
+| `vsage1` | MrOS v1 | main | ✅ | Backup age for MrOS |
+| `hwbmi` | MrOS v1 | main | ✅ | Backup BMI for MrOS |
 
 ### Key APPLES notes
 - Subject ID differs between files: `appleid` in main CSV, `nsrrid` in harmonized CSV. The current adapters handle this with a merge/rename step.
 - `sleepeffpsg` (main) and `nsrr_ttleffsp_f1` (harmonized) are **identical** (same mean 78.37, same std 13.03, same min/max at visit 3). Use `nsrr_ttleffsp_f1` from harmonized for consistency.
+- **Demographics (`nsrr_age`, `nsrr_sex`, `nsrr_bmi`) are only populated in the harmonized file at visit 1.** Visits 2–7 have NaN for these. For APPLES subjects appearing at visit 3 (PSG), look up their visit-1 demographics. This is fine because age/sex/BMI are subject-level (not visit-specific) attributes.
 - `osaseveritypostqc` is a **string** column with categories like `"0) Non-rand"`, `"1) mild"`, `"2) moderate"`, `"3) severe"`. Only available at visit 1 (baseline), not visit 3.
 
 ---
@@ -215,54 +223,143 @@ Master parquet: `/scratch/boshra95/psg/unified/targets/master_targets.parquet`
 
 ---
 
-## 4. Open Questions
+---
 
-### Q1 — MrOS Insomnia threshold
-MrOS visit 2 has only 31 positive cases at ISI >= 15 (3%). The task is not trainable at this imbalance.
+### 3.12 `age_regression` — **New task (Phase 1.5 diagnostic)**
 
-**Options**:
-- (a) Skip MrOS insomnia entirely — keep STAGES only
-- (b) Lower threshold for MrOS to ISI >= 10 (subthreshold + moderate insomnia)
-- (c) Keep >= 15, accept imbalance (heavy class weighting)
+- **Guide purpose**: Sanity check / diagnostic probe. Global subject trait — expected to saturate quickly with short context. If it fails → pipeline broken.
+- **Formulation**: Regression (predict continuous age). Optional: 4-class bins (<50, 50–60, 60–70, 70+).
+- **Column**: `nsrr_age` from harmonized files (same name in all 4 datasets).
+- **Data verified**:
 
-### Q2 — `osaseveritypostqc` class definition
-How to handle `"0) Non-rand"` in APPLES `osaseveritypostqc`:
-- (a) Exclude "Non-rand" subjects → 3-class or binary on remaining
-- (b) Map "Non-rand" as class 0 (non-OSA) → 4-class task
-- (c) Binary: "severe" vs everything else
+| Dataset | N | Notes |
+|---------|---|-------|
+| SHHS | 5,804 (v1) + 4,080 (v2) | 67 subjects with age capped at 90 (age > 89, privacy mask) |
+| MrOS | ~2,900 (v1) | Single visit |
+| APPLES | 1,516 (v1 harmonized only) | Demographics at visit 1; use for all APPLES subjects |
+| STAGES | ~1,775 | Harmonized file |
 
-### Q3 — `sleep_efficiency_binary` merge strategy
-Guide says "cautious — start per-dataset, then test merged." Given the 54%–74% positive rate range across SHHS/APPLES/MrOS, should the initial v2 experiment:
-- (a) Merge all three (with class weights per dataset or globally)
-- (b) Run per-dataset separately (3 separate tasks)
-- (c) Start merged as baseline, then check per-dataset ablation
+- **SHHS age censoring**: 67 subjects have `nsrr_age_gt89 = "yes"` and age capped at 90. For regression, **exclude these 67 subjects** (introducing noise at the high end). For the 4-class bins, they map cleanly to `70+` so can be kept.
+- **Merge**: YES — all 4 datasets.
+- **Implementation required**:
+  1. Add `age_regression` extraction to all 4 adapter scripts (read `nsrr_age` from harmonized, exclude `nsrr_age_gt89 = "yes"` for regression)
+  2. Add `age` column to master schema
+  3. Generate `age_regression_subjects.csv`
 
-### Q4 — PVT lapses threshold
-For `pvt_lapses_binary` (APPLES):
-- (a) Data-driven median split
-- (b) Fixed threshold (>= 5 lapses = impaired) — used in some literature
-- (c) Regression only (`pvt_meanrt_regression`) — no binary needed
+---
+
+### 3.13 `sex_binary` — **New task (Phase 1.5 diagnostic)**
+
+- **Guide purpose**: Debugging task. Extremely strong signal — should saturate immediately. If this fails, the representation or pipeline is broken.
+- **Formulation**: Binary (0 = female, 1 = male).
+- **Column**: `nsrr_sex` from harmonized files (string values: `"male"` / `"female"`).
+- **Data verified**:
+
+| Dataset | N | Notes |
+|---------|---|-------|
+| SHHS | 5,804 (v1) + 4,311 (v2) | Both sexes present |
+| MrOS | ~2,900 (v1) | **ALL MALE — exclude entirely** |
+| APPLES | 1,516 (v1) | 958 male / 558 female at visit 1 |
+| STAGES | ~1,775 | Both sexes present |
+
+- **Merge**: YES — SHHS + APPLES + STAGES only. MrOS excluded.
+- **APPLES note**: `nsrr_sex` populated at harmonized visit 1 only. Use visit-1 sex for all APPLES subjects (it's a static attribute).
+- **Implementation required**:
+  1. Add `sex_binary` extraction to SHHS, APPLES, STAGES adapters (skip MrOS)
+  2. Add `sex` column to master schema
+  3. Generate `sex_binary_subjects.csv`
+
+---
+
+### 3.14 `bmi_regression` (and optionally `bmi_binary`) — **New task (Phase 1.5 diagnostic)**
+
+- **Guide purpose**: Global trait with moderate sleep-physiology interaction (BMI ↔ OSA). Expected to show moderate context-length sensitivity — intermediate between sex (fast saturation) and AHI (needs long context).
+- **Formulation**: Regression (predict continuous BMI). Optional binary: BMI < 30 vs ≥ 30.
+- **Column**: `nsrr_bmi` from harmonized files (same name in all 4 datasets).
+- **Data verified**:
+
+| Dataset | N | Notes |
+|---------|---|-------|
+| SHHS | 5,761 (v1), 3,587 (v2) | Some missing at v2 |
+| MrOS | ~2,900 (v1) | Single visit harmonized |
+| APPLES | 1,512 (v1 harmonized only) | Populated at visit 1 only; use for all APPLES subjects |
+| STAGES | ~1,775 | Harmonized file |
+
+- **Merge**: YES — all 4 datasets.
+- **Implementation required**:
+  1. Add `bmi_regression` extraction to all 4 adapter scripts (read `nsrr_bmi` from harmonized)
+  2. Add `bmi` column to master schema
+  3. Generate `bmi_regression_subjects.csv`
+
+---
+
+## 4. Resolved Decisions (previously open questions)
+
+### Q1 — MrOS Insomnia → **RESOLVED: Skip entirely**
+31 positives out of 1,022 at ISI >= 15 is not trainable. STAGES insomnia (1,710 subjects, 44.6% positive) stays as the sole insomnia task.
+
+### Q2 — `osaseveritypostqc` class 0 → **RESOLVED: Include as class 0**
+Full confirmed label definition: `0 = Non-randomized; 1 = Mild [AHI 10–15); 2 = Moderate [AHI 15.1–30]; 3 = Severe [AHI >30]`. Non-randomized subjects were enrolled in APPLES (AHI >= 10 required) but not randomized into CPAP treatment for non-AHI reasons. They still have valid PSG and represent the low/ambiguous severity group.
+
+**Two tasks to create**:
+- `osa_severity_apples` (4-class): 0=Non-rand (414), 1=Mild (151), 2=Moderate (344), 3=Severe (607). Exploratory — Mild class is small.
+- `osa_binary_apples_postqc` (binary): Non-rand + Mild = 0 (565), Moderate + Severe = 1 (951). Primary task. Conceptually equivalent to AHI >= 15 using a clinically curated label.
+- String parsing required: extract integer prefix from strings like `"2) moderate"`.
+
+### Q3 — `sleep_efficiency_binary` merge → **RESOLVED: merged CSV + `--datasets` flag at runtime**
+Generate one `sleep_efficiency_binary_subjects.csv` containing all subjects from SHHS + APPLES + MrOS. Per-dataset ablations run by specifying `--datasets` on the sbatch command line. No code changes needed — existing infrastructure handles this.
+
+### Q4 — PVT lapses threshold → **RESOLVED: fixed threshold >= 5 lapses**
+Rationale: fixed threshold is reproducible, not data-dependent, and has literature precedent in sleep deprivation PVT research. Median split would shift if dataset changes. Do a distribution check before training to confirm positive rate is reasonable.
 
 ---
 
 ## 5. Implementation Order
 
-### Tier 2 (implement first, highest signal quality)
-1. `sleep_efficiency_binary` — SHHS + APPLES + MrOS
-2. `psqi_binary` — MrOS only
-3. `insomnia_binary` MrOS — **pending Q1**
+### Phase 1.5 — Diagnostic tasks (implement first — fast to add, high scientific value)
+1. `sex_binary` — SHHS + APPLES + STAGES (harmonized `nsrr_sex`)
+2. `age_regression` — all 4 datasets (harmonized `nsrr_age`, exclude `nsrr_age_gt89=yes` for regression)
+3. `bmi_regression` — all 4 datasets (harmonized `nsrr_bmi`)
 
-### Tier 3 (implement after Tier 2 results)
-4. `depression_extreme_binary` — APPLES (BDI ≤9 vs ≥20) + STAGES (PHQ ≤4 vs ≥15)
-5. `osaseveritypostqc` — **pending Q2**
+### Tier 2 — New clinical tasks
+4. `sleep_efficiency_binary` — SHHS + APPLES + MrOS (merged CSV, per-dataset via `--datasets`)
+5. `psqi_binary` — MrOS only
 
-### Tier 4 (deferred)
-6. PVT cognitive tasks — **pending Q4**
-7. SHHS CVD survival (requires new head architecture — out of scope for Phase 0)
+### Tier 3 — Refined/new task variants
+6. `depression_extreme_binary` — APPLES (BDI ≤9 vs ≥20) + STAGES (PHQ ≤4 vs ≥15)
+7. `osa_binary_apples_postqc` — APPLES only (Non-rand+Mild=0 vs Moderate+Severe=1)
+8. `osa_severity_apples` (4-class) — APPLES only (string column parsing)
+
+### Tier 4 — Deferred
+9. `pvt_lapses_binary` — APPLES visit 3, threshold >= 5 lapses
+10. `pvt_meanrt_regression` — APPLES visit 3
+11. SHHS CVD survival — requires new head architecture, out of scope for Phase 0
 
 ---
 
-## 6. What Does NOT Need to Change
+## 6. Complete Task Summary Table
+
+| Task | Datasets | Column(s) | Threshold | Status | Priority |
+|------|----------|-----------|-----------|--------|----------|
+| `apnea_binary` | SHHS+MrOS+APPLES+STAGES | `nsrr_ahi_*` | AHI >= 15 | ✅ no change | — |
+| `sleepiness_binary` | all 4 | `nsrr_ess_*` / visit cols | ESS >= 11 | ✅ no change | — |
+| `insomnia_binary` | STAGES only | `isi_score` | ISI >= 15 | ✅ no change | — |
+| `depression_binary` | APPLES+STAGES | BDI/PHQ | BDI>=11, PHQ>=10 | ✅ keep (baseline) | — |
+| `anxiety_binary` | STAGES | `gad_0800` | GAD>=10 | ✅ no change | — |
+| `cvd_binary` | SHHS+MrOS | `any_cvd`/`cvchd` | — | ✅ keep (baseline) | — |
+| `rested_morning` | SHHS+MrOS+APPLES | scale cols | >=4 = 1 | ✅ no change | — |
+| `sex_binary` | SHHS+APPLES+STAGES | `nsrr_sex` (harmonized) | male=1/female=0 | 🆕 new | Phase 1.5 |
+| `age_regression` | all 4 | `nsrr_age` (harmonized) | continuous | 🆕 new | Phase 1.5 |
+| `bmi_regression` | all 4 | `nsrr_bmi` (harmonized) | continuous | 🆕 new | Phase 1.5 |
+| `sleep_efficiency_binary` | SHHS+APPLES+MrOS | `nsrr_ttleffsp_f1`/`poslpeff` | < 85% | 🆕 new | Tier 2 |
+| `psqi_binary` | MrOS | `pqpsqi` | > 5 | 🆕 new | Tier 2 |
+| `depression_extreme_binary` | APPLES+STAGES | BDI/PHQ | BDI<=9 vs >=20; PHQ<=4 vs >=15 | 🆕 new name | Tier 3 |
+| `osa_binary_apples_postqc` | APPLES | `osaseveritypostqc` | Non-rand+Mild=0, Mod+Sev=1 | 🆕 new | Tier 3 |
+| `osa_severity_apples` (4-class) | APPLES | `osaseveritypostqc` | 0/1/2/3 | 🆕 new | Tier 3 |
+| `pvt_lapses_binary` | APPLES | `lapsesrtge500` | >= 5 lapses | 🆕 deferred | Tier 4 |
+| `pvt_meanrt_regression` | APPLES | `meanrt` | continuous | 🆕 deferred | Tier 4 |
+
+## 7. What Does NOT Need to Change
 
 The following tasks are already correctly implemented per the design guide:
 - `apnea_binary` (threshold, columns, merge logic)
@@ -275,7 +372,7 @@ Poor results on sleepiness/anxiety/restedness are **not caused by implementation
 
 ---
 
-## 7. Data Versioning Plan
+## 8. Data Versioning Plan
 
 All v2 outputs use new paths so nothing overwrites existing Phase 0 data.
 

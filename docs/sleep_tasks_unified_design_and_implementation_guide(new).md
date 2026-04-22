@@ -1080,5 +1080,234 @@ If only a minimal change set is possible right now, do this first:
 
 ---
 
+# 16. Demographics & Anthropometrics (Auxiliary Diagnostic Tasks)
+
+## Purpose and Role in the Project
+
+These tasks are **core auxiliary tasks**, not just optional additions.
+
+They serve as **diagnostic probes** to understand what the model is learning and how context length affects different types of signals.
+
+They help answer:
+
+- Is the model learning **global subject traits** vs **local sleep dynamics**?
+- Does performance **saturate early** (→ global/static information)?
+- Or require longer context (→ sleep-dependent temporal information)?
+- Is the learned representation **stable across context length**?
+
+👉 These tasks are essential for validating your **context sufficiency hypothesis**.
+
+---
+
+# Task J: Age Prediction
+
+## Why
+
+- Strong physiological signal
+- Mostly **global** (should not require long temporal context)
+- Acts as a **sanity check task**
+
+## Formulation
+
+### Preferred
+- Regression:
+  - Predict continuous age
+
+### Optional (more stable / robust)
+- Classification:
+  - Bins:
+    - `<50`
+    - `50–60`
+    - `60–70`
+    - `70+`
+
+## Datasets and Columns
+
+### SHHS
+- Columns:
+  - `age_s1`
+  - `age_s2`
+- Use corresponding visit-specific age
+
+### MrOS
+- Column:
+  - `vsage1`
+
+### APPLES
+- Column:
+  - `age`
+
+## Merge Decision
+
+- **MERGE = YES**
+
+👉 Age is consistent across datasets.
+
+## Metrics
+
+- Regression:
+  - MAE
+  - Pearson / Spearman correlation
+
+- Classification (if used):
+  - Accuracy
+  - Macro-F1
+
+---
+
+# Task K: Sex Prediction
+
+## Why
+
+- Extremely strong physiological signal
+- Should **saturate very quickly** with short context
+- Acts as a **debugging task**:
+  - If this fails → representation or pipeline is likely broken
+
+## Formulation
+
+- Binary classification:
+  - `0 = female`
+  - `1 = male`
+
+## Datasets and Columns
+
+### SHHS
+- Column:
+  - `gender`
+
+### MrOS
+- Column:
+  - `gender`
+
+⚠️ **Important**:
+- MrOS is **all male**
+- No label variance → unusable for training
+
+### APPLES
+- Column:
+  - `sex`
+
+## Merge Decision
+
+- **MERGE = YES (SHHS + APPLES only)**
+- **EXCLUDE MrOS**
+
+## Metrics
+
+- Accuracy
+- AUROC
+
+---
+
+# Task L: BMI Prediction
+
+## Why
+
+- Directly related to sleep disorders (especially OSA)
+- Contains both:
+  - global signal
+  - weak physiological/sleep interaction signal
+- Expected to show **moderate dependence on context length**
+
+## Formulation
+
+### Preferred
+- Regression:
+  - Predict continuous BMI
+
+### Optional
+- Binary classification:
+  - `BMI < 30 → non-obese`
+  - `BMI ≥ 30 → obese`
+
+## Datasets and Columns
+
+### SHHS
+- Columns:
+  - `bmi_s1`
+  - `bmi_s2`
+
+### MrOS
+- Column:
+  - `hwbmi`
+
+### APPLES
+- Column:
+  - `bmi`
+
+## Merge Decision
+
+- **MERGE = YES**
+
+👉 BMI has consistent physical meaning across datasets.
+
+## Metrics
+
+- Regression:
+  - MAE
+
+- Classification (if used):
+  - AUROC
+
+---
+
+# 17. Integration into Pipeline
+
+## Updated Task Priority
+
+### Phase 1 (main tasks)
+- osa_binary
+- apnea_class_4
+- sleepiness_binary
+
+### Phase 1.5 (NEW — critical diagnostic layer)
+- age_regression
+- sex_binary
+- bmi_regression
+
+### Phase 2+
+- sleep_efficiency_binary
+- insomnia_binary
+- psqi_binary
+- etc.
+
+---
+
+# 18. Expected Context-Length Behavior
+
+These tasks define your **reference curves**:
+
+| Task | Expected Context Behavior |
+|------|--------------------------|
+| sex | saturates very fast |
+| age | saturates fast |
+| bmi | medium |
+| ESS | medium |
+| AHI | needs longer |
+| sleep efficiency | needs longer |
+
+👉 This produces a **clean contrast between global vs temporal tasks**
+
+---
+
+# 19. Paper-Level Insight (Use This)
+
+These tasks enable a strong claim:
+
+> Global demographic traits (e.g., age, sex) saturate with minimal context, while sleep-dependent outcomes (e.g., AHI, sleep efficiency) require longer temporal context, validating the proposed context sufficiency framework.
+
+---
+
+# 20. Implementation Notes (Critical)
+
+## Add Tasks
+
+```yaml
+- name: age_regression
+- name: sex_binary
+- name: bmi_regression
+
+
 End of document.
 
