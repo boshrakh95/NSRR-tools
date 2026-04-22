@@ -486,13 +486,128 @@ def extract_mros_targets(config: dict) -> pd.DataFrame:
     
     # Add dataset column
     targets['dataset'] = dataset
-    
+
     # Fill missing values with empty string
     for col in targets.columns:
         if col not in ['subject_id', 'dataset', 'visit']:
             targets[col] = targets[col].fillna('')
-    
+
     logger.info(f"\n✅ Total subjects in final targets: {len(targets)}")
+
+    # ===================================================================
+    # V2 TASKS (only executed if enabled in config)
+    # ===================================================================
+
+    # --- sleep_efficiency_binary (main v1 + v2, poslpeff < 85 → 1) ---
+    task_cfg = mros_config['tasks'].get('sleep_efficiency_binary', {})
+    if task_cfg.get('enabled', False):
+        eff_col = task_cfg['column']   # poslpeff
+        eff_threshold = config['thresholds']['sleep_efficiency_binary']['threshold']
+        logger.info(f"\n=== V2 Task: sleep_efficiency_binary (column: {eff_col}, threshold < {eff_threshold}%) ===")
+
+        eff_frames = []
+        for df_vis, vis, vis_label in [
+            (df_main_v1, 1, 'v1'),
+            (df_main_v2, 2, 'v2'),
+        ]:
+            if eff_col not in df_vis.columns:
+                logger.warning(f"  Visit {vis}: column '{eff_col}' not found — skipping")
+                continue
+            tmp = df_vis[[subject_id_col, eff_col]].copy()
+            tmp[eff_col] = pd.to_numeric(tmp[eff_col], errors='coerce').replace(-9, pd.NA)
+            tmp['sleep_efficiency_binary'] = tmp[eff_col].apply(
+                lambda x: '' if pd.isna(x) else ('1' if x < eff_threshold else '0')
+            )
+            tmp['eff_score'] = tmp[eff_col].astype(str).replace(['nan', '<NA>'], '')
+            tmp['subject_id'] = tmp[subject_id_col].astype(str) + f'_{vis_label}'
+            tmp['visit'] = vis
+            valid = (tmp['sleep_efficiency_binary'] != '').sum()
+            pos = (tmp['sleep_efficiency_binary'] == '1').sum()
+            logger.info(f"  Visit {vis}: N={valid}, low_eff(1)={pos} ({pos/max(valid,1):.1%})")
+            eff_frames.append(tmp[['subject_id', 'visit', 'sleep_efficiency_binary', 'eff_score']])
+
+        if eff_frames:
+            eff_targets = pd.concat(eff_frames, ignore_index=True)
+            targets = targets.merge(eff_targets, on=['subject_id', 'visit'], how='left')
+            targets['sleep_efficiency_binary'] = targets['sleep_efficiency_binary'].fillna('')
+            targets['eff_score'] = targets['eff_score'].fillna('')
+
+    # --- psqi_binary (main v1 + v2, pqpsqi > 5 → 1) ---
+    task_cfg = mros_config['tasks'].get('psqi_binary', {})
+    if task_cfg.get('enabled', False):
+        psqi_col = task_cfg['column']   # pqpsqi
+        psqi_threshold = config['thresholds']['psqi_binary']['threshold']
+        logger.info(f"\n=== V2 Task: psqi_binary (column: {psqi_col}, threshold > {psqi_threshold}) ===")
+
+        psqi_frames = []
+        for df_vis, vis, vis_label in [
+            (df_main_v1, 1, 'v1'),
+            (df_main_v2, 2, 'v2'),
+        ]:
+            if psqi_col not in df_vis.columns:
+                logger.warning(f"  Visit {vis}: column '{psqi_col}' not found — skipping")
+                continue
+            tmp = df_vis[[subject_id_col, psqi_col]].copy()
+            tmp[psqi_col] = pd.to_numeric(tmp[psqi_col], errors='coerce').replace(-9, pd.NA)
+            tmp['psqi_binary'] = tmp[psqi_col].apply(
+                lambda x: '' if pd.isna(x) else ('1' if x > psqi_threshold else '0')
+            )
+            tmp['psqi_score'] = tmp[psqi_col].astype(str).replace(['nan', '<NA>'], '')
+            tmp['subject_id'] = tmp[subject_id_col].astype(str) + f'_{vis_label}'
+            tmp['visit'] = vis
+            valid = (tmp['psqi_binary'] != '').sum()
+            pos = (tmp['psqi_binary'] == '1').sum()
+            logger.info(f"  Visit {vis}: N={valid}, poor_sleep(1)={pos} ({pos/max(valid,1):.1%})")
+            psqi_frames.append(tmp[['subject_id', 'visit', 'psqi_binary', 'psqi_score']])
+
+        if psqi_frames:
+            psqi_targets = pd.concat(psqi_frames, ignore_index=True)
+            targets = targets.merge(psqi_targets, on=['subject_id', 'visit'], how='left')
+            targets['psqi_binary'] = targets['psqi_binary'].fillna('')
+            targets['psqi_score'] = targets['psqi_score'].fillna('')
+
+    # --- age_regression (harmonized v1 — static attribute applied to both visits) ---
+    task_cfg = mros_config['tasks'].get('age_regression', {})
+    if task_cfg.get('enabled', False):
+        age_col = task_cfg['column']
+        logger.info(f"\n=== V2 Task: age_regression (column: {age_col}, from harmonized v1) ===")
+
+        df_harm_v1_age = df_harm_v1[[subject_id_col, age_col]].copy()
+        df_harm_v1_age[age_col] = pd.to_numeric(df_harm_v1_age[age_col], errors='coerce').replace(-9, pd.NA)
+        df_harm_v1_age['age_value'] = df_harm_v1_age[age_col].astype(str).replace(['nan', '<NA>'], '')
+        logger.info(f"  N={( df_harm_v1_age['age_value'] != '').sum()} subjects with valid age")
+
+        # Apply to both visits
+        age_frames = []
+        for vis_label in ['v1', 'v2']:
+            tmp = df_harm_v1_age.copy()
+            tmp['subject_id'] = tmp[subject_id_col].astype(str) + f'_{vis_label}'
+            tmp['visit'] = int(vis_label[1])
+            age_frames.append(tmp[['subject_id', 'visit', 'age_value']])
+        age_targets = pd.concat(age_frames, ignore_index=True)
+        targets = targets.merge(age_targets, on=['subject_id', 'visit'], how='left')
+        targets['age_value'] = targets['age_value'].fillna('')
+
+    # --- bmi_regression (harmonized v1 — static attribute applied to both visits) ---
+    task_cfg = mros_config['tasks'].get('bmi_regression', {})
+    if task_cfg.get('enabled', False):
+        bmi_col = task_cfg['column']
+        logger.info(f"\n=== V2 Task: bmi_regression (column: {bmi_col}, from harmonized v1) ===")
+
+        df_harm_v1_bmi = df_harm_v1[[subject_id_col, bmi_col]].copy()
+        df_harm_v1_bmi[bmi_col] = pd.to_numeric(df_harm_v1_bmi[bmi_col], errors='coerce').replace(-9, pd.NA)
+        df_harm_v1_bmi['bmi_value'] = df_harm_v1_bmi[bmi_col].astype(str).replace(['nan', '<NA>'], '')
+        logger.info(f"  N={( df_harm_v1_bmi['bmi_value'] != '').sum()} subjects with valid BMI")
+
+        bmi_frames = []
+        for vis_label in ['v1', 'v2']:
+            tmp = df_harm_v1_bmi.copy()
+            tmp['subject_id'] = tmp[subject_id_col].astype(str) + f'_{vis_label}'
+            tmp['visit'] = int(vis_label[1])
+            bmi_frames.append(tmp[['subject_id', 'visit', 'bmi_value']])
+        bmi_targets = pd.concat(bmi_frames, ignore_index=True)
+        targets = targets.merge(bmi_targets, on=['subject_id', 'visit'], how='left')
+        targets['bmi_value'] = targets['bmi_value'].fillna('')
     
     # ===================================================================
     # COMPUTE STATISTICS
@@ -580,21 +695,21 @@ def main():
         # Save results
         output_path = args.output or (log_dir / "mros_targets.csv")
         
-        # Define column order
-        column_order = [
+        # Build column order dynamically (v2 columns only included if present)
+        _desired = [
             'subject_id', 'dataset', 'visit',
             'apnea_class', 'ahi_score',
             'sleepiness_class', 'ess_score',
             'insomnia_binary', 'isi_score',
             'cvd_binary',
-            'rested_morning', 'rested_score'
+            'rested_morning', 'rested_score',
+            'sleep_efficiency_binary', 'eff_score',
+            'psqi_binary', 'psqi_score',
+            'age_value',
+            'bmi_value',
         ]
-        
-        # Reorder columns
-        targets_df = targets_df[column_order]
-        
-        # Save to CSV
-        save_dataset_targets(targets_df, output_path, 'mros')
+        column_order = [c for c in _desired if c in targets_df.columns]
+        save_dataset_targets(targets_df, output_path, 'mros', column_order)
         
         logger.info("\n" + "="*80)
         logger.info("✅ MrOS extraction completed successfully!")

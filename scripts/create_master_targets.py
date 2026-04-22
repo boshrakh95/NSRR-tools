@@ -70,8 +70,18 @@ _MASTER_COLUMNS = [
     'fatigue_binary', 'fss_score',
     'cvd_binary',
     'rested_morning',
+    # v2 additions
+    'sex_binary',
+    'sleep_efficiency_binary', 'eff_score',
+    'psqi_binary', 'psqi_score',
+    'depression_extreme_binary',
+    'age_value',
+    'bmi_value',
     'extraction_date',
 ]
+
+# Columns storing float regression targets (not binary, not score)
+_REGRESSION_VALUE_COLUMNS = {'age_value', 'bmi_value'}
 
 MISSING_BINARY = -1
 DATASET_FILES = {
@@ -142,7 +152,10 @@ def load_dataset(csv_path: Path, dataset_name: str) -> pd.DataFrame:
     # --- Pass-through binary columns ---
     for col in ['apnea_binary', 'depression_binary', 'sleepiness_binary',
                 'anxiety_binary', 'insomnia_binary', 'fatigue_binary',
-                'cvd_binary', 'rested_morning']:
+                'cvd_binary', 'rested_morning',
+                # v2 binary
+                'sex_binary', 'sleep_efficiency_binary', 'psqi_binary',
+                'depression_extreme_binary']:
         if col in df.columns and col not in out.columns:
             out[col] = df[col].apply(_binary_str_to_int)
 
@@ -155,9 +168,16 @@ def load_dataset(csv_path: Path, dataset_name: str) -> pd.DataFrame:
 
     for src, dst in [('ahi_score', 'ahi_score'), ('ess_score', 'ess_score'),
                      ('gad7_score', 'gad7_score'), ('isi_score', 'isi_score'),
-                     ('fss_score', 'fss_score'), ('rested_score', 'rested_score')]:
+                     ('fss_score', 'fss_score'), ('rested_score', 'rested_score'),
+                     # v2 scores
+                     ('eff_score', 'eff_score'), ('psqi_score', 'psqi_score')]:
         if src in df.columns and dst not in out.columns:
             out[dst] = df[src].apply(_score_to_float)
+
+    # --- Regression value columns (float, NaN if missing) ---
+    for col in ['age_value', 'bmi_value']:
+        if col in df.columns:
+            out[col] = df[col].apply(_score_to_float)
 
     return out
 
@@ -179,7 +199,9 @@ def build_master(dfs: list[pd.DataFrame]) -> pd.DataFrame:
     # Fill missing columns with appropriate sentinel
     for col in _MASTER_COLUMNS:
         if col not in master.columns:
-            if col.endswith('_binary') or col in ('rested_morning', 'cvd_binary'):
+            if col in _REGRESSION_VALUE_COLUMNS:
+                master[col] = float('nan')
+            elif col.endswith('_binary') or col in ('rested_morning', 'cvd_binary'):
                 master[col] = MISSING_BINARY
             elif col.endswith('_score') or col == 'depression_score':
                 master[col] = float('nan')
@@ -188,7 +210,8 @@ def build_master(dfs: list[pd.DataFrame]) -> pd.DataFrame:
 
     # Enforce binary sentinel for any remaining NaN in binary columns
     binary_cols = [c for c in _MASTER_COLUMNS
-                   if c.endswith('_binary') or c in ('rested_morning', 'cvd_binary')]
+                   if (c.endswith('_binary') or c in ('rested_morning', 'cvd_binary'))
+                   and c not in _REGRESSION_VALUE_COLUMNS]
     for col in binary_cols:
         master[col] = master[col].fillna(MISSING_BINARY).astype(int)
 
@@ -203,8 +226,11 @@ def log_statistics(master: pd.DataFrame) -> None:
     logger.info(f"Datasets: {master['dataset'].value_counts().to_dict()}")
 
     binary_cols = [c for c in _MASTER_COLUMNS
-                   if c.endswith('_binary') or c in ('rested_morning', 'cvd_binary')]
+                   if (c.endswith('_binary') or c in ('rested_morning', 'cvd_binary'))
+                   and c not in _REGRESSION_VALUE_COLUMNS]
     for col in binary_cols:
+        if col not in master.columns:
+            continue
         valid = master[col][master[col] != MISSING_BINARY]
         if len(valid) == 0:
             logger.info(f"  {col}: all missing")
@@ -215,6 +241,20 @@ def log_statistics(master: pd.DataFrame) -> None:
         logger.info(
             f"  {col}: N={len(valid):,}  pos={n1:,} ({n1/len(valid):.1%})  "
             f"neg={n0:,} ({n0/len(valid):.1%})  missing={n_miss:,}"
+        )
+
+    # Regression value columns
+    for col in _REGRESSION_VALUE_COLUMNS:
+        if col not in master.columns:
+            continue
+        valid = master[col].dropna()
+        if len(valid) == 0:
+            logger.info(f"  {col}: all missing")
+            continue
+        logger.info(
+            f"  {col}: N={len(valid):,}  mean={valid.mean():.1f}  "
+            f"std={valid.std():.1f}  [min={valid.min():.1f}, max={valid.max():.1f}]  "
+            f"missing={master[col].isna().sum():,}"
         )
 
 

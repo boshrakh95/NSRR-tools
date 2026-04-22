@@ -301,15 +301,127 @@ def extract_shhs_targets(config: dict) -> pd.DataFrame:
     
     # Drop temporary merge key
     targets.drop(columns=['nsrrid_orig'], inplace=True)
-    
+
     # Add dataset column
     targets['dataset'] = dataset
-    
+
     # Fill missing values with empty string (consistent with other tasks)
     targets['sleepiness_class'] = targets['sleepiness_class'].fillna('')
     targets['ess_score'] = targets['ess_score'].fillna('')
     targets['cvd_binary'] = targets['cvd_binary'].fillna('')
-    
+
+    # ===================================================================
+    # V2 TASKS (only executed if enabled in config)
+    # ===================================================================
+
+    visit_col = shhs_config['tasks']['apnea_class']['visit_column']  # visitnumber
+
+    # --- sleep_efficiency_binary ---
+    task_cfg = shhs_config['tasks'].get('sleep_efficiency_binary', {})
+    if task_cfg.get('enabled', False):
+        eff_col = task_cfg['column']
+        eff_threshold = config['thresholds']['sleep_efficiency_binary']['threshold']
+        logger.info(f"\n=== V2 Task: sleep_efficiency_binary (threshold < {eff_threshold}%) ===")
+
+        def _eff_to_binary(val, thresh):
+            if pd.isna(val):
+                return ''
+            return '1' if float(val) < thresh else '0'
+
+        eff_frames = []
+        for vis, vis_label in [(1, 'v1'), (2, 'v2')]:
+            df_vis = df_harmonized[df_harmonized[visit_col] == vis][[subject_id_col, eff_col]].copy()
+            df_vis[eff_col] = pd.to_numeric(df_vis[eff_col], errors='coerce').replace(-9, pd.NA)
+            df_vis['sleep_efficiency_binary'] = df_vis[eff_col].apply(
+                lambda x: _eff_to_binary(x, eff_threshold)
+            )
+            df_vis['eff_score'] = df_vis[eff_col].astype(str).replace(['nan', '<NA>'], '')
+            df_vis['subject_id'] = df_vis[subject_id_col].astype(str) + f'_{vis_label}'
+            df_vis['visit'] = vis
+            valid = (df_vis['sleep_efficiency_binary'] != '').sum()
+            pos = (df_vis['sleep_efficiency_binary'] == '1').sum()
+            logger.info(f"  Visit {vis}: N={valid}, low_eff(1)={pos} ({pos/max(valid,1):.1%})")
+            eff_frames.append(df_vis[['subject_id', 'visit', 'sleep_efficiency_binary', 'eff_score']])
+
+        eff_targets = pd.concat(eff_frames, ignore_index=True)
+        targets = targets.merge(eff_targets, on=['subject_id', 'visit'], how='left')
+        targets['sleep_efficiency_binary'] = targets['sleep_efficiency_binary'].fillna('')
+        targets['eff_score'] = targets['eff_score'].fillna('')
+
+    # --- sex_binary ---
+    task_cfg = shhs_config['tasks'].get('sex_binary', {})
+    if task_cfg.get('enabled', False):
+        sex_col = task_cfg['column']
+        logger.info(f"\n=== V2 Task: sex_binary (column: {sex_col}) ===")
+
+        def _sex_to_binary(val):
+            v = str(val).strip().lower() if not pd.isna(val) else ''
+            return '1' if v == 'female' else ('0' if v == 'male' else '')
+
+        sex_frames = []
+        for vis, vis_label in [(1, 'v1'), (2, 'v2')]:
+            df_vis = df_harmonized[df_harmonized[visit_col] == vis][[subject_id_col, sex_col]].copy()
+            df_vis['sex_binary'] = df_vis[sex_col].apply(_sex_to_binary)
+            df_vis['subject_id'] = df_vis[subject_id_col].astype(str) + f'_{vis_label}'
+            df_vis['visit'] = vis
+            valid = (df_vis['sex_binary'] != '').sum()
+            pos = (df_vis['sex_binary'] == '1').sum()
+            logger.info(f"  Visit {vis}: N={valid}, female(1)={pos} ({pos/max(valid,1):.1%})")
+            sex_frames.append(df_vis[['subject_id', 'visit', 'sex_binary']])
+
+        sex_targets = pd.concat(sex_frames, ignore_index=True)
+        targets = targets.merge(sex_targets, on=['subject_id', 'visit'], how='left')
+        targets['sex_binary'] = targets['sex_binary'].fillna('')
+
+    # --- age_regression ---
+    task_cfg = shhs_config['tasks'].get('age_regression', {})
+    if task_cfg.get('enabled', False):
+        age_col = task_cfg['column']
+        exclude_col = task_cfg.get('exclude_censored_col', 'nsrr_age_gt89')
+        logger.info(f"\n=== V2 Task: age_regression (column: {age_col}) ===")
+
+        age_frames = []
+        for vis, vis_label in [(1, 'v1'), (2, 'v2')]:
+            cols_needed = [c for c in [subject_id_col, age_col, exclude_col]
+                          if c in df_harmonized.columns]
+            df_vis = df_harmonized[df_harmonized[visit_col] == vis][cols_needed].copy()
+            df_vis[age_col] = pd.to_numeric(df_vis[age_col], errors='coerce').replace(-9, pd.NA)
+            if exclude_col in df_vis.columns:
+                censored = df_vis[exclude_col].astype(str).str.strip().str.lower() == 'yes'
+                df_vis.loc[censored, age_col] = pd.NA
+                logger.info(f"  Visit {vis}: {censored.sum()} censored ages (>89) set to NaN")
+            df_vis['age_value'] = df_vis[age_col].astype(str).replace(['nan', '<NA>'], '')
+            df_vis['subject_id'] = df_vis[subject_id_col].astype(str) + f'_{vis_label}'
+            df_vis['visit'] = vis
+            valid = (df_vis['age_value'] != '').sum()
+            logger.info(f"  Visit {vis}: N={valid} with valid age")
+            age_frames.append(df_vis[['subject_id', 'visit', 'age_value']])
+
+        age_targets = pd.concat(age_frames, ignore_index=True)
+        targets = targets.merge(age_targets, on=['subject_id', 'visit'], how='left')
+        targets['age_value'] = targets['age_value'].fillna('')
+
+    # --- bmi_regression ---
+    task_cfg = shhs_config['tasks'].get('bmi_regression', {})
+    if task_cfg.get('enabled', False):
+        bmi_col = task_cfg['column']
+        logger.info(f"\n=== V2 Task: bmi_regression (column: {bmi_col}) ===")
+
+        bmi_frames = []
+        for vis, vis_label in [(1, 'v1'), (2, 'v2')]:
+            df_vis = df_harmonized[df_harmonized[visit_col] == vis][[subject_id_col, bmi_col]].copy()
+            df_vis[bmi_col] = pd.to_numeric(df_vis[bmi_col], errors='coerce').replace(-9, pd.NA)
+            df_vis['bmi_value'] = df_vis[bmi_col].astype(str).replace(['nan', '<NA>'], '')
+            df_vis['subject_id'] = df_vis[subject_id_col].astype(str) + f'_{vis_label}'
+            df_vis['visit'] = vis
+            valid = (df_vis['bmi_value'] != '').sum()
+            logger.info(f"  Visit {vis}: N={valid} with valid BMI")
+            bmi_frames.append(df_vis[['subject_id', 'visit', 'bmi_value']])
+
+        bmi_targets = pd.concat(bmi_frames, ignore_index=True)
+        targets = targets.merge(bmi_targets, on=['subject_id', 'visit'], how='left')
+        targets['bmi_value'] = targets['bmi_value'].fillna('')
+
     # ===================================================================
     # FINAL FORMATTING AND VALIDATION
     # ===================================================================
@@ -411,8 +523,18 @@ def main():
         # Save targets
         output_file = log_dir / 'shhs_targets.csv'
         
-        # Define column order (consistent with APPLES)
-        column_order = ['subject_id', 'dataset', 'visit', 'apnea_class', 'ahi_score', 'sleepiness_class', 'ess_score', 'cvd_binary']
+        # Build column order dynamically (v2 columns only included if present)
+        _desired = [
+            'subject_id', 'dataset', 'visit',
+            'apnea_class', 'ahi_score',
+            'sleepiness_class', 'ess_score',
+            'cvd_binary',
+            'sleep_efficiency_binary', 'eff_score',
+            'sex_binary',
+            'age_value',
+            'bmi_value',
+        ]
+        column_order = [c for c in _desired if c in targets.columns]
         save_dataset_targets(targets, output_file, 'shhs', column_order)
         
         logger.info("\n" + "="*80)

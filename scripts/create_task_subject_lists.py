@@ -47,6 +47,11 @@ BINARY_TASKS = [
     'fatigue_binary',
     'cvd_binary',
     'rested_morning',
+    # v2 additions
+    'sex_binary',
+    'sleep_efficiency_binary',
+    'psqi_binary',
+    'depression_extreme_binary',
 ]
 
 # ── Multiclass tasks ──────────────────────────────────────────────────────────
@@ -71,6 +76,26 @@ MULTICLASS_TASKS = {
         'num_classes': 4,
         'empty_sentinel': '',
     },
+    # v2 additions
+    'osa_severity_apples': {
+        'col': 'osa_severity_apples',
+        'datasets': ['apples'],
+        'num_classes': 4,
+        'empty_sentinel': '',
+    },
+}
+
+# ── Regression tasks ──────────────────────────────────────────────────────────
+# Source: master_targets.parquet (float columns, NaN if missing)
+REGRESSION_TASKS = {
+    'age_regression': {
+        'col': 'age_value',
+        'datasets': ['apples', 'shhs', 'mros', 'stages'],
+    },
+    'bmi_regression': {
+        'col': 'bmi_value',
+        'datasets': ['apples', 'shhs', 'mros', 'stages'],
+    },
 }
 
 DATASET_FILES = {
@@ -91,7 +116,12 @@ DATASET_FILES = {
 #   All others:          {subject_id}_stages.npy  (visit inferred from master_targets)
 STAGING_DATASETS = ['apples', 'shhs', 'mros', 'stages']
 
-ALL_TASKS = BINARY_TASKS + list(MULTICLASS_TASKS.keys()) + ['sleep_staging']
+ALL_TASKS = (
+    BINARY_TASKS +
+    list(MULTICLASS_TASKS.keys()) +
+    list(REGRESSION_TASKS.keys()) +
+    ['sleep_staging']
+)
 
 
 def setup_logging(log_file: Path) -> None:
@@ -161,6 +191,22 @@ def build_multiclass_task_list(
         return pd.DataFrame()
 
     return pd.concat(frames, ignore_index=True)
+
+
+# ── Regression ───────────────────────────────────────────────────────────────
+
+def build_regression_task_list(master: pd.DataFrame, task: str, col: str) -> pd.DataFrame:
+    """Filter master to rows with non-NaN float value for a regression task."""
+    if col not in master.columns:
+        logger.warning(f"  Column '{col}' not in master — skipping")
+        return pd.DataFrame()
+
+    valid = master[master[col].notna()].copy()
+    valid = valid[['unified_id', 'dataset', 'subject_id', 'visit', col]].rename(
+        columns={col: 'label'}
+    )
+    valid['label'] = valid['label'].astype(float)
+    return valid.reset_index(drop=True)
 
 
 # ── Stats ─────────────────────────────────────────────────────────────────────
@@ -409,6 +455,47 @@ def main() -> int:
         logger.info(f'  Saved: {out_path}')
         if stats:
             summary_rows.append(stats)
+
+    # ── Regression tasks ──────────────────────────────────────────────────────
+    regression_tasks_requested = [t for t in args.tasks if t in REGRESSION_TASKS]
+    if regression_tasks_requested:
+        logger.info('\n' + '=' * 80)
+        logger.info('Regression tasks  (source: master_targets.parquet)')
+        logger.info('=' * 80)
+
+        if master is None:
+            if not master_path.exists():
+                logger.error(f'master_targets.parquet not found: {master_path}')
+                return 1
+            master = pd.read_parquet(master_path)
+
+    for task in regression_tasks_requested:
+        task_def = REGRESSION_TASKS[task]
+        col = task_def['col']
+        logger.info(f'\n--- {task}  (column: {col}) ---')
+        df = build_regression_task_list(master, task, col)
+        if df.empty:
+            logger.info(f'  {task}: NO valid subjects')
+            continue
+        n_total = len(df)
+        datasets = df['dataset'].value_counts().to_dict()
+        mean_val = df['label'].mean()
+        std_val = df['label'].std()
+        logger.info(
+            f'  {task}: N={n_total:,}  mean={mean_val:.1f}  std={std_val:.1f}  datasets={datasets}'
+        )
+        for ds, grp in df.groupby('dataset'):
+            logger.info(f'    [{ds}] N={len(grp):,}  mean={grp["label"].mean():.1f}')
+        out_path = out_dir / f'{task}_subjects.csv'
+        df.to_csv(out_path, index=False)
+        logger.info(f'  Saved: {out_path}')
+        summary_rows.append({
+            'task':        task,
+            'n_total':     n_total,
+            'num_classes': 0,  # 0 signals regression
+            'balance':     f'mean={mean_val:.1f},std={std_val:.1f}',
+            'datasets':    ','.join(f'{k}:{v}' for k, v in datasets.items()),
+        })
 
     # ── Sleep staging ────────────────────────────────────────────────────────
     if 'sleep_staging' in args.tasks:

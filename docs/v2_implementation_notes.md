@@ -1,0 +1,196 @@
+# V2 Task Definitions — Implementation Notes
+
+> Branch: `v2-task-definitions`  
+> Created: 2026-04-22  
+> Companion document: `v2_task_audit_and_plan.md`
+
+---
+
+## What Changed
+
+V2 adds 7 new tasks without touching the v1 pipeline outputs.  
+A separate config `configs/target_extraction_v2.yaml` writes to `targets_v2/`.  
+All new task blocks in the adapters are guarded by `enabled: true/false` so running with v1 config leaves behaviour unchanged.
+
+### New tasks summary
+
+| Task | Type | Datasets | Source column(s) | Threshold |
+|------|------|----------|-----------------|-----------|
+| `sleep_efficiency_binary` | binary | APPLES, SHHS, MrOS | `nsrr_ttleffsp_f1` (APPLES/SHHS harmonized); `poslpeff` (MrOS main) | < 85 % → 1 |
+| `psqi_binary` | binary | MrOS | `pqpsqi` (main v1+v2) | > 5 → 1 |
+| `depression_extreme_binary` | binary | APPLES, STAGES | BDI (APPLES): ≤9=0, ≥20=1; PHQ-9 (STAGES): ≤4=0, ≥15=1; middle dropped | extreme-group |
+| `osa_severity_apples` | 4-class | APPLES | `osaseveritypostqc` (main v1, string parse) | 0=Non-rand, 1=Mild, 2=Moderate, 3=Severe |
+| `sex_binary` | binary | APPLES, SHHS, STAGES | `nsrr_sex` (harmonized); female=1, male=0 | N/A |
+| `age_regression` | regression (float) | APPLES, SHHS, MrOS, STAGES | `nsrr_age` (harmonized) | N/A |
+| `bmi_regression` | regression (float) | APPLES, SHHS, MrOS, STAGES | `nsrr_bmi` (harmonized) | N/A |
+
+**MrOS excluded from `sex_binary`** — all-male cohort, zero variance.  
+**SHHS `age_regression`** — 67 subjects with `nsrr_age_gt89 == "yes"` set to NaN (censored).
+
+---
+
+## Files Modified
+
+| File | Change |
+|------|--------|
+| `configs/target_extraction_v2.yaml` | **NEW** — full standalone config pointing to `targets_v2/` |
+| `scripts/extract_targets_shhs.py` | Added v2 block after CVD merge: sleep_efficiency, sex, age, bmi |
+| `scripts/extract_targets_apples.py` | Added v2 block after original merge: sleep_efficiency, osa_severity, depression_extreme, sex, age, bmi |
+| `scripts/extract_targets_mros.py` | Added v2 block after rested merge: sleep_efficiency, psqi, age, bmi |
+| `scripts/extract_targets_stages.py` | Added v2 block after fatigue: depression_extreme, sex/age/bmi (loads harmonized CSV) |
+| `scripts/create_master_targets.py` | Extended `_MASTER_COLUMNS`; added pass-through for new binary/score/regression cols; updated `build_master()` and `log_statistics()` |
+| `scripts/create_task_subject_lists.py` | Added new `BINARY_TASKS` entries; `osa_severity_apples` to `MULTICLASS_TASKS`; new `REGRESSION_TASKS` dict; `build_regression_task_list()` function; regression processing loop in `main()` |
+| `/home/boshra95/.vscode/launch.json` | Added 7 v2 debug configs (prefix `🆕 V2`) |
+
+---
+
+## Commands to Run (on cluster, in order)
+
+Run each script via the VSCode debug configs prefixed `🆕 V2`, **or** from the terminal:
+
+```bash
+cd /home/boshra95/NSRR-tools
+V2_CFG=configs/target_extraction_v2.yaml
+
+# Step 1 — Per-dataset adapters (can run in any order; independent)
+python scripts/extract_targets_apples.py --config $V2_CFG
+python scripts/extract_targets_shhs.py   --config $V2_CFG
+python scripts/extract_targets_mros.py   --config $V2_CFG
+python scripts/extract_targets_stages.py --config $V2_CFG
+
+# Step 2 — Merge into master parquet
+python scripts/create_master_targets.py  --config $V2_CFG
+
+# Step 3 — Per-task subject CSVs
+python scripts/create_task_subject_lists.py --config $V2_CFG
+```
+
+Output lands in `/home/boshra95/scratch/psg/unified/targets_v2/`.
+
+### v2-only subject lists (quick sanity check)
+
+```bash
+python scripts/create_task_subject_lists.py \
+  --config configs/target_extraction_v2.yaml \
+  --tasks sex_binary sleep_efficiency_binary psqi_binary \
+          depression_extreme_binary osa_severity_apples \
+          age_regression bmi_regression
+```
+
+---
+
+## Key Design Decisions
+
+### Versioning
+- V2 config writes to `targets_v2/`; v1 outputs in `targets/` are untouched on this branch.
+- All adapters can be run with either config. New task blocks are skipped when not present in config.
+
+### APPLES ID equivalence
+- `appleid` (main file) == `nsrrid` (harmonized file); outer merge is correct.
+- Demographics (sex, age, bmi) read from harmonized v1 and merged on `nsrrid` → `subject_id`.
+
+### APPLES/SHHS/STAGES demographics
+- Only populated at visit 1 in harmonized files.
+- APPLES & STAGES: single-visit output, so subject_id is unsuffixed — straightforward left-join.
+- SHHS: applied per visit (both v1/v2 rows read from harmonized, then merged on `subject_id` + `visit`).
+- MrOS: harmonized v1 demographics broadcast to both `_v1` and `_v2` subject rows.
+
+### SHHS age censoring
+- `nsrr_age_gt89 == "yes"` → age set to NaN before writing `age_value`. These subjects contribute to classification bins in training code but are excluded from age_regression labels.
+
+### `osaseveritypostqc` string parsing
+- String format: `"N) description"` — extract integer prefix via `int(str(val).split(')')[0].strip())`.
+- 0 = Non-randomized (included as class 0 per Q2 decision).
+- Stored in per-dataset CSV as `osa_severity_apples`; NOT in master (handled as `MULTICLASS_TASKS`).
+
+### Regression storage
+- `age_value` and `bmi_value` stored as string floats in per-dataset CSVs (`''` = missing).
+- Converted to `float` in master via `_score_to_float()`.
+- `_REGRESSION_VALUE_COLUMNS` set prevents them from receiving the binary `-1` sentinel.
+- Subject list label column is float; `num_classes=0` in summary TSV signals regression.
+
+### Depression extreme groups
+- APPLES: BDI ≤9 → 0, BDI ≥20 → 1; BDI 10–19 dropped (label = `''`).
+- STAGES: PHQ-9 ≤4 → 0, PHQ-9 ≥15 → 1; PHQ-9 5–14 dropped.
+- Middle-group subjects appear in master with `depression_extreme_binary = -1` (MISSING_BINARY).
+
+### MrOS insomnia (unchanged)
+- `insomnia_binary` remains `enabled: false` in v2 config (Q1 decision: only 3% positive, no clinical signal).
+
+### MrOS sex (excluded)
+- All-male cohort — no `sex_binary` block added to MrOS.
+
+---
+
+## Per-dataset v2 output columns
+
+### APPLES (`apples_targets.csv`)
+```
+subject_id, dataset, visit,
+apnea_class, ahi_score,
+depression_class, bdi_score,
+sleepiness_class, ess_score,
+sleep_efficiency_binary, eff_score,
+osa_severity_apples,
+depression_extreme_binary,
+sex_binary,
+age_value,
+bmi_value
+```
+
+### SHHS (`shhs_targets.csv`)
+```
+subject_id, dataset, visit,
+apnea_class, ahi_score,
+sleepiness_class, ess_score,
+cvd_binary,
+sleep_efficiency_binary, eff_score,
+sex_binary,
+age_value,
+bmi_value
+```
+
+### MrOS (`mros_targets.csv`)
+```
+subject_id, dataset, visit,
+apnea_class, ahi_score,
+sleepiness_class, ess_score,
+insomnia_binary, isi_score,
+cvd_binary,
+rested_morning, rested_score,
+sleep_efficiency_binary, eff_score,
+psqi_binary, psqi_score,
+age_value,
+bmi_value
+```
+
+### STAGES (`stages_targets.csv`)
+```
+subject_id, dataset, visit,
+apnea_class, ahi_score,
+depression_binary, phq9_score,
+sleepiness_binary, ess_score,
+anxiety_binary, gad7_score,
+insomnia_binary, isi_score,
+[fatigue_binary, fss_score — if enabled],
+depression_extreme_binary,
+sex_binary,
+age_value,
+bmi_value
+```
+
+---
+
+## Validation Checklist (run after each adapter)
+
+- [ ] APPLES: `osa_severity_apples` values ∈ {0,1,2,3,''}; no parse errors in log
+- [ ] APPLES: `sex_binary` counts match expected ~50/50 split
+- [ ] APPLES: `age_value` N ≈ 250 (visit 1 subjects); no -9 values
+- [ ] SHHS: `sleep_efficiency_binary` N ≈ 5k v1 + 2.5k v2; ~20–30% positive
+- [ ] SHHS: `age_value` 67 censored ages per log line
+- [ ] MrOS: `psqi_binary` N ≈ 2k total (v1+v2); ~50–60% positive expected
+- [ ] MrOS: `age_value` same N as `bmi_value` (from harmonized v1, broadcast to v2)
+- [ ] STAGES: harmonized file loaded OK; `sex_binary` non-empty
+- [ ] Master: `age_value` and `bmi_value` are float columns (not int)
+- [ ] Task lists: `age_regression_subjects.csv` and `bmi_regression_subjects.csv` present
+- [ ] Task lists: `osa_severity_apples_subjects.csv` has 4 distinct label values

@@ -1,0 +1,507 @@
+# Target Extraction Configuration — V2
+# Extends v1 with new tasks: sleep_efficiency_binary, psqi_binary,
+# depression_extreme_binary, osa_severity_apples, sex_binary,
+# age_regression, bmi_regression.
+#
+# V2 writes to targets_v2/ so the v1 outputs remain untouched.
+# Run the same adapter scripts with --config configs/target_extraction_v2.yaml.
+
+paths:
+  raw_data: "/home/boshra95/scratch/nsrr_downloads"
+  derived_data: "/home/boshra95/scratch/psg"
+  unified_metadata: "/home/boshra95/scratch/psg/unified/metadata"
+  targets_output: "/home/boshra95/scratch/psg/unified/targets_v2"
+
+# Clinical thresholds (v1 thresholds preserved; v2 additions appended)
+thresholds:
+  apnea_class:
+    type: "multiclass"
+    num_classes: 4
+    thresholds: [5, 15, 30]
+    class_labels:
+      0: "Normal (AHI < 5)"
+      1: "Mild (5 ≤ AHI < 15)"
+      2: "Moderate (15 ≤ AHI < 30)"
+      3: "Severe (AHI ≥ 30)"
+    rationale: "AASM ICSD-3 clinical severity classification"
+
+  depression_class:
+    type: "multiclass"
+    num_classes: 4
+    scales:
+      bdi:
+        thresholds: [10, 16, 20]
+        class_labels:
+          0: "Normal (1-10)"
+          1: "Mild mood disturbance (11-16)"
+          2: "Borderline clinical (17-20)"
+          3: "Moderate to severe (21-40)"
+      phq9:
+        thresholds: [10, 14, 19]
+        class_labels:
+          0: "Minimal (0-9)"
+          1: "Mild (10-14)"
+          2: "Moderate (15-19)"
+          3: "Moderately severe to severe (20-27)"
+    rationale: "BDI-II: Beck 1996; PHQ-9: Kroenke 2001"
+
+  sleepiness_class:
+    type: "multiclass"
+    num_classes: 3
+    thresholds: [10, 15]
+    class_labels:
+      0: "Normal (0-10)"
+      1: "Mild to Moderate (11-15)"
+      2: "Severe (16-24)"
+    rationale: "Johns 1991, ESS clinical interpretation"
+
+  anxiety_binary:
+    threshold: 10.0
+    rationale: "Spitzer 2006 (89% sensitivity)"
+
+  insomnia_binary:
+    threshold: 15.0
+    rationale: "Bastien 2001, clinical intervention threshold"
+
+  fatigue_binary:
+    threshold: 36.0
+    rationale: "Krupp 1989, validated threshold"
+
+  cvd_binary:
+    threshold: 1
+    rationale: "Adjudicated cardiovascular events"
+
+  rested_morning:
+    good_threshold: 4
+    poor_threshold: 3
+    rationale: "Subjective self-report; split at 4 to include all subjects"
+
+  # ── V2 thresholds ──────────────────────────────────────────────────────────
+  sleep_efficiency_binary:
+    threshold: 85.0      # < 85 % → impaired (1), ≥ 85 % → normal (0)
+    direction: "less_than"
+    rationale: "Buysse 2004: <85% TST/TIB is clinically impaired sleep"
+
+  psqi_binary:
+    threshold: 5         # PSQI total > 5 → poor sleep quality (1)
+    direction: "greater_than"
+    rationale: "Buysse 1989 PSQI: score > 5 distinguishes good vs poor sleepers"
+
+  depression_extreme_binary:
+    apples:
+      low_max: 9         # BDI ≤ 9 → no/minimal depression (0)
+      high_min: 20       # BDI ≥ 20 → moderate+ depression (1)
+      drop_range: [10, 19]  # dropped (middle group)
+      rationale: "Extreme-group design: BDI ≤9 vs ≥20 (drop 10-19)"
+    stages:
+      low_max: 4         # PHQ-9 ≤ 4 → minimal (0)
+      high_min: 15       # PHQ-9 ≥ 15 → moderately severe+ (1)
+      drop_range: [5, 14]   # dropped (middle group)
+      rationale: "Extreme-group design: PHQ-9 ≤4 vs ≥15 (drop 5-14)"
+
+# Task definitions per dataset
+tasks:
+  # ====================
+  # APPLES Dataset
+  # ====================
+  apples:
+    dataset_id: "apples"
+    subject_id_column: "appleid"
+
+    # ── V1 tasks (unchanged) ──────────────────────────────────────────────────
+    apnea_class:
+      enabled: true
+      priority: "tier1"
+      source_file: "apples-harmonized-dataset-0.1.0.csv"
+      column: "nsrr_ahi_chicago1999"
+      continuous_column: "nsrr_ahi_chicago1999"
+      visit_filter: 3
+      visit_column: "visitn"
+
+    depression_class:
+      enabled: true
+      priority: "tier1"
+      source_file: "apples-dataset-0.1.0.csv"
+      column: "bditotalscore"
+      continuous_column: "bditotalscore"
+      scale: "bdi"
+      visit_filter: 1
+      visit_column: "visitn"
+
+    sleepiness_class:
+      enabled: true
+      priority: "tier1"
+      source_file: "apples-dataset-0.1.0.csv"
+      column: "esstotalscoreqc"
+      continuous_column: "esstotalscoreqc"
+      visit_filter: 3
+      visit_column: "visitn"
+
+    # ── V2 tasks ──────────────────────────────────────────────────────────────
+    sleep_efficiency_binary:
+      enabled: true
+      priority: "tier2"
+      source_file: "apples-harmonized-dataset-0.1.0.csv"
+      column: "nsrr_ttleffsp_f1"   # sleep efficiency % (harmonized)
+      visit_filter: 3              # DX visit where PSG was performed
+      visit_column: "visitn"
+      notes: "nsrr_ttleffsp_f1 confirmed in harmonized file at visit 3"
+
+    osa_severity_apples:
+      enabled: true
+      priority: "tier2"
+      source_file: "apples-dataset-0.1.0.csv"
+      column: "osaseveritypostqc"  # string: "0) Non-rand", "1) mild", etc.
+      visit_filter: 1
+      visit_column: "visitn"
+      num_classes: 4
+      notes: "Integer prefix of string value; 0=Non-rand included as class 0"
+
+    depression_extreme_binary:
+      enabled: true
+      priority: "tier2"
+      source_file: "apples-dataset-0.1.0.csv"
+      column: "bditotalscore"
+      visit_filter: 1
+      visit_column: "visitn"
+      scale: "apples"   # uses thresholds.depression_extreme_binary.apples
+      notes: "Extreme-group design: BDI ≤9 vs ≥20; middle group dropped"
+
+    sex_binary:
+      enabled: true
+      priority: "tier1"
+      source_file: "apples-harmonized-dataset-0.1.0.csv"
+      column: "nsrr_sex"    # "female"/"male" string
+      visit_filter: 1       # demographics only populated at visit 1
+      visit_column: "visitn"
+      notes: "female=1, male=0; demographics static — use visit 1 for all subjects"
+
+    age_regression:
+      enabled: true
+      priority: "tier1"
+      source_file: "apples-harmonized-dataset-0.1.0.csv"
+      column: "nsrr_age"
+      visit_filter: 1
+      visit_column: "visitn"
+      notes: "Age in years; static attribute from visit 1 harmonized"
+
+    bmi_regression:
+      enabled: true
+      priority: "tier1"
+      source_file: "apples-harmonized-dataset-0.1.0.csv"
+      column: "nsrr_bmi"
+      visit_filter: 1
+      visit_column: "visitn"
+      notes: "BMI kg/m²; static attribute from visit 1 harmonized"
+
+  # ====================
+  # SHHS Dataset
+  # ====================
+  shhs:
+    dataset_id: "shhs"
+    subject_id_column: "nsrrid"
+
+    tasks:
+      # ── V1 tasks (unchanged) ────────────────────────────────────────────────
+      apnea_class:
+        enabled: true
+        priority: "tier1"
+        source_file: "shhs-harmonized-dataset-0.21.0.csv"
+        visit_column: "visitnumber"
+        column: "nsrr_ahi_hp3r_aasm15"
+        continuous_column: "nsrr_ahi_hp3r_aasm15"
+        keep_both_visits: true
+
+      sleepiness_class:
+        enabled: true
+        priority: "tier1"
+        source_files:
+          visit1: "shhs1-dataset-0.21.0.csv"
+          visit2: "shhs2-dataset-0.21.0.csv"
+        columns:
+          visit1: "ess_s1"
+          visit2: "ess_s2"
+        continuous_columns:
+          visit1: "ess_s1"
+          visit2: "ess_s2"
+        keep_both_visits: true
+
+      cvd_binary:
+        enabled: true
+        priority: "tier2"
+        source_file: "shhs-cvd-summary-dataset-0.21.0.csv"
+        column: "any_cvd"
+        threshold_override: 1
+
+      rested_morning:
+        enabled: true
+        priority: "tier3"
+        source_files:
+          visit1: "shhs1-dataset-0.21.0.csv"
+          visit2: "shhs2-dataset-0.21.0.csv"
+        columns:
+          visit1: "rest10"
+          visit2: "ms204c"
+        scale: [1, 5]
+        keep_both_visits: true
+
+      # ── V2 tasks ────────────────────────────────────────────────────────────
+      sleep_efficiency_binary:
+        enabled: true
+        priority: "tier2"
+        source_file: "shhs-harmonized-dataset-0.21.0.csv"
+        column: "nsrr_ttleffsp_f1"
+        visit_column: "visitnumber"
+        keep_both_visits: true
+        notes: "< 85% TST/TIB → 1 (impaired); confirmed in harmonized"
+
+      sex_binary:
+        enabled: true
+        priority: "tier1"
+        source_file: "shhs-harmonized-dataset-0.21.0.csv"
+        column: "nsrr_sex"
+        visit_column: "visitnumber"
+        keep_both_visits: true
+        notes: "female=1, male=0"
+
+      age_regression:
+        enabled: true
+        priority: "tier1"
+        source_file: "shhs-harmonized-dataset-0.21.0.csv"
+        column: "nsrr_age"
+        exclude_censored_col: "nsrr_age_gt89"   # exclude if == "yes"
+        visit_column: "visitnumber"
+        keep_both_visits: true
+        notes: "67 subjects censored at >89 years — set to NaN for regression"
+
+      bmi_regression:
+        enabled: true
+        priority: "tier1"
+        source_file: "shhs-harmonized-dataset-0.21.0.csv"
+        column: "nsrr_bmi"
+        visit_column: "visitnumber"
+        keep_both_visits: true
+        notes: "BMI kg/m²"
+
+  # ====================
+  # MrOS Dataset
+  # ====================
+  mros:
+    dataset_id: "mros"
+    subject_id_column: "nsrrid"
+
+    tasks:
+      # ── V1 tasks (unchanged) ────────────────────────────────────────────────
+      apnea_class:
+        enabled: true
+        priority: "tier1"
+        source_files:
+          visit1: "mros-visit1-harmonized-0.6.0.csv"
+        column: "nsrr_ahi_hp3r_aasm15"
+        continuous_column: "nsrr_ahi_hp3r_aasm15"
+        keep_both_visits: true
+
+      sleepiness_class:
+        enabled: true
+        priority: "tier1"
+        source_files:
+          visit1: "mros-visit1-dataset-0.6.0.csv"
+          visit2: "mros-visit2-dataset-0.6.0.csv"
+        column: "epepwort"
+        continuous_column: "epepwort"
+        keep_both_visits: true
+
+      insomnia_binary:
+        enabled: false   # only 3% positive at v2; skipping per Q1 decision
+        priority: "tier2"
+        source_files:
+          visit1: "mros-visit1-dataset-0.6.0.csv"
+          visit2: "mros-visit2-dataset-0.6.0.csv"
+        column: "slisiscr"
+        continuous_column: "slisiscr"
+        keep_both_visits: true
+        notes: "ISI col exists only in v2; 31/1022 positive (3%) — skipped"
+
+      cvd_binary:
+        enabled: true
+        priority: "tier2"
+        source_files:
+          visit1: "mros-visit1-dataset-0.6.0.csv"
+          visit2: "mros-visit2-dataset-0.6.0.csv"
+        column: "cvchd"
+        threshold_override: 1
+        keep_both_visits: true
+
+      rested_morning:
+        enabled: true
+        priority: "tier3"
+        source_files:
+          visit1: "mros-visit1-dataset-0.6.0.csv"
+          visit2: "mros-visit2-dataset-0.6.0.csv"
+        column: "poxqual3"
+        continuous_column: "poxqual3"
+        keep_both_visits: true
+        scale: [1, 5]
+
+      # ── V2 tasks ────────────────────────────────────────────────────────────
+      sleep_efficiency_binary:
+        enabled: true
+        priority: "tier2"
+        source_files:
+          visit1: "mros-visit1-dataset-0.6.0.csv"
+          visit2: "mros-visit2-dataset-0.6.0.csv"
+        column: "poslpeff"    # sleep efficiency % in main dataset
+        keep_both_visits: true
+        notes: "poslpeff confirmed in main v1 and v2; < 85 → 1"
+
+      psqi_binary:
+        enabled: true
+        priority: "tier2"
+        source_files:
+          visit1: "mros-visit1-dataset-0.6.0.csv"
+          visit2: "mros-visit2-dataset-0.6.0.csv"
+        column: "pqpsqi"     # PSQI total score
+        keep_both_visits: true
+        notes: "PSQI > 5 → poor sleep quality (1); confirmed in main v1 and v2"
+
+      age_regression:
+        enabled: true
+        priority: "tier1"
+        source_file: "mros-visit1-harmonized-0.6.0.csv"
+        column: "nsrr_age"
+        notes: "Static attribute from harmonized v1; applied to both visits"
+
+      bmi_regression:
+        enabled: true
+        priority: "tier1"
+        source_file: "mros-visit1-harmonized-0.6.0.csv"
+        column: "nsrr_bmi"
+        notes: "Static attribute from harmonized v1; applied to both visits"
+
+      # NO sex_binary: MrOS is all-male (zero variance)
+
+  # ====================
+  # STAGES Dataset
+  # ====================
+  stages:
+    dataset_id: "stages"
+    subject_id_column: "subject_code"
+
+    # ── V1 tasks (unchanged) ────────────────────────────────────────────────
+    depression_binary:
+      enabled: true
+      priority: "tier1"
+      source_file: "stages-dataset-0.3.0.csv"
+      column: "phq_1000"
+      continuous_column: "phq_1000"
+      threshold_override: 10.0
+
+    anxiety_binary:
+      enabled: true
+      priority: "tier2"
+      source_file: "stages-dataset-0.3.0.csv"
+      column: "gad_0800"
+      continuous_column: "gad_0800"
+
+    fatigue_binary:
+      enabled: false
+      priority: "tier3"
+      source_file: "stages-dataset-0.3.0.csv"
+      column: "fss_1000"
+      continuous_column: "fss_1000"
+
+    sleepiness_binary:
+      enabled: true
+      priority: "tier2"
+      source_file: "stages-dataset-0.3.0.csv"
+      column: "ess_0900"
+      continuous_column: "ess_0900"
+      threshold_override: 11.0
+
+    insomnia_binary:
+      enabled: true
+      priority: "tier2"
+      source_file: "stages-dataset-0.3.0.csv"
+      column: "isi_score"
+      continuous_column: "isi_score"
+
+    apnea_class:
+      enabled: true
+      priority: "tier1"
+      source_file: "STAGESPSGKeySRBDVariables2020-08-29 Deidentified.xlsx"
+      column: "ahi"
+      continuous_column: "ahi"
+      xlsx_subject_id_column: "s_code"
+
+    # ── V2 tasks ────────────────────────────────────────────────────────────
+    depression_extreme_binary:
+      enabled: true
+      priority: "tier2"
+      source_file: "stages-dataset-0.3.0.csv"
+      column: "phq_1000"
+      scale: "stages"   # uses thresholds.depression_extreme_binary.stages
+      notes: "Extreme-group: PHQ-9 ≤4 vs ≥15; drop 5-14"
+
+    sex_binary:
+      enabled: true
+      priority: "tier1"
+      source_file: "stages-harmonized-dataset-0.3.0.csv"
+      column: "nsrr_sex"
+      subject_id_column: "subject_code"   # ID col in harmonized
+      notes: "female=1, male=0; from harmonized file"
+
+    age_regression:
+      enabled: true
+      priority: "tier1"
+      source_file: "stages-harmonized-dataset-0.3.0.csv"
+      column: "nsrr_age"
+      subject_id_column: "subject_code"
+      notes: "Age in years from harmonized file"
+
+    bmi_regression:
+      enabled: true
+      priority: "tier1"
+      source_file: "stages-harmonized-dataset-0.3.0.csv"
+      column: "nsrr_bmi"
+      subject_id_column: "subject_code"
+      notes: "BMI kg/m² from harmonized file"
+
+# Output schema
+output_schema:
+  per_dataset_csv:
+    missing_value: ""
+  master_parquet:
+    missing_binary: -1
+    missing_continuous: null
+
+# Validation (same as v1)
+validation:
+  apnea_binary:
+    value_range: [0, 1]
+    ahi_range: [0, 200]
+  depression_binary:
+    value_range: [0, 1]
+    phq9_range: [0, 27]
+    bdi_range: [0, 63]
+  sleepiness_binary:
+    value_range: [0, 1]
+    ess_range: [0, 24]
+  anxiety_binary:
+    value_range: [0, 1]
+    gad7_range: [0, 21]
+  insomnia_binary:
+    value_range: [0, 1]
+    isi_range: [0, 28]
+  fatigue_binary:
+    value_range: [0, 1]
+    fss_range: [9, 63]
+  cvd_binary:
+    value_range: [0, 1]
+  rested_morning:
+    value_range: [0, 1]
+    scale_range: [1, 5]
+
+logging:
+  log_file: "target_extraction.log"
+  log_dir: "/home/boshra95/scratch/psg/unified/targets_v2"
+  level: "INFO"

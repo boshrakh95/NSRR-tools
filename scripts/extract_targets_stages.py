@@ -268,7 +268,7 @@ def extract_stages_targets(config: dict) -> pd.DataFrame:
     # ===================================================================
     # TASK 6: FATIGUE (BINARY) — FSS >= 36 — disabled by default
     # ===================================================================
-    task_cfg = stages_config['fatigue_binary']
+    task_cfg = stages_config.get('fatigue_binary', {})
     fatigue_enabled = task_cfg.get('enabled', False)
 
     if fatigue_enabled:
@@ -326,6 +326,136 @@ def extract_stages_targets(config: dict) -> pd.DataFrame:
             targets[col] = targets[col].fillna('')
 
     logger.info(f"Total subjects in output: {len(targets)}")
+
+    # ===================================================================
+    # V2 TASKS (only executed if enabled in config)
+    # ===================================================================
+
+    # --- depression_extreme_binary (main CSV, PHQ-9 ≤4=0 vs ≥15=1) ---
+    task_cfg = stages_config.get('depression_extreme_binary', {})
+    if task_cfg.get('enabled', False):
+        phq_col = task_cfg['column']   # phq_1000
+        ext_cfg = config['thresholds']['depression_extreme_binary']['stages']
+        low_max = ext_cfg['low_max']
+        high_min = ext_cfg['high_min']
+        logger.info(f"\n=== V2 Task: depression_extreme_binary (PHQ-9 ≤{low_max}=0, ≥{high_min}=1) ===")
+
+        def _extreme_binary(val, lmax, hmin):
+            if pd.isna(val):
+                return ''
+            v = float(val)
+            if v <= lmax:
+                return '0'
+            if v >= hmin:
+                return '1'
+            return ''   # middle group — dropped
+
+        phq_series = pd.to_numeric(df[phq_col], errors='coerce') if phq_col in df.columns else pd.Series(
+            pd.NA, index=df.index
+        )
+        targets['depression_extreme_binary'] = phq_series.apply(
+            lambda x: _extreme_binary(x, low_max, high_min)
+        ).values
+        valid = (targets['depression_extreme_binary'] != '').sum()
+        pos = (targets['depression_extreme_binary'] == '1').sum()
+        neg = (targets['depression_extreme_binary'] == '0').sum()
+        drop = len(targets) - valid
+        logger.info(f"  N={valid} (dropped middle={drop}), pos(1)={pos}, neg(0)={neg}")
+
+    # --- Load harmonized file for demographics (sex, age, bmi) ---
+    _need_harmonized = any(
+        stages_config.get(t, {}).get('enabled', False)
+        for t in ['sex_binary', 'age_regression', 'bmi_regression']
+    )
+    df_harm = None
+    if _need_harmonized:
+        harm_fname = stages_config.get(
+            'sex_binary',
+            stages_config.get('age_regression', stages_config.get('bmi_regression', {}))
+        ).get('source_file', 'stages-harmonized-dataset-0.3.0.csv')
+        harm_id_col = stages_config.get(
+            'sex_binary',
+            stages_config.get('age_regression', {'subject_id_column': subject_id_col})
+        ).get('subject_id_column', subject_id_col)
+        harm_file = data_dir / harm_fname
+        logger.info(f"\nLoading harmonized file for demographics: {harm_file}")
+        if harm_file.exists():
+            df_harm = pd.read_csv(harm_file, low_memory=False)
+            df_harm = df_harm.replace(-9, pd.NA)
+            logger.info(f"  Loaded {len(df_harm)} rows")
+            # deduplicate on subject ID
+            if harm_id_col in df_harm.columns:
+                df_harm = df_harm.drop_duplicates(subset=[harm_id_col], keep='last')
+        else:
+            logger.warning(f"  Harmonized file not found: {harm_file} — demographics tasks will be empty")
+
+    def _merge_harmonized(targets_df, df_harm_local, harm_id, new_col):
+        """Left-join a single column from harmonized into targets on subject_id."""
+        if df_harm_local is None or new_col not in df_harm_local.columns:
+            targets_df[new_col] = ''
+            return targets_df
+        slim = df_harm_local[[harm_id, new_col]].copy()
+        slim = slim.rename(columns={harm_id: 'subject_id'})
+        slim['subject_id'] = slim['subject_id'].astype(str)
+        return targets_df.merge(slim, on='subject_id', how='left')
+
+    # --- sex_binary ---
+    task_cfg = stages_config.get('sex_binary', {})
+    if task_cfg.get('enabled', False):
+        sex_col = task_cfg['column']
+        harm_id_col = task_cfg.get('subject_id_column', subject_id_col)
+        logger.info(f"\n=== V2 Task: sex_binary (column: {sex_col}) ===")
+
+        def _sex_to_binary(val):
+            v = str(val).strip().lower() if not pd.isna(val) else ''
+            return '1' if v == 'female' else ('0' if v == 'male' else '')
+
+        if df_harm is not None and sex_col in df_harm.columns:
+            df_harm['sex_binary'] = df_harm[sex_col].apply(_sex_to_binary)
+            targets = _merge_harmonized(targets, df_harm, harm_id_col, 'sex_binary')
+            targets['sex_binary'] = targets['sex_binary'].fillna('')
+            valid = (targets['sex_binary'] != '').sum()
+            pos = (targets['sex_binary'] == '1').sum()
+            logger.info(f"  N={valid}, female(1)={pos} ({pos/max(valid,1):.1%})")
+        else:
+            targets['sex_binary'] = ''
+            logger.warning(f"  Column '{sex_col}' not found in harmonized — sex_binary will be empty")
+
+    # --- age_regression ---
+    task_cfg = stages_config.get('age_regression', {})
+    if task_cfg.get('enabled', False):
+        age_col = task_cfg['column']
+        harm_id_col = task_cfg.get('subject_id_column', subject_id_col)
+        logger.info(f"\n=== V2 Task: age_regression (column: {age_col}) ===")
+
+        if df_harm is not None and age_col in df_harm.columns:
+            df_harm[age_col] = pd.to_numeric(df_harm[age_col], errors='coerce')
+            df_harm['age_value'] = df_harm[age_col].astype(str).replace(['nan', '<NA>'], '')
+            targets = _merge_harmonized(targets, df_harm, harm_id_col, 'age_value')
+            targets['age_value'] = targets['age_value'].fillna('')
+            valid = (targets['age_value'] != '').sum()
+            logger.info(f"  N={valid} with valid age")
+        else:
+            targets['age_value'] = ''
+            logger.warning(f"  Column '{age_col}' not found in harmonized — age_value will be empty")
+
+    # --- bmi_regression ---
+    task_cfg = stages_config.get('bmi_regression', {})
+    if task_cfg.get('enabled', False):
+        bmi_col = task_cfg['column']
+        harm_id_col = task_cfg.get('subject_id_column', subject_id_col)
+        logger.info(f"\n=== V2 Task: bmi_regression (column: {bmi_col}) ===")
+
+        if df_harm is not None and bmi_col in df_harm.columns:
+            df_harm[bmi_col] = pd.to_numeric(df_harm[bmi_col], errors='coerce')
+            df_harm['bmi_value'] = df_harm[bmi_col].astype(str).replace(['nan', '<NA>'], '')
+            targets = _merge_harmonized(targets, df_harm, harm_id_col, 'bmi_value')
+            targets['bmi_value'] = targets['bmi_value'].fillna('')
+            valid = (targets['bmi_value'] != '').sum()
+            logger.info(f"  N={valid} with valid BMI")
+        else:
+            targets['bmi_value'] = ''
+            logger.warning(f"  Column '{bmi_col}' not found in harmonized — bmi_value will be empty")
 
     # ===================================================================
     # STATISTICS
@@ -408,18 +538,20 @@ def main():
 
         output_path = args.output or (log_dir / "stages_targets.csv")
 
-        fatigue_enabled = config['tasks']['stages']['fatigue_binary'].get('enabled', False)
-        column_order = [
+        _desired = [
             'subject_id', 'dataset', 'visit',
             'apnea_class', 'ahi_score',
             'depression_binary', 'phq9_score',
             'sleepiness_binary', 'ess_score',
             'anxiety_binary', 'gad7_score',
             'insomnia_binary', 'isi_score',
+            'fatigue_binary', 'fss_score',
+            'depression_extreme_binary',
+            'sex_binary',
+            'age_value',
+            'bmi_value',
         ]
-        if fatigue_enabled:
-            column_order += ['fatigue_binary', 'fss_score']
-
+        column_order = [c for c in _desired if c in targets_df.columns]
         save_dataset_targets(targets_df, output_path, 'stages', column_order)
 
         logger.info("\n" + "=" * 80)
