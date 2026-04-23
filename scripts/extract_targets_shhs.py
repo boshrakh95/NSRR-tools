@@ -486,12 +486,15 @@ def extract_shhs_targets(config: dict) -> pd.DataFrame:
     # Reorder columns: subject_id, dataset, visit, then task columns
     task_columns = []
     score_columns = []
+    value_columns = []
     for col in targets.columns:
         if col.endswith('_class') or col.endswith('_binary'):
             task_columns.append(col)
         elif col.endswith('_score'):
             score_columns.append(col)
-    
+        elif col.endswith('_value'):
+            value_columns.append(col)
+
     # Interleave task and score columns
     interleaved_cols = []
     for task_col in task_columns:
@@ -506,13 +509,13 @@ def extract_shhs_targets(config: dict) -> pd.DataFrame:
         score_col = score_map.get(task_name)
         if score_col and score_col in score_columns:
             interleaved_cols.append(score_col)
-    
+
     # Add any remaining score columns not matched
     for score_col in score_columns:
         if score_col not in interleaved_cols:
             interleaved_cols.append(score_col)
-    
-    column_order = ['subject_id', 'dataset', 'visit'] + interleaved_cols
+
+    column_order = ['subject_id', 'dataset', 'visit'] + interleaved_cols + value_columns
     targets = targets[column_order]
     
     # Log final statistics

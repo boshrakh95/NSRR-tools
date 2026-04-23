@@ -198,7 +198,7 @@ bmi_value, bmi_binary
 
 ---
 
-## Master Target Statistics (first full v2 run — 2026-04-23)
+## Master Target Statistics (2026-04-23)
 
 Produced by `create_master_targets.py` with `configs/target_extraction_v2.yaml`.
 
@@ -226,10 +226,10 @@ Produced by `create_master_targets.py` with `configs/target_extraction_v2.yaml`.
 
 | Column | N valid | Mean | Std | Min | Max | Missing |
 |--------|---------|------|-----|-----|-----|---------|
-| `age_value` | 6,190 | 61.3 | 18.0 | 13.0 | 90.0 | 13,038 |
-| `bmi_value` | 6,184 | 29.6 | 7.0 | 11.9 | 79.5 | 13,044 |
+| `age_value` | 16,007 | 63.6 | 14.3 | 13.0 | 90.0 | 3,221 |
+| `bmi_value` | 15,532 | 28.8 | 6.0 | 11.9 | 79.5 | 3,696 |
 
-> Note: age/bmi N (~6,190) reflects APPLES+SHHS+STAGES visit-1 subjects + MrOS visit-1 only (no broadcasting to visit 2 after the 2026-04-23 fix). MrOS visit-2 rows have empty age/bmi. `sex_binary` missing=6,065 reflects MrOS subjects (all-male, excluded by design).
+> `bmi_binary` and `bmi_value` Ns match (15,532) — SHHS contributes both visits via harmonized `visitnumber` filtering. MrOS age/bmi are visit-1 only (no broadcasting); MrOS visit-2 rows have empty values. `sex_binary` missing=6,065 reflects MrOS subjects (all-male, excluded by design).
 
 ---
 
@@ -241,7 +241,7 @@ Produced by `create_master_targets.py` with `configs/target_extraction_v2.yaml`.
 - [ ] SHHS: `sleep_efficiency_binary` N ≈ 5k v1 + 2.5k v2; ~20–30% positive
 - [ ] SHHS: `age_value` 67 censored ages per log line
 - [ ] MrOS: `psqi_binary` N ≈ 2k total (v1+v2); ~50–60% positive expected
-- [ ] MrOS: `age_value` same N as `bmi_value` (from harmonized v1, broadcast to v2)
+- [ ] MrOS: `age_value` and `bmi_value` N ≈ 2,911 (visit 1 only); visit-2 rows empty
 - [ ] STAGES: harmonized file loaded OK; `sex_binary` non-empty
 - [ ] Master: `age_value` and `bmi_value` are float columns (not int)
 - [ ] Task lists: `age_regression_subjects.csv` and `bmi_regression_subjects.csv` present
