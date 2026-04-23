@@ -198,6 +198,41 @@ bmi_value, bmi_binary
 
 ---
 
+## Master Target Statistics (first full v2 run — 2026-04-23)
+
+Produced by `create_master_targets.py` with `configs/target_extraction_v2.yaml`.
+
+**Total records: 19,228** — SHHS: 10,115 | MrOS: 5,822 | STAGES: 1,775 | APPLES: 1,516
+
+### Binary tasks
+
+| Column | N valid | Positive | Negative | Missing |
+|--------|---------|----------|----------|---------|
+| `apnea_binary` | 14,097 | 6,888 (48.9%) | 7,209 (51.1%) | 5,131 |
+| `depression_binary` | 2,794 | 750 (26.8%) | 2,044 (73.2%) | 16,434 |
+| `sleepiness_binary` | 16,431 | 4,888 (29.7%) | 11,543 (70.3%) | 2,797 |
+| `anxiety_binary` | 1,698 | 341 (20.1%) | 1,357 (79.9%) | 17,530 |
+| `insomnia_binary` | 1,710 | 761 (44.5%) | 949 (55.5%) | 17,518 |
+| `fatigue_binary` | 0 | — | — | 19,228 (disabled) |
+| `cvd_binary` | 13,045 | 3,266 (25.0%) | 9,779 (75.0%) | 6,183 |
+| `rested_morning` | 3,934 | 1,702 (43.3%) | 2,232 (56.7%) | 15,294 |
+| `sex_binary` | 13,163 | 6,756 (51.3%) | 6,407 (48.7%) | 6,065 |
+| `sleep_efficiency_binary` | 13,615 | 8,285 (60.9%) | 5,330 (39.1%) | 5,613 |
+| `psqi_binary` | 3,933 | 1,727 (43.9%) | 2,206 (56.1%) | 15,295 |
+| `depression_extreme_binary` | 1,761 | 234 (13.3%) | 1,527 (86.7%) | 17,467 |
+| `bmi_binary` | 15,532 | 5,098 (32.8%) | 10,434 (67.2%) | 3,696 |
+
+### Regression tasks
+
+| Column | N valid | Mean | Std | Min | Max | Missing |
+|--------|---------|------|-----|-----|-----|---------|
+| `age_value` | 6,190 | 61.3 | 18.0 | 13.0 | 90.0 | 13,038 |
+| `bmi_value` | 6,184 | 29.6 | 7.0 | 11.9 | 79.5 | 13,044 |
+
+> Note: age/bmi N (~6,190) reflects APPLES+SHHS+STAGES visit-1 subjects + MrOS visit-1 only (no broadcasting to visit 2 after the 2026-04-23 fix). MrOS visit-2 rows have empty age/bmi. `sex_binary` missing=6,065 reflects MrOS subjects (all-male, excluded by design).
+
+---
+
 ## Validation Checklist (run after each adapter)
 
 - [ ] APPLES: `osa_severity_apples` values ∈ {0,1,2,3,''}; no parse errors in log
