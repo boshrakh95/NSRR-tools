@@ -405,6 +405,59 @@ def extract_apples_targets(config: dict) -> pd.DataFrame:
         targets['bmi_value'] = targets['bmi_value'].fillna('')
         valid = (targets['bmi_value'] != '').sum()
         logger.info(f"  N={valid} with valid BMI")
+
+    # --- age_class (3-class derived from age_value already in targets) ---
+    task_cfg = apples_cfg.get('age_class', {})
+    if task_cfg.get('enabled', False):
+        age_thresholds = config['thresholds']['age_class']['thresholds']
+        logger.info(f"\n=== V2 Task: age_class (thresholds: {age_thresholds}) ===")
+
+        if 'age_value' not in targets.columns:
+            logger.warning("  age_value not in targets — age_regression must be enabled. Skipping.")
+        else:
+            def _age_to_class(val_str, thresh):
+                if val_str == '':
+                    return ''
+                try:
+                    age = float(val_str)
+                    if age < thresh[0]:
+                        return '0'
+                    elif age < thresh[1]:
+                        return '1'
+                    else:
+                        return '2'
+                except ValueError:
+                    return ''
+
+            targets['age_class'] = targets['age_value'].apply(
+                lambda x: _age_to_class(x, age_thresholds)
+            )
+            dist = targets['age_class'][targets['age_class'] != ''].value_counts().sort_index()
+            logger.info(f"  Class distribution: {dict(dist)}")
+
+    # --- bmi_binary (derived from bmi_value already in targets) ---
+    task_cfg = apples_cfg.get('bmi_binary', {})
+    if task_cfg.get('enabled', False):
+        bmi_threshold = config['thresholds']['bmi_binary']['threshold']
+        logger.info(f"\n=== V2 Task: bmi_binary (threshold >= {bmi_threshold}) ===")
+
+        if 'bmi_value' not in targets.columns:
+            logger.warning("  bmi_value not in targets — bmi_regression must be enabled. Skipping.")
+        else:
+            def _bmi_to_binary(val_str, thresh):
+                if val_str == '':
+                    return ''
+                try:
+                    return '1' if float(val_str) >= thresh else '0'
+                except ValueError:
+                    return ''
+
+            targets['bmi_binary'] = targets['bmi_value'].apply(
+                lambda x: _bmi_to_binary(x, bmi_threshold)
+            )
+            valid = targets['bmi_binary'][targets['bmi_binary'] != '']
+            pos = (valid == '1').sum()
+            logger.info(f"  N={len(valid)}, obese(1)={pos} ({pos/max(len(valid),1):.1%})")
     
     # Compute statistics
     logger.info("\n" + "-"*60)
@@ -490,8 +543,8 @@ def main():
             'osa_binary_apples_postqc',
             'depression_extreme_binary',
             'sex_binary',
-            'age_value',
-            'bmi_value',
+            'age_value', 'age_class',
+            'bmi_value', 'bmi_binary',
         ]
         columns_order = [c for c in _desired if c in targets_df.columns]
         save_dataset_targets(targets_df, output_path, 'apples', columns_order)

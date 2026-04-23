@@ -53,6 +53,7 @@ BINARY_TASKS = [
     'psqi_binary',
     'depression_extreme_binary',
     'osa_binary_apples_postqc',
+    'bmi_binary',
 ]
 
 # ── Multiclass tasks ──────────────────────────────────────────────────────────
@@ -82,6 +83,12 @@ MULTICLASS_TASKS = {
         'col': 'osa_severity_apples',
         'datasets': ['apples'],
         'num_classes': 4,
+        'empty_sentinel': '',
+    },
+    'age_class': {
+        'col': 'age_class',
+        'datasets': ['apples', 'shhs', 'mros', 'stages'],
+        'num_classes': 3,
         'empty_sentinel': '',
     },
 }

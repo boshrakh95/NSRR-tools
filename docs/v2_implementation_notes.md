@@ -8,7 +8,7 @@
 
 ## What Changed
 
-V2 adds 7 new tasks without touching the v1 pipeline outputs.  
+V2 adds 9 new tasks without touching the v1 pipeline outputs.  
 A separate config `configs/target_extraction_v2.yaml` writes to `targets_v2/`.  
 All new task blocks in the adapters are guarded by `enabled: true/false` so running with v1 config leaves behaviour unchanged.
 
@@ -24,9 +24,12 @@ All new task blocks in the adapters are guarded by `enabled: true/false` so runn
 | `sex_binary` | binary | APPLES, SHHS, STAGES | `nsrr_sex` (harmonized); female=1, male=0 | N/A |
 | `age_regression` | regression (float) | APPLES, SHHS, MrOS, STAGES | `nsrr_age` (harmonized) | N/A |
 | `bmi_regression` | regression (float) | APPLES, SHHS, MrOS, STAGES | `nsrr_bmi` (harmonized) | N/A |
+| `age_class` | 3-class | APPLES, SHHS, MrOS, STAGES | derived from `age_value` | <50=0, 50–64=1, ≥65=2 |
+| `bmi_binary` | binary | APPLES, SHHS, MrOS, STAGES | derived from `bmi_value` | <30=0, ≥30=1 (WHO obesity) |
 
 **MrOS excluded from `sex_binary`** — all-male cohort, zero variance.  
-**SHHS `age_regression`** — 67 subjects with `nsrr_age_gt89 == "yes"` set to NaN (censored).
+**SHHS `age_regression`** — 67 subjects with `nsrr_age_gt89 == "yes"` set to NaN (censored).  
+**MrOS `age_class`** — cohort is 65+, so expect all subjects in class 2; still included for completeness.
 
 ---
 
@@ -35,12 +38,12 @@ All new task blocks in the adapters are guarded by `enabled: true/false` so runn
 | File | Change |
 |------|--------|
 | `configs/target_extraction_v2.yaml` | **NEW** — full standalone config pointing to `targets_v2/` |
-| `scripts/extract_targets_shhs.py` | Added v2 block after CVD merge: sleep_efficiency, sex, age, bmi |
-| `scripts/extract_targets_apples.py` | Added v2 block after original merge: sleep_efficiency, osa_severity, depression_extreme, sex, age, bmi |
-| `scripts/extract_targets_mros.py` | Added v2 block after rested merge: sleep_efficiency, psqi, age, bmi |
-| `scripts/extract_targets_stages.py` | Added v2 block after fatigue: depression_extreme, sex/age/bmi (loads harmonized CSV) |
-| `scripts/create_master_targets.py` | Extended `_MASTER_COLUMNS`; added pass-through for new binary/score/regression cols; updated `build_master()` and `log_statistics()` |
-| `scripts/create_task_subject_lists.py` | Added new `BINARY_TASKS` entries; `osa_severity_apples` to `MULTICLASS_TASKS`; new `REGRESSION_TASKS` dict; `build_regression_task_list()` function; regression processing loop in `main()` |
+| `scripts/extract_targets_shhs.py` | Added v2 block after CVD merge: sleep_efficiency, sex, age_regression, bmi_regression, age_class, bmi_binary |
+| `scripts/extract_targets_apples.py` | Added v2 block after original merge: sleep_efficiency, osa_severity, depression_extreme, sex, age_regression, bmi_regression, age_class, bmi_binary |
+| `scripts/extract_targets_mros.py` | Added v2 block after rested merge: sleep_efficiency, psqi, age_regression, bmi_regression, age_class, bmi_binary |
+| `scripts/extract_targets_stages.py` | Added v2 block after fatigue: depression_extreme, sex/age_regression/bmi_regression/age_class/bmi_binary (loads harmonized CSV) |
+| `scripts/create_master_targets.py` | Extended `_MASTER_COLUMNS` (incl. `bmi_binary`); pass-through for new binary/score/regression cols; `_REGRESSION_VALUE_COLUMNS` guard; updated `build_master()` and `log_statistics()` |
+| `scripts/create_task_subject_lists.py` | Added `bmi_binary` to `BINARY_TASKS`; `osa_severity_apples` and `age_class` to `MULTICLASS_TASKS`; new `REGRESSION_TASKS` dict; `build_regression_task_list()` function; regression processing loop |
 | `/home/boshra95/.vscode/launch.json` | Added 7 v2 debug configs (prefix `🆕 V2`) |
 
 ---
@@ -74,8 +77,8 @@ Output lands in `/home/boshra95/scratch/psg/unified/targets_v2/`.
 python scripts/create_task_subject_lists.py \
   --config configs/target_extraction_v2.yaml \
   --tasks sex_binary sleep_efficiency_binary psqi_binary \
-          depression_extreme_binary osa_severity_apples \
-          age_regression bmi_regression
+          depression_extreme_binary osa_severity_apples osa_binary_apples_postqc \
+          age_regression bmi_regression age_class bmi_binary
 ```
 
 ---
@@ -118,6 +121,15 @@ python scripts/create_task_subject_lists.py \
 - STAGES: PHQ-9 ≤4 → 0, PHQ-9 ≥15 → 1; PHQ-9 5–14 dropped.
 - Middle-group subjects appear in master with `depression_extreme_binary = -1` (MISSING_BINARY).
 
+### Age and BMI classification
+- `age_class` (3-class) thresholds `[50, 65]` follow clinical convention: <50=young, 50–64=middle, ≥65=older.
+- `bmi_binary` threshold 30.0 follows WHO obesity definition: <30=0 (non-obese), ≥30=1 (obese).
+- Both derived from `targets['age_value']` / `targets['bmi_value']` strings already merged by the regression blocks. Each adapter guards with `if 'age_value' not in targets.columns` to enforce ordering.
+- `age_class` stored only in per-dataset CSVs (via `MULTICLASS_TASKS`), **not** in master parquet.
+- `bmi_binary` stored in per-dataset CSVs AND master parquet (via `BINARY_TASKS`); pass-through with `-1` sentinel for missing.
+- SHHS censored subjects (age set to `''` by age_regression) get `''` for age_class too (~67 subjects).
+- MrOS cohort is 65+ — expect all subjects in class 2; logged as a warning.
+
 ### MrOS insomnia (unchanged)
 - `insomnia_binary` remains `enabled: false` in v2 config (Q1 decision: only 3% positive, no clinical signal).
 
@@ -139,8 +151,8 @@ osa_severity_apples,
 osa_binary_apples_postqc,
 depression_extreme_binary,
 sex_binary,
-age_value,
-bmi_value
+age_value, age_class,
+bmi_value, bmi_binary
 ```
 
 ### SHHS (`shhs_targets.csv`)
@@ -151,8 +163,8 @@ sleepiness_class, ess_score,
 cvd_binary,
 sleep_efficiency_binary, eff_score,
 sex_binary,
-age_value,
-bmi_value
+age_value, age_class,
+bmi_value, bmi_binary
 ```
 
 ### MrOS (`mros_targets.csv`)
@@ -165,8 +177,8 @@ cvd_binary,
 rested_morning, rested_score,
 sleep_efficiency_binary, eff_score,
 psqi_binary, psqi_score,
-age_value,
-bmi_value
+age_value, age_class,
+bmi_value, bmi_binary
 ```
 
 ### STAGES (`stages_targets.csv`)
@@ -180,8 +192,8 @@ insomnia_binary, isi_score,
 [fatigue_binary, fss_score — if enabled],
 depression_extreme_binary,
 sex_binary,
-age_value,
-bmi_value
+age_value, age_class,
+bmi_value, bmi_binary
 ```
 
 ---
@@ -200,3 +212,5 @@ bmi_value
 - [ ] Task lists: `age_regression_subjects.csv` and `bmi_regression_subjects.csv` present
 - [ ] Task lists: `osa_severity_apples_subjects.csv` has 4 distinct label values
 - [ ] Task lists: `osa_binary_apples_postqc_subjects.csv` present; labels ∈ {0, 1}
+- [ ] Task lists: `age_class_subjects.csv` present; labels ∈ {0, 1, 2} across all 4 datasets (MrOS likely all class 2)
+- [ ] Task lists: `bmi_binary_subjects.csv` present; labels ∈ {0, 1} across all 4 datasets

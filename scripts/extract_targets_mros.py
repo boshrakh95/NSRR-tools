@@ -566,48 +566,99 @@ def extract_mros_targets(config: dict) -> pd.DataFrame:
             targets['psqi_binary'] = targets['psqi_binary'].fillna('')
             targets['psqi_score'] = targets['psqi_score'].fillna('')
 
-    # --- age_regression (harmonized v1 — static attribute applied to both visits) ---
+    # --- age_regression (harmonized v1 only — visit 2 left empty) ---
     task_cfg = mros_config['tasks'].get('age_regression', {})
     if task_cfg.get('enabled', False):
         age_col = task_cfg['column']
-        logger.info(f"\n=== V2 Task: age_regression (column: {age_col}, from harmonized v1) ===")
+        logger.info(f"\n=== V2 Task: age_regression (column: {age_col}, visit 1 only) ===")
 
         df_harm_v1_age = df_harm_v1[[subject_id_col, age_col]].copy()
         df_harm_v1_age[age_col] = pd.to_numeric(df_harm_v1_age[age_col], errors='coerce').replace(-9, pd.NA)
         df_harm_v1_age['age_value'] = df_harm_v1_age[age_col].astype(str).replace(['nan', '<NA>'], '')
-        logger.info(f"  N={( df_harm_v1_age['age_value'] != '').sum()} subjects with valid age")
+        logger.info(f"  N={( df_harm_v1_age['age_value'] != '').sum()} subjects with valid age (visit 1 only; visit 2 will be empty)")
 
-        # Apply to both visits
-        age_frames = []
-        for vis_label in ['v1', 'v2']:
-            tmp = df_harm_v1_age.copy()
-            tmp['subject_id'] = tmp[subject_id_col].astype(str) + f'_{vis_label}'
-            tmp['visit'] = int(vis_label[1])
-            age_frames.append(tmp[['subject_id', 'visit', 'age_value']])
-        age_targets = pd.concat(age_frames, ignore_index=True)
+        age_targets = df_harm_v1_age.copy()
+        age_targets['subject_id'] = age_targets[subject_id_col].astype(str) + '_v1'
+        age_targets['visit'] = 1
+        age_targets = age_targets[['subject_id', 'visit', 'age_value']]
         targets = targets.merge(age_targets, on=['subject_id', 'visit'], how='left')
         targets['age_value'] = targets['age_value'].fillna('')
 
-    # --- bmi_regression (harmonized v1 — static attribute applied to both visits) ---
+    # --- bmi_regression (harmonized v1 only — visit 2 left empty) ---
     task_cfg = mros_config['tasks'].get('bmi_regression', {})
     if task_cfg.get('enabled', False):
         bmi_col = task_cfg['column']
-        logger.info(f"\n=== V2 Task: bmi_regression (column: {bmi_col}, from harmonized v1) ===")
+        logger.info(f"\n=== V2 Task: bmi_regression (column: {bmi_col}, visit 1 only) ===")
 
         df_harm_v1_bmi = df_harm_v1[[subject_id_col, bmi_col]].copy()
         df_harm_v1_bmi[bmi_col] = pd.to_numeric(df_harm_v1_bmi[bmi_col], errors='coerce').replace(-9, pd.NA)
         df_harm_v1_bmi['bmi_value'] = df_harm_v1_bmi[bmi_col].astype(str).replace(['nan', '<NA>'], '')
-        logger.info(f"  N={( df_harm_v1_bmi['bmi_value'] != '').sum()} subjects with valid BMI")
+        logger.info(f"  N={( df_harm_v1_bmi['bmi_value'] != '').sum()} subjects with valid BMI (visit 1 only; visit 2 will be empty)")
 
-        bmi_frames = []
-        for vis_label in ['v1', 'v2']:
-            tmp = df_harm_v1_bmi.copy()
-            tmp['subject_id'] = tmp[subject_id_col].astype(str) + f'_{vis_label}'
-            tmp['visit'] = int(vis_label[1])
-            bmi_frames.append(tmp[['subject_id', 'visit', 'bmi_value']])
-        bmi_targets = pd.concat(bmi_frames, ignore_index=True)
+        bmi_targets = df_harm_v1_bmi.copy()
+        bmi_targets['subject_id'] = bmi_targets[subject_id_col].astype(str) + '_v1'
+        bmi_targets['visit'] = 1
+        bmi_targets = bmi_targets[['subject_id', 'visit', 'bmi_value']]
         targets = targets.merge(bmi_targets, on=['subject_id', 'visit'], how='left')
         targets['bmi_value'] = targets['bmi_value'].fillna('')
+
+    # --- age_class (3-class derived from age_value already in targets) ---
+    task_cfg = mros_config['tasks'].get('age_class', {})
+    if task_cfg.get('enabled', False):
+        age_thresholds = config['thresholds']['age_class']['thresholds']
+        logger.info(f"\n=== V2 Task: age_class (thresholds: {age_thresholds}) ===")
+        logger.info("  Note: MrOS is 65+ — expect all subjects in class 2")
+
+        if 'age_value' not in targets.columns:
+            logger.warning("  age_value not in targets — age_regression must be enabled. Skipping.")
+        else:
+            def _age_to_class(val_str, thresh):
+                if val_str == '':
+                    return ''
+                try:
+                    age = float(val_str)
+                    if age < thresh[0]:
+                        return '0'
+                    elif age < thresh[1]:
+                        return '1'
+                    else:
+                        return '2'
+                except ValueError:
+                    return ''
+
+            targets['age_class'] = targets['age_value'].apply(
+                lambda x: _age_to_class(x, age_thresholds)
+            )
+            for vis in [1, 2]:
+                sub = targets[targets['visit'] == vis]
+                dist = sub['age_class'][sub['age_class'] != ''].value_counts().sort_index()
+                logger.info(f"  Visit {vis}: class_dist={dict(dist)}")
+
+    # --- bmi_binary (derived from bmi_value already in targets) ---
+    task_cfg = mros_config['tasks'].get('bmi_binary', {})
+    if task_cfg.get('enabled', False):
+        bmi_threshold = config['thresholds']['bmi_binary']['threshold']
+        logger.info(f"\n=== V2 Task: bmi_binary (threshold >= {bmi_threshold}) ===")
+
+        if 'bmi_value' not in targets.columns:
+            logger.warning("  bmi_value not in targets — bmi_regression must be enabled. Skipping.")
+        else:
+            def _bmi_to_binary(val_str, thresh):
+                if val_str == '':
+                    return ''
+                try:
+                    return '1' if float(val_str) >= thresh else '0'
+                except ValueError:
+                    return ''
+
+            targets['bmi_binary'] = targets['bmi_value'].apply(
+                lambda x: _bmi_to_binary(x, bmi_threshold)
+            )
+            for vis in [1, 2]:
+                sub = targets[targets['visit'] == vis]
+                valid = sub['bmi_binary'][sub['bmi_binary'] != '']
+                pos = (valid == '1').sum()
+                logger.info(f"  Visit {vis}: N={len(valid)}, obese(1)={pos} ({pos/max(len(valid),1):.1%})")
     
     # ===================================================================
     # COMPUTE STATISTICS
@@ -705,8 +756,8 @@ def main():
             'rested_morning', 'rested_score',
             'sleep_efficiency_binary', 'eff_score',
             'psqi_binary', 'psqi_score',
-            'age_value',
-            'bmi_value',
+            'age_value', 'age_class',
+            'bmi_value', 'bmi_binary',
         ]
         column_order = [c for c in _desired if c in targets_df.columns]
         save_dataset_targets(targets_df, output_path, 'mros', column_order)

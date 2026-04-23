@@ -87,6 +87,21 @@ thresholds:
     direction: "greater_than"
     rationale: "Buysse 1989 PSQI: score > 5 distinguishes good vs poor sleepers"
 
+  age_class:
+    type: "multiclass"
+    num_classes: 3
+    thresholds: [50, 65]
+    class_labels:
+      0: "Young adult (< 50)"
+      1: "Middle-aged (50–64)"
+      2: "Older adult (≥ 65)"
+    rationale: "Standard sleep-medicine age boundaries; sleep architecture changes markedly at 50 and 65"
+
+  bmi_binary:
+    threshold: 30.0    # BMI ≥ 30 → obese (1); < 30 → non-obese (0)
+    direction: "greater_equal"
+    rationale: "WHO obesity definition; strongest modifiable risk factor for OSA"
+
   depression_extreme_binary:
     apples:
       low_max: 9         # BDI ≤ 9 → no/minimal depression (0)
@@ -203,6 +218,16 @@ tasks:
       visit_column: "visitn"
       notes: "BMI kg/m²; static attribute from visit 1 harmonized"
 
+    age_class:
+      enabled: true
+      priority: "tier1"
+      notes: "Derived from age_value; requires age_regression enabled"
+
+    bmi_binary:
+      enabled: true
+      priority: "tier1"
+      notes: "Derived from bmi_value (>= 30 = obese); requires bmi_regression enabled"
+
   # ====================
   # SHHS Dataset
   # ====================
@@ -291,6 +316,16 @@ tasks:
         visit_column: "visitnumber"
         keep_both_visits: true
         notes: "BMI kg/m²"
+
+      age_class:
+        enabled: true
+        priority: "tier1"
+        notes: "Derived from age_value; censored (>89) subjects get '' and are excluded"
+
+      bmi_binary:
+        enabled: true
+        priority: "tier1"
+        notes: "Derived from bmi_value (>= 30 = obese)"
 
   # ====================
   # MrOS Dataset
@@ -387,6 +422,16 @@ tasks:
         column: "nsrr_bmi"
         notes: "Static attribute from harmonized v1; applied to both visits"
 
+      age_class:
+        enabled: true
+        priority: "tier1"
+        notes: "Derived from age_value; MrOS is all 65+ so all subjects will be class 2"
+
+      bmi_binary:
+        enabled: true
+        priority: "tier1"
+        notes: "Derived from bmi_value (>= 30 = obese)"
+
       # NO sex_binary: MrOS is all-male (zero variance)
 
   # ====================
@@ -474,6 +519,16 @@ tasks:
       column: "nsrr_bmi"
       subject_id_column: "subject_code"
       notes: "BMI kg/m² from harmonized file"
+
+    age_class:
+      enabled: true
+      priority: "tier1"
+      notes: "Derived from age_value; requires age_regression enabled"
+
+    bmi_binary:
+      enabled: true
+      priority: "tier1"
+      notes: "Derived from bmi_value (>= 30 = obese); requires bmi_regression enabled"
 
 # Output schema
 output_schema:
