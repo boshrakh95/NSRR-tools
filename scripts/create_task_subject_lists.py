@@ -146,7 +146,7 @@ def build_binary_task_list(master: pd.DataFrame, task: str) -> pd.DataFrame:
         logger.warning(f"  Column '{task}' not in master — skipping")
         return pd.DataFrame()
 
-    valid = master[master[task] != MISSING_BINARY].copy()
+    valid = master[master[task].notna() & (master[task] != MISSING_BINARY)].copy()
     valid = valid[['unified_id', 'dataset', 'subject_id', 'visit', task]].rename(
         columns={task: 'label'}
     )

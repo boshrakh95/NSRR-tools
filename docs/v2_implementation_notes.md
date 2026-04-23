@@ -233,6 +233,59 @@ Produced by `create_master_targets.py` with `configs/target_extraction_v2.yaml`.
 
 ---
 
+## Per-Task Subject List Statistics (2026-04-23)
+
+Produced by `create_task_subject_lists.py --config configs/target_extraction_v2.yaml`.
+
+### Binary tasks (source: master_targets.parquet)
+
+| Task | N | Pos | Neg | Datasets |
+|------|---|-----|-----|----------|
+| `apnea_binary` | 14,097 | 6,888 (48.9%) | 7,209 | shhs:8455, mros:2872, stages:1547, apples:1223 |
+| `depression_binary` | 2,794 | 750 (26.8%) | 2,044 | stages:1698, apples:1096 |
+| `sleepiness_binary` | 16,431 | 4,888 (29.7%) | 11,543 | shhs:9550, mros:3936, stages:1711, apples:1234 |
+| `anxiety_binary` | 1,698 | 341 (20.1%) | 1,357 | stages:1698 |
+| `insomnia_binary` | 1,710 | 761 (44.5%) | 949 | stages:1710 |
+| `fatigue_binary` | 0 | — | — | disabled |
+| `cvd_binary` | 13,045 | 3,266 (25.0%) | 9,779 | shhs:9122, mros:3923 |
+| `rested_morning` | 3,934 | 1,702 (43.3%) | 2,232 | mros:3934 |
+| `sex_binary` | 13,163 | 6,756 (51.3%) | 6,407 | shhs:9884, stages:1763, apples:1516 |
+| `sleep_efficiency_binary` | 13,615 | 8,285 (60.9%) | 5,330 | shhs:8455, mros:3937, apples:1223 |
+| `psqi_binary` | 3,933 | 1,727 (43.9%) | 2,206 | mros:3933 |
+| `depression_extreme_binary` | 1,761 | 234 (13.3%) | 1,527 | stages:885, apples:876 |
+| `osa_binary_apples_postqc` | 1,516 | 951 (62.7%) | 565 | apples:1516 |
+| `bmi_binary` | 15,532 | 5,098 (32.8%) | 10,434 | shhs:9348, mros:2909, stages:1763, apples:1512 |
+
+### Multiclass tasks (source: per-dataset CSVs)
+
+| Task | N | Classes | Class counts | Datasets |
+|------|---|---------|--------------|----------|
+| `apnea_class` | 14,097 | 4 | 0:2350, 1:4859, 2:3830, 3:3058 | shhs:8455, mros:2872, stages:1547, apples:1223 |
+| `sleepiness_class` | 14,720 | 3 | 0:10432, 1:3251, 2:1037 | shhs:9550, mros:3936, apples:1234 |
+| `depression_class` | 1,096 | 4 | 0:849, 1:171, 2:49, 3:27 | apples:1096 |
+| `osa_severity_apples` | 1,516 | 4 | 0:414, 1:151, 2:344, 3:607 | apples:1516 |
+| `age_class` | 16,007 | 3 | 0:2669, 1:4846, 2:8492 | shhs:9817, mros:2911, stages:1763, apples:1516 |
+
+> MrOS `age_class` is all class 2 (2,911 subjects) — expected, cohort is 65+.
+
+### Regression tasks (source: master_targets.parquet)
+
+| Task | N | Mean | Std | Datasets |
+|------|---|------|-----|----------|
+| `age_regression` | 16,007 | 63.6 | 14.3 | shhs:9817, mros:2911, stages:1763, apples:1516 |
+| `bmi_regression` | 15,532 | 28.8 | 6.0 | shhs:9348, mros:2909, stages:1763, apples:1512 |
+
+> Per-dataset age means: APPLES=50.1, MrOS=76.4, SHHS=65.1, STAGES=45.9  
+> Per-dataset BMI means: APPLES=32.1, MrOS=27.2, SHHS=28.2, STAGES=31.3
+
+### Sleep staging (source: per-subject \*\_stages.npy)
+
+| N subjects | Total epochs | Approx hours | Datasets |
+|-----------|-------------|-------------|---------|
+| 14,960 | 17,053,035 | ~142,109 h | shhs:8444, mros:3927, stages:1485, apples:1104 |
+
+---
+
 ## Validation Checklist (run after each adapter)
 
 - [ ] APPLES: `osa_severity_apples` values ∈ {0,1,2,3,''}; no parse errors in log
