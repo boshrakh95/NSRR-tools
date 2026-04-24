@@ -144,7 +144,9 @@ def evaluate_at_k(df: pd.DataFrame, k_val: int | str,
         seg_probs  = sub[prob_cols].values.astype(np.float32)
 
         # Segment-level accumulation
-        all_seg_targets.append(np.full(len(sub), true_label, dtype=np.int32))
+        # Use per-window true labels: equivalent for seq2label (same label repeated),
+        # and correct for seq2seq (each window has its own ground-truth stage).
+        all_seg_targets.append(sub["true_label"].values.astype(np.int32))
         all_seg_preds.append(seg_preds.astype(np.int32))
         all_seg_probs.append(seg_probs)
 
@@ -197,14 +199,17 @@ def fmt(val, pct=True) -> str:
 
 
 HEADER_MAP = {
+    "seg_accuracy":               "Seg-Acc",
     "seg_auroc":                  "Seg-AUROC",
     "seg_balanced_accuracy":      "Seg-BalAcc",
     "seg_macro_f1":               "Seg-F1",
     "seg_cohen_kappa":            "Seg-Kappa",
+    "mean_prob_accuracy":         "MP-Acc",
     "mean_prob_auroc":            "MP-AUROC",
     "mean_prob_balanced_accuracy":"MP-BalAcc",
     "mean_prob_macro_f1":         "MP-F1",
     "mean_prob_cohen_kappa":      "MP-Kappa",
+    "majority_accuracy":          "MV-Acc",
     "majority_auroc":             "MV-AUROC",
     "majority_balanced_accuracy": "MV-BalAcc",
     "majority_macro_f1":          "MV-F1",
@@ -237,7 +242,7 @@ def _split_to_markdown(results_df: pd.DataFrame, strategy: str,
         metric_cols = [
             f"{p}_{m}"
             for p in prefixes
-            for m in ["auroc", "balanced_accuracy", "macro_f1", "cohen_kappa"]
+            for m in ["accuracy", "auroc", "balanced_accuracy", "macro_f1", "cohen_kappa"]
             if f"{p}_{m}" in cdf.columns and not cdf[f"{p}_{m}"].isna().all()
         ]
 
