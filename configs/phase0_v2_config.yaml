@@ -1,0 +1,124 @@
+# ============================================================
+# Phase 0 — V2 Task Definitions — Context-Length Sweep Config
+# ============================================================
+# Identical to phase0_config.yaml except:
+#   label_source   → targets_v2/master_targets.parquet
+#   task_subject_dir → targets_v2/task_subjects
+#   results_dir    → results/phase0_v2
+# Embeddings and signal data are shared with phase0.
+
+# ── Embedding Extraction ─────────────────────────────────────────────────────
+embedding:
+  checkpoint_dir: "/home/boshra95/sleepfm-clinical/sleepfm/checkpoints/model_base"
+  output_dir: "/scratch/boshra95/psg/unified/embeddings/sleepfm_5sec"
+  chunk_batch_size: 16
+  datasets:
+    - apples
+    - shhs
+    - mros
+    - stages
+
+# ── HDF5 Signal Data ─────────────────────────────────────────────────────────
+data:
+  hdf5_dir: "/scratch/boshra95/psg"
+  sampling_freq: 128
+  chunk_seconds: 300
+  patch_size: 640
+  patches_per_chunk: 60
+  max_channels:
+    BAS: 10
+    RESP: 7
+    EKG: 2
+    EMG: 4
+  channel_priority:
+    BAS:
+      - C3-M2
+      - C4-M1
+      - LOC
+      - ROC
+      - O1-M2
+      - O2-M1
+      - F3-M2
+      - F4-M1
+      - A1
+      - A2
+    RESP:
+      - Airflow
+      - Thor
+      - ABD
+      - SpO2
+      - HR
+      - Snore
+      - RespRate
+    EKG:
+      - EKG
+      - ECG-L
+      - ECG-R
+    EMG:
+      - CHIN
+      - LLEG
+      - RLEG
+      - EMG
+
+# ── Context-Window Dataset ───────────────────────────────────────────────────
+dataset:
+  embedding_dir: "/scratch/boshra95/psg/unified/embeddings/sleepfm_5sec"
+
+  # V2 targets (points to targets_v2/ instead of targets/)
+  label_source: "/scratch/boshra95/psg/unified/targets_v2/master_targets.parquet"
+  task_subject_dir: "/scratch/boshra95/psg/unified/targets_v2/task_subjects"
+
+  sleep_stage_dir: "/scratch/boshra95/psg"
+
+  context_lengths:
+    - "30s"
+    - "10m"
+    - "40m"
+    - "80m"
+
+  task: "sex_binary"
+  task_type: "seq2label"
+
+  datasets:
+    - apples
+    - shhs
+    - mros
+    - stages
+
+  train_split: 0.70
+  val_split:   0.15
+  test_split:  0.15
+  split_seed:  42
+
+  windows_per_subject: 5
+  min_past_denom:       8
+  max_min_past_patches: 240
+
+# ── Sequence Head Model ──────────────────────────────────────────────────────
+model:
+  input_dim: 512
+  head_type: "lstm"
+  hidden_dim: 128
+  num_layers: 1
+  num_heads:  8
+  dropout:    0.3
+  num_classes: 2
+
+# ── Training ─────────────────────────────────────────────────────────────────
+training:
+  epochs: 30
+  lr: 1.0e-4
+  weight_decay: 1.0e-3
+  optimizer: "adamw"
+  scheduler: "cosine"
+  early_stopping_patience: 10
+  device: "cuda"
+  mixed_precision: false
+  class_weights: "auto"
+  early_stopping_monitor: "val_auroc"
+  weighted_sampler: false
+
+# ── Logging & Output ─────────────────────────────────────────────────────────
+logging:
+  results_dir: "/scratch/boshra95/psg/unified/results/phase0_v2"
+  log_every_n_steps: 10

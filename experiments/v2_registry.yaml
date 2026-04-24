@@ -1,0 +1,277 @@
+# ============================================================
+# V2 Experiment Registry
+# ============================================================
+# Each entry defines one (task, head) experiment group.
+# Use gen_commands.py to generate sbatch/python commands from this file.
+#
+# Fields:
+#   task        — task name (must match task_subjects/*.csv stem)
+#   task_type   — seq2label | seq2seq
+#   num_classes — number of output classes
+#   head        — lstm | transformer | mean_pool
+#   datasets    — datasets that have labels for this task
+#   contexts    — context lengths to train/infer (subset of [30s, 10m, 40m, 80m])
+#   batch_size  — training batch size (inference uses 512)
+#   lr          — learning rate (default 1e-4)
+#   run_tag     — suffix appended to experiment folder; empty = no suffix
+#   tier        — 1 (run first) | 2 (run second) | deferred
+#   notes       — free-form notes
+
+config: configs/phase0_v2_config.yaml
+results_dir: /scratch/boshra95/psg/unified/results/phase0_v2
+inference_dir: /scratch/boshra95/psg/unified/results/phase0_v2/inference
+
+# ── Tier 1: Large N, clinically broad ────────────────────────────────────────
+# Run all three heads to enable head comparison.
+
+experiments:
+
+  # ── sex_binary (N=13,163 — APPLES, SHHS, STAGES) ─────────────────────────
+  sex_binary_lstm:
+    task: sex_binary
+    task_type: seq2label
+    num_classes: 2
+    head: lstm
+    datasets: [apples, shhs, stages]
+    contexts: [30s, 10m, 40m, 80m]
+    batch_size: 32
+    lr: 1.0e-4
+    run_tag: ""
+    tier: 1
+    notes: "Female=1, Male=0. MrOS excluded (all-male cohort, zero variance)."
+
+  sex_binary_transformer:
+    task: sex_binary
+    task_type: seq2label
+    num_classes: 2
+    head: transformer
+    datasets: [apples, shhs, stages]
+    contexts: [30s, 10m, 40m]   # skip 80m: O(N²) memory risk
+    batch_size: 32
+    lr: 1.0e-4
+    run_tag: ""
+    tier: 1
+    notes: "80m excluded due to transformer memory constraints."
+
+  sex_binary_mean_pool:
+    task: sex_binary
+    task_type: seq2label
+    num_classes: 2
+    head: mean_pool
+    datasets: [apples, shhs, stages]
+    contexts: [30s, 10m, 40m, 80m]
+    batch_size: 64
+    lr: 1.0e-4
+    run_tag: ""
+    tier: 1
+    notes: "Baseline (no temporal modelling)."
+
+  # ── sleep_efficiency_binary (N=13,615 — APPLES, SHHS, MrOS) ─────────────
+  sleep_efficiency_binary_lstm:
+    task: sleep_efficiency_binary
+    task_type: seq2label
+    num_classes: 2
+    head: lstm
+    datasets: [apples, shhs, mros]
+    contexts: [30s, 10m, 40m, 80m]
+    batch_size: 32
+    lr: 1.0e-4
+    run_tag: ""
+    tier: 1
+    notes: "Sleep efficiency < 85% = 1. STAGES excluded (no eff. score available)."
+
+  sleep_efficiency_binary_transformer:
+    task: sleep_efficiency_binary
+    task_type: seq2label
+    num_classes: 2
+    head: transformer
+    datasets: [apples, shhs, mros]
+    contexts: [30s, 10m, 40m]
+    batch_size: 32
+    lr: 1.0e-4
+    run_tag: ""
+    tier: 1
+    notes: ""
+
+  sleep_efficiency_binary_mean_pool:
+    task: sleep_efficiency_binary
+    task_type: seq2label
+    num_classes: 2
+    head: mean_pool
+    datasets: [apples, shhs, mros]
+    contexts: [30s, 10m, 40m, 80m]
+    batch_size: 64
+    lr: 1.0e-4
+    run_tag: ""
+    tier: 1
+    notes: ""
+
+  # ── bmi_binary (N=15,532 — all datasets) ────────────────────────────────
+  bmi_binary_lstm:
+    task: bmi_binary
+    task_type: seq2label
+    num_classes: 2
+    head: lstm
+    datasets: [apples, shhs, mros, stages]
+    contexts: [30s, 10m, 40m, 80m]
+    batch_size: 32
+    lr: 1.0e-4
+    run_tag: ""
+    tier: 1
+    notes: "BMI >= 30 = obese (WHO definition). MrOS: visit-1 labels only."
+
+  bmi_binary_transformer:
+    task: bmi_binary
+    task_type: seq2label
+    num_classes: 2
+    head: transformer
+    datasets: [apples, shhs, mros, stages]
+    contexts: [30s, 10m, 40m]
+    batch_size: 32
+    lr: 1.0e-4
+    run_tag: ""
+    tier: 1
+    notes: ""
+
+  bmi_binary_mean_pool:
+    task: bmi_binary
+    task_type: seq2label
+    num_classes: 2
+    head: mean_pool
+    datasets: [apples, shhs, mros, stages]
+    contexts: [30s, 10m, 40m, 80m]
+    batch_size: 64
+    lr: 1.0e-4
+    run_tag: ""
+    tier: 1
+    notes: ""
+
+  # ── age_class (N=16,007 — all datasets, 3-class) ─────────────────────────
+  age_class_lstm:
+    task: age_class
+    task_type: seq2label
+    num_classes: 3
+    head: lstm
+    datasets: [apples, shhs, mros, stages]
+    contexts: [30s, 10m, 40m, 80m]
+    batch_size: 32
+    lr: 1.0e-4
+    run_tag: ""
+    tier: 1
+    notes: "3-class: <50=0, 50-64=1, >=65=2. MrOS all class 2 (65+ cohort)."
+
+  age_class_transformer:
+    task: age_class
+    task_type: seq2label
+    num_classes: 3
+    head: transformer
+    datasets: [apples, shhs, mros, stages]
+    contexts: [30s, 10m, 40m]
+    batch_size: 32
+    lr: 1.0e-4
+    run_tag: ""
+    tier: 1
+    notes: ""
+
+  age_class_mean_pool:
+    task: age_class
+    task_type: seq2label
+    num_classes: 3
+    head: mean_pool
+    datasets: [apples, shhs, mros, stages]
+    contexts: [30s, 10m, 40m, 80m]
+    batch_size: 64
+    lr: 1.0e-4
+    run_tag: ""
+    tier: 1
+    notes: ""
+
+# ── Tier 2: Smaller N or single-dataset ──────────────────────────────────────
+# Run lstm only initially; add transformer if results are promising.
+
+  # ── psqi_binary (N=3,933 — MrOS only) ────────────────────────────────────
+  psqi_binary_lstm:
+    task: psqi_binary
+    task_type: seq2label
+    num_classes: 2
+    head: lstm
+    datasets: [mros]
+    contexts: [30s, 10m, 40m, 80m]
+    batch_size: 32
+    lr: 1.0e-4
+    run_tag: ""
+    tier: 2
+    notes: "PSQI > 5 = poor sleep quality. MrOS only. N=3933 across v1+v2."
+
+  # ── depression_extreme_binary (N=1,761 — APPLES + STAGES) ────────────────
+  depression_extreme_binary_lstm:
+    task: depression_extreme_binary
+    task_type: seq2label
+    num_classes: 2
+    head: lstm
+    datasets: [apples, stages]
+    contexts: [30s, 10m, 40m]   # skip 80m: small N per split
+    batch_size: 32
+    lr: 1.0e-4
+    run_tag: ""
+    tier: 2
+    notes: "Extreme-group design: BDI<=9->0 or >=20->1 (APPLES); PHQ-9 <=4->0 or >=15->1 (STAGES). Middle group dropped."
+
+  # ── osa_binary_apples_postqc (N=1,516 — APPLES only) ─────────────────────
+  osa_binary_apples_postqc_lstm:
+    task: osa_binary_apples_postqc
+    task_type: seq2label
+    num_classes: 2
+    head: lstm
+    datasets: [apples]
+    contexts: [30s, 10m, 40m]   # skip 80m: single dataset, small N
+    batch_size: 32
+    lr: 1.0e-4
+    run_tag: ""
+    tier: 2
+    notes: "Binary OSA severity post-QC: Non-rand+Mild->0, Moderate+Severe->1. APPLES only."
+
+  # ── osa_severity_apples (N=1,516 — APPLES only, 4-class) ─────────────────
+  osa_severity_apples_lstm:
+    task: osa_severity_apples
+    task_type: seq2label
+    num_classes: 4
+    head: lstm
+    datasets: [apples]
+    contexts: [30s, 10m, 40m]
+    batch_size: 32
+    lr: 1.0e-4
+    run_tag: ""
+    tier: 2
+    notes: "4-class OSA: 0=Non-rand, 1=Mild, 2=Moderate, 3=Severe. APPLES only."
+
+# ── Deferred: Regression tasks ────────────────────────────────────────────────
+# Requires adding a regression head to train_context_sweep.py.
+# Labels are floats in master_targets.parquet (age_value, bmi_value).
+# Uncomment and implement when regression head is ready.
+
+  # age_regression_lstm:
+  #   task: age_regression
+  #   task_type: regression        # NOT YET SUPPORTED
+  #   num_classes: 1
+  #   head: lstm
+  #   datasets: [apples, shhs, mros, stages]
+  #   contexts: [30s, 10m, 40m, 80m]
+  #   batch_size: 32
+  #   lr: 1.0e-4
+  #   run_tag: ""
+  #   tier: deferred
+  #   notes: "Float target. MrOS: visit-1 only. SHHS: 67 censored ages (>89) excluded."
+
+  # bmi_regression_lstm:
+  #   task: bmi_regression
+  #   task_type: regression        # NOT YET SUPPORTED
+  #   num_classes: 1
+  #   head: lstm
+  #   datasets: [apples, shhs, mros, stages]
+  #   contexts: [30s, 10m, 40m, 80m]
+  #   batch_size: 32
+  #   lr: 1.0e-4
+  #   run_tag: ""
+  #   tier: deferred
+  #   notes: "Float target. MrOS: visit-1 only."
