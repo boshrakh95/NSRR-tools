@@ -34,8 +34,8 @@ experiments:
     task_type: seq2label
     num_classes: 2
     head: lstm
-    datasets: [apples, shhs, stages]
-    contexts: [30s, 10m, 40m, 80m]
+    datasets: [apples, shhs] # , stages
+    contexts: [30s, 10m, 40m, 80m, 120m]
     batch_size: 32
     lr: 1.0e-4
     run_tag: ""
@@ -48,22 +48,22 @@ experiments:
     task_type: seq2label
     num_classes: 2
     head: transformer
-    datasets: [apples, shhs, stages]
-    contexts: [30s, 10m, 40m]   # skip 80m: O(N²) memory risk
+    datasets: [apples, shhs] # , stages
+    contexts: [30s, 10m, 40m, 80m, 120m]   # skip 80m if oom: O(N²) memory risk
     batch_size: 32
     lr: 1.0e-4
     run_tag: ""
     n_size: large
     tier: 1
-    notes: "80m excluded due to transformer memory constraints."
+    notes: "80m onward should be excluded due to transformer memory constraints."
 
   sex_binary_mean_pool:
     task: sex_binary
     task_type: seq2label
     num_classes: 2
     head: mean_pool
-    datasets: [apples, shhs, stages]
-    contexts: [30s, 10m, 40m, 80m]
+    datasets: [apples, shhs] # , stages
+    contexts: [30s, 10m, 40m, 80m, 120m]
     batch_size: 64
     lr: 1.0e-4
     run_tag: ""
@@ -78,7 +78,7 @@ experiments:
     num_classes: 2
     head: lstm
     datasets: [apples, shhs, mros]
-    contexts: [30s, 10m, 40m, 80m]
+    contexts: [30s, 10m, 40m, 80m, 120m]
     batch_size: 32
     lr: 1.0e-4
     run_tag: ""
@@ -92,7 +92,7 @@ experiments:
     num_classes: 2
     head: transformer
     datasets: [apples, shhs, mros]
-    contexts: [30s, 10m, 40m]
+    contexts: [30s, 10m, 40m, 80m, 120m]
     batch_size: 32
     lr: 1.0e-4
     run_tag: ""
@@ -106,8 +106,8 @@ experiments:
     num_classes: 2
     head: mean_pool
     datasets: [apples, shhs, mros]
-    contexts: [30s, 10m, 40m, 80m]
-    batch_size: 64
+    contexts: [30s, 10m, 40m, 80m, 120m]
+    batch_size: 128
     lr: 1.0e-4
     run_tag: ""
     n_size: large
@@ -120,8 +120,8 @@ experiments:
     task_type: seq2label
     num_classes: 2
     head: lstm
-    datasets: [apples, shhs, mros, stages]
-    contexts: [30s, 10m, 40m, 80m]
+    datasets: [apples, shhs, mros] # , stages
+    contexts: [30s, 10m, 40m, 80m, 120m]
     batch_size: 32
     lr: 1.0e-4
     run_tag: ""
@@ -134,8 +134,8 @@ experiments:
     task_type: seq2label
     num_classes: 2
     head: transformer
-    datasets: [apples, shhs, mros, stages]
-    contexts: [30s, 10m, 40m]
+    datasets: [apples, shhs, mros] # , stages
+    contexts: [30s, 10m, 40m, 80m, 120m]
     batch_size: 32
     lr: 1.0e-4
     run_tag: ""
@@ -148,9 +148,9 @@ experiments:
     task_type: seq2label
     num_classes: 2
     head: mean_pool
-    datasets: [apples, shhs, mros, stages]
-    contexts: [30s, 10m, 40m, 80m]
-    batch_size: 64
+    datasets: [apples, shhs, mros] # , stages
+    contexts: [30s, 10m, 40m, 80m, 120m]
+    batch_size: 128
     lr: 1.0e-4
     run_tag: ""
     n_size: large
@@ -163,8 +163,8 @@ experiments:
     task_type: seq2label
     num_classes: 3
     head: lstm
-    datasets: [apples, shhs, mros, stages]
-    contexts: [30s, 10m, 40m, 80m]
+    datasets: [apples, shhs, mros] # , stages
+    contexts: [30s, 10m, 40m, 80m, 120m]
     batch_size: 32
     lr: 1.0e-4
     run_tag: ""
@@ -177,8 +177,8 @@ experiments:
     task_type: seq2label
     num_classes: 3
     head: transformer
-    datasets: [apples, shhs, mros, stages]
-    contexts: [30s, 10m, 40m]
+    datasets: [apples, shhs, mros] # , stages
+    contexts: [30s, 10m, 40m, 80m, 120m]
     batch_size: 32
     lr: 1.0e-4
     run_tag: ""
@@ -191,9 +191,9 @@ experiments:
     task_type: seq2label
     num_classes: 3
     head: mean_pool
-    datasets: [apples, shhs, mros, stages]
-    contexts: [30s, 10m, 40m, 80m]
-    batch_size: 64
+    datasets: [apples, shhs, mros] # , stages
+    contexts: [30s, 10m, 40m, 80m, 120m]
+    batch_size: 128
     lr: 1.0e-4
     run_tag: ""
     n_size: large
@@ -210,7 +210,7 @@ experiments:
     num_classes: 2
     head: lstm
     datasets: [mros]
-    contexts: [30s, 10m, 40m, 80m]
+    contexts: [30s, 10m, 40m, 80m, 120m]
     batch_size: 32
     lr: 1.0e-4
     run_tag: ""
@@ -224,8 +224,8 @@ experiments:
     task_type: seq2label
     num_classes: 2
     head: lstm
-    datasets: [apples, stages]
-    contexts: [30s, 10m, 40m]   # skip 80m: small N per split
+    datasets: [apples] # , stages
+    contexts: [30s, 10m, 40m, 80m, 120m]   # skip 80m: small N per split
     batch_size: 32
     lr: 1.0e-4
     run_tag: ""
@@ -240,7 +240,7 @@ experiments:
     num_classes: 2
     head: lstm
     datasets: [apples]
-    contexts: [30s, 10m, 40m]   # skip 80m: single dataset, small N
+    contexts: [30s, 10m, 40m, 80m, 120m]   # skip 80m: single dataset, small N
     batch_size: 32
     lr: 1.0e-4
     run_tag: ""
@@ -255,7 +255,7 @@ experiments:
     num_classes: 4
     head: lstm
     datasets: [apples]
-    contexts: [30s, 10m, 40m]
+    contexts: [30s, 10m, 40m, 80m, 120m]
     batch_size: 32
     lr: 1.0e-4
     run_tag: ""
