@@ -14,12 +14,14 @@
 #   batch_size  — training batch size (inference uses 512)
 #   lr          — learning rate (default 1e-4)
 #   run_tag     — suffix appended to experiment folder; empty = no suffix
+#   n_size      — large (N>10k) | medium (N~3-5k) | small (N<2k); used for wall-time estimation
 #   tier        — 1 (run first) | 2 (run second) | deferred
 #   notes       — free-form notes
 
 config: configs/phase0_v2_config.yaml
 results_dir: /scratch/boshra95/psg/unified/results/phase0_v2
 inference_dir: /scratch/boshra95/psg/unified/results/phase0_v2/inference
+logs_dir: /home/boshra95/NSRR-tools/logs_v2
 
 # ── Tier 1: Large N, clinically broad ────────────────────────────────────────
 # Run all three heads to enable head comparison.
@@ -37,6 +39,7 @@ experiments:
     batch_size: 32
     lr: 1.0e-4
     run_tag: ""
+    n_size: large
     tier: 1
     notes: "Female=1, Male=0. MrOS excluded (all-male cohort, zero variance)."
 
@@ -50,6 +53,7 @@ experiments:
     batch_size: 32
     lr: 1.0e-4
     run_tag: ""
+    n_size: large
     tier: 1
     notes: "80m excluded due to transformer memory constraints."
 
@@ -63,6 +67,7 @@ experiments:
     batch_size: 64
     lr: 1.0e-4
     run_tag: ""
+    n_size: large
     tier: 1
     notes: "Baseline (no temporal modelling)."
 
@@ -77,6 +82,7 @@ experiments:
     batch_size: 32
     lr: 1.0e-4
     run_tag: ""
+    n_size: large
     tier: 1
     notes: "Sleep efficiency < 85% = 1. STAGES excluded (no eff. score available)."
 
@@ -90,6 +96,7 @@ experiments:
     batch_size: 32
     lr: 1.0e-4
     run_tag: ""
+    n_size: large
     tier: 1
     notes: ""
 
@@ -103,6 +110,7 @@ experiments:
     batch_size: 64
     lr: 1.0e-4
     run_tag: ""
+    n_size: large
     tier: 1
     notes: ""
 
@@ -117,6 +125,7 @@ experiments:
     batch_size: 32
     lr: 1.0e-4
     run_tag: ""
+    n_size: large
     tier: 1
     notes: "BMI >= 30 = obese (WHO definition). MrOS: visit-1 labels only."
 
@@ -130,6 +139,7 @@ experiments:
     batch_size: 32
     lr: 1.0e-4
     run_tag: ""
+    n_size: large
     tier: 1
     notes: ""
 
@@ -143,6 +153,7 @@ experiments:
     batch_size: 64
     lr: 1.0e-4
     run_tag: ""
+    n_size: large
     tier: 1
     notes: ""
 
@@ -157,6 +168,7 @@ experiments:
     batch_size: 32
     lr: 1.0e-4
     run_tag: ""
+    n_size: large
     tier: 1
     notes: "3-class: <50=0, 50-64=1, >=65=2. MrOS all class 2 (65+ cohort)."
 
@@ -170,6 +182,7 @@ experiments:
     batch_size: 32
     lr: 1.0e-4
     run_tag: ""
+    n_size: large
     tier: 1
     notes: ""
 
@@ -183,6 +196,7 @@ experiments:
     batch_size: 64
     lr: 1.0e-4
     run_tag: ""
+    n_size: large
     tier: 1
     notes: ""
 
@@ -200,6 +214,7 @@ experiments:
     batch_size: 32
     lr: 1.0e-4
     run_tag: ""
+    n_size: medium
     tier: 2
     notes: "PSQI > 5 = poor sleep quality. MrOS only. N=3933 across v1+v2."
 
@@ -214,6 +229,7 @@ experiments:
     batch_size: 32
     lr: 1.0e-4
     run_tag: ""
+    n_size: small
     tier: 2
     notes: "Extreme-group design: BDI<=9->0 or >=20->1 (APPLES); PHQ-9 <=4->0 or >=15->1 (STAGES). Middle group dropped."
 
@@ -228,6 +244,7 @@ experiments:
     batch_size: 32
     lr: 1.0e-4
     run_tag: ""
+    n_size: small
     tier: 2
     notes: "Binary OSA severity post-QC: Non-rand+Mild->0, Moderate+Severe->1. APPLES only."
 
@@ -242,6 +259,7 @@ experiments:
     batch_size: 32
     lr: 1.0e-4
     run_tag: ""
+    n_size: small
     tier: 2
     notes: "4-class OSA: 0=Non-rand, 1=Mild, 2=Moderate, 3=Severe. APPLES only."
 
@@ -260,6 +278,7 @@ experiments:
   #   batch_size: 32
   #   lr: 1.0e-4
   #   run_tag: ""
+  #   n_size: large
   #   tier: deferred
   #   notes: "Float target. MrOS: visit-1 only. SHHS: 67 censored ages (>89) excluded."
 
@@ -273,5 +292,6 @@ experiments:
   #   batch_size: 32
   #   lr: 1.0e-4
   #   run_tag: ""
+  #   n_size: large
   #   tier: deferred
   #   notes: "Float target. MrOS: visit-1 only."

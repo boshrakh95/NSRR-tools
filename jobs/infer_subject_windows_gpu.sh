@@ -59,7 +59,7 @@ python -c "import torch; assert torch.cuda.is_available(), 'CUDA not available o
 }
 
 # ── Job parameters ────────────────────────────────────────────────────────────
-CONFIG="configs/phase0_config.yaml"
+CONFIG=${CONFIG:-"configs/phase0_config.yaml"}
 TASK=${TASK:-""}
 TASK_TYPE=${TASK_TYPE:-"seq2label"}
 HEAD=${HEAD:-"lstm"}

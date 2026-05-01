@@ -59,7 +59,7 @@ export WANDB_DIR=/tmp/wandb_${SLURM_JOB_ID}   # node-local tmp, auto-cleaned
 mkdir -p "$WANDB_DIR"
 
 # ── Job parameters ────────────────────────────────────────────────────────────
-CONFIG="configs/phase0_config.yaml"
+CONFIG=${CONFIG:-"configs/phase0_config.yaml"}
 TASK=${TASK:-""}            # empty = use config default
 TASK_TYPE=${TASK_TYPE:-""}  # empty = use config default
 HEAD=${HEAD:-""}            # empty = use config default
