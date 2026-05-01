@@ -68,7 +68,7 @@ DATASETS=${DATASETS:-""}    # space-separated dataset names, e.g. "shhs mros"
 BATCH_SIZE=${BATCH_SIZE:-""}  # training batch size (default: 32); reduce for long contexts
 LR=${LR:-""}                  # learning rate override, e.g. LR=1e-4
 RUN_TAG=${RUN_TAG:-""}        # suffix for experiment folder, e.g. RUN_TAG=lr1e4
-WANDB_PROJECT=${WANDB_PROJECT:-"nsrr-phase0"}
+WANDB_PROJECT=${WANDB_PROJECT:-"nsrr-phase0-v2"}  # W&B project name (default: "nsrr-phase0-v2")
 NO_WANDB=${NO_WANDB:-""}
 
 echo "========================================================================"
