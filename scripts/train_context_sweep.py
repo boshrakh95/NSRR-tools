@@ -300,6 +300,18 @@ def train_one_context(
     print(f"Context: {context_length}")
     print(f"{'='*60}")
 
+    # ── Resume checkpoint detection ────────────────────────────────────────
+    out_dir.mkdir(parents=True, exist_ok=True)
+    resume_path           = out_dir / "resume.pt"
+    _resuming             = resume_path.exists()
+    _saved_wandb_id       = None
+    _accumulated_time_min = 0.0
+    if _resuming:
+        _rckpt = torch.load(resume_path, map_location="cpu")
+        _saved_wandb_id       = _rckpt.get("wandb_run_id")
+        _accumulated_time_min = _rckpt.get("accumulated_time_min", 0.0)
+        print(f"  [RESUME] Found checkpoint — continuing from epoch {_rckpt['epoch'] + 1}")
+
     # ── Datasets ──────────────────────────────────────────────────────────
     def make_ds(split):
         with warnings.catch_warnings():
@@ -326,28 +338,37 @@ def train_one_context(
     # ── W&B run ────────────────────────────────────────────────────────────
     wb_run = None
     if use_wandb and HAS_WANDB:
-        wb_run = wandb.init(
-            project=wandb_project,
-            entity=wandb_entity,
-            name=f"{exp_id}_{context_length}",
-            group=exp_id,
-            tags=[task, head_type, context_length, task_type],
-            config={
-                "task":           task,
-                "task_type":      task_type,
-                "head_type":      head_type,
-                "context_length": context_length,
-                "n_train":        len(train_ds),
-                "n_val":          len(val_ds),
-                "n_test":         len(test_ds),
-                **{k: v for k, v in cfg["training"].items()
-                   if not isinstance(v, (list, dict))},
-                **{k: v for k, v in cfg["model"].items()
-                   if not isinstance(v, (list, dict))},
-            },
-            dir=os.environ.get("WANDB_DIR", "/tmp"),
-            reinit=True,
-        )
+        if _resuming and _saved_wandb_id:
+            wb_run = wandb.init(
+                project=wandb_project,
+                entity=wandb_entity,
+                id=_saved_wandb_id,
+                resume="must",
+                dir=os.environ.get("WANDB_DIR", "/tmp"),
+            )
+        else:
+            wb_run = wandb.init(
+                project=wandb_project,
+                entity=wandb_entity,
+                name=f"{exp_id}_{context_length}",
+                group=exp_id,
+                tags=[task, head_type, context_length, task_type],
+                config={
+                    "task":           task,
+                    "task_type":      task_type,
+                    "head_type":      head_type,
+                    "context_length": context_length,
+                    "n_train":        len(train_ds),
+                    "n_val":          len(val_ds),
+                    "n_test":         len(test_ds),
+                    **{k: v for k, v in cfg["training"].items()
+                       if not isinstance(v, (list, dict))},
+                    **{k: v for k, v in cfg["model"].items()
+                       if not isinstance(v, (list, dict))},
+                },
+                dir=os.environ.get("WANDB_DIR", "/tmp"),
+                reinit=True,
+            )
 
     # ── Class weights (computed before DataLoaders so sampler can reuse) ───
     train_labels      = np.array([entry[2] for entry in train_ds._index])
@@ -429,17 +450,27 @@ def train_one_context(
     patience  = t_cfg.get("early_stopping_patience", 5)
     monitor   = t_cfg.get("early_stopping_monitor", "val_loss")
     monitor_higher_is_better = (monitor != "val_loss")
-    best_monitor = float("-inf") if monitor_higher_is_better else float("inf")
     monitor_label = monitor.replace("val_", "")   # e.g. "auroc", "balanced_accuracy"
 
-    no_improve = 0
-    history    = []
-
-    out_dir.mkdir(parents=True, exist_ok=True)
     ckpt_path = out_dir / "best_model.pt"
 
+    if _resuming:
+        model.load_state_dict(_rckpt["model_state_dict"])
+        optimizer.load_state_dict(_rckpt["optimizer_state_dict"])
+        scheduler.load_state_dict(_rckpt["scheduler_state_dict"])
+        best_monitor = _rckpt["best_monitor"]
+        no_improve   = _rckpt["no_improve"]
+        history      = _rckpt["history"]
+        start_epoch  = _rckpt["epoch"] + 1
+        del _rckpt
+    else:
+        best_monitor = float("-inf") if monitor_higher_is_better else float("inf")
+        no_improve   = 0
+        history      = []
+        start_epoch  = 1
+
     t0 = time.time()
-    for epoch in range(1, epochs + 1):
+    for epoch in range(start_epoch, epochs + 1):
         train_loss, train_logits, train_targets = run_epoch(
             model, train_loader, optimizer, criterion, device, scaler, train=True
         )
@@ -495,12 +526,28 @@ def train_one_context(
                 "lr":             optimizer.param_groups[0]["lr"],
             }, step=epoch)
 
+        torch.save({
+            "epoch":                epoch,
+            "model_state_dict":     model.state_dict(),
+            "optimizer_state_dict": optimizer.state_dict(),
+            "scheduler_state_dict": scheduler.state_dict(),
+            "best_monitor":         best_monitor,
+            "no_improve":           no_improve,
+            "history":              history,
+            "wandb_run_id":         wb_run.id if wb_run else None,
+            "accumulated_time_min": _accumulated_time_min + (time.time() - t0) / 60,
+        }, resume_path)
+
         if no_improve >= patience:
             print(f"  Early stop at epoch {epoch}.")
             break
 
     elapsed = time.time() - t0
-    print(f"  Training time: {elapsed/60:.1f} min")
+    total_train_min = _accumulated_time_min + elapsed / 60
+    if _resuming:
+        print(f"  Training time: {elapsed/60:.1f} min (this run) | {total_train_min:.1f} min total")
+    else:
+        print(f"  Training time: {elapsed/60:.1f} min")
 
     # ── Evaluation ─────────────────────────────────────────────────────────
     model.load_state_dict(torch.load(ckpt_path, map_location=device))
@@ -531,7 +578,7 @@ def train_one_context(
         "early_stopping_monitor": monitor,
         "best_val_monitor":       best_monitor,
         "n_epochs_run":      len(history),
-        "training_time_min": elapsed / 60,
+        "training_time_min": total_train_min,
         "train":             train_metrics,
         "val":               val_metrics,
         "test":              test_metrics,
@@ -539,6 +586,7 @@ def train_one_context(
 
     with open(out_dir / "metrics.json", "w") as f:
         json.dump(metrics, f, indent=2)
+    resume_path.unlink(missing_ok=True)
 
     print(f"  Train: {train_metrics}")
     print(f"  Val:   {val_metrics}")
@@ -548,7 +596,7 @@ def train_one_context(
         wb_run.summary.update({f"train/{k}": v for k, v in train_metrics.items()})
         wb_run.summary.update({f"val/{k}":   v for k, v in val_metrics.items()})
         wb_run.summary.update({f"test/{k}":  v for k, v in test_metrics.items()})
-        wb_run.summary["training_time_min"] = elapsed / 60
+        wb_run.summary["training_time_min"] = total_train_min
         wb_run.summary["n_epochs_run"]      = len(history)
         wb_run.finish()
 

@@ -6,14 +6,17 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32000M
 #SBATCH --exclude=fc11006
-#SBATCH --output=/home/boshra95/NSRR-tools/logs/infer_%x_%j.out
-#SBATCH --error=/home/boshra95/NSRR-tools/logs/infer_%x_%j.err
+#SBATCH --output=/home/boshra95/NSRR-tools/logs_v2/infer_%x_%j.out
+#SBATCH --error=/home/boshra95/NSRR-tools/logs_v2/infer_%x_%j.err
 
 # Phase 0 — Subject-level inference (all windows)
 #
 # Loads a trained checkpoint and runs inference on ALL non-overlapping windows
 # per subject (no K=5 cap).  Saves a parquet of per-window probabilities for
 # downstream majority-voting / mean-prob aggregation.
+#
+# Already-done contexts are skipped automatically (safe to resubmit / requeue).
+# If the job times out it will be requeued and resume from the first unfinished context.
 #
 # Usage examples:
 #   # Single context:
@@ -43,7 +46,8 @@
 set -e
 
 cd /home/boshra95/NSRR-tools
-mkdir -p logs
+mkdir -p logs_v2
+mkdir -p logs_v2/status
 
 # ── Environment ───────────────────────────────────────────────────────────────
 module load python/3.11 2>/dev/null || true
@@ -70,6 +74,28 @@ NO_ALL_WINDOWS=${NO_ALL_WINDOWS:-""}   # set to 1 to use K=5 (training eval mode
 BATCH_SIZE=${BATCH_SIZE:-512}
 RUN_TAG=${RUN_TAG:-""}                 # must match RUN_TAG used during training
 
+# ── Job run tracking ──────────────────────────────────────────────────────────
+_EXP_TAG="${TASK}_${HEAD}"
+[ -n "$RUN_TAG" ] && _EXP_TAG="${_EXP_TAG}_${RUN_TAG}"
+_STATUS_FILE="logs_v2/status/infer_${_EXP_TAG}_${SPLIT}.jsonl"
+
+_write_status() {
+    printf '{"ts":"%s","job_id":"%s","restart":%d,"node":"%s","status":"%s","task":"%s","head":"%s","contexts":"%s","split":"%s","datasets":"%s"}\n' \
+        "$(date -Iseconds)" "${SLURM_JOB_ID:-local}" "${SLURM_RESTART_COUNT:-0}" \
+        "${SLURM_NODELIST:-local}" "$1" \
+        "$TASK" "$HEAD" "${CONTEXTS:-all}" "$SPLIT" "${DATASETS:-all}" \
+        >> "$_STATUS_FILE"
+}
+
+# On SIGTERM (SLURM timeout with --requeue): mark as timed out, then exit
+trap '_write_status "TIMEOUT_REQUEUED"; exit 143' TERM
+
+if [ "${SLURM_RESTART_COUNT:-0}" -gt 0 ]; then
+    _write_status "REQUEUED"
+else
+    _write_status "STARTED"
+fi
+
 echo "========================================================================"
 echo "Phase 0 — Subject-level inference (all windows)"
 echo "========================================================================"
@@ -82,6 +108,7 @@ echo "Contexts:    ${CONTEXTS:-'(auto-discover)'}"
 echo "Split:       ${SPLIT}"
 echo "Datasets:    ${DATASETS:-'(all)'}"
 echo "All windows: ${NO_ALL_WINDOWS:-yes}$([ -n "$NO_ALL_WINDOWS" ] && echo 'no (K=5)')"
+echo "Restart:     ${SLURM_RESTART_COUNT:-0}"
 echo "Start:       $(date)"
 echo "========================================================================"
 echo ""
@@ -100,17 +127,20 @@ CMD="$CMD --batch-size $BATCH_SIZE"
 
 echo "Running: $CMD"
 echo ""
+set +e
 eval $CMD
-
 EXIT_CODE=$?
+set -e
 
 echo ""
 echo "========================================================================"
 echo "End time: $(date)"
 if [ $EXIT_CODE -eq 0 ]; then
     echo "Status: SUCCESS"
+    _write_status "SUCCESS"
 else
     echo "Status: FAILED (exit code: $EXIT_CODE)"
+    _write_status "FAILED"
 fi
 echo "========================================================================"
 

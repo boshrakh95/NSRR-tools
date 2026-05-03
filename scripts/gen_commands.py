@@ -19,6 +19,9 @@ Usage:
   python scripts/gen_commands.py status [<exp_id>]
       Show detailed file-level status for one or all experiments.
 
+  python scripts/gen_commands.py runs [<exp_id>]
+      Show job run history (from logs_v2/status/*.jsonl tracking files).
+
 Examples:
   python scripts/gen_commands.py list --tier 1
   python scripts/gen_commands.py train sex_binary_lstm
@@ -27,11 +30,15 @@ Examples:
   python scripts/gen_commands.py infer sex_binary_lstm --split val
   python scripts/gen_commands.py analyze sex_binary_lstm --plot
   python scripts/gen_commands.py status
+  python scripts/gen_commands.py runs
+  python scripts/gen_commands.py runs sex_binary_lstm
 """
 
 import argparse
+import json
 import re
 import sys
+from collections import defaultdict
 from pathlib import Path
 
 import yaml
@@ -177,6 +184,7 @@ def build_train_cmd(exp: dict, registry: dict, context: str) -> str:
     env_str = " ".join(env_vars)
 
     sbatch_opts = (
+        f"--requeue "
         f"--time={wall_time} "
         f"--output={logs_dir}/{stem}_%j.out "
         f"--error={logs_dir}/{stem}_%j.err"
@@ -207,6 +215,7 @@ def build_infer_cmd(exp: dict, registry: dict, split: str = "test") -> str:
     env_str = " ".join(env_vars)
 
     sbatch_opts = (
+        f"--requeue "
         f"--time={wall_time} "
         f"--output={logs_dir}/{stem}_%j.out "
         f"--error={logs_dir}/{stem}_%j.err"
@@ -318,6 +327,72 @@ def cmd_status(args, registry):
         print(f"  Analyzed:  {'yes' if ana else 'no'}")
 
 
+def cmd_runs(args, registry):
+    logs_dir = Path(registry.get("logs_dir", str(Path(__file__).parent.parent / "logs_v2")))
+    status_dir = logs_dir / "status"
+
+    if not status_dir.exists():
+        print("No status directory found yet (logs_v2/status/). No jobs tracked.")
+        return
+
+    target_id = getattr(args, "exp_id", None)
+    target_task_head = None
+    if target_id:
+        if target_id not in registry["experiments"]:
+            print(f"ERROR: '{target_id}' not in registry.", file=sys.stderr)
+            sys.exit(1)
+        exp = registry["experiments"][target_id]
+        target_task_head = f"{exp['task']}_{exp['head']}"
+        tag = exp.get("run_tag", "")
+        if tag:
+            target_task_head += f"_{tag}"
+
+    files = sorted(status_dir.glob("*.jsonl"))
+    if not files:
+        print("No job history found in logs_v2/status/.")
+        return
+
+    shown = 0
+    for jsonl_path in files:
+        stem = jsonl_path.stem  # e.g. train_sex_binary_lstm_30s_lr1e-4
+
+        if target_task_head and target_task_head not in stem:
+            continue
+
+        records = []
+        with open(jsonl_path) as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    try:
+                        records.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        pass
+
+        if not records:
+            continue
+
+        shown += 1
+        latest = records[-1]
+        n_attempts = sum(1 for r in records if r["status"] in ("STARTED", "REQUEUED"))
+
+        print(f"\n{'─'*72}")
+        print(f"  {stem}")
+        print(f"  Latest status : {latest['status']}")
+        print(f"  Attempts      : {n_attempts}  |  Events: {len(records)}")
+        print(f"  Latest job    : {latest['job_id']}  node={latest.get('node', '?')}  ts={latest['ts']}")
+        if args.verbose or len(records) > 1:
+            print(f"  History:")
+            for r in records:
+                print(f"    [{r['ts']}] status={r['status']:<20} job={r.get('job_id','?')}  node={r.get('node','?')}")
+
+    if shown == 0:
+        if target_id:
+            print(f"No tracking records found for '{target_id}'.")
+        else:
+            print("No tracking records found.")
+
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 def main():
@@ -350,6 +425,12 @@ def main():
     p_status.add_argument("exp_id", nargs="?", default=None,
                           help="Specific experiment ID (default: all)")
 
+    p_runs = sub.add_parser("runs", help="Show job run history from tracking files")
+    p_runs.add_argument("exp_id", nargs="?", default=None,
+                        help="Filter by experiment ID (default: all)")
+    p_runs.add_argument("-v", "--verbose", action="store_true",
+                        help="Always show full history even for single-attempt jobs")
+
     args = parser.parse_args()
     registry = load_registry()
 
@@ -359,6 +440,7 @@ def main():
         "infer":   cmd_infer,
         "analyze": cmd_analyze,
         "status":  cmd_status,
+        "runs":    cmd_runs,
     }
 
     if args.command not in dispatch:

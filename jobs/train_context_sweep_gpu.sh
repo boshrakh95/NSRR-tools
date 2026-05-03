@@ -14,6 +14,8 @@
 # Trains one (task, head_type) combination across all context lengths.
 # Each context length takes ~10-30 min; 7 lengths × up to 30 epochs = ~2-4h.
 # Already-finished context lengths are skipped automatically (safe to resubmit).
+# If a job times out it will be requeued automatically (--requeue in sbatch call)
+# and training will resume from the last saved epoch checkpoint.
 #
 # Usage examples:
 #   sbatch --export=ALL,TASK=apnea_binary,HEAD=lstm        jobs/train_context_sweep_gpu.sh
@@ -37,6 +39,7 @@ set -e
 
 cd /home/boshra95/NSRR-tools
 mkdir -p logs
+mkdir -p logs_v2/status
 
 # ── Environment ───────────────────────────────────────────────────────────────
 module load python/3.11 2>/dev/null || true
@@ -71,6 +74,28 @@ RUN_TAG=${RUN_TAG:-""}        # suffix for experiment folder, e.g. RUN_TAG=lr1e4
 WANDB_PROJECT=${WANDB_PROJECT:-"nsrr-phase0-v2"}  # W&B project name (default: "nsrr-phase0-v2")
 NO_WANDB=${NO_WANDB:-""}
 
+# ── Job run tracking ──────────────────────────────────────────────────────────
+_EXP_TAG="${TASK}_${HEAD}"
+[ -n "$RUN_TAG" ] && _EXP_TAG="${_EXP_TAG}_${RUN_TAG}"
+_STATUS_FILE="logs_v2/status/train_${_EXP_TAG}_${CONTEXT:-nocontext}_lr${LR:-default}.jsonl"
+
+_write_status() {
+    printf '{"ts":"%s","job_id":"%s","restart":%d,"node":"%s","status":"%s","task":"%s","head":"%s","context":"%s","lr":"%s","datasets":"%s"}\n' \
+        "$(date -Iseconds)" "${SLURM_JOB_ID:-local}" "${SLURM_RESTART_COUNT:-0}" \
+        "${SLURM_NODELIST:-local}" "$1" \
+        "$TASK" "$HEAD" "${CONTEXT:-?}" "${LR:-default}" "${DATASETS:-all}" \
+        >> "$_STATUS_FILE"
+}
+
+# On SIGTERM (SLURM timeout with --requeue): mark as timed out, then exit
+trap '_write_status "TIMEOUT_REQUEUED"; exit 143' TERM
+
+if [ "${SLURM_RESTART_COUNT:-0}" -gt 0 ]; then
+    _write_status "REQUEUED"
+else
+    _write_status "STARTED"
+fi
+
 echo "========================================================================"
 echo "Phase 0 Step 4 — Context-Length Sweep"
 echo "========================================================================"
@@ -80,6 +105,7 @@ echo "GPU:       $(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null
 echo "Task:      ${TASK:-'(from config)'}  type=${TASK_TYPE:-'(from config)'}"
 echo "Head:      ${HEAD:-'(from config)'}"
 echo "Datasets:  ${DATASETS:-'(all)'}"
+echo "Restart:   ${SLURM_RESTART_COUNT:-0}"
 echo "W&B:       ${NO_WANDB:+disabled}${NO_WANDB:-project=$WANDB_PROJECT}"
 echo "Start:     $(date)"
 echo "========================================================================"
@@ -100,17 +126,20 @@ CMD="python scripts/train_context_sweep.py --config $CONFIG"
 
 echo "Running: $CMD"
 echo ""
+set +e
 eval $CMD
-
 EXIT_CODE=$?
+set -e
 
 echo ""
 echo "========================================================================"
 echo "End time: $(date)"
 if [ $EXIT_CODE -eq 0 ]; then
     echo "Status: SUCCESS"
+    _write_status "SUCCESS"
 else
     echo "Status: FAILED (exit code: $EXIT_CODE)"
+    _write_status "FAILED"
 fi
 echo "========================================================================"
 
