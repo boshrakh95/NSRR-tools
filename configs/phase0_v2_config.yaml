@@ -123,7 +123,8 @@ training:
   #   "token_budget" — set K = max(1, floor(token_budget_minutes / ctx_minutes))
   #                    so total tokens per subject ≈ constant across context lengths
   windows_strategy: "fixed"
-  token_budget_minutes: 80
+  token_budget_minutes: 240  # target minutes of the night seen per subject per epoch; set to longest context so all models train on equal coverage
+  k_max: 50                  # hard cap on K to keep short-context (e.g. 30s) training tractable; without this, 30s would need K=480 epochs (~96x slower)
 
 # ── Logging & Output ─────────────────────────────────────────────────────────
 logging:

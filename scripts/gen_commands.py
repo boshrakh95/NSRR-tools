@@ -166,11 +166,12 @@ def exp_status(exp: dict, registry: dict) -> str:
 
 # ── Command builders ──────────────────────────────────────────────────────────
 
-def build_train_cmd(exp: dict, registry: dict, context: str) -> str:
+def build_train_cmd(exp: dict, registry: dict, context: str,
+                    override_time: str = None) -> str:
     cfg = registry["config"]
     logs_dir = registry.get("logs_dir", str(Path(__file__).parent.parent / "logs"))
     n_size = exp.get("n_size", "large")
-    wall_time = estimate_train_time(n_size, exp["head"], context)
+    wall_time = override_time if override_time else estimate_train_time(n_size, exp["head"], context)
     stem = _log_stem(exp, "train", context)
 
     env_vars = [
@@ -196,13 +197,14 @@ def build_train_cmd(exp: dict, registry: dict, context: str) -> str:
     return f"{env_str} sbatch {sbatch_opts} {JOBS_DIR}/train_context_sweep_gpu.sh"
 
 
-def build_infer_cmd(exp: dict, registry: dict, split: str = "test") -> str:
+def build_infer_cmd(exp: dict, registry: dict, split: str = "test",
+                    override_time: str = None) -> str:
     cfg = registry["config"]
     logs_dir = registry.get("logs_dir", str(Path(__file__).parent.parent / "logs"))
     n_size = exp.get("n_size", "large")
     contexts_trained = trained_contexts(exp, registry)
     ctx_list = contexts_trained if contexts_trained else exp["contexts"]
-    wall_time = estimate_infer_time(n_size, exp["head"], ctx_list)
+    wall_time = override_time if override_time else estimate_infer_time(n_size, exp["head"], ctx_list)
     stem = _log_stem(exp, "infer")
 
     env_vars = [
@@ -279,7 +281,8 @@ def cmd_train(args, registry):
         trained = ctx in trained_contexts(exp, registry)
         wall = estimate_train_time(n_size, exp["head"], ctx)
         status_tag = "  # already trained" if trained else f"  # est. {wall}"
-        print(build_train_cmd(exp, registry, ctx) + status_tag)
+        print(build_train_cmd(exp, registry, ctx,
+                              override_time=getattr(args, "override_time", None)) + status_tag)
 
 
 def cmd_infer(args, registry):
@@ -299,7 +302,8 @@ def cmd_infer(args, registry):
     print(f"# Trained contexts: {tr or 'none found — check results dir'}")
     print(f"# Est. wall time: {wall}  Logs → {registry.get('logs_dir', 'logs/')}")
     print()
-    print(build_infer_cmd(exp, registry, split))
+    print(build_infer_cmd(exp, registry, split,
+                          override_time=getattr(args, "override_time", None)))
 
 
 def cmd_analyze(args, registry):
@@ -416,10 +420,14 @@ def main():
     p_train.add_argument("exp_id", help="Experiment ID from registry")
     p_train.add_argument("--context", nargs="+", default=None,
                          help="Specific context(s) to train (default: all in registry)")
+    p_train.add_argument("--time", default=None, dest="override_time",
+                         help="Override wall-time for all generated commands, e.g. --time 02:00:00")
 
     p_infer = sub.add_parser("infer", help="Print inference sbatch command")
     p_infer.add_argument("exp_id", help="Experiment ID from registry")
     p_infer.add_argument("--split", default="test", choices=["train", "val", "test"])
+    p_infer.add_argument("--time", default=None, dest="override_time",
+                         help="Override estimated wall-time, e.g. --time 01:30:00")
 
     p_analyze = sub.add_parser("analyze", help="Print window analysis command")
     p_analyze.add_argument("exp_id", help="Experiment ID from registry")

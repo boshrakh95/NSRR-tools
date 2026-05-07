@@ -1,0 +1,2 @@
+{"ts":"2026-05-07T11:04:43-07:00","job_id":"39034156","restart":0,"node":"fc11008","status":"STARTED","task":"sex_binary","head":"lstm","context":"240m","lr":"0.0001","datasets":"apples shhs"}
+{"ts":"2026-05-07T11:54:27-07:00","job_id":"39034156","restart":0,"node":"fc11008","status":"SUCCESS","task":"sex_binary","head":"lstm","context":"240m","lr":"0.0001","datasets":"apples shhs"}
