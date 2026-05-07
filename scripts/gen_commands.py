@@ -50,28 +50,32 @@ JOBS_DIR = Path(__file__).parent.parent / "jobs"
 # Conservative estimates with ~50-100% margin over observed runtimes.
 # (n_size, head) → {context: hours}
 
+# Calibrated from sex_binary_lstm (large, N~13k, K=5, batch=32) observed on H100:
+#   30s=31min/18ep, 10m=46min/17ep, 40m=80min/24ep, 80m=111min/22ep, 120m=185min/25ep
+# Estimates = max_epochs(30) × per_epoch × 1.5 safety, rounded to nearest 0.5h.
+# Checkpoint resume means underestimates just cause one requeue — no data loss.
 _TRAIN_HOURS = {
-    ("large",  "lstm"):        {"30s": 4,  "10m": 6,  "40m": 10, "80m": 16, "120m": 22, "240m": 30, "full_night": 12},
-    ("large",  "transformer"): {"30s": 5,  "10m": 8,  "40m": 12, "80m": 20, "120m": 24, "240m": 24, "full_night": 24},
-    ("large",  "mean_pool"):   {"30s": 2,  "10m": 2,  "40m": 2,  "80m": 2,  "120m": 2,  "240m": 2,  "full_night": 2 },
-    ("medium", "lstm"):        {"30s": 2,  "10m": 4,  "40m": 6,  "80m": 10, "120m": 14, "240m": 18, "full_night": 6 },
-    ("medium", "transformer"): {"30s": 2,  "10m": 4,  "40m": 6,  "80m": 10, "120m": 14, "240m": 18, "full_night": 24},
-    ("medium", "mean_pool"):   {"30s": 1,  "10m": 1,  "40m": 1,  "80m": 1,  "120m": 1,  "240m": 1,  "full_night": 1 },
-    ("small",  "lstm"):        {"30s": 2,  "10m": 2,  "40m": 2,  "80m": 3,  "120m": 4,  "240m": 5,  "full_night": 3 },
-    ("small",  "transformer"): {"30s": 2,  "10m": 2,  "40m": 2,  "80m": 3,  "120m": 4,  "240m": 5,  "full_night": 24},
-    ("small",  "mean_pool"):   {"30s": 1,  "10m": 1,  "40m": 1,  "80m": 1,  "120m": 1,  "240m": 1,  "full_night": 1 },
+    ("large",  "lstm"):        {"30s": 2,   "10m": 3,   "40m": 3,   "80m": 4,   "120m": 6,   "240m": 12,  "full_night": 8 },
+    ("large",  "transformer"): {"30s": 2,   "10m": 3,   "40m": 4,   "80m": 8,   "120m": 12,  "240m": 24,  "full_night": 24},
+    ("large",  "mean_pool"):   {"30s": 1,   "10m": 1,   "40m": 1,   "80m": 1,   "120m": 1,   "240m": 2,   "full_night": 2 },
+    ("medium", "lstm"):        {"30s": 1,   "10m": 2,   "40m": 2,   "80m": 3,   "120m": 4,   "240m": 8,   "full_night": 4 },
+    ("medium", "transformer"): {"30s": 1,   "10m": 2,   "40m": 3,   "80m": 6,   "120m": 8,   "240m": 16,  "full_night": 24},
+    ("medium", "mean_pool"):   {"30s": 1,   "10m": 1,   "40m": 1,   "80m": 1,   "120m": 1,   "240m": 1,   "full_night": 1 },
+    ("small",  "lstm"):        {"30s": 1,   "10m": 1,   "40m": 1,   "80m": 2,   "120m": 2,   "240m": 4,   "full_night": 2 },
+    ("small",  "transformer"): {"30s": 1,   "10m": 1,   "40m": 2,   "80m": 3,   "120m": 4,   "240m": 8,   "full_night": 24},
+    ("small",  "mean_pool"):   {"30s": 1,   "10m": 1,   "40m": 1,   "80m": 1,   "120m": 1,   "240m": 1,   "full_night": 1 },
 }
 
 # Per-context inference hours (one job runs all contexts sequentially)
 _INFER_HOURS_PER_CTX = {
-    ("large",  "lstm"):        {"30s": 1.0, "10m": 1.5, "40m": 2.5, "80m": 4.0, "120m": 5.5, "240m": 7.0, "full_night": 3.0},
-    ("large",  "transformer"): {"30s": 1.0, "10m": 1.5, "40m": 2.5, "80m": 4.0, "120m": 5.5, "240m": 7.0, "full_night": 3.0},
+    ("large",  "lstm"):        {"30s": 0.5, "10m": 0.5, "40m": 1.0, "80m": 1.5, "120m": 2.0, "240m": 3.5, "full_night": 2.0},
+    ("large",  "transformer"): {"30s": 0.5, "10m": 0.5, "40m": 1.0, "80m": 1.5, "120m": 2.0, "240m": 3.5, "full_night": 2.0},
     ("large",  "mean_pool"):   {"30s": 0.5, "10m": 0.5, "40m": 0.5, "80m": 0.5, "120m": 0.5, "240m": 0.5, "full_night": 0.5},
-    ("medium", "lstm"):        {"30s": 0.5, "10m": 1.0, "40m": 1.5, "80m": 2.0, "120m": 3.0, "240m": 4.0, "full_night": 1.5},
-    ("medium", "transformer"): {"30s": 0.5, "10m": 1.0, "40m": 1.5, "80m": 2.0, "120m": 3.0, "240m": 4.0, "full_night": 1.5},
+    ("medium", "lstm"):        {"30s": 0.5, "10m": 0.5, "40m": 0.5, "80m": 1.0, "120m": 1.5, "240m": 2.5, "full_night": 1.0},
+    ("medium", "transformer"): {"30s": 0.5, "10m": 0.5, "40m": 0.5, "80m": 1.0, "120m": 1.5, "240m": 2.5, "full_night": 1.0},
     ("medium", "mean_pool"):   {"30s": 0.5, "10m": 0.5, "40m": 0.5, "80m": 0.5, "120m": 0.5, "240m": 0.5, "full_night": 0.5},
-    ("small",  "lstm"):        {"30s": 0.5, "10m": 0.5, "40m": 0.5, "80m": 0.5, "120m": 1.0, "240m": 1.5, "full_night": 1.0},
-    ("small",  "transformer"): {"30s": 0.5, "10m": 0.5, "40m": 0.5, "80m": 0.5, "120m": 1.0, "240m": 1.5, "full_night": 1.0},
+    ("small",  "lstm"):        {"30s": 0.5, "10m": 0.5, "40m": 0.5, "80m": 0.5, "120m": 0.5, "240m": 1.0, "full_night": 0.5},
+    ("small",  "transformer"): {"30s": 0.5, "10m": 0.5, "40m": 0.5, "80m": 0.5, "120m": 0.5, "240m": 1.0, "full_night": 0.5},
     ("small",  "mean_pool"):   {"30s": 0.5, "10m": 0.5, "40m": 0.5, "80m": 0.5, "120m": 0.5, "240m": 0.5, "full_night": 0.5},
 }
 

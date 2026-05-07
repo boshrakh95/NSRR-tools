@@ -437,13 +437,13 @@ Wall-time estimates on H100 (10 GB slice). The generator uses these to set `--ti
 
 | n_size | Head | 30s | 10m | 40m | 80m | 120m | 240m |
 |--------|------|-----|-----|-----|-----|------|------|
-| large (N>10k) | lstm | 4h | 6h | 10h | 16h | 22h | 30h |
-| large | transformer | 5h | 8h | 12h | 20h | 24h | 24h |
-| large | mean_pool | 2h | 2h | 2h | 2h | 2h | 2h |
-| medium (N~3-5k) | lstm | 2h | 4h | 6h | 10h | 14h | 18h |
-| small (N<2k) | lstm | 2h | 2h | 2h | 3h | 4h | 5h |
+| large (N>10k) | lstm | 2h | 3h | 3h | 4h | 6h | 12h |
+| large | transformer | 2h | 3h | 4h | 8h | 12h | 24h |
+| large | mean_pool | 1h | 1h | 1h | 1h | 1h | 2h |
+| medium (N~3-5k) | lstm | 1h | 2h | 2h | 3h | 4h | 8h |
+| small (N<2k) | lstm | 1h | 1h | 1h | 2h | 2h | 4h |
 
-These include ~50-100% safety margin over observed runtimes. If a job times out, it auto-requeues and resumes from the last saved epoch — you don't need to increase the time limit just to guarantee completion.
+Calibrated from observed sex_binary_lstm runs on H100 (large, K=5, batch=32): 30s=31min, 10m=46min, 40m=80min, 80m=111min, 120m=185min. Estimates include ~50% safety margin over 30 epochs worst case. Checkpoint resume means a timeout just causes one requeue — no data loss.
 
 ### Inference (one job runs all contexts)
 
