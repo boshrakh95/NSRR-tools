@@ -230,3 +230,227 @@ Before adding new context lengths (which costs significant GPU time), align on:
 3. **Is training K an ablation or the main method?** The token-budget approach is more principled but adds training cost. If the supervisor agrees K=5 is a reasonable design choice (comparable to what's done in the EHR/ECG literature), skip the ablation and note the limitation.
 
 4. **Seq2seq (sleep staging):** Is this in scope for this paper, or a separate paper? It has different analysis (no aggregation; purely context saturation) and may dilute the message if combined.
+
+---
+
+## 11. Mock Plots vs. Current Pipeline: Gap Analysis
+
+This section documents the comparison between the mock visualizations in `mock-compute-optimal-tradeoffs-plots-main/` (PLOTS.md, plot_binary.py, plot_heatmap.py) and the current experiment design and code. It records what needs to change before results can feed directly into those plots.
+
+### 11.1 Where mock plots and current design agree
+
+The conceptual framing is fully consistent:
+- The heatmap axes (context length on Y, K on X, metric as color) match Section 2 of this document exactly.
+- Iso-compute lines defined as `K × L_minutes = constant` — same definition used here.
+- "Pareto front" plot (Plot 4) maps to H2 of Section 4: which (L, K) config is optimal at each total budget?
+- "Min-cost frontier" (Plot 5) maps to H3: what is the minimum compute to reach a target performance?
+- "Double tradeoff" (Plot 7) — "should you double K or double context?" — is the most direct operationalization of H2.
+- `total_compute_min = context_length_min × k` is the right definition of total signal consumed per patient at inference.
+
+### 11.2 Context lengths: mock uses 9, current plan uses 5
+
+The mock scripts use: `[0.5, 5, 10, 20, 40, 80, 120, 180, 240]` minutes (= "30s, 5m, 10m, 20m, 40m, 80m, 120m, 180m, 240m").
+
+The current registry has: `[30s, 10m, 40m, 80m, 120m]`.
+
+Missing from current plan:
+- **5m** (or 2m): fills the steep-ascent regime between 30s and 10m — likely where most tasks improve fastest
+- **20m**: fills the 10m→40m gap
+- **180m or 240m**: fills the gap before full_night and anchors the long end
+
+Without these, the heatmap has only 5 rows and large uninformative gaps. The Pareto front and "double tradeoff" plots will have coarse transitions between context length regimes. For a paper figure, 5 rows is marginal; 8–9 rows is much more convincing. **Action:** add at minimum `5m` and `240m` to Tier 1 experiment contexts.
+
+### 11.3 K sweep density: current pipeline has 6 discrete values, plots need ~20+
+
+Current `analyze_windows.py` default: `K_VALUES = [1, 5, 10, 20, 50, "all"]` — only 6 points per context row.
+
+Mock plots sweep K continuously up to `floor(budget / L)`, using approximately these values:
+```
+[1, 2, 3, 4, 5, 6, 8, 10, 12, 16, 20, 24, 32, 40, 48, 60, 80, 96, 120, 160, 192, 240, 320, 384, 480, 640, 768, 960]
+```
+
+With only 6 points per row, the heatmap cells will be very coarse, the Pareto front will have jagged transitions, and the marginal-gain and min-cost curves will be nearly unusable.
+
+**What to change in `analyze_windows.py`:** Add a `--k-dense` flag that sweeps a much larger set of K values. A practical set for real data (where K is naturally capped by available windows):
+```
+[1, 2, 3, 4, 5, 6, 8, 10, 12, 16, 20, 25, 30, 40, 50, 60, 80, 100, 120, 160, 200, 250, 320, 400, 500, "all"]
+```
+In practice, most subjects at 80m or 120m have fewer than 10 windows, so large K values will simply be skipped ("K > max available — skipping") — no wasted compute. The flag adds negligible runtime since the parquet is already loaded.
+
+The default (sparse) K list stays for the quick per-context markdown table. The dense list is used only when building the heatmap DataFrame.
+
+### 11.4 Output format mismatch: column names
+
+The mock plot functions expect a single flat DataFrame with columns:
+
+| Expected column | Current `analyze_windows.py` output | Fix |
+|---|---|---|
+| `context_length_min` | not present | compute from `context_length` string |
+| `context_label` | `context_length` (string, e.g. "10m") | rename |
+| `k` | `k` (int or "all") | replace "all" with numeric max |
+| `accuracy` / `auroc` / `f1` | `mean_prob_auroc`, `seg_auroc`, etc. | choose aggregation method, rename |
+| `total_compute_min` | not present | `context_length_min × k` |
+
+The current pipeline also outputs one CSV per experiment split (`window_analysis_test.csv`) that **does include all context lengths** as rows, just with different column names. So the data structure is right; only the column names and a few derived columns are missing.
+
+**What to build:** A new script `scripts/build_heatmap_df.py` that:
+1. Reads `window_analysis_test.csv` for a given (task, head) — or re-runs the K sweep from parquets with the dense K list
+2. Renames/derives the required columns (convert "10m"→10.0 for `context_length_min`, select `mean_prob_auroc` as the primary metric column named `auroc`, compute `total_compute_min`)
+3. Saves a single combined DataFrame: `heatmap_df_{task}_{head}.csv` ready for the plot functions
+
+**String-to-minutes conversion function needed:**
+```python
+def ctx_to_minutes(s: str) -> float:
+    if s.endswith("s"):  return float(s[:-1]) / 60
+    if s.endswith("m"):  return float(s[:-1])
+    if s.endswith("h"):  return float(s[:-1]) * 60
+    if s == "full_night": return 480.0  # approximate
+    raise ValueError(f"Unknown context format: {s}")
+```
+
+### 11.5 Budget parameter: mock uses 16h, real data needs ~8h
+
+The mock uses `budget_min = 960` (16 hours). Real PSG studies are ~7–8 hours. This matters for:
+- Which cells are NaN in the heatmap (cells where `K × L > budget`)
+- The x-axis range of the Pareto front and min-cost plots
+- The upper end of the marginal-gain plot
+
+**Recommended `budget_min` for real data:** Use the 90th percentile of actual recording lengths across your datasets, in minutes. Approximately 480 minutes (8 hours) for APPLES/SHHS/MrOS. This should be configurable in `build_heatmap_df.py` and the plot scripts.
+
+For K caps in practice: a 30s model from an 8h study has at most ~960 windows; a 120m model has at most ~4. The heatmap will automatically show NaN (grey) for cells that exceed actual available data.
+
+### 11.6 Additional plots that require pipeline additions
+
+Beyond the 7 core plots in PLOTS.md, the mock `plot_binary.py` includes three additional plots:
+
+**Plot A — ROC curves at iso-compute budgets:**
+Requires: for each (iso-budget, L) pair, select K=floor(iso/L) windows per subject, take their `prob_class1` scores, and compute a ROC curve. 
+Doable from existing parquets (they contain `prob_class0`, `prob_class1` per window). Needs a new script section, not a pipeline change.
+
+**Plot B — Recall at fixed precision:**
+Requires sweeping the voting threshold (predict positive only if ≥t votes out of K, for t=1,...,K). This goes beyond the standard majority-vote (threshold = K/2). 
+Doable from existing parquets but requires a loop over threshold values within `evaluate_at_k()`. Can be added as a post-processing step without rerunning training or inference.
+
+**Plot C — Which metric picks which optimal context:**
+Requires running the Pareto-front analysis for each metric separately. 
+Doable once the combined heatmap DataFrame is ready — no pipeline changes.
+
+**Priority:** Plots A, B, C are supplementary. Build the 7 core plots first.
+
+### 11.7 `analyze_windows.py` output to check/update
+
+Current output columns that are correctly named and can be used as-is:
+- `k`, `n_subjects`, `n_segments` ✓
+- `mean_prob_auroc`, `mean_prob_balanced_accuracy`, `mean_prob_macro_f1` → rename to `auroc`, `balanced_accuracy`, `f1` in the heatmap DataFrame
+- `majority_auroc`, `majority_balanced_accuracy` → include as alternative aggregation columns
+- `seg_auroc` → include for the "segment-level" baseline
+
+Current output not yet present:
+- `context_length_min` (float) — derive from `context_length` string
+- `total_compute_min` — compute as `context_length_min × k`
+- Dense K values — add `--k-dense` flag
+
+### 11.8 Summary: what to build before running the actual plots
+
+| Item | Priority | Requires retraining? | Notes |
+|------|----------|---------------------|-------|
+| Add 5m and 240m context lengths to registry | High | **Yes** | 2 new training jobs per (task, head) |
+| Add `--k-dense` flag to `analyze_windows.py` | High | No | ~20 K values, 1–2h CPU |
+| Write `build_heatmap_df.py` | High | No | Reads existing CSVs, renames columns |
+| Write `plot_context_heatmap.py` | High | No | Adapts mock functions to real data |
+| ROC at iso-compute (Plot A) | Medium | No | Reads parquet directly |
+| Recall at fixed precision (Plot B) | Low | No | Adds threshold loop to evaluate_at_k |
+| Metric comparison (Plot C) | Low | No | Derived from heatmap DataFrame |
+
+---
+
+## 12. Implementing Configurable Training K Strategy
+
+This section describes how to add a `windows_strategy` config option to support both the current fixed-K approach and the token-budget approach, without changing any code now. Implement this when ready to run the ablation.
+
+### 12.1 What to add to the config file
+
+In `configs/phase0_v2_config.yaml`, under the `training:` section, add:
+
+```yaml
+training:
+  # ... existing fields (lr, epochs, etc.) ...
+
+  # How many windows to sample per subject per training epoch.
+  # "fixed": always K = windows_per_subject (current behavior)
+  # "token_budget": K = floor(token_budget_minutes / context_length_minutes), min 1
+  #   This keeps total signal seen per subject constant across context lengths.
+  windows_strategy: "fixed"        # "fixed" | "token_budget"
+  token_budget_minutes: 80         # used only when windows_strategy = token_budget
+  # windows_per_subject: 5         # used only when windows_strategy = fixed (already in dataset section)
+```
+
+### 12.2 What to change in `train_context_sweep.py`
+
+In `train_one_context()`, right before the `make_ds()` call, insert:
+
+```python
+# ── Training K strategy ────────────────────────────────────────────────────
+windows_strategy = t_cfg.get("windows_strategy", "fixed")
+if windows_strategy == "token_budget":
+    budget_min_ctx = float(t_cfg.get("token_budget_minutes", 80))
+    # parse_context_length returns number of 30s steps; × 0.5 converts to minutes
+    ctx_minutes = parse_context_length(context_length) * 0.5
+    if not is_full_night:
+        k_train = max(1, int(budget_min_ctx / ctx_minutes))
+        cfg["dataset"]["windows_per_subject"] = k_train
+        print(f"  Token budget: {budget_min_ctx:.0f}min / {ctx_minutes:.1f}min = K_train={k_train}")
+    # full_night: always K=1 (one window per subject = one full recording)
+```
+
+This change is isolated — it only affects training-time data loading, not inference or analysis.
+
+### 12.3 How to run the ablation
+
+Use `run_tag` in the registry so results go to separate folders and don't overwrite the K=5 baseline:
+
+```yaml
+# In v2_registry.yaml, add these two entries (example for sex_binary_lstm):
+
+sex_binary_lstm_kbudget:
+  task: sex_binary
+  task_type: seq2label
+  head: lstm
+  datasets: [apples, shhs]
+  contexts: [30s, 5m, 10m, 40m, 80m, 120m]
+  batch_size: 32
+  lr: 1.0e-4
+  run_tag: "kbudget"
+  n_size: large
+  tier: 3           # run after Tier 1 and 2
+
+# windows_strategy and token_budget_minutes go in the config yaml, not per experiment.
+# Create a separate config file for this ablation:
+# configs/phase0_v2_kbudget_config.yaml — identical to v2_config but with:
+#   training.windows_strategy: "token_budget"
+#   training.token_budget_minutes: 80
+# Then add CONFIG=configs/phase0_v2_kbudget_config.yaml to the gen_commands call.
+```
+
+Token budget of 80 minutes gives these training K values across context lengths:
+
+| Context | Length (min) | K_train (token budget, 80m) | K_train (current fixed) |
+|---------|-------------|----------------------------|------------------------|
+| 30s | 0.5 | 160 | 5 |
+| 5m | 5 | 16 | 5 |
+| 10m | 10 | 8 | 5 |
+| 40m | 40 | 2 | 5 |
+| 80m | 80 | 1 | 5 |
+| 120m | 120 | 1 | 5 |
+
+Note: at 80m and 120m, both strategies give effectively K=1 or K≈1, so they will agree. The biggest difference is at short contexts (30s), where the token-budget model sees 32× more windows per epoch.
+
+### 12.4 What the ablation tells you
+
+If the K=5 heatmap and the K=token-budget heatmap have the same shape (even if absolute values differ slightly):
+→ K=5 is robust; use it as the main method and note it in the paper.
+
+If the shapes diverge (e.g., token-budget shows stronger advantage for short-context models):
+→ The training regime confounds the comparison; use token-budget as the main method and report K=5 as a sensitivity check.
+
+Either result is informative and publishable.
