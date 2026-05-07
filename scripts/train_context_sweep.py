@@ -312,6 +312,17 @@ def train_one_context(
         _accumulated_time_min = _rckpt.get("accumulated_time_min", 0.0)
         print(f"  [RESUME] Found checkpoint — continuing from epoch {_rckpt['epoch'] + 1}")
 
+    # ── Training-K strategy ────────────────────────────────────────────────
+    windows_strategy = t_cfg.get("windows_strategy", "fixed")
+    if windows_strategy == "token_budget" and not is_full_night:
+        budget_min = float(t_cfg.get("token_budget_minutes", 80))
+        ctx_minutes = N * 0.5  # each step = 30 s = 0.5 min
+        k_train = max(1, int(budget_min / ctx_minutes))
+        cfg["dataset"]["windows_per_subject"] = k_train
+        print(f"  Windows/subject: {k_train} (token_budget={budget_min:.0f}min / ctx={ctx_minutes:.1f}min)")
+    else:
+        print(f"  Windows/subject: {cfg['dataset'].get('windows_per_subject', 5)} (fixed)")
+
     # ── Datasets ──────────────────────────────────────────────────────────
     def make_ds(split):
         with warnings.catch_warnings():

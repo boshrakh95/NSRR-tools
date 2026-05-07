@@ -118,6 +118,12 @@ training:
   class_weights: "auto"
   early_stopping_monitor: "val_auroc"
   weighted_sampler: false
+  # K-selection strategy for training windows per subject:
+  #   "fixed"        — always use dataset.windows_per_subject (default: 5)
+  #   "token_budget" — set K = max(1, floor(token_budget_minutes / ctx_minutes))
+  #                    so total tokens per subject ≈ constant across context lengths
+  windows_strategy: "fixed"
+  token_budget_minutes: 80
 
 # ── Logging & Output ─────────────────────────────────────────────────────────
 logging:

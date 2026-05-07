@@ -355,7 +355,9 @@ logs_v2/infer_sex_binary_lstm_lr1e-4_38400002.out
 | `osa_binary_apples_postqc` | seq2label | 2 | ~1.5k | APPLES | 2 |
 | `osa_severity_apples` | seq2label | 4 | ~1.5k | APPLES | 2 |
 
-Context lengths: `30s, 10m, 40m, 80m, 120m` (all experiments).
+Context lengths:
+- **Tier 1:** `30s, 10m, 40m, 80m, 120m, 240m`
+- **Tier 2:** `30s, 10m, 40m, 80m, 120m` (smaller N; 240m not added)
 
 ### Experiments per task
 
@@ -433,13 +435,13 @@ Wall-time estimates on H100 (10 GB slice). The generator uses these to set `--ti
 
 ### Training (per context, approximate)
 
-| n_size | Head | 30s | 10m | 40m | 80m | 120m |
-|--------|------|-----|-----|-----|-----|------|
-| large (N>10k) | lstm | 4h | 6h | 10h | 16h | 22h |
-| large | transformer | 5h | 8h | 12h | 20h | 24h |
-| large | mean_pool | 2h | 2h | 2h | 2h | 2h |
-| medium (N~3-5k) | lstm | 2h | 4h | 6h | 10h | 14h |
-| small (N<2k) | lstm | 2h | 2h | 2h | 3h | 4h |
+| n_size | Head | 30s | 10m | 40m | 80m | 120m | 240m |
+|--------|------|-----|-----|-----|-----|------|------|
+| large (N>10k) | lstm | 4h | 6h | 10h | 16h | 22h | 30h |
+| large | transformer | 5h | 8h | 12h | 20h | 24h | 24h |
+| large | mean_pool | 2h | 2h | 2h | 2h | 2h | 2h |
+| medium (N~3-5k) | lstm | 2h | 4h | 6h | 10h | 14h | 18h |
+| small (N<2k) | lstm | 2h | 2h | 2h | 3h | 4h | 5h |
 
 These include ~50-100% safety margin over observed runtimes. If a job times out, it auto-requeues and resumes from the last saved epoch — you don't need to increase the time limit just to guarantee completion.
 
@@ -454,6 +456,23 @@ Total time scales roughly linearly with number of contexts. The generator estima
 | 30s | 18 | 31 min | 0.741 |
 | 10m | 17 | 46 min | 0.757 |
 | 80m | — | in progress | — |
+
+---
+
+## Configurable Training K Strategy
+
+Training K (windows sampled per subject per epoch) can be controlled via `configs/phase0_v2_config.yaml`:
+
+```yaml
+training:
+  windows_strategy: "fixed"        # "fixed" | "token_budget"
+  token_budget_minutes: 80         # used only when windows_strategy = "token_budget"
+```
+
+- **`fixed`** (default): K = `dataset.windows_per_subject` (currently 5) for all context lengths.
+- **`token_budget`**: K = `max(1, floor(token_budget_minutes / ctx_minutes))` so that the total signal seen per subject is approximately constant across context lengths (e.g., 80min budget → K=160 for 30s context, K=2 for 40m context).
+
+The logic is applied in `train_context_sweep.py` before dataset construction and prints the K value at training time. Switching from `"fixed"` to `"token_budget"` requires retraining (and changing the config). To run a token-budget ablation without overwriting the K=5 baseline, use a separate `run_tag` and a separate config file — see `docs/context_length_experiment_design.md` §12 for details.
 
 ---
 

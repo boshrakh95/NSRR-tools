@@ -51,28 +51,28 @@ JOBS_DIR = Path(__file__).parent.parent / "jobs"
 # (n_size, head) → {context: hours}
 
 _TRAIN_HOURS = {
-    ("large",  "lstm"):        {"30s": 4,  "10m": 6,  "40m": 10, "80m": 16, "120m": 22, "full_night": 12},
-    ("large",  "transformer"): {"30s": 5,  "10m": 8,  "40m": 12, "80m": 20, "120m": 24, "full_night": 24},
-    ("large",  "mean_pool"):   {"30s": 2,  "10m": 2,  "40m": 2,  "80m": 2,  "120m": 2,  "full_night": 2 },
-    ("medium", "lstm"):        {"30s": 2,  "10m": 4,  "40m": 6,  "80m": 10, "120m": 14, "full_night": 6 },
-    ("medium", "transformer"): {"30s": 2,  "10m": 4,  "40m": 6,  "80m": 10, "120m": 14, "full_night": 24},
-    ("medium", "mean_pool"):   {"30s": 1,  "10m": 1,  "40m": 1,  "80m": 1,  "120m": 1,  "full_night": 1 },
-    ("small",  "lstm"):        {"30s": 2,  "10m": 2,  "40m": 2,  "80m": 3,  "120m": 4,  "full_night": 3 },
-    ("small",  "transformer"): {"30s": 2,  "10m": 2,  "40m": 2,  "80m": 3,  "120m": 4,  "full_night": 24},
-    ("small",  "mean_pool"):   {"30s": 1,  "10m": 1,  "40m": 1,  "80m": 1,  "120m": 1,  "full_night": 1 },
+    ("large",  "lstm"):        {"30s": 4,  "10m": 6,  "40m": 10, "80m": 16, "120m": 22, "240m": 30, "full_night": 12},
+    ("large",  "transformer"): {"30s": 5,  "10m": 8,  "40m": 12, "80m": 20, "120m": 24, "240m": 24, "full_night": 24},
+    ("large",  "mean_pool"):   {"30s": 2,  "10m": 2,  "40m": 2,  "80m": 2,  "120m": 2,  "240m": 2,  "full_night": 2 },
+    ("medium", "lstm"):        {"30s": 2,  "10m": 4,  "40m": 6,  "80m": 10, "120m": 14, "240m": 18, "full_night": 6 },
+    ("medium", "transformer"): {"30s": 2,  "10m": 4,  "40m": 6,  "80m": 10, "120m": 14, "240m": 18, "full_night": 24},
+    ("medium", "mean_pool"):   {"30s": 1,  "10m": 1,  "40m": 1,  "80m": 1,  "120m": 1,  "240m": 1,  "full_night": 1 },
+    ("small",  "lstm"):        {"30s": 2,  "10m": 2,  "40m": 2,  "80m": 3,  "120m": 4,  "240m": 5,  "full_night": 3 },
+    ("small",  "transformer"): {"30s": 2,  "10m": 2,  "40m": 2,  "80m": 3,  "120m": 4,  "240m": 5,  "full_night": 24},
+    ("small",  "mean_pool"):   {"30s": 1,  "10m": 1,  "40m": 1,  "80m": 1,  "120m": 1,  "240m": 1,  "full_night": 1 },
 }
 
 # Per-context inference hours (one job runs all contexts sequentially)
 _INFER_HOURS_PER_CTX = {
-    ("large",  "lstm"):        {"30s": 1.0, "10m": 1.5, "40m": 2.5, "80m": 4.0, "120m": 5.5, "full_night": 3.0},
-    ("large",  "transformer"): {"30s": 1.0, "10m": 1.5, "40m": 2.5, "80m": 4.0, "120m": 5.5, "full_night": 3.0},
-    ("large",  "mean_pool"):   {"30s": 0.5, "10m": 0.5, "40m": 0.5, "80m": 0.5, "120m": 0.5, "full_night": 0.5},
-    ("medium", "lstm"):        {"30s": 0.5, "10m": 1.0, "40m": 1.5, "80m": 2.0, "120m": 3.0, "full_night": 1.5},
-    ("medium", "transformer"): {"30s": 0.5, "10m": 1.0, "40m": 1.5, "80m": 2.0, "120m": 3.0, "full_night": 1.5},
-    ("medium", "mean_pool"):   {"30s": 0.5, "10m": 0.5, "40m": 0.5, "80m": 0.5, "120m": 0.5, "full_night": 0.5},
-    ("small",  "lstm"):        {"30s": 0.5, "10m": 0.5, "40m": 0.5, "80m": 0.5, "120m": 1.0, "full_night": 1.0},
-    ("small",  "transformer"): {"30s": 0.5, "10m": 0.5, "40m": 0.5, "80m": 0.5, "120m": 1.0, "full_night": 1.0},
-    ("small",  "mean_pool"):   {"30s": 0.5, "10m": 0.5, "40m": 0.5, "80m": 0.5, "120m": 0.5, "full_night": 0.5},
+    ("large",  "lstm"):        {"30s": 1.0, "10m": 1.5, "40m": 2.5, "80m": 4.0, "120m": 5.5, "240m": 7.0, "full_night": 3.0},
+    ("large",  "transformer"): {"30s": 1.0, "10m": 1.5, "40m": 2.5, "80m": 4.0, "120m": 5.5, "240m": 7.0, "full_night": 3.0},
+    ("large",  "mean_pool"):   {"30s": 0.5, "10m": 0.5, "40m": 0.5, "80m": 0.5, "120m": 0.5, "240m": 0.5, "full_night": 0.5},
+    ("medium", "lstm"):        {"30s": 0.5, "10m": 1.0, "40m": 1.5, "80m": 2.0, "120m": 3.0, "240m": 4.0, "full_night": 1.5},
+    ("medium", "transformer"): {"30s": 0.5, "10m": 1.0, "40m": 1.5, "80m": 2.0, "120m": 3.0, "240m": 4.0, "full_night": 1.5},
+    ("medium", "mean_pool"):   {"30s": 0.5, "10m": 0.5, "40m": 0.5, "80m": 0.5, "120m": 0.5, "240m": 0.5, "full_night": 0.5},
+    ("small",  "lstm"):        {"30s": 0.5, "10m": 0.5, "40m": 0.5, "80m": 0.5, "120m": 1.0, "240m": 1.5, "full_night": 1.0},
+    ("small",  "transformer"): {"30s": 0.5, "10m": 0.5, "40m": 0.5, "80m": 0.5, "120m": 1.0, "240m": 1.5, "full_night": 1.0},
+    ("small",  "mean_pool"):   {"30s": 0.5, "10m": 0.5, "40m": 0.5, "80m": 0.5, "120m": 0.5, "240m": 0.5, "full_night": 0.5},
 }
 
 

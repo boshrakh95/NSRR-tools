@@ -10,7 +10,7 @@
 #   num_classes — number of output classes
 #   head        — lstm | transformer | mean_pool
 #   datasets    — datasets that have labels for this task
-#   contexts    — context lengths to train/infer (subset of [30s, 10m, 40m, 80m])
+#   contexts    — context lengths to train/infer (subset of [30s, 10m, 40m, 80m, 120m, 240m])
 #   batch_size  — training batch size (inference uses 512)
 #   lr          — learning rate (default 1e-4)
 #   run_tag     — suffix appended to experiment folder; empty = no suffix
@@ -35,7 +35,7 @@ experiments:
     num_classes: 2
     head: lstm
     datasets: [apples, shhs] # , stages
-    contexts: [30s, 10m, 40m, 80m, 120m]
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
     batch_size: 32
     lr: 1.0e-4
     run_tag: ""
@@ -49,7 +49,7 @@ experiments:
     num_classes: 2
     head: transformer
     datasets: [apples, shhs] # , stages
-    contexts: [30s, 10m, 40m, 80m, 120m]   # skip 80m if oom: O(N²) memory risk
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]   # skip 80m if oom: O(N²) memory risk
     batch_size: 32
     lr: 1.0e-4
     run_tag: ""
@@ -63,7 +63,7 @@ experiments:
     num_classes: 2
     head: mean_pool
     datasets: [apples, shhs] # , stages
-    contexts: [30s, 10m, 40m, 80m, 120m]
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
     batch_size: 64
     lr: 1.0e-4
     run_tag: ""
@@ -78,7 +78,7 @@ experiments:
     num_classes: 2
     head: lstm
     datasets: [apples, shhs, mros]
-    contexts: [30s, 10m, 40m, 80m, 120m]
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
     batch_size: 32
     lr: 1.0e-4
     run_tag: ""
@@ -92,7 +92,7 @@ experiments:
     num_classes: 2
     head: transformer
     datasets: [apples, shhs, mros]
-    contexts: [30s, 10m, 40m, 80m, 120m]
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
     batch_size: 32
     lr: 1.0e-4
     run_tag: ""
@@ -106,7 +106,7 @@ experiments:
     num_classes: 2
     head: mean_pool
     datasets: [apples, shhs, mros]
-    contexts: [30s, 10m, 40m, 80m, 120m]
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
     batch_size: 128
     lr: 1.0e-4
     run_tag: ""
@@ -121,7 +121,7 @@ experiments:
     num_classes: 2
     head: lstm
     datasets: [apples, shhs, mros] # , stages
-    contexts: [30s, 10m, 40m, 80m, 120m]
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
     batch_size: 32
     lr: 1.0e-4
     run_tag: ""
@@ -135,7 +135,7 @@ experiments:
     num_classes: 2
     head: transformer
     datasets: [apples, shhs, mros] # , stages
-    contexts: [30s, 10m, 40m, 80m, 120m]
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
     batch_size: 32
     lr: 1.0e-4
     run_tag: ""
@@ -149,7 +149,7 @@ experiments:
     num_classes: 2
     head: mean_pool
     datasets: [apples, shhs, mros] # , stages
-    contexts: [30s, 10m, 40m, 80m, 120m]
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
     batch_size: 128
     lr: 1.0e-4
     run_tag: ""
@@ -164,7 +164,7 @@ experiments:
     num_classes: 3
     head: lstm
     datasets: [apples, shhs, mros] # , stages
-    contexts: [30s, 10m, 40m, 80m, 120m]
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
     batch_size: 32
     lr: 1.0e-4
     run_tag: ""
@@ -178,7 +178,7 @@ experiments:
     num_classes: 3
     head: transformer
     datasets: [apples, shhs, mros] # , stages
-    contexts: [30s, 10m, 40m, 80m, 120m]
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
     batch_size: 32
     lr: 1.0e-4
     run_tag: ""
@@ -192,7 +192,7 @@ experiments:
     num_classes: 3
     head: mean_pool
     datasets: [apples, shhs, mros] # , stages
-    contexts: [30s, 10m, 40m, 80m, 120m]
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
     batch_size: 128
     lr: 1.0e-4
     run_tag: ""

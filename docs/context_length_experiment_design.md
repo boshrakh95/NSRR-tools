@@ -352,58 +352,70 @@ Current output not yet present:
 
 ### 11.8 Summary: what to build before running the actual plots
 
-| Item | Priority | Requires retraining? | Notes |
-|------|----------|---------------------|-------|
-| Add 5m and 240m context lengths to registry | High | **Yes** | 2 new training jobs per (task, head) |
-| Add `--k-dense` flag to `analyze_windows.py` | High | No | ~20 K values, 1–2h CPU |
-| Write `build_heatmap_df.py` | High | No | Reads existing CSVs, renames columns |
-| Write `plot_context_heatmap.py` | High | No | Adapts mock functions to real data |
-| ROC at iso-compute (Plot A) | Medium | No | Reads parquet directly |
-| Recall at fixed precision (Plot B) | Low | No | Adds threshold loop to evaluate_at_k |
-| Metric comparison (Plot C) | Low | No | Derived from heatmap DataFrame |
+| Item | Priority | Requires retraining? | Status | Notes |
+|------|----------|---------------------|--------|-------|
+| Add 240m context length to registry | High | **Yes** | ✅ Done | Added to all Tier 1 experiments |
+| Add `--k-dense` flag to `analyze_windows.py` | High | No | ⬜ TODO | Extend default K list to ~25 values; see §11.9 |
+| Write `build_heatmap_df.py` | High | No | ⬜ TODO | Reads existing CSVs, renames columns |
+| Write `plot_context_heatmap.py` | High | No | ⬜ TODO | Adapts mock functions to real data |
+| ROC at iso-compute (Plot A) | Medium | No | ⬜ TODO | Reads parquet directly |
+| Recall at fixed precision (Plot B) | Low | No | ⬜ TODO | Adds threshold loop to evaluate_at_k |
+| Metric comparison (Plot C) | Low | No | ⬜ TODO | Derived from heatmap DataFrame |
+
+### 11.9 Required changes to `analyze_windows.py` for the heatmap
+
+The mock heatmap uses ~28 K values on a log-spaced grid:
+```
+[1, 2, 3, 4, 5, 6, 8, 10, 12, 16, 20, 24, 32, 40, 48, 60, 80, 96, 120, 160, 192, 240, 320, 384, 480, 640, 768, 960]
+```
+Current default is only 6 values `[1, 5, 10, 20, 50, "all"]`. With 6 columns the heatmap cells are too coarse, iso-compute lines don't land on real cells, and the Pareto/marginal plots are unusable.
+
+**Change needed:** Add a `DENSE_K_VALUES` list and a `--k-dense` flag:
+```python
+DENSE_K_VALUES = [1, 2, 3, 4, 5, 6, 8, 10, 12, 16, 20, 25, 30, 40, 50,
+                  60, 80, 100, 120, 160, 200, 250, 320, 400, 500, "all"]
+```
+Use `--k-dense` when building the heatmap DataFrame; the default sparse list stays for the quick markdown table.
+
+K values that exceed `max_windows_available` for a context length are silently skipped — no wasted compute. For 120m context (~4 windows per subject), only K=1,2,3,4 will actually run.
 
 ---
 
-## 12. Implementing Configurable Training K Strategy
+## 12. Configurable Training K Strategy
 
-This section describes how to add a `windows_strategy` config option to support both the current fixed-K approach and the token-budget approach, without changing any code now. Implement this when ready to run the ablation.
+**Status: Implemented.** The `windows_strategy` option is live in `configs/phase0_v2_config.yaml` and `scripts/train_context_sweep.py`.
 
-### 12.1 What to add to the config file
+### 12.1 Config options
 
-In `configs/phase0_v2_config.yaml`, under the `training:` section, add:
+In `configs/phase0_v2_config.yaml`, under `training:`:
 
 ```yaml
-training:
-  # ... existing fields (lr, epochs, etc.) ...
-
-  # How many windows to sample per subject per training epoch.
-  # "fixed": always K = windows_per_subject (current behavior)
-  # "token_budget": K = floor(token_budget_minutes / context_length_minutes), min 1
-  #   This keeps total signal seen per subject constant across context lengths.
   windows_strategy: "fixed"        # "fixed" | "token_budget"
-  token_budget_minutes: 80         # used only when windows_strategy = token_budget
-  # windows_per_subject: 5         # used only when windows_strategy = fixed (already in dataset section)
+  token_budget_minutes: 80         # used only when windows_strategy = "token_budget"
 ```
 
-### 12.2 What to change in `train_context_sweep.py`
+- `"fixed"`: always K = `dataset.windows_per_subject` (default 5)
+- `"token_budget"`: K = `max(1, floor(token_budget_minutes / ctx_minutes))` — keeps total signal per subject roughly constant across context lengths
 
-In `train_one_context()`, right before the `make_ds()` call, insert:
+### 12.2 How `train_context_sweep.py` applies this
 
-```python
-# ── Training K strategy ────────────────────────────────────────────────────
-windows_strategy = t_cfg.get("windows_strategy", "fixed")
-if windows_strategy == "token_budget":
-    budget_min_ctx = float(t_cfg.get("token_budget_minutes", 80))
-    # parse_context_length returns number of 30s steps; × 0.5 converts to minutes
-    ctx_minutes = parse_context_length(context_length) * 0.5
-    if not is_full_night:
-        k_train = max(1, int(budget_min_ctx / ctx_minutes))
-        cfg["dataset"]["windows_per_subject"] = k_train
-        print(f"  Token budget: {budget_min_ctx:.0f}min / {ctx_minutes:.1f}min = K_train={k_train}")
-    # full_night: always K=1 (one window per subject = one full recording)
+Right before dataset creation in `train_one_context()`, the script reads `windows_strategy` from config. If `"token_budget"` and not `full_night`, it overwrites `cfg["dataset"]["windows_per_subject"]` in-memory. The printed log line shows which K is used and why.
+
+### 12.3 How to run the token-budget ablation
+
+Use `run_tag` in the registry so results go to separate folders and don't overwrite the K=5 baseline:
+
+```yaml
+sex_binary_lstm_kbudget:
+  task: sex_binary
+  head: lstm
+  datasets: [apples, shhs]
+  contexts: [30s, 10m, 40m, 80m, 120m, 240m]
+  run_tag: "kbudget"
+  tier: 3
 ```
 
-This change is isolated — it only affects training-time data loading, not inference or analysis.
+Use a separate config with `windows_strategy: "token_budget"` and pass it via `--config`. Do not modify the main `phase0_v2_config.yaml` for the ablation.
 
 ### 12.3 How to run the ablation
 
