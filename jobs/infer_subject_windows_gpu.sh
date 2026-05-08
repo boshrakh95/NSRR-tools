@@ -6,6 +6,7 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32000M
 #SBATCH --exclude=fc11006
+#SBATCH --signal=B:USR1@120            # send SIGUSR1 to bash 120s before wall time
 #SBATCH --output=/home/boshra95/NSRR-tools/logs_v2/infer_%x_%j.out
 #SBATCH --error=/home/boshra95/NSRR-tools/logs_v2/infer_%x_%j.err
 
@@ -15,8 +16,10 @@
 # per subject (no K=5 cap).  Saves a parquet of per-window probabilities for
 # downstream majority-voting / mean-prob aggregation.
 #
-# Already-done contexts are skipped automatically (safe to resubmit / requeue).
-# If the job times out it will be requeued and resume from the first unfinished context.
+# Already-done contexts are skipped automatically (safe to resubmit).
+# Auto-resume on timeout: same mechanism as train_context_sweep_gpu.sh —
+#   --signal=B:USR1@120 fires 120s before wall time, Python is killed cleanly,
+#   and this script is resubmitted via sbatch "$0" with --export=ALL.
 #
 # Usage examples:
 #   # Single context:
@@ -44,6 +47,10 @@
 #   Multi-context job: sum of individual times + set --time accordingly
 
 set -e
+
+# Store absolute path early — needed for resubmission from within the job
+_SCRIPT_PATH="$(realpath "$0")"
+_PYTHON_PID=""
 
 cd /home/boshra95/NSRR-tools
 mkdir -p logs_v2
@@ -79,22 +86,33 @@ _EXP_TAG="${TASK}_${HEAD}"
 [ -n "$RUN_TAG" ] && _EXP_TAG="${_EXP_TAG}_${RUN_TAG}"
 _STATUS_FILE="logs_v2/status/infer_${_EXP_TAG}_${SPLIT}.jsonl"
 
+# Persistent inference log — all resubmissions append here.
+_INFER_LOG="logs_v2/infer_${_EXP_TAG}_${SPLIT}.log"
+exec > >(tee -a "$_INFER_LOG") 2>&1
+
 _write_status() {
-    printf '{"ts":"%s","job_id":"%s","restart":%d,"node":"%s","status":"%s","task":"%s","head":"%s","contexts":"%s","split":"%s","datasets":"%s"}\n' \
-        "$(date -Iseconds)" "${SLURM_JOB_ID:-local}" "${SLURM_RESTART_COUNT:-0}" \
+    printf '{"ts":"%s","job_id":"%s","node":"%s","status":"%s","task":"%s","head":"%s","contexts":"%s","split":"%s","datasets":"%s"}\n' \
+        "$(date -Iseconds)" "${SLURM_JOB_ID:-local}" \
         "${SLURM_NODELIST:-local}" "$1" \
         "$TASK" "$HEAD" "${CONTEXTS:-all}" "$SPLIT" "${DATASETS:-all}" \
         >> "$_STATUS_FILE"
 }
 
-# On SIGTERM (SLURM timeout with --requeue): mark as timed out, then exit
-trap '_write_status "TIMEOUT_REQUEUED"; exit 143' TERM
+# ── Auto-resume trap (SIGUSR1 fires 120s before wall time) ───────────────────
+_timeout_handler() {
+    _write_status "TIMEOUT_REQUEUED"
+    echo ""
+    echo "Time limit approaching — resubmitting for auto-resume ($(date))"
+    [ -n "$_PYTHON_PID" ] && kill -TERM "$_PYTHON_PID" 2>/dev/null || true
+    _TIME_LIMIT=$(scontrol show job "$SLURM_JOB_ID" 2>/dev/null \
+        | grep -oP 'TimeLimit=\K\S+' || echo "05:00:00")
+    NEW_JOB=$(sbatch --export=ALL --time="$_TIME_LIMIT" "$_SCRIPT_PATH" 2>&1)
+    echo "$NEW_JOB"
+    exit 0
+}
+trap '_timeout_handler' USR1
 
-if [ "${SLURM_RESTART_COUNT:-0}" -gt 0 ]; then
-    _write_status "REQUEUED"
-else
-    _write_status "STARTED"
-fi
+_write_status "STARTED"
 
 echo "========================================================================"
 echo "Phase 0 — Subject-level inference (all windows)"
@@ -107,8 +125,7 @@ echo "Head:        ${HEAD}"
 echo "Contexts:    ${CONTEXTS:-'(auto-discover)'}"
 echo "Split:       ${SPLIT}"
 echo "Datasets:    ${DATASETS:-'(all)'}"
-echo "All windows: ${NO_ALL_WINDOWS:-yes}$([ -n "$NO_ALL_WINDOWS" ] && echo 'no (K=5)')"
-echo "Restart:     ${SLURM_RESTART_COUNT:-0}"
+echo "All windows: $([ -n "$NO_ALL_WINDOWS" ] && echo 'no (K=5)' || echo 'yes')"
 echo "Start:       $(date)"
 echo "========================================================================"
 echo ""
@@ -127,9 +144,14 @@ CMD="$CMD --batch-size $BATCH_SIZE"
 
 echo "Running: $CMD"
 echo ""
+
+# Run Python in background so USR1 can interrupt 'wait' immediately
 set +e
-eval $CMD
+eval "$CMD" &
+_PYTHON_PID=$!
+wait $_PYTHON_PID
 EXIT_CODE=$?
+trap '' USR1   # training done — ignore any late-firing USR1
 set -e
 
 echo ""

@@ -81,6 +81,7 @@ import argparse
 import csv
 import json
 import os
+import signal
 import sys
 import time
 import warnings
@@ -121,6 +122,20 @@ try:
 except ImportError:
     HAS_SKLEARN = False
     warnings.warn("scikit-learn not found — AUROC and some metrics will be skipped.")
+
+
+# ── SIGTERM handler — lets bash trap fire before SLURM's SIGKILL arrives ─────
+# SLURM sends SIGTERM to the whole process group on timeout. Without this,
+# bash defers its trap until Python exits, but CUDA ops can delay that exit
+# long enough for SLURM's SIGKILL to arrive first, preventing the status write.
+# With this handler Python exits cleanly in <1s, giving bash's trap time to
+# write TIMEOUT_REQUEUED before SIGKILL. resume.pt (saved after each epoch)
+# is already on disk — no training state is lost.
+def _handle_sigterm(signum, frame):
+    print("\n[SIGTERM] Timeout — exiting cleanly so bash can log TIMEOUT_REQUEUED", flush=True)
+    sys.exit(0)
+
+signal.signal(signal.SIGTERM, _handle_sigterm)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
