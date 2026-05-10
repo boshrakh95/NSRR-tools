@@ -138,6 +138,19 @@ def _handle_sigterm(signum, frame):
 signal.signal(signal.SIGTERM, _handle_sigterm)
 
 
+def _classify_failure(exc: BaseException) -> str:
+    """Return a short reason string for the failure status JSONL."""
+    name = type(exc).__name__
+    msg  = str(exc)
+    if isinstance(exc, torch.cuda.OutOfMemoryError):
+        return "oom"
+    if "wandb" in type(exc).__module__.lower() or "wandb" in name.lower():
+        return f"wandb_crash: {msg[:120]}"
+    if isinstance(exc, (OSError, IOError)):
+        return f"io_error: {msg[:120]}"
+    return f"error: {name}: {msg[:120]}"
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Metrics
 # ─────────────────────────────────────────────────────────────────────────────
@@ -720,6 +733,7 @@ def main():
     exp_dir.mkdir(parents=True, exist_ok=True)
 
     any_failed = False
+    failure_reasons: list[str] = []
 
     for ctx in context_lengths:
         ctx_dir = exp_dir / f"context_{ctx}"
@@ -757,13 +771,18 @@ def main():
             print(f"\n[ERROR] context={ctx}: {exc}")
             import traceback; traceback.print_exc()
             any_failed = True
+            failure_reasons.append(f"{ctx}: {_classify_failure(exc)}")
 
     print(f"\n{'='*60}")
     print(f"Sweep complete. Results: {exp_dir}")
     print(f"Summary:         {summary_path}")
 
     if any_failed:
-        print("\n[WARNING] One or more context lengths failed — see [ERROR] lines above.")
+        reason_str = "; ".join(failure_reasons)
+        # Write reason file for bash to include in status JSONL
+        reason_file = exp_dir / f"_failure_reason_{os.environ.get('SLURM_JOB_ID', 'local')}.txt"
+        reason_file.write_text(reason_str)
+        print(f"\n[WARNING] One or more context lengths failed: {reason_str}")
         sys.exit(1)
 
 

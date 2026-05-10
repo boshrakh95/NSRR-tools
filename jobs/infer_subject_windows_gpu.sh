@@ -91,11 +91,21 @@ _INFER_LOG="logs_v2/infer_${_EXP_TAG}_${SPLIT}.log"
 exec > >(tee -a "$_INFER_LOG") 2>&1
 
 _write_status() {
-    printf '{"ts":"%s","job_id":"%s","node":"%s","status":"%s","task":"%s","head":"%s","contexts":"%s","split":"%s","datasets":"%s"}\n' \
-        "$(date -Iseconds)" "${SLURM_JOB_ID:-local}" \
-        "${SLURM_NODELIST:-local}" "$1" \
-        "$TASK" "$HEAD" "${CONTEXTS:-all}" "$SPLIT" "${DATASETS:-all}" \
-        >> "$_STATUS_FILE"
+    local _status="$1"
+    local _reason="${2:-}"
+    if [ -n "$_reason" ]; then
+        printf '{"ts":"%s","job_id":"%s","node":"%s","status":"%s","reason":"%s","task":"%s","head":"%s","contexts":"%s","split":"%s","datasets":"%s"}\n' \
+            "$(date -Iseconds)" "${SLURM_JOB_ID:-local}" \
+            "${SLURM_NODELIST:-local}" "$_status" "$_reason" \
+            "$TASK" "$HEAD" "${CONTEXTS:-all}" "$SPLIT" "${DATASETS:-all}" \
+            >> "$_STATUS_FILE"
+    else
+        printf '{"ts":"%s","job_id":"%s","node":"%s","status":"%s","task":"%s","head":"%s","contexts":"%s","split":"%s","datasets":"%s"}\n' \
+            "$(date -Iseconds)" "${SLURM_JOB_ID:-local}" \
+            "${SLURM_NODELIST:-local}" "$_status" \
+            "$TASK" "$HEAD" "${CONTEXTS:-all}" "$SPLIT" "${DATASETS:-all}" \
+            >> "$_STATUS_FILE"
+    fi
 }
 
 # ── Auto-resume trap (SIGUSR1 fires 120s before wall time) ───────────────────
@@ -161,8 +171,13 @@ if [ $EXIT_CODE -eq 0 ]; then
     echo "Status: SUCCESS"
     _write_status "SUCCESS"
 else
-    echo "Status: FAILED (exit code: $EXIT_CODE)"
-    _write_status "FAILED"
+    # Read failure reason written by Python (inference/{exp_id}/_failure_reason_<jobid>.txt)
+    _RESULTS_DIR=$(python -c "import yaml; print(yaml.safe_load(open('$CONFIG'))['logging']['results_dir'])" 2>/dev/null || echo "")
+    _EXP_ID="${TASK}_${HEAD}$([ -n "$RUN_TAG" ] && echo "_${RUN_TAG}")"
+    _REASON_FILE="${_RESULTS_DIR}/inference/${_EXP_ID}/_failure_reason_${SLURM_JOB_ID:-local}.txt"
+    _REASON=$(cat "$_REASON_FILE" 2>/dev/null | tr '"' "'" || echo "unknown")
+    echo "Status: FAILED (exit code: $EXIT_CODE) — ${_REASON}"
+    _write_status "FAILED" "$_REASON"
 fi
 echo "========================================================================"
 
