@@ -1,0 +1,2 @@
+{"ts":"2026-05-08T15:51:27-07:00","job_id":"39226092","node":"fc11008","status":"STARTED","task":"sex_binary","head":"transformer","context":"240m","lr":"0.0001","datasets":"apples shhs"}
+{"ts":"2026-05-08T15:55:11-07:00","job_id":"39226092","node":"fc11008","status":"FAILED","task":"sex_binary","head":"transformer","context":"240m","lr":"0.0001","datasets":"apples shhs","note":"corrected — positional encoding overflow (max_seq_len=2048 < 2881 patches); exit code was 0 (pre-fix bug)"}

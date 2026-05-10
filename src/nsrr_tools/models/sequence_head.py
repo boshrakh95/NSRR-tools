@@ -263,7 +263,8 @@ def build_head(cfg: dict) -> nn.Module:
         )
 
     elif head_type == "transformer":
-        num_heads = m.get("num_heads", 8)
+        num_heads   = m.get("num_heads", 8)
+        max_seq_len = m.get("max_seq_len", 4096)  # 4096 covers 240m (2880 patches) + margin
         return TransformerHead(
             input_dim=input_dim,
             hidden_dim=hidden_dim,
@@ -271,6 +272,7 @@ def build_head(cfg: dict) -> nn.Module:
             num_heads=num_heads,
             num_classes=num_classes,
             dropout=dropout,
+            max_seq_len=max_seq_len,
         )
 
     else:

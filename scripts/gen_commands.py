@@ -66,17 +66,21 @@ _TRAIN_HOURS = {
     ("small",  "mean_pool"):   {"30s": 1,   "10m": 1,   "40m": 1,   "80m": 1,   "120m": 1,   "240m": 1,   "full_night": 1 },
 }
 
-# Per-context inference hours (one job runs all contexts sequentially)
+# Per-context inference hours (one job runs all contexts sequentially).
+# Calibrated from sex_binary_lstm (large, apples+shhs, batch=512, H100 10GB MIG):
+#   30s=~20 min (1.5M items), 10m=~3 min, 40m=~1 min, 80m=~1 min; all 4 in 26 min.
+# Inference cost is dominated by 30s (many short windows); longer contexts are trivially fast.
+# With auto-requeue an underestimate just causes one extra job — use tight values.
 _INFER_HOURS_PER_CTX = {
-    ("large",  "lstm"):        {"30s": 0.5, "10m": 0.5, "40m": 1.0, "80m": 1.5, "120m": 2.0, "240m": 3.5, "full_night": 2.0},
-    ("large",  "transformer"): {"30s": 0.5, "10m": 0.5, "40m": 1.0, "80m": 1.5, "120m": 2.0, "240m": 3.5, "full_night": 2.0},
-    ("large",  "mean_pool"):   {"30s": 0.5, "10m": 0.5, "40m": 0.5, "80m": 0.5, "120m": 0.5, "240m": 0.5, "full_night": 0.5},
-    ("medium", "lstm"):        {"30s": 0.5, "10m": 0.5, "40m": 0.5, "80m": 1.0, "120m": 1.5, "240m": 2.5, "full_night": 1.0},
-    ("medium", "transformer"): {"30s": 0.5, "10m": 0.5, "40m": 0.5, "80m": 1.0, "120m": 1.5, "240m": 2.5, "full_night": 1.0},
-    ("medium", "mean_pool"):   {"30s": 0.5, "10m": 0.5, "40m": 0.5, "80m": 0.5, "120m": 0.5, "240m": 0.5, "full_night": 0.5},
-    ("small",  "lstm"):        {"30s": 0.5, "10m": 0.5, "40m": 0.5, "80m": 0.5, "120m": 0.5, "240m": 1.0, "full_night": 0.5},
-    ("small",  "transformer"): {"30s": 0.5, "10m": 0.5, "40m": 0.5, "80m": 0.5, "120m": 0.5, "240m": 1.0, "full_night": 0.5},
-    ("small",  "mean_pool"):   {"30s": 0.5, "10m": 0.5, "40m": 0.5, "80m": 0.5, "120m": 0.5, "240m": 0.5, "full_night": 0.5},
+    ("large",  "lstm"):        {"30s": 0.5, "10m": 0.1, "40m": 0.1, "80m": 0.1, "120m": 0.1, "240m": 0.1, "full_night": 0.5},
+    ("large",  "transformer"): {"30s": 0.5, "10m": 0.1, "40m": 0.1, "80m": 0.1, "120m": 0.1, "240m": 0.1, "full_night": 0.5},
+    ("large",  "mean_pool"):   {"30s": 0.25,"10m": 0.1, "40m": 0.1, "80m": 0.1, "120m": 0.1, "240m": 0.1, "full_night": 0.25},
+    ("medium", "lstm"):        {"30s": 0.5, "10m": 0.1, "40m": 0.1, "80m": 0.1, "120m": 0.1, "240m": 0.1, "full_night": 0.5},
+    ("medium", "transformer"): {"30s": 0.5, "10m": 0.1, "40m": 0.1, "80m": 0.1, "120m": 0.1, "240m": 0.1, "full_night": 0.5},
+    ("medium", "mean_pool"):   {"30s": 0.25,"10m": 0.1, "40m": 0.1, "80m": 0.1, "120m": 0.1, "240m": 0.1, "full_night": 0.25},
+    ("small",  "lstm"):        {"30s": 0.25,"10m": 0.1, "40m": 0.1, "80m": 0.1, "120m": 0.1, "240m": 0.1, "full_night": 0.25},
+    ("small",  "transformer"): {"30s": 0.25,"10m": 0.1, "40m": 0.1, "80m": 0.1, "120m": 0.1, "240m": 0.1, "full_night": 0.25},
+    ("small",  "mean_pool"):   {"30s": 0.25,"10m": 0.1, "40m": 0.1, "80m": 0.1, "120m": 0.1, "240m": 0.1, "full_night": 0.25},
 }
 
 
@@ -167,12 +171,13 @@ def exp_status(exp: dict, registry: dict) -> str:
 # ── Command builders ──────────────────────────────────────────────────────────
 
 def build_train_cmd(exp: dict, registry: dict, context: str,
-                    override_time: str = None) -> str:
+                    override_time: str = None, override_batch_size: int = None) -> str:
     cfg = registry["config"]
     logs_dir = registry.get("logs_dir", str(Path(__file__).parent.parent / "logs"))
     n_size = exp.get("n_size", "large")
     wall_time = override_time if override_time else estimate_train_time(n_size, exp["head"], context)
     stem = _log_stem(exp, "train", context)
+    batch_size = override_batch_size if override_batch_size is not None else exp["batch_size"]
 
     env_vars = [
         f"TASK={exp['task']}",
@@ -180,7 +185,7 @@ def build_train_cmd(exp: dict, registry: dict, context: str,
         f"HEAD={exp['head']}",
         f"CONTEXT={context}",
         f"DATASETS=\"{' '.join(exp['datasets'])}\"",
-        f"BATCH_SIZE={exp['batch_size']}",
+        f"BATCH_SIZE={batch_size}",
         f"LR={exp['lr']}",
     ]
     if exp.get("run_tag"):
@@ -198,7 +203,7 @@ def build_train_cmd(exp: dict, registry: dict, context: str,
 
 
 def build_infer_cmd(exp: dict, registry: dict, split: str = "test",
-                    override_time: str = None) -> str:
+                    override_time: str = None, override_batch_size: int = None) -> str:
     cfg = registry["config"]
     logs_dir = registry.get("logs_dir", str(Path(__file__).parent.parent / "logs"))
     n_size = exp.get("n_size", "large")
@@ -215,6 +220,8 @@ def build_infer_cmd(exp: dict, registry: dict, split: str = "test",
         f"SPLIT={split}",
         f"DATASETS=\"{' '.join(exp['datasets'])}\"",
     ]
+    if override_batch_size is not None:
+        env_vars.append(f"BATCH_SIZE={override_batch_size}")
     if exp.get("run_tag"):
         env_vars.append(f"RUN_TAG={exp['run_tag']}")
     env_vars.append(f"CONFIG={cfg}")
@@ -282,7 +289,8 @@ def cmd_train(args, registry):
         wall = estimate_train_time(n_size, exp["head"], ctx)
         status_tag = "  # already trained" if trained else f"  # est. {wall}"
         print(build_train_cmd(exp, registry, ctx,
-                              override_time=getattr(args, "override_time", None)) + status_tag)
+                              override_time=getattr(args, "override_time", None),
+                              override_batch_size=getattr(args, "override_batch_size", None)) + status_tag)
 
 
 def cmd_infer(args, registry):
@@ -303,7 +311,8 @@ def cmd_infer(args, registry):
     print(f"# Est. wall time: {wall}  Logs → {registry.get('logs_dir', 'logs/')}")
     print()
     print(build_infer_cmd(exp, registry, split,
-                          override_time=getattr(args, "override_time", None)))
+                          override_time=getattr(args, "override_time", None),
+                          override_batch_size=getattr(args, "override_batch_size", None)))
 
 
 def cmd_analyze(args, registry):
@@ -422,12 +431,16 @@ def main():
                          help="Specific context(s) to train (default: all in registry)")
     p_train.add_argument("--time", default=None, dest="override_time",
                          help="Override wall-time for all generated commands, e.g. --time 02:00:00")
+    p_train.add_argument("--batch-size", type=int, default=None, dest="override_batch_size",
+                         help="Override training batch size, e.g. --batch-size 16 (use for OOM)")
 
     p_infer = sub.add_parser("infer", help="Print inference sbatch command")
     p_infer.add_argument("exp_id", help="Experiment ID from registry")
     p_infer.add_argument("--split", default="test", choices=["train", "val", "test"])
     p_infer.add_argument("--time", default=None, dest="override_time",
                          help="Override estimated wall-time, e.g. --time 01:30:00")
+    p_infer.add_argument("--batch-size", type=int, default=None, dest="override_batch_size",
+                         help="Override inference batch size (default: 512), e.g. --batch-size 128")
 
     p_analyze = sub.add_parser("analyze", help="Print window analysis command")
     p_analyze.add_argument("exp_id", help="Experiment ID from registry")

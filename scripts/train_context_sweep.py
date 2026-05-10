@@ -719,6 +719,8 @@ def main():
     summary_path = exp_dir / "summary.csv"
     exp_dir.mkdir(parents=True, exist_ok=True)
 
+    any_failed = False
+
     for ctx in context_lengths:
         ctx_dir = exp_dir / f"context_{ctx}"
 
@@ -754,10 +756,15 @@ def main():
         except Exception as exc:
             print(f"\n[ERROR] context={ctx}: {exc}")
             import traceback; traceback.print_exc()
+            any_failed = True
 
     print(f"\n{'='*60}")
     print(f"Sweep complete. Results: {exp_dir}")
     print(f"Summary:         {summary_path}")
+
+    if any_failed:
+        print("\n[WARNING] One or more context lengths failed — see [ERROR] lines above.")
+        sys.exit(1)
 
 
 if __name__ == "__main__":
