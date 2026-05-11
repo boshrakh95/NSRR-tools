@@ -22,6 +22,7 @@ config: configs/phase0_v2_config.yaml
 results_dir: /scratch/boshra95/psg/unified/results/phase0_v2
 inference_dir: /scratch/boshra95/psg/unified/results/phase0_v2/inference
 logs_dir: /home/boshra95/NSRR-tools/logs_v2
+python_bin: /home/boshra95/sleepfm_env/bin/python
 
 # ── Tier 1: Large N, clinically broad ────────────────────────────────────────
 # Run all three heads to enable head comparison.

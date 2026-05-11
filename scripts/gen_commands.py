@@ -237,18 +237,22 @@ def build_infer_cmd(exp: dict, registry: dict, split: str = "test",
 
 
 def build_analyze_cmd(exp: dict, registry: dict, plot: bool = False) -> str:
-    infer_dir = Path(registry["inference_dir"])
+    results_dir = Path(registry["results_dir"])
     tag = exp.get("run_tag", "")
+    # Use the virtualenv Python directly — analyze_windows.py requires sklearn
+    # (balanced_accuracy, AUROC, F1) which lives in sleepfm_env, not the system Python.
+    python = registry.get("python_bin", "/home/boshra95/sleepfm_env/bin/python")
     cmd_parts = [
-        "python scripts/analyze_windows.py",
+        f"{python} scripts/analyze_windows.py",
         f"--task {exp['task']}",
         f"--head {exp['head']}",
-        f"--results-dir {infer_dir}",
+        f"--results-dir {results_dir}",
     ]
     if tag:
         cmd_parts.append(f"--run-tag {tag}")
     if plot:
         cmd_parts.append("--plot")
+        cmd_parts.append("--plot-metric auroc balanced_accuracy")
     return " ".join(cmd_parts)
 
 
