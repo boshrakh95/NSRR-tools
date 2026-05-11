@@ -45,9 +45,10 @@ Output (per context):
 ```
 results/{phase}/{task}_{head}{_tag}/
   context_{L}/
-    best_model.pt        # best checkpoint (by val_auroc)
-    resume.pt            # per-epoch resume checkpoint (deleted on success)
-    metrics.json         # train/val/test metrics at best epoch
+    best_model.pt           # best checkpoint (by val_auroc)
+    resume.pt               # per-epoch resume checkpoint (deleted on success)
+    metrics.json            # train/val/test metrics at best epoch
+    training_curves.csv     # per-epoch: loss, bal_acc, val monitor (written on completion)
   summary.csv            # one row per completed context length (val + test metrics)
 ```
 
@@ -407,7 +408,8 @@ Context lengths:
 │   └── context_{L}/               # e.g. context_30s/
 │       ├── best_model.pt           # best checkpoint by val_auroc
 │       ├── resume.pt               # per-epoch resume checkpoint (present during training, deleted on success)
-│       └── metrics.json            # final metrics (presence = context is done)
+│       ├── metrics.json            # final metrics (presence = context is done)
+│       └── training_curves.csv     # per-epoch loss/bal_acc/monitor (written on completion)
 │
 └── inference/
     └── {task}_{head}/

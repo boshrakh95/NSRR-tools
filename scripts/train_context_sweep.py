@@ -626,6 +626,15 @@ def train_one_context(
 
     with open(out_dir / "metrics.json", "w") as f:
         json.dump(metrics, f, indent=2)
+
+    # Per-epoch training curves — written once at end so it covers all resumes
+    if history:
+        curves_path = out_dir / "training_curves.csv"
+        with open(curves_path, "w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=list(history[0].keys()))
+            writer.writeheader()
+            writer.writerows(history)
+
     resume_path.unlink(missing_ok=True)
 
     print(f"  Train: {train_metrics}")
