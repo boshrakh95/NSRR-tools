@@ -355,12 +355,14 @@ Current output not yet present:
 | Item | Priority | Requires retraining? | Status | Notes |
 |------|----------|---------------------|--------|-------|
 | Add 240m context length to registry | High | **Yes** | ✅ Done | Added to all Tier 1 experiments |
-| Add `--k-dense` flag to `analyze_windows.py` | High | No | ⬜ TODO | Extend default K list to ~25 values; see §11.9 |
-| Write `build_heatmap_df.py` | High | No | ⬜ TODO | Reads existing CSVs, renames columns |
-| Write `plot_context_heatmap.py` | High | No | ⬜ TODO | Adapts mock functions to real data |
-| ROC at iso-compute (Plot A) | Medium | No | ⬜ TODO | Reads parquet directly |
-| Recall at fixed precision (Plot B) | Low | No | ⬜ TODO | Adds threshold loop to evaluate_at_k |
-| Metric comparison (Plot C) | Low | No | ⬜ TODO | Derived from heatmap DataFrame |
+| Add `--k-dense` flag to `analyze_windows.py` | High | No | ✅ Done | See §13 Step 1 |
+| Write `build_heatmap_df.py` | High | No | ✅ Done | See §13 Step 2 |
+| Write `plot_iso_compute.py` (7 plots) | High | No | ✅ Done | See §13 Step 3; replaces `plot_context_heatmap.py` |
+| Write `plot_saturation.py` | High | No | ✅ Done | See §13 Step 4 |
+| Integrate into `gen_commands.py` | High | No | ✅ Done | See §13 Step 5; 3 new subcommands |
+| ROC at iso-compute (Plot A) | Medium | No | ⬜ TODO | See §13 Step 6 |
+| Recall at fixed precision (Plot B) | Low | No | ⬜ TODO | See §13 Step 6 |
+| Metric comparison (Plot C) | Low | No | ⬜ TODO | See §13 Step 6 |
 
 ### 11.9 Required changes to `analyze_windows.py` for the heatmap
 
@@ -466,3 +468,196 @@ If the shapes diverge (e.g., token-budget shows stronger advantage for short-con
 → The training regime confounds the comparison; use token-budget as the main method and report K=5 as a sensitivity check.
 
 Either result is informative and publishable.
+
+---
+
+## 13. Implementation Plan: Iso-Compute Plots
+
+This section is the step-by-step workplan for implementing the 7 core iso-compute plots (from `mock-compute-optimal-tradeoffs-plots-main/`) on real experimental data.
+
+**Design decisions (confirmed):**
+- Primary metric: `mean_prob_auroc` (AUROC). Secondary: `balanced_accuracy` via `--metric` flag.
+- One experiment per plot (single task × single head per figure).
+- Build with current 6 context lengths; adding new contexts later just adds heatmap rows automatically.
+- Budget default: 480 minutes (8h, 90th-percentile PSG recording length for APPLES/SHHS/MrOS).
+
+**Status legend:** ⬜ TODO · 🔄 In progress · ✅ Done
+
+---
+
+### Step 1 — Add `--k-dense` flag to `analyze_windows.py` ✅
+
+**File:** `scripts/analyze_windows.py`
+
+**What:** Add a `DENSE_K_VALUES` constant and a `--k-dense` CLI flag. When set, the script uses the dense list instead of the default 6-point sparse list. The default sparse list stays unchanged (used for the quick markdown table).
+
+```python
+DENSE_K_VALUES = [1, 2, 3, 4, 5, 6, 8, 10, 12, 16, 20, 25, 30, 40, 50,
+                  60, 80, 100, 120, 160, 200, 250, 320, 400, 500, "all"]
+```
+
+K values that exceed the maximum available windows for a context length are silently skipped — no wasted compute.
+
+**Why:** With only 6 K values per context row, iso-compute lines don't land on real cells, the Pareto front is jagged, and the marginal-gain plot is unusable. ~25 K values gives smooth curves.
+
+**Re-run command after change:**
+```bash
+python scripts/gen_commands.py analyze sex_binary_lstm --plot | bash
+# and separately for the dense version:
+/home/boshra95/sleepfm_env/bin/python scripts/analyze_windows.py \
+    --task sex_binary --head lstm \
+    --results-dir /scratch/boshra95/psg/unified/results/phase0_v2 \
+    --k-dense --splits test
+```
+
+---
+
+### Step 2 — Write `scripts/build_heatmap_df.py` ✅
+
+**What:** Reads the per-split `window_analysis_{split}.csv` produced by `analyze_windows.py` and outputs a heatmap-ready DataFrame.
+
+**Input:** `{results_dir}/inference/{task}_{head}/window_analysis_{split}.csv`
+**Output:** `{results_dir}/inference/{task}_{head}/heatmap_df_{split}.csv`
+
+**Transformations applied:**
+1. Parse `context_length` strings → `context_length_min` float:
+   ```python
+   "30s" → 0.5,  "10m" → 10.0,  "240m" → 240.0,  "full_night" → 480.0
+   ```
+2. Replace `k == "all"` with the numeric max K for that context (= `n_segments / n_subjects`).
+3. Rename columns to match mock plot API:
+   - `mean_prob_auroc` → `auroc`
+   - `mean_prob_balanced_accuracy` → `balanced_accuracy`
+   - `mean_prob_macro_f1` → `f1`
+   - Keep `seg_auroc`, `majority_auroc` as alternative columns.
+4. Add `total_compute_min = context_length_min × k`.
+5. Drop rows where any required column is NaN (contexts with no data).
+
+**CLI:**
+```bash
+python scripts/build_heatmap_df.py \
+    --task sex_binary --head lstm \
+    --results-dir /scratch/.../results/phase0_v2 \
+    --split test
+```
+
+**Output columns:** `context_length_min, context_label, k, auroc, balanced_accuracy, f1, seg_auroc, majority_auroc, total_compute_min, n_subjects, n_segments`
+
+---
+
+### Step 3 — Write `scripts/plot_iso_compute.py` ✅
+
+**What:** Produces all 7 iso-compute plots from a heatmap DataFrame. Adapted directly from the mock functions in `mock-compute-optimal-tradeoffs-plots-main/PLOTS.md`, with changes for real data.
+
+**Input:** `heatmap_df_{split}.csv` produced by Step 2.
+**Output:** Saves to `{results_dir}/figures/{task}_{head}/` as both `.png` and `.pdf`.
+
+**CLI:**
+```bash
+python scripts/plot_iso_compute.py \
+    --task sex_binary --head lstm \
+    --results-dir /scratch/.../results/phase0_v2 \
+    --split test \
+    --metric auroc \               # auroc | balanced_accuracy
+    --budget 480                   # minutes; default 480 (8h)
+```
+
+**7 plots produced** (one file each, named by plot type and metric):
+
+| # | File | What it shows |
+|---|------|---------------|
+| 1 | `heatmap_{metric}.png` | 2D grid: L (Y) × K (X), cell color = metric. Iso-compute lines overlaid. |
+| 2 | `metric_vs_k_{metric}.png` | Per-context curves of metric vs K on log-x axis, with iso-compute lines crossing curves. |
+| 3 | `metric_vs_total_context_{metric}.png` | Per-context curves vs total context minutes (= L × K) on log-x axis. |
+| 4 | `pareto_front_{metric}.png` | Pareto-optimal (L, K) at each compute budget, colored by optimal L, annotated with K. |
+| 5 | `min_cost_frontier_{metric}.png` | Minimum compute needed to reach each target metric value, per context length. |
+| 6 | `marginal_gain_{metric}.png` | Per-additional-vote gain vs K (log–log), showing diminishing returns across context lengths. |
+| 7 | `double_tradeoff_{metric}.png` | Grid of subplots: gain from doubling K vs switching to 2× longer context, per starting L. |
+
+**Differences from mock:**
+- Primary metric is `auroc` (not `accuracy`). `--metric balanced_accuracy` produces the same 7 plots for that metric.
+- Budget default is 480 min (not 960).
+- Annotation targets in min-cost plot adjusted to AUROC range (e.g., 0.55, 0.65, 0.70, 0.75, 0.80 instead of accuracy thresholds).
+- Context lengths sorted and labeled from real data; no synthetic curve fitting.
+
+**Dependencies:** `matplotlib`, `seaborn`, `numpy`, `pandas` — all in `sleepfm_env`.
+
+---
+
+### Step 4 — Write `scripts/plot_saturation.py` ✅
+
+**What:** "Figure 1" for the paper — AUROC (and balanced_accuracy) vs context length at K=all, one line per head. Reads directly from `summary.csv` files (no parquet or heatmap DF needed).
+
+**Input:** For each (task, head), reads `{results_dir}/{task}_{head}/summary.csv` and extracts `test_auroc` at the `context_length` for each row.
+
+**CLI:**
+```bash
+python scripts/plot_saturation.py \
+    --task sex_binary \
+    --heads lstm transformer mean_pool \
+    --results-dir /scratch/.../results/phase0_v2 \
+    --metric auroc                # also: balanced_accuracy
+```
+
+**Output:** `{results_dir}/figures/saturation_{task}_{metric}.png`
+
+**What it shows:** One line per head, x-axis = context length (log scale in minutes), y-axis = test metric. This answers H1 (context saturation) and the head comparison (H4). Constructable immediately from existing `summary.csv` files — no dense K sweep needed.
+
+---
+
+### Step 5 — Integrate into `gen_commands.py` ✅
+
+Add two new subcommands:
+
+```bash
+# Build heatmap DataFrame (Step 2)
+python scripts/gen_commands.py build-heatmap sex_binary_lstm [--split test]
+
+# Produce all iso-compute plots (Step 3)
+python scripts/gen_commands.py iso-plots sex_binary_lstm [--metric auroc] [--budget 480]
+
+# Produce saturation curve (Step 4)
+python scripts/gen_commands.py saturation sex_binary [--heads lstm transformer mean_pool]
+```
+
+Each subcommand emits a shell command using `sleepfm_env` Python, similar to how `analyze` works.
+Also update `gen_commands.py list` and `status` to check for `heatmap_df_test.csv` as a pipeline completion indicator.
+
+---
+
+### Step 6 — Supplementary plots (lower priority) ⬜
+
+Three additional plots from `plot_binary.py`, after Steps 1–5 are done:
+
+**Plot A — ROC curves at iso-compute budgets:**
+For each (iso-budget, L) pair, select K=floor(budget/L) windows per subject, aggregate `prob_class1` scores, compute ROC curve. Add as a function in `plot_iso_compute.py` or a separate `plot_roc_iso.py`. Reads directly from the per-window parquets.
+
+**Plot B — Recall at fixed precision (threshold sweep):**
+Instead of standard majority-vote (threshold = K/2), sweep threshold t=1,...,K ("predict positive if ≥t of K windows say positive"). Shows precision-recall tradeoff across aggregation strategies. Requires adding a threshold loop to `evaluate_at_k()` in `analyze_windows.py` or a post-processing step on the parquet.
+
+**Plot C — Metric comparison (which metric picks which optimal L):**
+Run the Pareto-front analysis (Plot 4) independently for AUROC, balanced_accuracy, and F1. Overlay on one figure to show whether the optimal context length is stable across metrics. Derived from the existing heatmap DataFrame — no new data needed.
+
+---
+
+### Dependency map
+
+```
+analyze_windows.py --k-dense    (Step 1)
+        ↓
+build_heatmap_df.py             (Step 2)
+        ↓
+plot_iso_compute.py             (Step 3)   ← 7 iso-compute plots
+
+summary.csv (already exists)
+        ↓
+plot_saturation.py              (Step 4)   ← saturation curve
+
+gen_commands.py                 (Step 5)   ← wires Steps 2-4 into pipeline
+```
+
+Steps 1–2 are prerequisites for Step 3. Steps 1–4 are independent of each other otherwise. Start with Step 1 (smallest change), then 2 and 4 in parallel, then 3, then 5.
+
+### Hero experiment for initial plots
+
+Use `sex_binary_lstm` (6 trained contexts: 30s, 10m, 40m, 80m, 120m, 240m; inference done on test split). Adding 5m context later will add a row to the heatmap automatically without any code changes.

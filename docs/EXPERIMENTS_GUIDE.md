@@ -16,9 +16,10 @@ This document is the definitive reference for running training, inference, and a
 8. [V2 Experiment Plan](#v2-experiment-plan)
 9. [Results Directory Structure](#results-directory-structure)
 10. [Expected Runtimes](#expected-runtimes)
-11. [Adding New Experiments](#adding-new-experiments)
-12. [Regression Tasks (Deferred)](#regression-tasks-deferred)
-13. [Notes on Specific Tasks](#notes-on-specific-tasks)
+11. [Configurable Training K Strategy](#configurable-training-k-strategy)
+12. [Adding New Experiments](#adding-new-experiments)
+13. [Regression Tasks (Deferred)](#regression-tasks-deferred)
+14. [Notes on Specific Tasks](#notes-on-specific-tasks)
 
 ---
 
@@ -26,10 +27,12 @@ This document is the definitive reference for running training, inference, and a
 
 The pipeline takes frozen SleepFM embeddings and trains lightweight sequence heads (LSTM, Transformer, MeanPool) to predict clinical labels from PSG signals. Each experiment sweeps over multiple context lengths (how much of the night the model sees) to measure how performance scales with context.
 
-**Three phases per experiment:**
+**Five phases per experiment:**
 1. **Train** — fit the head on the training split, checkpoint the best model by val_auroc
 2. **Infer** — run the best model on every window of every test subject, save per-window probabilities
 3. **Analyze** — sweep K=1,5,10,20,50,all windows per subject, compute metrics, write markdown tables and optional plots
+4. **Iso-compute analysis** — dense K sweep (`--k-dense`, ~25 values), build heatmap DataFrame, produce 7 iso-compute plots: heatmap, metric-vs-k, metric-vs-total-context, Pareto front, min-cost frontier, marginal gain, double-tradeoff
+5. **Saturation curve** — AUROC/balanced_accuracy vs context length per head; the primary "Figure 1" for the paper
 
 ---
 
@@ -74,9 +77,56 @@ results/{phase}/inference/{task}_{head}{_tag}/
 Output (per experiment):
 ```
 results/{phase}/inference/{task}_{head}{_tag}/
-  window_analysis.csv      # K-sweep metrics table
-  window_analysis.md       # formatted markdown
-  window_analysis_auroc.png  # optional plot (--plot flag)
+  window_analysis_{split}.csv   # K-sweep metrics table
+  window_analysis.md            # formatted markdown tables (all splits)
+  {task}_{head}_{split}_window_sweep_{metric}.png  # optional plot (--plot)
+```
+
+### Step 4 — Iso-Compute Analysis (dense K sweep → plots)
+
+**Scripts:** `scripts/analyze_windows.py --k-dense`, `scripts/build_heatmap_df.py`, `scripts/plot_iso_compute.py`  
+**Run locally** (no GPU needed). Steps must run in order.
+
+```bash
+# 4a. Dense K sweep (~25 K values per context; used for heatmap/iso-compute)
+python scripts/gen_commands.py analyze sex_binary_lstm --k-dense | bash
+
+# 4b. Build heatmap DataFrame (parses context strings, renames columns, adds total_compute_min)
+python scripts/gen_commands.py build-heatmap sex_binary_lstm | bash
+
+# 4c. Produce all 7 iso-compute plots
+python scripts/gen_commands.py iso-plots sex_binary_lstm | bash
+```
+
+Output:
+```
+results/{phase}/inference/{task}_{head}/
+  window_analysis_{split}.csv       # updated with dense K values
+  heatmap_df_{split}.csv            # heatmap-ready: context_length_min, k, auroc, total_compute_min, ...
+
+results/{phase}/figures/{task}_{head}/{metric}_{split}/
+  heatmap_{metric}.{png,pdf}
+  metric_vs_k_{metric}.{png,pdf}
+  metric_vs_total_{metric}.{png,pdf}
+  pareto_front_{metric}.{png,pdf}
+  min_cost_frontier_{metric}.{png,pdf}
+  marginal_gain_{metric}.{png,pdf}
+  double_tradeoff_{metric}.{png,pdf}
+```
+
+### Step 5 — Saturation Curve (Figure 1)
+
+**Script:** `scripts/plot_saturation.py`  
+**Run locally.** Reads `summary.csv` per head — no dense K sweep needed.
+
+```bash
+python scripts/gen_commands.py saturation sex_binary --heads lstm transformer mean_pool | bash
+```
+
+Output:
+```
+results/{phase}/figures/
+  saturation_{task}_{metric}_{split}.{png,pdf}   # one line per head, x=context length
 ```
 
 ---
@@ -135,6 +185,18 @@ python scripts/gen_commands.py infer sex_binary_lstm --split val
 # Generate analysis command
 python scripts/gen_commands.py analyze sex_binary_lstm
 python scripts/gen_commands.py analyze sex_binary_lstm --plot
+python scripts/gen_commands.py analyze sex_binary_lstm --k-dense   # dense K sweep for iso-compute
+
+# Iso-compute analysis pipeline (Steps 4a–4c above)
+python scripts/gen_commands.py build-heatmap sex_binary_lstm
+python scripts/gen_commands.py build-heatmap sex_binary_lstm --split val
+python scripts/gen_commands.py iso-plots sex_binary_lstm
+python scripts/gen_commands.py iso-plots sex_binary_lstm --metric auroc --budget 240
+
+# Saturation curve (Figure 1: metric vs context length per head)
+python scripts/gen_commands.py saturation sex_binary
+python scripts/gen_commands.py saturation sex_binary --heads lstm transformer mean_pool
+python scripts/gen_commands.py saturation sex_binary --metric auroc balanced_accuracy
 
 # Check file-level status (trained / inferred / analyzed)
 python scripts/gen_commands.py status
@@ -228,10 +290,18 @@ python scripts/gen_commands.py status sex_binary_lstm    # file-level progress
 # 3. After training, infer
 python scripts/gen_commands.py infer sex_binary_lstm | bash
 
-# 4. After inference, analyze
+# 4. After inference: standard analysis (sparse K, markdown table + plots)
 python scripts/gen_commands.py analyze sex_binary_lstm --plot | bash
 
-# 5. Check all experiments at once
+# 5. Iso-compute analysis (dense K sweep → 7 plots per metric)
+python scripts/gen_commands.py analyze sex_binary_lstm --k-dense | bash
+python scripts/gen_commands.py build-heatmap sex_binary_lstm | bash
+python scripts/gen_commands.py iso-plots sex_binary_lstm | bash
+
+# 6. Saturation curve — once all three heads are trained for this task
+python scripts/gen_commands.py saturation sex_binary --heads lstm transformer mean_pool | bash
+
+# 7. Check all experiments at once
 python scripts/gen_commands.py list
 ```
 
@@ -403,22 +473,34 @@ Context lengths:
 ```
 /scratch/boshra95/psg/unified/results/phase0_v2/
 │
-├── {task}_{head}/                  # e.g. sex_binary_lstm/
-│   ├── summary.csv                 # one row per context (val/test metrics)
-│   └── context_{L}/               # e.g. context_30s/
-│       ├── best_model.pt           # best checkpoint by val_auroc
-│       ├── resume.pt               # per-epoch resume checkpoint (present during training, deleted on success)
-│       ├── metrics.json            # final metrics (presence = context is done)
-│       └── training_curves.csv     # per-epoch loss/bal_acc/monitor (written on completion)
+├── {task}_{head}/                    # e.g. sex_binary_lstm/
+│   ├── summary.csv                   # one row per context (val/test metrics)
+│   └── context_{L}/                 # e.g. context_30s/
+│       ├── best_model.pt             # best checkpoint by val_auroc
+│       ├── resume.pt                 # per-epoch resume checkpoint (deleted on success)
+│       ├── metrics.json              # final metrics (presence = context is done)
+│       └── training_curves.csv       # per-epoch loss/bal_acc/monitor (written on completion)
 │
-└── inference/
+├── inference/
+│   └── {task}_{head}/
+│       ├── window_analysis_{split}.csv   # K-sweep metrics (sparse; or dense with --k-dense)
+│       ├── window_analysis.md            # markdown tables (all splits)
+│       ├── heatmap_df_{split}.csv        # iso-compute-ready: context_min, k, auroc, total_compute_min
+│       └── context_{L}/
+│           ├── {split}_windows.parquet   # per-window predictions
+│           └── {split}_subjects.parquet  # per-subject aggregations
+│
+└── figures/
+    ├── saturation_{task}_{metric}_{split}.{png,pdf}   # Step 5: head comparison
     └── {task}_{head}/
-        ├── window_analysis.csv
-        ├── window_analysis.md
-        ├── window_analysis_auroc.png   (if --plot)
-        └── context_{L}/
-            ├── test_windows.parquet
-            └── test_subjects.parquet
+        └── {metric}_{split}/           # Step 4: iso-compute plots
+            ├── heatmap_{metric}.{png,pdf}
+            ├── metric_vs_k_{metric}.{png,pdf}
+            ├── metric_vs_total_{metric}.{png,pdf}
+            ├── pareto_front_{metric}.{png,pdf}
+            ├── min_cost_frontier_{metric}.{png,pdf}
+            ├── marginal_gain_{metric}.{png,pdf}
+            └── double_tradeoff_{metric}.{png,pdf}
 
 /home/boshra95/NSRR-tools/logs_v2/
 ├── train_sex_binary_lstm_30s_lr1e-4_{job_id}.out    # SLURM stdout

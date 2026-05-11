@@ -22,6 +22,16 @@ Usage:
   python scripts/gen_commands.py runs [<exp_id>]
       Show job run history (from logs_v2/status/*.jsonl tracking files).
 
+  python scripts/gen_commands.py build-heatmap <exp_id> [--split test]
+      Print the build_heatmap_df.py command (Step 2 of iso-compute pipeline).
+      Run analyze --k-dense first to produce the dense window_analysis CSV.
+
+  python scripts/gen_commands.py iso-plots <exp_id> [--split test] [--metric auroc ...]
+      Print the plot_iso_compute.py command (Step 3 — 7 iso-compute plots).
+
+  python scripts/gen_commands.py saturation <task> [--heads lstm ...] [--metric auroc ...]
+      Print the plot_saturation.py command (Step 4 — saturation curve across heads).
+
 Examples:
   python scripts/gen_commands.py list --tier 1
   python scripts/gen_commands.py train sex_binary_lstm
@@ -29,6 +39,10 @@ Examples:
   python scripts/gen_commands.py infer sex_binary_lstm
   python scripts/gen_commands.py infer sex_binary_lstm --split val
   python scripts/gen_commands.py analyze sex_binary_lstm --plot
+  python scripts/gen_commands.py analyze sex_binary_lstm --k-dense
+  python scripts/gen_commands.py build-heatmap sex_binary_lstm
+  python scripts/gen_commands.py iso-plots sex_binary_lstm
+  python scripts/gen_commands.py saturation sex_binary --heads lstm transformer mean_pool
   python scripts/gen_commands.py status
   python scripts/gen_commands.py runs
   python scripts/gen_commands.py runs sex_binary_lstm
@@ -236,7 +250,8 @@ def build_infer_cmd(exp: dict, registry: dict, split: str = "test",
     return f"{env_str} sbatch {sbatch_opts} {JOBS_DIR}/infer_subject_windows_gpu.sh"
 
 
-def build_analyze_cmd(exp: dict, registry: dict, plot: bool = False) -> str:
+def build_analyze_cmd(exp: dict, registry: dict, plot: bool = False,
+                      k_dense: bool = False) -> str:
     results_dir = Path(registry["results_dir"])
     tag = exp.get("run_tag", "")
     # Use the virtualenv Python directly — analyze_windows.py requires sklearn
@@ -250,9 +265,66 @@ def build_analyze_cmd(exp: dict, registry: dict, plot: bool = False) -> str:
     ]
     if tag:
         cmd_parts.append(f"--run-tag {tag}")
+    if k_dense:
+        cmd_parts.append("--k-dense")
     if plot:
         cmd_parts.append("--plot")
         cmd_parts.append("--plot-metric auroc balanced_accuracy")
+    return " ".join(cmd_parts)
+
+
+def build_heatmap_cmd(exp: dict, registry: dict, split: str = "test") -> str:
+    results_dir = Path(registry["results_dir"])
+    tag = exp.get("run_tag", "")
+    python = registry.get("python_bin", "/home/boshra95/sleepfm_env/bin/python")
+    cmd_parts = [
+        f"{python} scripts/build_heatmap_df.py",
+        f"--task {exp['task']}",
+        f"--head {exp['head']}",
+        f"--results-dir {results_dir}",
+        f"--split {split}",
+    ]
+    if tag:
+        cmd_parts.append(f"--run-tag {tag}")
+    return " ".join(cmd_parts)
+
+
+def build_iso_plots_cmd(exp: dict, registry: dict, split: str = "test",
+                        metrics: list = None, budget: float = 480.0) -> str:
+    results_dir = Path(registry["results_dir"])
+    tag = exp.get("run_tag", "")
+    python = registry.get("python_bin", "/home/boshra95/sleepfm_env/bin/python")
+    metrics = metrics or ["auroc", "balanced_accuracy"]
+    cmd_parts = [
+        f"{python} scripts/plot_iso_compute.py",
+        f"--task {exp['task']}",
+        f"--head {exp['head']}",
+        f"--results-dir {results_dir}",
+        f"--split {split}",
+        f"--metric {' '.join(metrics)}",
+        f"--budget {budget:.0f}",
+    ]
+    if tag:
+        cmd_parts.append(f"--run-tag {tag}")
+    return " ".join(cmd_parts)
+
+
+def build_saturation_cmd(task: str, heads: list, registry: dict,
+                         metrics: list = None, split: str = "test",
+                         run_tag: str = "") -> str:
+    results_dir = Path(registry["results_dir"])
+    python = registry.get("python_bin", "/home/boshra95/sleepfm_env/bin/python")
+    metrics = metrics or ["auroc", "balanced_accuracy"]
+    cmd_parts = [
+        f"{python} scripts/plot_saturation.py",
+        f"--task {task}",
+        f"--heads {' '.join(heads)}",
+        f"--results-dir {results_dir}",
+        f"--metric {' '.join(metrics)}",
+        f"--split {split}",
+    ]
+    if run_tag:
+        cmd_parts.append(f"--run-tag {run_tag}")
     return " ".join(cmd_parts)
 
 
@@ -325,10 +397,51 @@ def cmd_analyze(args, registry):
         print(f"ERROR: experiment '{args.exp_id}' not found.", file=sys.stderr)
         sys.exit(1)
     exp = experiments[args.exp_id]
-    plot = getattr(args, "plot", False)
+    plot    = getattr(args, "plot", False)
+    k_dense = getattr(args, "k_dense", False)
     print(f"# Window analysis command for: {args.exp_id}")
     print()
-    print(build_analyze_cmd(exp, registry, plot))
+    print(build_analyze_cmd(exp, registry, plot, k_dense))
+
+
+def cmd_build_heatmap(args, registry):
+    experiments = registry["experiments"]
+    if args.exp_id not in experiments:
+        print(f"ERROR: experiment '{args.exp_id}' not found.", file=sys.stderr)
+        sys.exit(1)
+    exp   = experiments[args.exp_id]
+    split = getattr(args, "split", "test")
+    print(f"# Build heatmap DataFrame for iso-compute analysis: {args.exp_id}")
+    print(f"# Prerequisite: run 'analyze {args.exp_id} --k-dense' first")
+    print()
+    print(build_heatmap_cmd(exp, registry, split))
+
+
+def cmd_iso_plots(args, registry):
+    experiments = registry["experiments"]
+    if args.exp_id not in experiments:
+        print(f"ERROR: experiment '{args.exp_id}' not found.", file=sys.stderr)
+        sys.exit(1)
+    exp     = experiments[args.exp_id]
+    split   = getattr(args, "split", "test")
+    metrics = getattr(args, "metric", None) or ["auroc", "balanced_accuracy"]
+    budget  = getattr(args, "budget", 480.0)
+    print(f"# Iso-compute plots (7 plots per metric) for: {args.exp_id}")
+    print(f"# Prerequisite: run 'build-heatmap {args.exp_id}' first")
+    print()
+    print(build_iso_plots_cmd(exp, registry, split, metrics, budget))
+
+
+def cmd_saturation(args, registry):
+    task    = args.task
+    heads   = getattr(args, "heads", ["lstm", "transformer", "mean_pool"])
+    metrics = getattr(args, "metric", None) or ["auroc", "balanced_accuracy"]
+    split   = getattr(args, "split", "test")
+    run_tag = getattr(args, "run_tag", "")
+    print(f"# Saturation curve for task: {task}  heads: {heads}")
+    print(f"# Reads {task}_{{head}}/summary.csv — no dense K sweep needed")
+    print()
+    print(build_saturation_cmd(task, heads, registry, metrics, split, run_tag))
 
 
 def cmd_status(args, registry):
@@ -449,6 +562,33 @@ def main():
     p_analyze = sub.add_parser("analyze", help="Print window analysis command")
     p_analyze.add_argument("exp_id", help="Experiment ID from registry")
     p_analyze.add_argument("--plot", action="store_true", help="Include --plot flag")
+    p_analyze.add_argument("--k-dense", action="store_true", dest="k_dense",
+                           help="Include --k-dense flag (~25 K values for iso-compute pipeline)")
+
+    p_bh = sub.add_parser("build-heatmap",
+                           help="Print build_heatmap_df.py command (Step 2)")
+    p_bh.add_argument("exp_id", help="Experiment ID from registry")
+    p_bh.add_argument("--split", default="test", choices=["train", "val", "test"])
+
+    p_iso = sub.add_parser("iso-plots",
+                            help="Print plot_iso_compute.py command (Step 3 — 7 plots)")
+    p_iso.add_argument("exp_id", help="Experiment ID from registry")
+    p_iso.add_argument("--split",  default="test", choices=["train", "val", "test"])
+    p_iso.add_argument("--metric", nargs="+", default=["auroc", "balanced_accuracy"],
+                       help="Metric columns to plot (default: auroc balanced_accuracy)")
+    p_iso.add_argument("--budget", type=float, default=480.0,
+                       help="Max compute budget in minutes (default: 480)")
+
+    p_sat = sub.add_parser("saturation",
+                            help="Print plot_saturation.py command (Step 4 — head comparison)")
+    p_sat.add_argument("task", help="Task name, e.g. sex_binary")
+    p_sat.add_argument("--heads", nargs="+",
+                       default=["lstm", "transformer", "mean_pool"],
+                       help="Heads to compare (default: lstm transformer mean_pool)")
+    p_sat.add_argument("--metric", nargs="+", default=["auroc", "balanced_accuracy"],
+                       help="Metrics to plot (default: auroc balanced_accuracy)")
+    p_sat.add_argument("--split", default="test", choices=["val", "test"])
+    p_sat.add_argument("--run-tag", default="", dest="run_tag")
 
     p_status = sub.add_parser("status", help="Show file-level status for experiment(s)")
     p_status.add_argument("exp_id", nargs="?", default=None,
@@ -464,12 +604,15 @@ def main():
     registry = load_registry()
 
     dispatch = {
-        "list":    cmd_list,
-        "train":   cmd_train,
-        "infer":   cmd_infer,
-        "analyze": cmd_analyze,
-        "status":  cmd_status,
-        "runs":    cmd_runs,
+        "list":           cmd_list,
+        "train":          cmd_train,
+        "infer":          cmd_infer,
+        "analyze":        cmd_analyze,
+        "build-heatmap":  cmd_build_heatmap,
+        "iso-plots":      cmd_iso_plots,
+        "saturation":     cmd_saturation,
+        "status":         cmd_status,
+        "runs":           cmd_runs,
     }
 
     if args.command not in dispatch:
