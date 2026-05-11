@@ -785,6 +785,10 @@ def main():
     print(f"\n{'='*60}")
     print(f"Sweep complete. Results: {exp_dir}")
     print(f"Summary:         {summary_path}")
+    if any_failed:
+        print("Status: FAILED — one or more context lengths errored (see [ERROR] lines above).")
+    else:
+        print("Status: SUCCESS — all context lengths completed.")
 
     if any_failed:
         reason_str = "; ".join(failure_reasons)

@@ -162,7 +162,8 @@ _PYTHON_PID=$!
 wait $_PYTHON_PID
 EXIT_CODE=$?
 trap '' USR1   # training done — ignore any late-firing USR1
-set -e
+# Do NOT re-enable set -e here — EXIT_CODE is already captured and the
+# cleanup/status path below must not be aborted by a non-zero subcommand.
 
 echo ""
 echo "========================================================================"
@@ -173,7 +174,8 @@ if [ $EXIT_CODE -eq 0 ]; then
 else
     # Read failure reason written by Python (inference/{exp_id}/_failure_reason_<jobid>.txt)
     _RESULTS_DIR=$(python -c "import yaml; print(yaml.safe_load(open('$CONFIG'))['logging']['results_dir'])" 2>/dev/null || echo "")
-    _EXP_ID="${TASK}_${HEAD}$([ -n "$RUN_TAG" ] && echo "_${RUN_TAG}")"
+    _EXP_ID="${TASK}_${HEAD}"
+    [ -n "$RUN_TAG" ] && _EXP_ID="${_EXP_ID}_${RUN_TAG}"
     _REASON_FILE="${_RESULTS_DIR}/inference/${_EXP_ID}/_failure_reason_${SLURM_JOB_ID:-local}.txt"
     _REASON=$(cat "$_REASON_FILE" 2>/dev/null | tr '"' "'" || echo "unknown")
     echo "Status: FAILED (exit code: $EXIT_CODE) — ${_REASON}"

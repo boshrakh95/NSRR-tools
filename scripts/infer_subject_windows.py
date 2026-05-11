@@ -261,8 +261,17 @@ def main():
 
             cfg["model"]["num_classes"] = num_classes
             cfg["model"]["head_type"]   = args.head_type
+
+            # For transformer heads, match max_seq_len to what the checkpoint
+            # was trained with (pos_enc is a registered buffer saved in state
+            # dict; shape mismatch causes load failure if the default changed).
+            ckpt_state = torch.load(ckpt_path, map_location="cpu")
+            if "pos_enc" in ckpt_state:
+                # pos_enc shape: [1, max_seq_len+1, hidden_dim]
+                cfg["model"]["max_seq_len"] = ckpt_state["pos_enc"].shape[1] - 1
+
             model = build_head(cfg)
-            model.load_state_dict(torch.load(ckpt_path, map_location=device))
+            model.load_state_dict(ckpt_state)
             model = model.to(device)
             model.eval()
             print(f"  num_classes: {num_classes}")
@@ -310,7 +319,10 @@ def main():
             failure_reasons.append(f"{ctx}: {_classify_failure(exc)}")
 
     print(f"\n{'='*60}")
-    print("All contexts processed.")
+    if any_failed:
+        print("Contexts finished (with errors — see [ERROR] lines above).")
+    else:
+        print("All contexts processed successfully.")
 
     if any_failed:
         reason_str  = "; ".join(failure_reasons)
