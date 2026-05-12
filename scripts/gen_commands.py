@@ -51,6 +51,7 @@ Examples:
 import argparse
 import json
 import re
+import socket
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -59,6 +60,10 @@ import yaml
 
 REGISTRY_PATH = Path(__file__).parent.parent / "experiments" / "v2_registry.yaml"
 JOBS_DIR = Path(__file__).parent.parent / "jobs"
+
+_ON_RORQUAL = "rorqual" in socket.gethostname()
+_TRAIN_SCRIPT = "train_context_sweep_gpu_rorqual.sh" if _ON_RORQUAL else "train_context_sweep_gpu.sh"
+_INFER_SCRIPT = "infer_subject_windows_gpu_rorqual.sh" if _ON_RORQUAL else "infer_subject_windows_gpu.sh"
 
 # ── Wall-time lookup tables ────────────────────────────────────────────────────
 # Conservative estimates with ~50-100% margin over observed runtimes.
@@ -213,7 +218,7 @@ def build_train_cmd(exp: dict, registry: dict, context: str,
         f"--output={logs_dir}/{stem}_%j.out "
         f"--error={logs_dir}/{stem}_%j.err"
     )
-    return f"{env_str} sbatch {sbatch_opts} {JOBS_DIR}/train_context_sweep_gpu.sh"
+    return f"{env_str} sbatch {sbatch_opts} {JOBS_DIR}/{_TRAIN_SCRIPT}"
 
 
 def build_infer_cmd(exp: dict, registry: dict, split: str = "test",
@@ -247,7 +252,7 @@ def build_infer_cmd(exp: dict, registry: dict, split: str = "test",
         f"--output={logs_dir}/{stem}_%j.out "
         f"--error={logs_dir}/{stem}_%j.err"
     )
-    return f"{env_str} sbatch {sbatch_opts} {JOBS_DIR}/infer_subject_windows_gpu.sh"
+    return f"{env_str} sbatch {sbatch_opts} {JOBS_DIR}/{_INFER_SCRIPT}"
 
 
 def build_analyze_cmd(exp: dict, registry: dict, plot: bool = False,
