@@ -58,6 +58,7 @@ python -c "import torch; assert torch.cuda.is_available(), 'CUDA not available o
 # ── W&B setup (non-interactive) ───────────────────────────────────────────────
 # Store your key once: echo "your_key_here" > ~/.wandb_key && chmod 600 ~/.wandb_key
 [ -f ~/.wandb_key ] && export WANDB_API_KEY=$(cat ~/.wandb_key)
+export WANDB_MODE=offline                      # compute nodes have no internet; sync later from login node
 export WANDB_DIR=/tmp/wandb_${SLURM_JOB_ID}   # node-local tmp, auto-cleaned
 mkdir -p "$WANDB_DIR"
 
