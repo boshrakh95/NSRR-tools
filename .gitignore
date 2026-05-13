@@ -38,3 +38,5 @@ runs/
 **/*.h5
 **/*.parquet
 **/*.csv  # (optional: keep if you want only small metadata CSVs)
+!results/collected/training.csv
+!results/collected/analysis.csv

@@ -197,11 +197,21 @@ For each iso-compute diagonal: one line showing how AUROC varies as you move fro
 
 | Figure / analysis | Script | Status |
 |---|---|---|
-| Saturation curve (AUROC vs L) | `collect_results.py` or manual from `summary.csv` | Needs minor script (read CSVs across context lengths) |
+| Saturation curve (AUROC vs L) | `plot_saturation.py` (reads `results/collected/analysis.csv`, k=all) | **Already implemented** |
 | Per-context K-sweep table + line plot | `analyze_windows.py` | **Already implemented** |
-| 2D heatmap with iso-compute lines | `plot_context_heatmap.py` | **Needs to be written** |
-| Head comparison plots | Run `analyze_windows.py` separately per head | Needs wrapper or manual |
-| Iso-compute curve | Part of heatmap script | **Needs to be written** |
+| 2D heatmap with iso-compute lines | `build_heatmap_df.py` + `plot_iso_compute.py` | **Already implemented** |
+| Head comparison plots | `plot_saturation.py --heads lstm transformer mean_pool` | **Already implemented** |
+| Iso-compute curve (7 plots) | `plot_iso_compute.py` | **Already implemented** |
+| Collect all results into flat CSVs | `collect_results_v2.py` | **Already implemented** |
+
+**Results collection inputs and outputs:**
+
+`scripts/collect_results_v2.py` reads the raw per-run output files from scratch and writes flat CSVs and parquets:
+
+- **Reads:** `{task}_{head}/context_{L}/training_curves.csv`, `metrics.json` (for training); `inference/{task}_{head}/window_analysis_{split}.csv` (for analysis); `inference/{task}_{head}/context_{L}/{split}_windows.parquet` (for per-window predictions)
+- **Writes:** `results/collected/training.csv`, `results/collected/analysis.csv` (repo + scratch); `collected/predictions/*.parquet` (scratch only)
+
+These flat files replace the need to read individual per-run CSVs and JSONs when making plots and tables. See `docs/RESULTS_COLLECTION.md` for full column schemas and usage examples.
 
 ---
 

@@ -20,6 +20,7 @@ This document is the definitive reference for running training, inference, and a
 12. [Adding New Experiments](#adding-new-experiments)
 13. [Regression Tasks (Deferred)](#regression-tasks-deferred)
 14. [Notes on Specific Tasks](#notes-on-specific-tasks)
+15. [Results Collection](#results-collection)
 
 ---
 
@@ -301,7 +302,11 @@ python scripts/gen_commands.py iso-plots sex_binary_lstm | bash
 # 6. Saturation curve — once all three heads are trained for this task
 python scripts/gen_commands.py saturation sex_binary --heads lstm transformer mean_pool | bash
 
-# 7. Check all experiments at once
+# 7. Collect all results into flat CSVs (run after any new training or inference)
+python scripts/collect_results_v2.py
+git add results/collected/ && git commit -m "collect results" && git push
+
+# 8. Check all experiments at once
 python scripts/gen_commands.py list
 ```
 
@@ -627,3 +632,45 @@ Labels are already prepared: `age_value` and `bmi_value` float columns in `targe
 **`osa_binary_apples_postqc`** and **`osa_severity_apples`**: APPLES-only. Small N (~1,516). Context lengths up to 120m included; be cautious with 80m+ given small per-split N.
 
 **`psqi_binary`**: MrOS-only. Both MrOS visits contribute (PSQI is visit-specific). N=~3,933 across both visits.
+
+---
+
+## Results Collection
+
+**Script:** `scripts/collect_results_v2.py`  
+**Run from:** either cluster, any time after new training or inference results are available.
+
+```bash
+cd /home/boshra95/NSRR-tools
+python scripts/collect_results_v2.py
+```
+
+The script scans the scratch results directory and appends new rows to three output files:
+
+| File | Content | Location |
+|------|---------|----------|
+| `results/collected/training.csv` | One row per (task, head, context, epoch) | Repo + scratch |
+| `results/collected/analysis.csv` | One row per (task, head, context, K, split) | Repo + scratch |
+| `collected/predictions/{task}_{head}_{ctx}_{split}.parquet` | Per-window probabilities | Scratch only |
+
+The CSVs are committed to the repo and synced across clusters via git. The parquets are scratch-only (too large for git) and accumulate independently on each cluster.
+
+**Sync workflow:**
+```bash
+# After collecting results on one cluster:
+git add results/collected/ && git commit -m "collect results" && git push
+
+# Before collecting on the other cluster:
+git pull
+python scripts/collect_results_v2.py
+git add results/collected/ && git commit -m "collect results" && git push
+```
+
+**Using the collected files for analysis:**
+- `training.csv` filtered by `is_best_epoch == True` → paper performance tables
+- `training.csv` all rows → learning curve plots
+- `analysis.csv` with `k == "all"` → saturation curve (Figure 1)
+- `analysis.csv` with `total_compute_min` column → iso-compute heatmap and Pareto plots
+- `predictions/*.parquet` → custom aggregations, ROC at iso-compute, per-dataset breakdowns
+
+See `docs/RESULTS_COLLECTION.md` for the full column schemas and detailed usage examples.
