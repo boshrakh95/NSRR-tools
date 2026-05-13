@@ -317,6 +317,15 @@ def main():
             traceback.print_exc()
             any_failed = True
             failure_reasons.append(f"{ctx}: {_classify_failure(exc)}")
+        finally:
+            # free GPU memory before the next context so OOM in one context
+            # doesn't cascade into the next
+            try:
+                del model
+            except NameError:
+                pass
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
     print(f"\n{'='*60}")
     if any_failed:

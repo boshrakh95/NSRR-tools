@@ -107,7 +107,7 @@ model:
 
 # ── Training ─────────────────────────────────────────────────────────────────
 training:
-  epochs: 30
+  epochs: 40
   lr: 1.0e-4
   weight_decay: 1.0e-3
   optimizer: "adamw"
