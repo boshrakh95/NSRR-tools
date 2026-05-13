@@ -4,3 +4,6 @@
 {"ts":"2026-05-12T18:23:04-04:00","job_id":"12189306","node":"rg12701","status":"FAILED","reason":"10m: wandb_crash: Run initialization has timed out after 90.0 sec. 
 Please refer to the documentation for additional information: https://","task":"age_class","head":"lstm","context":"10m","lr":"0.0001","datasets":"apples shhs mros"}
 {"ts":"2026-05-12T18:25:00-04:00","job_id":"12189870","node":"rg13203","status":"STARTED","task":"age_class","head":"lstm","context":"10m","lr":"0.0001","datasets":"apples shhs mros"}
+{"ts":"2026-05-12T18:52:31-04:00","job_id":"12189870","node":"rg13203","status":"TIMEOUT_REQUEUED","task":"age_class","head":"lstm","context":"10m","lr":"0.0001","datasets":"apples shhs mros"}
+{"ts":"2026-05-12T18:52:56-04:00","job_id":"12191627","node":"rg13101","status":"STARTED","task":"age_class","head":"lstm","context":"10m","lr":"0.0001","datasets":"apples shhs mros"}
+{"ts":"2026-05-12T19:01:30-04:00","job_id":"12191627","node":"rg13101","status":"SUCCESS","task":"age_class","head":"lstm","context":"10m","lr":"0.0001","datasets":"apples shhs mros"}
