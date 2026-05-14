@@ -1,0 +1,2 @@
+{"ts":"2026-05-12T22:39:10-04:00","job_id":"12207057","node":"rg13001","status":"STARTED","task":"age_class","head":"transformer","context":"40m","lr":"0.0001","datasets":"apples shhs mros"}
+{"ts":"2026-05-12T23:06:25-04:00","job_id":"12207057","node":"rg13001","status":"SUCCESS","task":"age_class","head":"transformer","context":"40m","lr":"0.0001","datasets":"apples shhs mros"}

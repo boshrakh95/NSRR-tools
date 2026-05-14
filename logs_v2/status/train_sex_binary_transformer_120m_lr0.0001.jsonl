@@ -1,0 +1,6 @@
+{"ts":"2026-05-08T15:51:17-07:00","job_id":"39226042","node":"fc11009","status":"STARTED","task":"sex_binary","head":"transformer","context":"120m","lr":"0.0001","datasets":"apples shhs"}
+{"ts":"2026-05-08T16:07:07-07:00","job_id":"39226042","node":"fc11009","status":"FAILED","task":"sex_binary","head":"transformer","context":"120m","lr":"0.0001","datasets":"apples shhs","note":"corrected — per-context exception, exit code was 0 (pre-fix bug)"}
+{"ts":"2026-05-08T16:11:24-07:00","job_id":"39227266","node":"fc11004","status":"STARTED","task":"sex_binary","head":"transformer","context":"120m","lr":"0.0001","datasets":"apples shhs"}
+{"ts":"2026-05-08T16:15:05-07:00","job_id":"39227266","node":"fc11004","status":"FAILED","task":"sex_binary","head":"transformer","context":"120m","lr":"0.0001","datasets":"apples shhs","note":"corrected — per-context exception, exit code was 0 (pre-fix bug)"}
+{"ts":"2026-05-10T11:41:14-07:00","job_id":"39507943","node":"fc11005","status":"STARTED","task":"sex_binary","head":"transformer","context":"120m","lr":"0.0001","datasets":"apples shhs"}
+{"ts":"2026-05-10T13:33:55-07:00","job_id":"39507943","node":"fc11005","status":"SUCCESS","task":"sex_binary","head":"transformer","context":"120m","lr":"0.0001","datasets":"apples shhs"}

@@ -45,6 +45,8 @@ Usage:
 
 import argparse
 import json
+import os
+import signal
 import sys
 import warnings
 from pathlib import Path
@@ -62,6 +64,22 @@ from nsrr_tools.datasets.context_window_dataset import (
     FULL_NIGHT_SENTINEL,
 )
 from nsrr_tools.models.sequence_head import build_head
+
+def _handle_sigterm(signum, frame):
+    print("\n[SIGTERM] Timeout — exiting cleanly so bash can log TIMEOUT_REQUEUED", flush=True)
+    sys.exit(0)
+
+signal.signal(signal.SIGTERM, _handle_sigterm)
+
+
+def _classify_failure(exc: BaseException) -> str:
+    if isinstance(exc, torch.cuda.OutOfMemoryError):
+        return "oom"
+    if "wandb" in type(exc).__module__.lower():
+        return f"wandb_crash: {str(exc)[:120]}"
+    if isinstance(exc, (OSError, IOError)):
+        return f"io_error: {str(exc)[:120]}"
+    return f"error: {type(exc).__name__}: {str(exc)[:120]}"
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -181,6 +199,9 @@ def main():
     print(f"  Device:      {device}")
     print()
 
+    any_failed = False
+    failure_reasons: list[str] = []
+
     for ctx in contexts:
         print(f"\n{'='*60}")
         print(f"  Context: {ctx}")
@@ -208,80 +229,118 @@ def main():
         print(f"  Checkpoint:  {ckpt_path}")
         print(f"  Output:      {out_parquet}")
 
-        # ── Build dataset ─────────────────────────────────────────────────────
-        ds = build_dataset(
-            cfg=cfg,
-            split=args.split,
-            context_length=ctx,
-            task=args.task,
-            task_type=args.task_type,
-            datasets_filter=args.datasets,
-            all_windows=all_windows,
-        )
-        print(f"  Dataset items: {len(ds):,}  (subjects: {len(ds.df):,})")
+        try:
+            # ── Build dataset ─────────────────────────────────────────────────
+            ds = build_dataset(
+                cfg=cfg,
+                split=args.split,
+                context_length=ctx,
+                task=args.task,
+                task_type=args.task_type,
+                datasets_filter=args.datasets,
+                all_windows=all_windows,
+            )
+            print(f"  Dataset items: {len(ds):,}  (subjects: {len(ds.df):,})")
 
-        subject_ids = get_subject_ids(ds)
+            subject_ids = get_subject_ids(ds)
 
-        loader = DataLoader(
-            ds,
-            batch_size=args.batch_size,
-            shuffle=False,
-            num_workers=args.num_workers,
-            pin_memory=(device.type == "cuda"),
-            collate_fn=ds.collate_fn,
-        )
+            loader = DataLoader(
+                ds,
+                batch_size=args.batch_size,
+                shuffle=False,
+                num_workers=args.num_workers,
+                pin_memory=(device.type == "cuda"),
+                collate_fn=ds.collate_fn,
+            )
 
-        # ── Load model ────────────────────────────────────────────────────────
-        metrics_path = ckpt_path.parent / "metrics.json"
-        with open(metrics_path) as f:
-            saved_metrics = json.load(f)
-        num_classes = saved_metrics["num_classes"]
+            # ── Load model ────────────────────────────────────────────────────
+            metrics_path = ckpt_path.parent / "metrics.json"
+            with open(metrics_path) as f:
+                saved_metrics = json.load(f)
+            num_classes = saved_metrics["num_classes"]
 
-        cfg["model"]["num_classes"] = num_classes
-        cfg["model"]["head_type"]   = args.head_type
-        model = build_head(cfg)
-        model.load_state_dict(torch.load(ckpt_path, map_location=device))
-        model = model.to(device)
-        model.eval()
-        print(f"  num_classes: {num_classes}")
+            cfg["model"]["num_classes"] = num_classes
+            cfg["model"]["head_type"]   = args.head_type
 
-        # ── Inference ─────────────────────────────────────────────────────────
-        print("  Running inference...")
-        logits_np, targets_np = run_inference(model, loader, device, num_classes)
+            # For transformer heads, match max_seq_len to what the checkpoint
+            # was trained with (pos_enc is a registered buffer saved in state
+            # dict; shape mismatch causes load failure if the default changed).
+            ckpt_state = torch.load(ckpt_path, map_location="cpu")
+            if "pos_enc" in ckpt_state:
+                # pos_enc shape: [1, max_seq_len+1, hidden_dim]
+                cfg["model"]["max_seq_len"] = ckpt_state["pos_enc"].shape[1] - 1
 
-        probs = torch.softmax(torch.from_numpy(logits_np), dim=-1).numpy()
-        preds = logits_np.argmax(axis=1)
+            model = build_head(cfg)
+            model.load_state_dict(ckpt_state)
+            model = model.to(device)
+            model.eval()
+            print(f"  num_classes: {num_classes}")
 
-        # ── Build output DataFrame ────────────────────────────────────────────
-        rows = {
-            "subject_id": [sid   for sid, _     in subject_ids],
-            "dataset":    [dname for _,   dname in subject_ids],
-            "true_label": targets_np.astype(np.int16),
-            "pred_label": preds.astype(np.int16),
-        }
-        for c in range(num_classes):
-            rows[f"prob_class{c}"] = probs[:, c].astype(np.float32)
+            # ── Inference ─────────────────────────────────────────────────────
+            print("  Running inference...")
+            logits_np, targets_np = run_inference(model, loader, device, num_classes)
 
-        window_idx = np.zeros(len(subject_ids), dtype=np.int32)
-        seen: dict = {}
-        for i, (sid, dname) in enumerate(subject_ids):
-            key = (sid, dname)
-            window_idx[i] = seen.get(key, 0)
-            seen[key] = seen.get(key, 0) + 1
-        rows["window_idx"] = window_idx
+            probs = torch.softmax(torch.from_numpy(logits_np), dim=-1).numpy()
+            preds = logits_np.argmax(axis=1)
 
-        df_out = pd.DataFrame(rows)
-        df_out.to_parquet(out_parquet, index=False)
+            # ── Build output DataFrame ────────────────────────────────────────
+            rows = {
+                "subject_id": [sid   for sid, _     in subject_ids],
+                "dataset":    [dname for _,   dname in subject_ids],
+                "true_label": targets_np.astype(np.int16),
+                "pred_label": preds.astype(np.int16),
+            }
+            for c in range(num_classes):
+                rows[f"prob_class{c}"] = probs[:, c].astype(np.float32)
 
-        seg_acc          = (df_out["pred_label"] == df_out["true_label"]).mean()
-        n_subjects       = df_out.groupby(["subject_id", "dataset"]).ngroups
-        windows_per_subj = len(df_out) / max(n_subjects, 1)
-        print(f"  Saved {len(df_out):,} rows → {out_parquet}")
-        print(f"  Segment accuracy: {seg_acc*100:.2f}%  |  "
-              f"Subjects: {n_subjects:,}  |  Avg windows: {windows_per_subj:.1f}")
+            window_idx = np.zeros(len(subject_ids), dtype=np.int32)
+            seen: dict = {}
+            for i, (sid, dname) in enumerate(subject_ids):
+                key = (sid, dname)
+                window_idx[i] = seen.get(key, 0)
+                seen[key] = seen.get(key, 0) + 1
+            rows["window_idx"] = window_idx
+
+            df_out = pd.DataFrame(rows)
+            df_out.to_parquet(out_parquet, index=False)
+
+            seg_acc          = (df_out["pred_label"] == df_out["true_label"]).mean()
+            n_subjects       = df_out.groupby(["subject_id", "dataset"]).ngroups
+            windows_per_subj = len(df_out) / max(n_subjects, 1)
+            print(f"  Saved {len(df_out):,} rows → {out_parquet}")
+            print(f"  Segment accuracy: {seg_acc*100:.2f}%  |  "
+                  f"Subjects: {n_subjects:,}  |  Avg windows: {windows_per_subj:.1f}")
+
+        except Exception as exc:
+            import traceback
+            print(f"\n[ERROR] context={ctx}: {exc}")
+            traceback.print_exc()
+            any_failed = True
+            failure_reasons.append(f"{ctx}: {_classify_failure(exc)}")
+        finally:
+            # free GPU memory before the next context so OOM in one context
+            # doesn't cascade into the next
+            try:
+                del model
+            except NameError:
+                pass
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
     print(f"\n{'='*60}")
-    print("All contexts processed.")
+    if any_failed:
+        print("Contexts finished (with errors — see [ERROR] lines above).")
+    else:
+        print("All contexts processed successfully.")
+
+    if any_failed:
+        reason_str  = "; ".join(failure_reasons)
+        infer_dir   = results_dir / "inference" / exp_id
+        infer_dir.mkdir(parents=True, exist_ok=True)
+        reason_file = infer_dir / f"_failure_reason_{os.environ.get('SLURM_JOB_ID', 'local')}.txt"
+        reason_file.write_text(reason_str)
+        print(f"\n[WARNING] One or more contexts failed: {reason_str}")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

@@ -39,6 +39,9 @@ Usage
 
   # Choose window selection strategy (default: evenly-spaced):
   python scripts/analyze_windows.py --task apnea_binary --head lstm --window-strategy first
+
+  # Dense K sweep for iso-compute / heatmap analysis (~25 K values):
+  python scripts/analyze_windows.py --task apnea_binary --head lstm --k-dense
 """
 
 import argparse
@@ -67,7 +70,9 @@ except ImportError:
 # ── Config ────────────────────────────────────────────────────────────────────
 
 DEFAULT_K_VALUES = [1, 5, 10, 20, 50, "all"]
-CONTEXT_ORDER    = ["30s", "10m", "40m", "80m"]
+DENSE_K_VALUES   = [1, 2, 3, 4, 5, 6, 8, 10, 12, 16, 20, 25, 30, 40, 50,
+                    60, 80, 100, 120, 160, 200, 250, 320, 400, 500, "all"]
+CONTEXT_ORDER    = ["30s", "10m", "40m", "80m", "120m", "240m"]
 
 # Tasks where subject-level aggregation (mean-prob / majority-vote) is
 # meaningless: each anchor has its own label, so there is no single
@@ -346,15 +351,21 @@ def main():
     parser.add_argument("--k-values", nargs="+", default=None, dest="k_values",
                         help='K values to evaluate, e.g. --k-values 1 5 10 20 all '
                              '(default: 1 5 10 20 50 all)')
+    parser.add_argument("--k-dense", action="store_true", dest="k_dense",
+                        help='Use the dense K sweep (~25 values) instead of the default '
+                             'sparse list. Use this when building heatmap DataFrames for '
+                             'iso-compute plots. Overridden by --k-values if both are set.')
     parser.add_argument("--window-strategy", default="evenly-spaced",
                         choices=["evenly-spaced", "first", "last", "random"],
                         dest="window_strategy",
                         help="How to select K windows per subject (default: evenly-spaced)")
     parser.add_argument("--plot", action="store_true",
                         help="Also save comparison plots")
-    parser.add_argument("--plot-metric", default="auroc", dest="plot_metric",
+    parser.add_argument("--plot-metric", nargs="+",
+                        default=["auroc", "balanced_accuracy"], dest="plot_metric",
                         choices=["auroc", "balanced_accuracy", "macro_f1"],
-                        help="Metric to plot (default: auroc)")
+                        help="Metrics to plot (default: auroc balanced_accuracy). "
+                             "Accepts multiple: --plot-metric auroc balanced_accuracy macro_f1")
     parser.add_argument("--splits", nargs="+", default=["test"],
                         choices=["train", "val", "test"],
                         help="Splits to analyse (default: test). Use --splits val test for both.")
@@ -372,8 +383,13 @@ def main():
         print("Run infer_subject_windows.py first.")
         return
 
-    # Parse K values once
-    raw_k = args.k_values or [str(k) for k in DEFAULT_K_VALUES]
+    # Parse K values once — --k-values > --k-dense > default sparse list
+    if args.k_values:
+        raw_k = args.k_values
+    elif args.k_dense:
+        raw_k = [str(k) for k in DENSE_K_VALUES]
+    else:
+        raw_k = [str(k) for k in DEFAULT_K_VALUES]
     k_values = ["all" if v == "all" else int(v) for v in raw_k]
 
     print(f"Task: {args.task}  Head: {args.head}  Splits: {args.splits}")
@@ -470,11 +486,11 @@ def main():
         # Collect markdown section for this split
         split_contents[split] = _split_to_markdown(split_df, args.window_strategy, task=args.task)
 
-        # Plot per split
         if args.plot:
-            out_fig = (args.results_dir / "figures" /
-                       f"{args.task}_{args.head}_{split}_window_sweep_{args.plot_metric}.png")
-            plot_window_sweep(split_df, args.task, args.head, args.plot_metric, out_fig)
+            for pm in args.plot_metric:
+                out_fig = (args.results_dir / "figures" /
+                           f"{args.task}_{args.head}_{split}_window_sweep_{pm}.png")
+                plot_window_sweep(split_df, args.task, args.head, pm, out_fig)
 
     # ── Save combined markdown (all splits, separate sections) ────────────────
     out_md = inf_dir / "window_analysis.md"
