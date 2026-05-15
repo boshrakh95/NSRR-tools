@@ -310,6 +310,7 @@ def train_one_context(
     wandb_entity:    str  = None,
     batch_size:      int  = 32,
     exp_id:          str  = None,
+    cli_lr_set:      bool = False,
 ):
     train_batch_size = batch_size
     eval_batch_size  = batch_size * 2
@@ -352,6 +353,14 @@ def train_one_context(
         _overfit_start_epoch  = _rckpt.get("overfit_start_epoch", None)
         phase_tag = " [overfit phase]" if _in_overfit_phase else ""
         print(f"  [RESUME] Found checkpoint — continuing from epoch {_rckpt['epoch'] + 1}{phase_tag}")
+
+    # ── Per-context LR override (only when no CLI --lr was given) ─────────
+    if not cli_lr_set:
+        ctx_lr_overrides = t_cfg.get("context_lr_overrides", {})
+        if str(context_length) in ctx_lr_overrides:
+            override_lr = float(ctx_lr_overrides[str(context_length)])
+            cfg["training"]["lr"] = override_lr
+            print(f"  LR override for {context_length}: {override_lr} (from context_lr_overrides)")
 
     # ── Training-K strategy ────────────────────────────────────────────────
     windows_strategy = t_cfg.get("windows_strategy", "fixed")
@@ -488,9 +497,17 @@ def train_one_context(
     print(f"  Trainable params: {n_params:,}")
 
     # ── Capture training-setup metadata for metrics.json ──────────────────────
-    # steps_per_epoch and windows_per_subject_train are set after DataLoaders
-    # are built so they reflect any token_budget override applied above.
-    _windows_per_subject_train = int(cfg["dataset"].get("windows_per_subject", 5))
+    # Compute actual average K from the built index (not the configured target).
+    # After the overlapping-window fix, K=K_max for almost all subjects; the
+    # average dips below K_max only for subjects with T < N + K_max - 1.
+    from collections import Counter as _Counter
+    _subj_counts = _Counter(row_idx for row_idx, _, _ in train_ds._index)
+    _windows_per_subject_train = (
+        sum(_subj_counts.values()) / len(_subj_counts)
+        if _subj_counts else 0.0
+    )
+    print(f"  Actual avg K/subject (train): {_windows_per_subject_train:.2f}"
+          f"  (target K_max={cfg['dataset'].get('windows_per_subject', 5)})")
     _snap_dir = out_dir / "snapshots"
 
     # ── Optimizer & scheduler ──────────────────────────────────────────────
@@ -870,8 +887,10 @@ def main():
     head_type = args.head_type or cfg["model"]["head_type"]
     train_batch_size = args.batch_size or 32
 
-    # Apply LR override before passing cfg into training
-    if args.lr is not None:
+    # Apply LR override before passing cfg into training.
+    # cli_lr_set=True suppresses per-context LR overrides from the config.
+    _cli_lr_set = args.lr is not None
+    if _cli_lr_set:
         cfg["training"]["lr"] = args.lr
 
     context_lengths = args.context or cfg["dataset"]["context_lengths"]
@@ -927,6 +946,7 @@ def main():
                 wandb_entity=args.wandb_entity,
                 batch_size=train_batch_size,
                 exp_id=exp_id,
+                cli_lr_set=_cli_lr_set,
             )
             if metrics is not None:
                 append_to_summary(summary_path, metrics)

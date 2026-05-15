@@ -18,11 +18,16 @@
 #   tier        — 1 (run first) | 2 (run second) | deferred
 #   notes       — free-form notes
 
-config: configs/phase0_v2_config.yaml
-results_dir: /scratch/boshra95/psg/unified/results/phase0_v2
-inference_dir: /scratch/boshra95/psg/unified/results/phase0_v2/inference
-logs_dir: /home/boshra95/NSRR-tools/logs_v2
+config: configs/phase0_v3_config.yaml
+results_dir: /scratch/boshra95/psg/unified/results/phase0_v3
+inference_dir: /scratch/boshra95/psg/unified/results/phase0_v3/inference
+logs_dir: /home/boshra95/NSRR-tools/logs_v3
 python_bin: /home/boshra95/sleepfm_env/bin/python
+
+# ── v2 paths (old protocol — non-overlapping windows, kept for reference) ──────
+# v2_results_dir: /scratch/boshra95/psg/unified/results/phase0_v2
+# v2_inference_dir: /scratch/boshra95/psg/unified/results/phase0_v2/inference
+# v2_logs_dir: /home/boshra95/NSRR-tools/logs_v2
 
 # ── Tier 1: Large N, clinically broad ────────────────────────────────────────
 # Run all three heads to enable head comparison.

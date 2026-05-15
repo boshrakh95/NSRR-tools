@@ -19,9 +19,9 @@ questions — only the amount of context given as input differs.
 
   seq2label (night-level tasks):
     Index unit = (subject, window_k).
-    K = min(K_max, n_available_windows) non-overlapping windows per subject.
-    K_max is the same at every context length, so __len__ is approximately
-    equal across the sweep (exact equality only breaks at full_night where K=1).
+    K = min(K_max, T-N+1) windows per subject sampled from all valid start
+    positions (overlapping allowed). K_max is fixed at every context length so
+    __len__ is constant across the sweep (only breaks at full_night where K=1).
 
 INPUT FILES
 ───────────
@@ -420,22 +420,20 @@ class ContextWindowDataset(Dataset):
                 index.append((row_idx, 0, label))
                 continue
 
-            n_windows = T // N                    # non-overlapping windows
-            K = min(self._K_max, n_windows)
+            n_valid = T - N + 1                   # all valid (possibly overlapping) starts
+            K = min(self._K_max, n_valid)
 
             if self.split == "train":
-                # K random start positions (without replacement)
+                # K random starts without replacement from all valid positions
                 starts = sorted(
-                    rng.choice(n_windows, size=K, replace=False).tolist()
+                    rng.choice(n_valid, size=K, replace=False).tolist()
                 )
-                starts = [s * N for s in starts]
             else:
-                # K evenly spaced windows (deterministic)
-                positions = np.linspace(0, n_windows - 1, K, dtype=int)
-                starts = [int(p) * N for p in positions]
+                # K evenly spaced starts across [0, T-N] (deterministic, for val/test)
+                starts = np.linspace(0, n_valid - 1, K, dtype=int).tolist()
 
             for s in starts:
-                index.append((row_idx, s, label))
+                index.append((row_idx, int(s), label))
 
         return index
 

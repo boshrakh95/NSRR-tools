@@ -105,22 +105,22 @@ _TRAIN_SCRIPT = "train_context_sweep_gpu_rorqual.sh" if _ON_RORQUAL else "train_
 _INFER_SCRIPT = "infer_subject_windows_gpu_rorqual.sh" if _ON_RORQUAL else "infer_subject_windows_gpu.sh"
 
 # ── Wall-time lookup tables ────────────────────────────────────────────────────
-# Conservative estimates with ~50-100% margin over observed runtimes.
-# (n_size, head) → {context: hours}
-
-# Calibrated from sex_binary_lstm (large, N~13k, K=5, batch=32) observed on H100:
+# Calibrated from sex_binary_lstm (large, N~13k, K=5, batch=32, overlapping-window
+# protocol v3) observed on H100:
 #   30s=31min/18ep, 10m=46min/17ep, 40m=80min/24ep, 80m=111min/22ep, 120m=185min/25ep
-# Estimates = max_epochs(30) × per_epoch × 1.5 safety, rounded to nearest 0.5h.
-# Checkpoint resume means underestimates just cause one requeue — no data loss.
+# Estimates = max_epochs(40) × per_epoch × 1.3 safety, rounded to nearest 0.5h.
+# Auto-requeue on timeout means an underestimate just triggers one extra job — no
+# training state is lost (resume.pt is saved after every epoch).
+# Values are fractional hours; estimate_train_time() converts to HH:MM:SS.
 _TRAIN_HOURS = {
-    ("large",  "lstm"):        {"30s": 2,   "10m": 3,   "40m": 3,   "80m": 4,   "120m": 6,   "240m": 12,  "full_night": 8 },
-    ("large",  "transformer"): {"30s": 2,   "10m": 3,   "40m": 4,   "80m": 8,   "120m": 12,  "240m": 24,  "full_night": 24},
-    ("large",  "mean_pool"):   {"30s": 1,   "10m": 1,   "40m": 1,   "80m": 1,   "120m": 1,   "240m": 2,   "full_night": 2 },
-    ("medium", "lstm"):        {"30s": 1,   "10m": 2,   "40m": 2,   "80m": 3,   "120m": 4,   "240m": 8,   "full_night": 4 },
-    ("medium", "transformer"): {"30s": 1,   "10m": 2,   "40m": 3,   "80m": 6,   "120m": 8,   "240m": 16,  "full_night": 24},
+    ("large",  "lstm"):        {"30s": 1.5, "10m": 2,   "40m": 2.5, "80m": 3.5, "120m": 5,   "240m": 9,   "full_night": 6 },
+    ("large",  "transformer"): {"30s": 1.5, "10m": 2.5, "40m": 3,   "80m": 6,   "120m": 9,   "240m": 18,  "full_night": 18},
+    ("large",  "mean_pool"):   {"30s": 1,   "10m": 1,   "40m": 1,   "80m": 1,   "120m": 1,   "240m": 1.5, "full_night": 2 },
+    ("medium", "lstm"):        {"30s": 1,   "10m": 1.5, "40m": 1.5, "80m": 2,   "120m": 3,   "240m": 6,   "full_night": 3 },
+    ("medium", "transformer"): {"30s": 1,   "10m": 1.5, "40m": 2,   "80m": 4,   "120m": 6,   "240m": 12,  "full_night": 18},
     ("medium", "mean_pool"):   {"30s": 1,   "10m": 1,   "40m": 1,   "80m": 1,   "120m": 1,   "240m": 1,   "full_night": 1 },
-    ("small",  "lstm"):        {"30s": 1,   "10m": 1,   "40m": 1,   "80m": 2,   "120m": 2,   "240m": 4,   "full_night": 2 },
-    ("small",  "transformer"): {"30s": 1,   "10m": 1,   "40m": 2,   "80m": 3,   "120m": 4,   "240m": 8,   "full_night": 24},
+    ("small",  "lstm"):        {"30s": 1,   "10m": 1,   "40m": 1,   "80m": 1.5, "120m": 2,   "240m": 3,   "full_night": 2 },
+    ("small",  "transformer"): {"30s": 1,   "10m": 1,   "40m": 1.5, "80m": 2,   "120m": 3,   "240m": 6,   "full_night": 18},
     ("small",  "mean_pool"):   {"30s": 1,   "10m": 1,   "40m": 1,   "80m": 1,   "120m": 1,   "240m": 1,   "full_night": 1 },
 }
 
@@ -144,7 +144,9 @@ _INFER_HOURS_PER_CTX = {
 
 def estimate_train_time(n_size: str, head: str, context: str) -> str:
     hours = _TRAIN_HOURS.get((n_size, head), {}).get(context, 24)
-    return f"{int(hours):02d}:00:00"
+    h = int(hours)
+    m = int(round((hours - h) * 60))
+    return f"{h:02d}:{m:02d}:00"
 
 
 def estimate_infer_time(n_size: str, head: str, contexts: list) -> str:
@@ -523,11 +525,11 @@ def cmd_status(args, registry):
 
 
 def cmd_runs(args, registry):
-    logs_dir = Path(registry.get("logs_dir", str(Path(__file__).parent.parent / "logs_v2")))
+    logs_dir = Path(registry.get("logs_dir", str(Path(__file__).parent.parent / "logs_v3")))
     status_dir = logs_dir / "status"
 
     if not status_dir.exists():
-        print("No status directory found yet (logs_v2/status/). No jobs tracked.")
+        print(f"No status directory found yet ({logs_dir}/status/). No jobs tracked.")
         return
 
     target_id = getattr(args, "exp_id", None)
@@ -544,7 +546,7 @@ def cmd_runs(args, registry):
 
     files = sorted(status_dir.glob("*.jsonl"))
     if not files:
-        print("No job history found in logs_v2/status/.")
+        print(f"No job history found in {logs_dir}/status/.")
         return
 
     shown = 0

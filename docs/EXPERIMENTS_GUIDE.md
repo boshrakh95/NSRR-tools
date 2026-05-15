@@ -1,6 +1,8 @@
-# Experiment Execution Guide — Phase 0 / V2 Tasks
+# Experiment Execution Guide — Phase 0 / V3 Protocol
 
 This document is the definitive reference for running training, inference, and analysis experiments for Phase 0 V2 task definitions.
+
+> **V3 protocol (current):** Results are written to `phase0_v3/`, logs to `logs_v3/`. Training uses overlapping-window fixed-K sampling (K=5 per subject at all context lengths), context-specific LR at 120m/240m, and varying batch size recorded in metrics.json. Use `configs/phase0_v3_config.yaml` and `experiments/v2_registry.yaml` (already updated). Do NOT mix v2 and v3 results in the same comparison figure. See [TRAINING_PROTOCOL_FIXES.md](TRAINING_PROTOCOL_FIXES.md) for the rationale behind each change.
 
 ---
 

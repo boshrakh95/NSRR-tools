@@ -7,8 +7,8 @@
 #SBATCH --mem=32000M
 #SBATCH --exclude=fc11006,fc11013,fc11010
 #SBATCH --signal=B:USR1@120            # send SIGUSR1 to bash 120s before wall time
-#SBATCH --output=/home/boshra95/NSRR-tools/logs/sweep_%x_%j.out
-#SBATCH --error=/home/boshra95/NSRR-tools/logs/sweep_%x_%j.err
+#SBATCH --output=/home/boshra95/NSRR-tools/logs_v3/sweep_%x_%j.out
+#SBATCH --error=/home/boshra95/NSRR-tools/logs_v3/sweep_%x_%j.err
 
 # Phase 0 Step 4 — Context-Length Sweep Training
 #
@@ -48,8 +48,8 @@ _SCRIPT_PATH="$(realpath "$0")"
 _PYTHON_PID=""
 
 cd /home/boshra95/NSRR-tools
-mkdir -p logs
-mkdir -p logs_v2/status
+mkdir -p logs_v3
+mkdir -p logs_v3/status
 
 # ── Environment ───────────────────────────────────────────────────────────────
 module load python/3.11 2>/dev/null || true
@@ -72,7 +72,7 @@ export WANDB_DIR=/tmp/wandb_${SLURM_JOB_ID}   # node-local tmp, auto-cleaned
 mkdir -p "$WANDB_DIR"
 
 # ── Job parameters ────────────────────────────────────────────────────────────
-CONFIG=${CONFIG:-"configs/phase0_config.yaml"}
+CONFIG=${CONFIG:-"configs/phase0_v3_config.yaml"}
 TASK=${TASK:-""}            # empty = use config default
 TASK_TYPE=${TASK_TYPE:-""}  # empty = use config default
 HEAD=${HEAD:-""}            # empty = use config default
@@ -81,17 +81,17 @@ DATASETS=${DATASETS:-""}    # space-separated dataset names, e.g. "shhs mros"
 BATCH_SIZE=${BATCH_SIZE:-""}  # training batch size (default: 32); reduce for long contexts
 LR=${LR:-""}                  # learning rate override, e.g. LR=1e-4
 RUN_TAG=${RUN_TAG:-""}        # suffix for experiment folder, e.g. RUN_TAG=lr1e4
-WANDB_PROJECT=${WANDB_PROJECT:-"nsrr-phase0-v2"}  # W&B project name (default: "nsrr-phase0-v2")
+WANDB_PROJECT=${WANDB_PROJECT:-"nsrr-phase0-v3"}
 NO_WANDB=${NO_WANDB:-""}
 
 # ── Job run tracking ──────────────────────────────────────────────────────────
 _EXP_TAG="${TASK}_${HEAD}"
 [ -n "$RUN_TAG" ] && _EXP_TAG="${_EXP_TAG}_${RUN_TAG}"
-_STATUS_FILE="logs_v2/status/train_${_EXP_TAG}_${CONTEXT:-nocontext}_lr${LR:-default}.jsonl"
+_STATUS_FILE="logs_v3/status/train_${_EXP_TAG}_${CONTEXT:-nocontext}_lr${LR:-default}.jsonl"
 
 # Persistent training log — all resubmissions append here so the full epoch
 # history is in one place regardless of how many jobs the run takes.
-_TRAIN_LOG="logs_v2/train_${_EXP_TAG}_${CONTEXT:-nocontext}_lr${LR:-default}.log"
+_TRAIN_LOG="logs_v3/train_${_EXP_TAG}_${CONTEXT:-nocontext}_lr${LR:-default}.log"
 exec > >(tee -a "$_TRAIN_LOG") 2>&1
 
 _write_status() {
