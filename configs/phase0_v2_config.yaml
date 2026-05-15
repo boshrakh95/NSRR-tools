@@ -119,48 +119,12 @@ training:
   early_stopping_monitor: "val_auroc"
   weighted_sampler: false
   # K-selection strategy for training windows per subject:
-  #   "fixed"        — RECOMMENDED for context-length comparison experiments.
-  #                    Uses dataset.windows_per_subject as K_max for all context
-  #                    lengths. With overlapping-window sampling (see dataset code),
-  #                    K=K_max is achieved for essentially all subjects at every L.
-  #   "token_budget" — ⚠ SECONDARY ANALYSIS ONLY. Do NOT use as the primary
-  #                    training protocol: it sets K ∝ 1/L (short contexts get many
-  #                    more windows than long contexts), which confounds K and L.
-  #                    Any observed performance gap could reflect K differences,
-  #                    not context quality. Only use for §10 (equal-compute analysis).
+  #   "fixed"        — always use dataset.windows_per_subject (default: 5)
+  #   "token_budget" — set K = max(1, floor(token_budget_minutes / ctx_minutes))
+  #                    so total tokens per subject ≈ constant across context lengths
   windows_strategy: "fixed"
-  token_budget_minutes: 240  # only relevant when windows_strategy: "token_budget"
-  k_max: 50                  # hard cap for token_budget mode (30s: K=480 without this → too slow)
-
-  # Per-context learning rate overrides — applied when windows_strategy: "fixed"
-  # and no --lr flag is passed on the command line. Useful for longer contexts
-  # that may benefit from a slightly lower LR due to noisier gradient estimates
-  # from overlapping windows. Set to null or omit to use training.lr for all L.
-  context_lr_overrides: null
-  # context_lr_overrides:
-  #   "120m": 5.0e-5
-  #   "240m": 5.0e-5
-
-  # ── Overfitting / scaling-law analysis ──────────────────────────────────────
-  # overfit_epochs: continue training this many epochs after early stopping fires,
-  #   without updating best_model.pt. Exposes the right arm of the U-shaped
-  #   val-loss curve for scaling-law and overfitting analysis. 0 = disabled.
-  overfit_epochs: 0
-
-  # ── Periodic snapshot checkpoints ───────────────────────────────────────────
-  # save_snapshots: whether to save model-state-dict snapshots at fixed intervals.
-  #   Snapshots are saved to context_{L}/snapshots/epoch_{NNNN}.pt and enable
-  #   inference at intermediate training stages (scaling-law analysis, learning
-  #   curve on test set, compute-efficiency comparison across heads).
-  save_snapshots: false
-  snapshot_interval: 5        # save a snapshot every N epochs (only when save_snapshots: true)
-
-# ── Analysis ─────────────────────────────────────────────────────────────────
-analysis:
-  # bootstrap_samples: number of bootstrap resamples for 95% CI on AUROC and
-  #   balanced_accuracy in window analysis. Subject-level resampling (not window-
-  #   level). 0 = disabled. 1000 is recommended for paper tables.
-  bootstrap_samples: 0
+  token_budget_minutes: 240  # target minutes of the night seen per subject per epoch; set to longest context so all models train on equal coverage
+  k_max: 50                  # hard cap on K to keep short-context (e.g. 30s) training tractable; without this, 30s would need K=480 epochs (~96x slower)
 
 # ── Logging & Output ─────────────────────────────────────────────────────────
 logging:
