@@ -152,7 +152,7 @@ training:
   overfit_epochs: 0
 
   # ── Periodic snapshot checkpoints ────────────────────────────────────────────
-  save_snapshots: false
+  save_snapshots: true
   snapshot_interval: 5
 
 # ── Analysis ─────────────────────────────────────────────────────────────────
@@ -162,4 +162,3 @@ analysis:
 # ── Logging & Output ─────────────────────────────────────────────────────────
 logging:
   results_dir: "/scratch/boshra95/psg/unified/results/phase0_v3"
-  log_every_n_steps: 10
