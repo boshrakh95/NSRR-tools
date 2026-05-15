@@ -78,8 +78,9 @@ TASK_TYPE=${TASK_TYPE:-""}  # empty = use config default
 HEAD=${HEAD:-""}            # empty = use config default
 CONTEXT=${CONTEXT:-""}      # single context length, e.g. "30s" or "10m"
 DATASETS=${DATASETS:-""}    # space-separated dataset names, e.g. "shhs mros"
-BATCH_SIZE=${BATCH_SIZE:-""}  # training batch size (default: 32); reduce for long contexts
-LR=${LR:-""}                  # learning rate override, e.g. LR=1e-4
+BATCH_SIZE=${BATCH_SIZE:-""}   # micro-batch size fed to the GPU (default: 32)
+ACCUM_STEPS=${ACCUM_STEPS:-1}  # gradient accumulation steps; effective_batch = BATCH_SIZE × ACCUM_STEPS
+LR=${LR:-""}                   # learning rate override, e.g. LR=1e-4
 RUN_TAG=${RUN_TAG:-""}        # suffix for experiment folder, e.g. RUN_TAG=lr1e4
 WANDB_PROJECT=${WANDB_PROJECT:-"nsrr-phase0-v3"}
 NO_WANDB=${NO_WANDB:-""}
@@ -155,6 +156,7 @@ CMD="python scripts/train_context_sweep.py --config $CONFIG"
 [ -n "$CONTEXT"        ] && CMD="$CMD --context $CONTEXT"
 [ -n "$DATASETS"       ] && CMD="$CMD --datasets $DATASETS"
 [ -n "$BATCH_SIZE"     ] && CMD="$CMD --batch-size $BATCH_SIZE"
+CMD="$CMD --accum-steps $ACCUM_STEPS"
 [ -n "$LR"             ] && CMD="$CMD --lr $LR"
 [ -n "$RUN_TAG"        ] && CMD="$CMD --run-tag $RUN_TAG"
 [ -n "$WANDB_PROJECT"  ] && CMD="$CMD --wandb-project $WANDB_PROJECT"

@@ -80,6 +80,7 @@ METRICS (all tasks)
 import argparse
 import csv
 import json
+import math
 import os
 import signal
 import sys
@@ -249,15 +250,26 @@ def run_epoch(
     scaler,
     train:     bool,
     max_grad_norm: float = 1.0,
+    accum_steps:   int   = 1,
 ):
-    """One epoch.  Returns (avg_loss, logits_np, targets_np)."""
+    """One epoch.  Returns (avg_loss, logits_np, targets_np).
+
+    accum_steps > 1 enables gradient accumulation: gradients are accumulated
+    over accum_steps micro-batches before a single optimizer.step() call.
+    Loss is divided by accum_steps before backward so the effective gradient
+    magnitude matches a single large batch of size batch_size * accum_steps.
+    """
     model.train(train)
     total_loss  = 0.0
     all_logits  = []
     all_targets = []
 
+    if train:
+        optimizer.zero_grad()   # zeroed once before the loop; re-zeroed after each step
+
+    n_batches = len(loader)
     with torch.set_grad_enabled(train):
-        for x, mask, y in loader:
+        for batch_idx, (x, mask, y) in enumerate(loader):
             x    = x.to(device, non_blocking=True)
             mask = mask.to(device, non_blocking=True)
             y    = y.to(device, non_blocking=True)
@@ -267,17 +279,24 @@ def run_epoch(
                 loss   = criterion(logits, y)
 
             if train:
-                optimizer.zero_grad()
+                scaled_loss = loss / accum_steps
                 if scaler is not None:
-                    scaler.scale(loss).backward()
-                    scaler.unscale_(optimizer)
-                    nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
-                    scaler.step(optimizer)
-                    scaler.update()
+                    scaler.scale(scaled_loss).backward()
                 else:
-                    loss.backward()
-                    nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
-                    optimizer.step()
+                    scaled_loss.backward()
+
+                # Step only at accumulation boundary or on the final batch
+                is_step = ((batch_idx + 1) % accum_steps == 0) or ((batch_idx + 1) == n_batches)
+                if is_step:
+                    if scaler is not None:
+                        scaler.unscale_(optimizer)
+                        nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
+                        scaler.step(optimizer)
+                        scaler.update()
+                    else:
+                        nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
+                        optimizer.step()
+                    optimizer.zero_grad()
 
             total_loss  += loss.item() * x.size(0)
             all_logits.append(logits.detach().cpu().float().numpy())
@@ -309,11 +328,13 @@ def train_one_context(
     wandb_project:   str  = "nsrr-phase0",
     wandb_entity:    str  = None,
     batch_size:      int  = 32,
+    accum_steps:     int  = 1,
     exp_id:          str  = None,
     cli_lr_set:      bool = False,
 ):
-    train_batch_size = batch_size
-    eval_batch_size  = batch_size * 2
+    train_batch_size     = batch_size
+    effective_batch_size = batch_size * accum_steps
+    eval_batch_size      = batch_size * 2
     if exp_id is None:
         exp_id = f"{task}_{head_type}"
     t_cfg = cfg["training"]
@@ -335,6 +356,7 @@ def train_one_context(
 
     print(f"\n{'='*60}")
     print(f"Context: {context_length}")
+    print(f"  micro-batch: {train_batch_size}  accum_steps: {accum_steps}  effective_batch: {effective_batch_size}")
     print(f"{'='*60}")
 
     # ── Resume checkpoint detection ────────────────────────────────────────
@@ -548,7 +570,8 @@ def train_one_context(
         _resumed_global_step = None
 
     # steps_per_epoch known after DataLoaders exist
-    _steps_per_epoch = len(train_loader)
+    _steps_per_epoch           = len(train_loader)                                    # micro-batch steps
+    _effective_steps_per_epoch = math.ceil(_steps_per_epoch / accum_steps)            # optimizer.step() calls
 
     # When resuming in overfit phase, skip the normal training loop entirely
     _early_stopped_at: int | None = None
@@ -556,7 +579,7 @@ def train_one_context(
         # Reload best model (overfit phase always starts from the best checkpoint)
         model.load_state_dict(torch.load(ckpt_path, map_location=device))
 
-    # global_step: cumulative training-batch updates across all epochs and resumes.
+    # global_step: cumulative optimizer.step() calls across all epochs and resumes.
     # If resume.pt stored it directly, use that; otherwise derive from history length
     # (fallback for checkpoints written before this field was added).
     if _resumed_global_step is not None:
@@ -564,16 +587,17 @@ def train_one_context(
     elif history:
         _global_step = sum(
             1 for h in history if not h.get("is_overfit_epoch", False)
-        ) * _steps_per_epoch
+        ) * _effective_steps_per_epoch
     else:
         _global_step = 0
 
     t0 = time.time()
     for epoch in range(start_epoch, epochs + 1) if not _in_overfit_phase else []:
         train_loss, train_logits, train_targets = run_epoch(
-            model, train_loader, optimizer, criterion, device, scaler, train=True
+            model, train_loader, optimizer, criterion, device, scaler,
+            train=True, accum_steps=accum_steps,
         )
-        _global_step += _steps_per_epoch
+        _global_step += _effective_steps_per_epoch
         val_loss, val_logits, val_targets = run_epoch(
             model, val_loader, None, criterion, device, None, train=False
         )
@@ -682,9 +706,10 @@ def train_one_context(
 
             for epoch in range(_ov_actual_start, _ov_end + 1):
                 train_loss, train_logits, train_targets = run_epoch(
-                    model, train_loader, optimizer, criterion, device, scaler, train=True
+                    model, train_loader, optimizer, criterion, device, scaler,
+                    train=True, accum_steps=accum_steps,
                 )
-                _global_step += _steps_per_epoch
+                _global_step += _effective_steps_per_epoch
                 val_loss, val_logits, val_targets = run_epoch(
                     model, val_loader, None, criterion, device, None, train=False
                 )
@@ -779,9 +804,12 @@ def train_one_context(
         "n_overfit_epochs":  _n_overfit_epochs,
         "training_time_min": total_train_min,
         # ── Training-setup metadata for compute / scaling-law analysis ─────────
-        "batch_size":              train_batch_size,
-        "seq_len":                 _seq_len,              # 30s-chunks per context window; -1 for full_night
-        "steps_per_epoch":         _steps_per_epoch,
+        "batch_size":                train_batch_size,        # micro-batch (what the GPU sees)
+        "accum_steps":               accum_steps,             # gradient accumulation factor
+        "effective_batch_size":      effective_batch_size,    # batch_size × accum_steps
+        "seq_len":                   _seq_len,                # 30s-chunks per context window; -1 for full_night
+        "steps_per_epoch":           _steps_per_epoch,        # micro-batch steps per epoch
+        "effective_steps_per_epoch": _effective_steps_per_epoch,  # optimizer.step() calls per epoch
         "windows_per_subject_train": _windows_per_subject_train,
         "n_trainable_params":      n_params,
         "input_dim":               cfg["model"].get("input_dim", None),
@@ -871,7 +899,11 @@ def main():
     parser.add_argument("--no-wandb",      action="store_true", dest="no_wandb",
                         help="Disable W&B logging")
     parser.add_argument("--batch-size",    default=None, type=int, dest="batch_size",
-                        help="Training batch size (default: 32). Val/test use 2× this value.")
+                        help="Micro-batch size fed to the GPU each step (default: 32). "
+                             "Val/test use 2× this value.")
+    parser.add_argument("--accum-steps",  default=1, type=int, dest="accum_steps",
+                        help="Gradient accumulation steps (default: 1 = no accumulation). "
+                             "Effective batch = batch_size × accum_steps.")
     parser.add_argument("--lr",            default=None, type=float,
                         help="Override training.lr from config (e.g. --lr 1e-4)")
     parser.add_argument("--run-tag",       default="", dest="run_tag",
@@ -886,6 +918,7 @@ def main():
     task_type = args.task_type or cfg["dataset"]["task_type"]
     head_type = args.head_type or cfg["model"]["head_type"]
     train_batch_size = args.batch_size or 32
+    accum_steps      = args.accum_steps
 
     # Apply LR override before passing cfg into training.
     # cli_lr_set=True suppresses per-context LR overrides from the config.
@@ -945,6 +978,7 @@ def main():
                 wandb_project=args.wandb_project,
                 wandb_entity=args.wandb_entity,
                 batch_size=train_batch_size,
+                accum_steps=accum_steps,
                 exp_id=exp_id,
                 cli_lr_set=_cli_lr_set,
             )

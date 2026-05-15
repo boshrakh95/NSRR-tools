@@ -230,6 +230,26 @@ def exp_status(exp: dict, registry: dict) -> str:
 
 # ── Command builders ──────────────────────────────────────────────────────────
 
+def resolve_batch_accum(exp: dict, registry: dict, context: str,
+                        override_batch_size: int = None):
+    """Return (micro_batch, accum_steps) for this context.
+
+    If gradient_accumulation.enabled is true in the registry, reads
+    context_micro_batch[context] and computes accum_steps automatically.
+    Otherwise uses the experiment's batch_size (or override) with accum_steps=1.
+    """
+    ga = registry.get("gradient_accumulation", {})
+    if ga.get("enabled", False) and override_batch_size is None:
+        effective_batch = int(ga.get("effective_batch", 32))
+        ctx_map = ga.get("context_micro_batch", {})
+        micro_batch = int(ctx_map.get(context, effective_batch))
+        accum_steps = max(1, effective_batch // micro_batch)
+        return micro_batch, accum_steps
+    else:
+        batch_size = override_batch_size if override_batch_size is not None else exp["batch_size"]
+        return batch_size, 1
+
+
 def build_train_cmd(exp: dict, registry: dict, context: str,
                     override_time: str = None, override_batch_size: int = None) -> str:
     cfg = registry["config"]
@@ -237,7 +257,7 @@ def build_train_cmd(exp: dict, registry: dict, context: str,
     n_size = exp.get("n_size", "large")
     wall_time = override_time if override_time else estimate_train_time(n_size, exp["head"], context)
     stem = _log_stem(exp, "train", context)
-    batch_size = override_batch_size if override_batch_size is not None else exp["batch_size"]
+    micro_batch, accum_steps = resolve_batch_accum(exp, registry, context, override_batch_size)
 
     env_vars = [
         f"TASK={exp['task']}",
@@ -245,7 +265,8 @@ def build_train_cmd(exp: dict, registry: dict, context: str,
         f"HEAD={exp['head']}",
         f"CONTEXT={context}",
         f"DATASETS=\"{' '.join(exp['datasets'])}\"",
-        f"BATCH_SIZE={batch_size}",
+        f"BATCH_SIZE={micro_batch}",
+        f"ACCUM_STEPS={accum_steps}",
         f"LR={exp['lr']}",
     ]
     if exp.get("run_tag"):
@@ -409,9 +430,12 @@ def cmd_train(args, registry):
     exp = experiments[args.exp_id]
     contexts = args.context if args.context else exp["contexts"]
     n_size = exp.get("n_size", "large")
+    ga = registry.get("gradient_accumulation", {})
+    ga_enabled = ga.get("enabled", False)
     print(f"# Training commands for: {args.exp_id}")
     print(f"# Task: {exp['task']}  Head: {exp['head']}  LR: {exp['lr']}  N-size: {n_size}")
     print(f"# Datasets: {exp['datasets']}")
+    print(f"# Gradient accumulation: {'ENABLED (effective_batch=' + str(ga.get('effective_batch', 32)) + ')' if ga_enabled else 'disabled (accum_steps=1)'}")
     print(f"# Logs → {registry.get('logs_dir', 'logs/')}")
     print()
     for ctx in contexts:
@@ -420,7 +444,13 @@ def cmd_train(args, registry):
             continue
         trained = ctx in trained_contexts(exp, registry)
         wall = estimate_train_time(n_size, exp["head"], ctx)
-        status_tag = "  # already trained" if trained else f"  # est. {wall}"
+        micro_batch, accum_steps = resolve_batch_accum(
+            exp, registry, ctx,
+            override_batch_size=getattr(args, "override_batch_size", None),
+        )
+        eff_batch = micro_batch * accum_steps
+        batch_tag = f"micro={micro_batch} accum={accum_steps} eff={eff_batch}"
+        status_tag = "  # already trained" if trained else f"  # est. {wall}  [{batch_tag}]"
         print(build_train_cmd(exp, registry, ctx,
                               override_time=getattr(args, "override_time", None),
                               override_batch_size=getattr(args, "override_batch_size", None)) + status_tag)
