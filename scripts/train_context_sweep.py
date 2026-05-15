@@ -517,16 +517,18 @@ def train_one_context(
         model.load_state_dict(_rckpt["model_state_dict"])
         optimizer.load_state_dict(_rckpt["optimizer_state_dict"])
         scheduler.load_state_dict(_rckpt["scheduler_state_dict"])
-        best_monitor = _rckpt["best_monitor"]
-        no_improve   = _rckpt["no_improve"]
-        history      = _rckpt["history"]
-        start_epoch  = _rckpt["epoch"] + 1
+        best_monitor        = _rckpt["best_monitor"]
+        no_improve          = _rckpt["no_improve"]
+        history             = _rckpt["history"]
+        start_epoch         = _rckpt["epoch"] + 1
+        _resumed_global_step = _rckpt.get("global_step", None)
         del _rckpt
     else:
-        best_monitor = float("-inf") if monitor_higher_is_better else float("inf")
-        no_improve   = 0
-        history      = []
-        start_epoch  = 1
+        best_monitor        = float("-inf") if monitor_higher_is_better else float("inf")
+        no_improve          = 0
+        history             = []
+        start_epoch         = 1
+        _resumed_global_step = None
 
     # steps_per_epoch known after DataLoaders exist
     _steps_per_epoch = len(train_loader)
@@ -537,11 +539,24 @@ def train_one_context(
         # Reload best model (overfit phase always starts from the best checkpoint)
         model.load_state_dict(torch.load(ckpt_path, map_location=device))
 
+    # global_step: cumulative training-batch updates across all epochs and resumes.
+    # If resume.pt stored it directly, use that; otherwise derive from history length
+    # (fallback for checkpoints written before this field was added).
+    if _resumed_global_step is not None:
+        _global_step = _resumed_global_step
+    elif history:
+        _global_step = sum(
+            1 for h in history if not h.get("is_overfit_epoch", False)
+        ) * _steps_per_epoch
+    else:
+        _global_step = 0
+
     t0 = time.time()
     for epoch in range(start_epoch, epochs + 1) if not _in_overfit_phase else []:
         train_loss, train_logits, train_targets = run_epoch(
             model, train_loader, optimizer, criterion, device, scaler, train=True
         )
+        _global_step += _steps_per_epoch
         val_loss, val_logits, val_targets = run_epoch(
             model, val_loader, None, criterion, device, None, train=False
         )
@@ -559,6 +574,7 @@ def train_one_context(
 
         history.append({
             "epoch":                epoch,
+            "global_step":          _global_step,
             "train_loss":           train_loss,
             "val_loss":             val_loss,
             "train_bal_acc":        train_bal_acc,
@@ -606,6 +622,7 @@ def train_one_context(
         _should_early_stop = (no_improve >= patience)
         _resume_state = {
             "epoch":                epoch,
+            "global_step":          _global_step,
             "model_state_dict":     model.state_dict(),
             "optimizer_state_dict": optimizer.state_dict(),
             "scheduler_state_dict": scheduler.state_dict(),
@@ -623,6 +640,12 @@ def train_one_context(
         if _should_early_stop:
             print(f"  Early stop at epoch {epoch}.")
             _early_stopped_at = epoch
+            # Always snapshot the early-stop epoch so learning curves can include
+            # the final training state (not just the best-val checkpoint).
+            if _save_snapshots:
+                _snap_dir.mkdir(parents=True, exist_ok=True)
+                torch.save(model.state_dict(), _snap_dir / f"epoch_{epoch:04d}.pt")
+                print(f"  [snapshot] Saved epoch_{epoch:04d}.pt (early-stop epoch)")
             break
 
     # ── Phase 2: Overfit extension (optional) ────────────────────────────────
@@ -644,6 +667,7 @@ def train_one_context(
                 train_loss, train_logits, train_targets = run_epoch(
                     model, train_loader, optimizer, criterion, device, scaler, train=True
                 )
+                _global_step += _steps_per_epoch
                 val_loss, val_logits, val_targets = run_epoch(
                     model, val_loader, None, criterion, device, None, train=False
                 )
@@ -660,6 +684,7 @@ def train_one_context(
 
                 history.append({
                     "epoch":                epoch,
+                    "global_step":          _global_step,
                     "train_loss":           train_loss,
                     "val_loss":             val_loss,
                     "train_bal_acc":        train_bal_acc,
@@ -683,6 +708,7 @@ def train_one_context(
                 # Keep resume.pt current so SLURM requeue restarts correctly
                 torch.save({
                     "epoch":                epoch,
+                    "global_step":          _global_step,
                     "model_state_dict":     model.state_dict(),
                     "optimizer_state_dict": optimizer.state_dict(),
                     "scheduler_state_dict": scheduler.state_dict(),
