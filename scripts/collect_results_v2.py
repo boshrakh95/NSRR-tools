@@ -27,21 +27,29 @@ Column reference
 ----------------
 training.csv
   key:        task, head, context_length, epoch
-  every row:  is_best_epoch, train_loss, val_loss, train_bal_acc,
-              val_bal_acc, val_auroc, num_classes, n_train, n_val, n_test,
-              n_epochs_run, training_time_min
+  every row:  is_best_epoch, is_overfit_epoch, train_loss, val_loss,
+              train_bal_acc, val_bal_acc, val_auroc,
+              num_classes, n_train, n_val, n_test,
+              n_epochs_run, n_overfit_epochs, training_time_min,
+              batch_size, seq_len, steps_per_epoch,
+              windows_per_subject_train, n_trainable_params,
+              input_dim, hidden_dim, save_snapshots, snapshot_interval
   best only:  {train,val,test}_{accuracy,balanced_accuracy,macro_f1,auroc}
               {train,val,test}_recall_class{0..4}
-  → filter is_best_epoch=True for paper tables; all rows for learning curves
+  → filter is_best_epoch=True for paper tables
+  → all rows (including is_overfit_epoch=True) for U-shape / scaling-law plots
+  → seq_len × steps_per_epoch × FLOPs_per_token gives total compute per epoch
 
 analysis.csv
   key:        task, head, context_length, k, split
   every row:  context_length_min, total_compute_min (= ctx_min × k; NaN for k='all'),
               n_subjects, n_segments,
               {seg,mean_prob,majority}_{accuracy,balanced_accuracy,macro_f1,auroc}
+              mean_prob_{auroc,bal_acc}_ci_{lo,hi}  (NaN if bootstrap disabled)
   → use for every post-training plot (K-saturation, iso-compute, Pareto fronts)
   → k='all' rows = inference over every available window (max coverage)
   → total_compute_min is the iso-compute axis
+  → CI columns populated only when analyze_windows was run with --bootstrap N > 0
 """
 
 import json
@@ -129,7 +137,7 @@ def collect_training(results_dir: Path, out_paths: list[Path]) -> int:
             curves  = pd.read_csv(curves_path)
             metrics = json.loads(metrics_path.read_text()) if metrics_path.exists() else {}
 
-            # Identify best epoch from the early-stopping monitor column
+            # Identify best epoch — exclude overfit-phase rows from idxmax()
             monitor_col_map = {
                 "val_auroc":             "val_auroc",
                 "val_balanced_accuracy": "val_bal_acc",
@@ -137,17 +145,22 @@ def collect_training(results_dir: Path, out_paths: list[Path]) -> int:
             monitor_col = monitor_col_map.get(
                 metrics.get("early_stopping_monitor", "val_auroc"), "val_auroc"
             )
-            if monitor_col in curves.columns:
-                best_epoch = int(curves.loc[curves[monitor_col].idxmax(), "epoch"])
+            if "is_overfit_epoch" in curves.columns:
+                normal_curves = curves[~curves["is_overfit_epoch"].fillna(False)]
             else:
-                best_epoch = int(curves["epoch"].iloc[-1])
+                normal_curves = curves
+            if monitor_col in normal_curves.columns and not normal_curves.empty:
+                best_epoch = int(normal_curves.loc[normal_curves[monitor_col].idxmax(), "epoch"])
+            else:
+                best_epoch = int(normal_curves["epoch"].iloc[-1]) if not normal_curves.empty else int(curves["epoch"].iloc[-1])
 
             for _, row in curves.iterrows():
                 epoch = int(row["epoch"])
                 if (task, head, ctx, str(epoch)) in done:
                     continue
 
-                is_best = epoch == best_epoch
+                is_best      = epoch == best_epoch
+                is_overfit   = bool(row.get("is_overfit_epoch", False))
                 r: dict = {
                     "task":              task,
                     "head":              head,
@@ -155,6 +168,7 @@ def collect_training(results_dir: Path, out_paths: list[Path]) -> int:
                     "epoch":             epoch,
                     # per-epoch curves
                     "is_best_epoch":     is_best,
+                    "is_overfit_epoch":  is_overfit,
                     "train_loss":        row.get("train_loss"),
                     "val_loss":          row.get("val_loss"),
                     "train_bal_acc":     row.get("train_bal_acc"),
@@ -166,7 +180,18 @@ def collect_training(results_dir: Path, out_paths: list[Path]) -> int:
                     "n_val":             metrics.get("n_val"),
                     "n_test":            metrics.get("n_test"),
                     "n_epochs_run":      metrics.get("n_epochs_run"),
+                    "n_overfit_epochs":  metrics.get("n_overfit_epochs"),
                     "training_time_min": metrics.get("training_time_min"),
+                    # compute / model-size metadata (for scaling-law analysis)
+                    "batch_size":                metrics.get("batch_size"),
+                    "seq_len":                   metrics.get("seq_len"),
+                    "steps_per_epoch":           metrics.get("steps_per_epoch"),
+                    "windows_per_subject_train": metrics.get("windows_per_subject_train"),
+                    "n_trainable_params":        metrics.get("n_trainable_params"),
+                    "input_dim":                 metrics.get("input_dim"),
+                    "hidden_dim":                metrics.get("hidden_dim"),
+                    "save_snapshots":            metrics.get("save_snapshots"),
+                    "snapshot_interval":         metrics.get("snapshot_interval"),
                 }
 
                 # Detailed split metrics only exist in metrics.json (best epoch)
@@ -253,6 +278,11 @@ def collect_analysis(inference_dir: Path, out_paths: list[Path]) -> int:
                     "majority_balanced_accuracy": row.get("majority_balanced_accuracy"),
                     "majority_macro_f1":          row.get("majority_macro_f1"),
                     "majority_auroc":             row.get("majority_auroc"),
+                    # bootstrap 95% CIs (NaN when bootstrap disabled or N<2 subjects)
+                    "mean_prob_auroc_ci_lo":     row.get("mean_prob_auroc_ci_lo"),
+                    "mean_prob_auroc_ci_hi":     row.get("mean_prob_auroc_ci_hi"),
+                    "mean_prob_bal_acc_ci_lo":   row.get("mean_prob_bal_acc_ci_lo"),
+                    "mean_prob_bal_acc_ci_hi":   row.get("mean_prob_bal_acc_ci_hi"),
                 })
 
     if not new_rows:

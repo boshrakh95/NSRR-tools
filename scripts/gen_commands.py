@@ -262,6 +262,15 @@ def build_analyze_cmd(exp: dict, registry: dict, plot: bool = False,
     # Use the virtualenv Python directly — analyze_windows.py requires sklearn
     # (balanced_accuracy, AUROC, F1) which lives in sleepfm_env, not the system Python.
     python = registry.get("python_bin", "/home/boshra95/sleepfm_env/bin/python")
+
+    # Read bootstrap_samples from the experiment config yaml (analysis.bootstrap_samples)
+    bootstrap_n = 0
+    cfg_path = Path(registry.get("config", ""))
+    if cfg_path.exists():
+        with open(cfg_path) as _f:
+            _cfg = yaml.safe_load(_f)
+        bootstrap_n = int(_cfg.get("analysis", {}).get("bootstrap_samples", 0))
+
     cmd_parts = [
         f"{python} scripts/analyze_windows.py",
         f"--task {exp['task']}",
@@ -272,6 +281,8 @@ def build_analyze_cmd(exp: dict, registry: dict, plot: bool = False,
         cmd_parts.append(f"--run-tag {tag}")
     if k_dense:
         cmd_parts.append("--k-dense")
+    if bootstrap_n > 0:
+        cmd_parts.append(f"--bootstrap {bootstrap_n}")
     if plot:
         cmd_parts.append("--plot")
         cmd_parts.append("--plot-metric auroc balanced_accuracy")

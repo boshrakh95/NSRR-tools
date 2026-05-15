@@ -319,6 +319,14 @@ def train_one_context(
     N     = parse_context_length(context_length)
     is_full_night = (N == FULL_NIGHT_SENTINEL)
 
+    # ── New analysis features (backward-compatible: all default to off) ────────
+    _overfit_epochs    = int(t_cfg.get("overfit_epochs", 0))
+    _save_snapshots    = bool(t_cfg.get("save_snapshots", False))
+    _snapshot_interval = int(t_cfg.get("snapshot_interval", 5))
+    # seq_len: number of 30-second embedding vectors per context window
+    # (FULL_NIGHT_SENTINEL is variable-length; use -1 as a placeholder)
+    _seq_len = N if not is_full_night else -1
+
     # Transformer is O(N²) — skip for full_night
     if is_full_night and head_type == "transformer":
         print(f"  [SKIP] Transformer head not supported for full_night context.")
@@ -334,11 +342,16 @@ def train_one_context(
     _resuming             = resume_path.exists()
     _saved_wandb_id       = None
     _accumulated_time_min = 0.0
+    _in_overfit_phase     = False
+    _overfit_start_epoch  = None
     if _resuming:
         _rckpt = torch.load(resume_path, map_location="cpu")
         _saved_wandb_id       = _rckpt.get("wandb_run_id")
         _accumulated_time_min = _rckpt.get("accumulated_time_min", 0.0)
-        print(f"  [RESUME] Found checkpoint — continuing from epoch {_rckpt['epoch'] + 1}")
+        _in_overfit_phase     = _rckpt.get("in_overfit_phase", False)
+        _overfit_start_epoch  = _rckpt.get("overfit_start_epoch", None)
+        phase_tag = " [overfit phase]" if _in_overfit_phase else ""
+        print(f"  [RESUME] Found checkpoint — continuing from epoch {_rckpt['epoch'] + 1}{phase_tag}")
 
     # ── Training-K strategy ────────────────────────────────────────────────
     windows_strategy = t_cfg.get("windows_strategy", "fixed")
@@ -474,6 +487,12 @@ def train_one_context(
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"  Trainable params: {n_params:,}")
 
+    # ── Capture training-setup metadata for metrics.json ──────────────────────
+    # steps_per_epoch and windows_per_subject_train are set after DataLoaders
+    # are built so they reflect any token_budget override applied above.
+    _windows_per_subject_train = int(cfg["dataset"].get("windows_per_subject", 5))
+    _snap_dir = out_dir / "snapshots"
+
     # ── Optimizer & scheduler ──────────────────────────────────────────────
     optimizer = torch.optim.Adam(
         model.parameters(),
@@ -509,8 +528,17 @@ def train_one_context(
         history      = []
         start_epoch  = 1
 
+    # steps_per_epoch known after DataLoaders exist
+    _steps_per_epoch = len(train_loader)
+
+    # When resuming in overfit phase, skip the normal training loop entirely
+    _early_stopped_at: int | None = None
+    if _in_overfit_phase:
+        # Reload best model (overfit phase always starts from the best checkpoint)
+        model.load_state_dict(torch.load(ckpt_path, map_location=device))
+
     t0 = time.time()
-    for epoch in range(start_epoch, epochs + 1):
+    for epoch in range(start_epoch, epochs + 1) if not _in_overfit_phase else []:
         train_loss, train_logits, train_targets = run_epoch(
             model, train_loader, optimizer, criterion, device, scaler, train=True
         )
@@ -530,10 +558,13 @@ def train_one_context(
         val_monitor = compute_monitor_metric(monitor, val_logits, val_targets, val_loss, num_classes)
 
         history.append({
-            "epoch":         epoch,
-            "train_loss":    train_loss,    "val_loss":    val_loss,
-            "train_bal_acc": train_bal_acc, "val_bal_acc": val_bal_acc,
+            "epoch":                epoch,
+            "train_loss":           train_loss,
+            "val_loss":             val_loss,
+            "train_bal_acc":        train_bal_acc,
+            "val_bal_acc":          val_bal_acc,
             f"val_{monitor_label}": val_monitor,
+            "is_overfit_epoch":     False,
         })
 
         improved = (
@@ -566,7 +597,14 @@ def train_one_context(
                 "lr":             optimizer.param_groups[0]["lr"],
             }, step=epoch)
 
-        torch.save({
+        # Periodic snapshot (model state dict only, lightweight)
+        if _save_snapshots and _snapshot_interval > 0 and epoch % _snapshot_interval == 0:
+            _snap_dir.mkdir(parents=True, exist_ok=True)
+            torch.save(model.state_dict(), _snap_dir / f"epoch_{epoch:04d}.pt")
+            print(f"  [snapshot] Saved epoch_{epoch:04d}.pt")
+
+        _should_early_stop = (no_improve >= patience)
+        _resume_state = {
             "epoch":                epoch,
             "model_state_dict":     model.state_dict(),
             "optimizer_state_dict": optimizer.state_dict(),
@@ -576,11 +614,86 @@ def train_one_context(
             "history":              history,
             "wandb_run_id":         wb_run.id if wb_run else None,
             "accumulated_time_min": _accumulated_time_min + (time.time() - t0) / 60,
-        }, resume_path)
+            # overfit-phase fields — True only when we're about to enter it
+            "in_overfit_phase":    _should_early_stop and _overfit_epochs > 0,
+            "overfit_start_epoch": (epoch + 1) if (_should_early_stop and _overfit_epochs > 0) else None,
+        }
+        torch.save(_resume_state, resume_path)
 
-        if no_improve >= patience:
+        if _should_early_stop:
             print(f"  Early stop at epoch {epoch}.")
+            _early_stopped_at = epoch
             break
+
+    # ── Phase 2: Overfit extension (optional) ────────────────────────────────
+    if _overfit_epochs > 0:
+        _ov_start = _overfit_start_epoch if _in_overfit_phase else (
+            (_early_stopped_at + 1) if _early_stopped_at is not None else (epochs + 1)
+        )
+        _ov_end = _ov_start + _overfit_epochs - 1
+        # When resuming mid-overfit, start from where we left off
+        _ov_actual_start = (start_epoch if _in_overfit_phase else _ov_start)
+
+        if _ov_actual_start <= _ov_end:
+            if not _in_overfit_phase:
+                # Reload the best model so overfitting starts from the optimum
+                model.load_state_dict(torch.load(ckpt_path, map_location=device))
+            print(f"\n  === Overfit phase: epochs {_ov_actual_start}–{_ov_end} ===")
+
+            for epoch in range(_ov_actual_start, _ov_end + 1):
+                train_loss, train_logits, train_targets = run_epoch(
+                    model, train_loader, optimizer, criterion, device, scaler, train=True
+                )
+                val_loss, val_logits, val_targets = run_epoch(
+                    model, val_loader, None, criterion, device, None, train=False
+                )
+                scheduler.step()
+
+                if HAS_SKLEARN:
+                    train_bal_acc = float(balanced_accuracy_score(train_targets, train_logits.argmax(1)))
+                    val_bal_acc   = float(balanced_accuracy_score(val_targets, val_logits.argmax(1)))
+                else:
+                    train_bal_acc = float((train_logits.argmax(1) == train_targets).mean())
+                    val_bal_acc   = float((val_logits.argmax(1) == val_targets).mean())
+
+                val_monitor = compute_monitor_metric(monitor, val_logits, val_targets, val_loss, num_classes)
+
+                history.append({
+                    "epoch":                epoch,
+                    "train_loss":           train_loss,
+                    "val_loss":             val_loss,
+                    "train_bal_acc":        train_bal_acc,
+                    "val_bal_acc":          val_bal_acc,
+                    f"val_{monitor_label}": val_monitor,
+                    "is_overfit_epoch":     True,
+                })
+
+                print(
+                    f"  [overfit] Epoch {epoch:3d}/{_ov_end} | "
+                    f"loss: train={train_loss:.4f}  val={val_loss:.4f} | "
+                    f"bal_acc: train={train_bal_acc:.3f}  val={val_bal_acc:.3f} | "
+                    f"{monitor_label}: val={val_monitor:.4f}"
+                )
+
+                if _save_snapshots and _snapshot_interval > 0 and epoch % _snapshot_interval == 0:
+                    _snap_dir.mkdir(parents=True, exist_ok=True)
+                    torch.save(model.state_dict(), _snap_dir / f"epoch_{epoch:04d}.pt")
+                    print(f"  [snapshot] Saved epoch_{epoch:04d}.pt")
+
+                # Keep resume.pt current so SLURM requeue restarts correctly
+                torch.save({
+                    "epoch":                epoch,
+                    "model_state_dict":     model.state_dict(),
+                    "optimizer_state_dict": optimizer.state_dict(),
+                    "scheduler_state_dict": scheduler.state_dict(),
+                    "best_monitor":         best_monitor,
+                    "no_improve":           no_improve,
+                    "history":              history,
+                    "wandb_run_id":         wb_run.id if wb_run else None,
+                    "accumulated_time_min": _accumulated_time_min + (time.time() - t0) / 60,
+                    "in_overfit_phase":     True,
+                    "overfit_start_epoch":  _ov_start,
+                }, resume_path)
 
     elapsed = time.time() - t0
     total_train_min = _accumulated_time_min + elapsed / 60
@@ -606,6 +719,8 @@ def train_one_context(
     val_metrics   = compute_metrics(val_logits,   val_targets,   num_classes, task)
     test_metrics  = compute_metrics(test_logits,  test_targets,  num_classes, task)
 
+    _n_normal_epochs  = sum(1 for h in history if not h.get("is_overfit_epoch", False))
+    _n_overfit_epochs = sum(1 for h in history if h.get("is_overfit_epoch", False))
     metrics = {
         "context_length":    context_length,
         "task":              task,
@@ -617,8 +732,21 @@ def train_one_context(
         "n_test":            len(test_ds),
         "early_stopping_monitor": monitor,
         "best_val_monitor":       best_monitor,
-        "n_epochs_run":      len(history),
+        "n_epochs_run":      _n_normal_epochs,
+        "n_overfit_epochs":  _n_overfit_epochs,
         "training_time_min": total_train_min,
+        # ── Training-setup metadata for compute / scaling-law analysis ─────────
+        "batch_size":              train_batch_size,
+        "seq_len":                 _seq_len,              # 30s-chunks per context window; -1 for full_night
+        "steps_per_epoch":         _steps_per_epoch,
+        "windows_per_subject_train": _windows_per_subject_train,
+        "n_trainable_params":      n_params,
+        "input_dim":               cfg["model"].get("input_dim", None),
+        "hidden_dim":              cfg["model"].get("hidden_dim", None),
+        "save_snapshots":          _save_snapshots,
+        "snapshot_interval":       _snapshot_interval if _save_snapshots else None,
+        "overfit_epochs_configured": _overfit_epochs,
+        # ──────────────────────────────────────────────────────────────────────
         "train":             train_metrics,
         "val":               val_metrics,
         "test":              test_metrics,

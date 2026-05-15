@@ -197,12 +197,24 @@ For each iso-compute diagonal: one line showing how AUROC varies as you move fro
 
 | Figure / analysis | Script | Status |
 |---|---|---|
-| Saturation curve (AUROC vs L) | `plot_saturation.py` (reads `results/collected/analysis.csv`, k=all) | **Already implemented** |
+| Saturation curve (AUROC vs L) | `plot_saturation.py` | **Already implemented** |
 | Per-context K-sweep table + line plot | `analyze_windows.py` | **Already implemented** |
 | 2D heatmap with iso-compute lines | `build_heatmap_df.py` + `plot_iso_compute.py` | **Already implemented** |
 | Head comparison plots | `plot_saturation.py --heads lstm transformer mean_pool` | **Already implemented** |
 | Iso-compute curve (7 plots) | `plot_iso_compute.py` | **Already implemented** |
 | Collect all results into flat CSVs | `collect_results_v2.py` | **Already implemented** |
+| Bootstrap 95% CIs on AUROC / bal-acc | `analyze_windows.py --bootstrap N` | **Already implemented** (config-driven via `gen_commands.py`) |
+| U-shape overfitting curves | `plot_scaling_laws.py` | **Pending** — reads `training.csv` (all rows incl. overfit epochs) |
+| FLOPs vs AUROC scaling law | `plot_scaling_laws.py` | **Pending** — reads `training.csv` + FLOPs computed analytically |
+| ECE calibration + reliability diagrams | `plot_calibration.py` | **Pending** — reads `*_windows.parquet` |
+| Window-position probability profiles | `plot_window_position.py` | **Pending** — reads `*_windows.parquet` |
+| Within-subject variance across windows | `plot_subject_consistency.py` | **Pending** — reads `*_windows.parquet` |
+| Cross-task sensitivity matrix | `plot_task_comparison.py` | **Pending** — reads `analysis.csv` (multi-task) |
+| Per-dataset saturation curves | `plot_cohort_saturation.py` | **Pending** — reads `analysis.csv` + per-dataset breakdown |
+| Precision-recall curves at multiple thresholds | `plot_precision_recall.py` | **Pending** — reads `*_windows.parquet` |
+| K* distribution + coverage curves | `plot_subject_kstar.py` | **Pending** — reads `window_analysis_*.csv` |
+
+See `docs/ANALYSIS_IDEAS.md` for the scientific motivation, expected outputs, and implementation notes for all pending scripts. Mock plots with synthetic data are in `mock/generate_all_plots.py`.
 
 **Results collection inputs and outputs:**
 
@@ -671,3 +683,66 @@ Steps 1–2 are prerequisites for Step 3. Steps 1–4 are independent of each ot
 ### Hero experiment for initial plots
 
 Use `sex_binary_lstm` (6 trained contexts: 30s, 10m, 40m, 80m, 120m, 240m; inference done on test split). Adding 5m context later will add a row to the heatmap automatically without any code changes.
+
+---
+
+## 14. Extended Analyses for Paper Depth
+
+Beyond H1–H4 and the 7 iso-compute plots, a second set of analyses adds scientific depth. Full details and scientific motivation are in `docs/ANALYSIS_IDEAS.md`. This section summarises the design decisions that drove the pipeline changes made to support them.
+
+### 14.1 Overfitting phase and U-shape curves (ANALYSIS_IDEAS §7)
+
+**Scientific question:** Does training longer than early-stopping help or hurt? How do context lengths differ in their tendency to overfit?
+
+**Why added to training code:** Early-stopped training only reveals the left and flat portion of the val-loss curve. To expose the right arm (rising val-loss, falling train-loss), training must continue past the stopping point without corrupting `best_model.pt`. The new `overfit_epochs` config option does exactly this: it runs extra epochs, flags them in `training_curves.csv` as `is_overfit_epoch: True`, and never updates the best checkpoint.
+
+**Expected finding:** Short-context models (30s, 10m) with small effective sequence lengths may overfit faster to a relatively easier pattern. Long-context models may show a shallower overfitting slope because the task requires genuine temporal integration that the dataset supports. The difference in the overfitting slope across context lengths is itself a result about model capacity.
+
+**Data pipeline:** `training_curves.csv` → collected into `training.csv` (all rows) → `plot_scaling_laws.py`. Filter `is_overfit_epoch == False` for all other uses.
+
+### 14.2 Neural scaling laws (ANALYSIS_IDEAS §8)
+
+**Scientific question:** Does test performance (AUROC) follow a power-law in training compute (FLOPs)? Is there a Chinchilla-style optimal context length for a given compute budget?
+
+**Why added:** Scaling-law analysis requires (compute, performance) pairs at multiple training budgets, not just the best epoch. Two mechanisms provide these:
+
+1. **Epoch-level points:** Each epoch in `training.csv` gives one (cumulative FLOPs, val_auroc) point. FLOPs per epoch are computed analytically post-hoc from `seq_len × steps_per_epoch × FLOPs_per_token(head_type, hidden_dim)`.
+2. **Snapshot-level points (optional):** When `save_snapshots: true`, intermediate model states are saved every N epochs. Running inference on snapshots gives test AUROC at multiple compute budgets.
+
+**FLOPs formulas (analytical, no profiling needed):**
+- LSTM: FLOPs/step ≈ `4 × seq_len × hidden_dim × (input_dim + hidden_dim)` (4 gates, each a matmul)
+- Transformer: FLOPs/step ≈ `2 × seq_len² × hidden_dim + 4 × seq_len × hidden_dim × input_dim` (attention + FF)
+- MeanPool: FLOPs/step ≈ `seq_len × input_dim` (elementwise reduction only)
+
+All inputs (`seq_len`, `hidden_dim`, `input_dim`, `steps_per_epoch`, `n_trainable_params`) are now recorded in `metrics.json` and collected into `training.csv` for this purpose.
+
+### 14.3 Calibration analysis (ANALYSIS_IDEAS §3)
+
+**Scientific question:** Are the predicted probabilities well-calibrated, especially at longer context lengths where AUROC improves? A highly discriminative model can still be overconfident or underconfident.
+
+**Data needed:** Per-window `prob_class*` from `*_windows.parquet`. No new training or inference needed.
+
+**Implementation note:** Expected Calibration Error (ECE) and reliability diagrams require binning predicted probabilities and comparing bin mean probability vs observed positive fraction. This is computed in a new `plot_calibration.py` script that reads parquets directly — no dependency on `collect_results_v2.py`.
+
+### 14.4 Window position analysis (ANALYSIS_IDEAS §4)
+
+**Scientific question:** Is there a "privileged" time-of-night? Do the first hours of sleep carry more diagnostic signal than late sleep for a given task?
+
+**Data needed:** Each row of `*_windows.parquet` includes a `window_start` or `window_index` field. Group predictions by relative position in the night and compute mean predicted probability per bin.
+
+**Why this matters for the paper:** If early-night windows are systematically more informative, the optimal K-window selection strategy is not uniform sampling but position-weighted sampling. This supports a practical recommendation.
+
+### 14.5 Architecture: which analyses depend on which scripts
+
+The pipeline architecture for new analyses follows the same pattern as the existing iso-compute pipeline:
+
+| Analysis type | Data source | Depends on `collect_results_v2.py`? |
+|---------------|------------|--------------------------------------|
+| U-shape / overfitting curves | `training_curves.csv` (per run) or `training.csv` | Either (prefer raw for single experiment) |
+| Scaling laws (FLOPs vs AUROC) | `training.csv` + analytical FLOPs | Yes — needs data from all context lengths in one place |
+| Calibration, window position, PR curves | `*_windows.parquet` (per run) | No — reads parquets directly |
+| Cross-task sensitivity, cohort breakdown | `analysis.csv` | Yes — multi-experiment data |
+| K* distribution | `window_analysis_*.csv` (per run) | No — reads single experiment's CSV |
+| Subject consistency | `*_windows.parquet` (per run) | No |
+
+`collect_results_v2.py` is a convenience aggregator, not a required computation step. All the numbers it stores were already computed by earlier pipeline stages. Single-experiment plots bypass it; cross-experiment plots use it to avoid scanning many directories.

@@ -674,3 +674,115 @@ git add results/collected/ && git commit -m "collect results" && git push
 - `predictions/*.parquet` → custom aggregations, ROC at iso-compute, per-dataset breakdowns
 
 See `docs/RESULTS_COLLECTION.md` for the full column schemas and detailed usage examples.
+
+---
+
+## Extended Analysis Features
+
+These features were added to support the deeper analyses described in `docs/ANALYSIS_IDEAS.md` — analyses beyond the core H1–H4 hypotheses that strengthen the paper with uncertainty quantification, overfitting characterisation, and neural scaling-law results.
+
+### Overfitting phase (`overfit_epochs`)
+
+**Config (`configs/phase0_v2_config.yaml`, under `training:`):**
+```yaml
+overfit_epochs: 0   # 0 = disabled (default); set e.g. to 20 to enable
+```
+
+**What it does:** After early stopping fires (val_auroc stops improving for `patience` epochs), if `overfit_epochs > 0`, training continues for that many additional epochs without updating `best_model.pt`. These extra epochs are tagged `is_overfit_epoch: True` in `training_curves.csv` and in the collected `training.csv`.
+
+**Why it was added:** Normal early-stopped training only exposes the left and flat portions of the U-shaped val_loss curve. To study overfitting dynamics and fit neural scaling laws (see ANALYSIS_IDEAS §7 and §8) you need the right arm — the regime where val_loss rises while train_loss keeps falling. Concretely:
+
+- **U-shape / overfitting curves:** Plot `train_loss` and `val_loss` vs epoch for all rows (including overfit rows). The width of the gap at the right characterises how well model capacity matches the dataset for each context length and head.
+- **Scaling laws:** Compute cumulative FLOPs at each epoch (from `seq_len × steps_per_epoch × FLOPs_per_token × epoch_number`) and plot test AUROC vs FLOPs. Running past early stopping gives additional (compute, performance) datapoints on the overfit side.
+
+**SLURM safety:** `resume.pt` is updated with `in_overfit_phase: True` and `overfit_start_epoch` before the main-loop break, so if the job times out mid-overfit-phase the resumed job picks up from the correct epoch.
+
+**Using the data:** In `training.csv`, filter `is_overfit_epoch == False` for paper performance tables; include all rows (both normal and overfit) for learning-curve and U-shape plots.
+
+---
+
+### Snapshot checkpoints (`save_snapshots`, `snapshot_interval`)
+
+**Config:**
+```yaml
+save_snapshots: false       # true to enable (disabled by default to save disk)
+snapshot_interval: 5        # save a snapshot every N epochs (only when save_snapshots: true)
+```
+
+**What it does:** When enabled, saves `context_{L}/snapshots/epoch_{NNNN}.pt` every N epochs. These are model state dicts only (smaller than full resume checkpoints). The existing `best_model.pt` and `resume.pt` are unaffected.
+
+**Why it was added:** Scaling-law analysis (ANALYSIS_IDEAS §8) requires measuring test AUROC at multiple training compute budgets — not just at the best epoch. Snapshots enable running inference at intermediate epochs (e.g., at 5, 10, 15, 20 epochs) to produce a (FLOPs, AUROC) curve and fit a power-law. Combined with `seq_len`, `steps_per_epoch`, and `n_trainable_params` now recorded in `metrics.json`, you can compute FLOPs analytically post-hoc without any additional training.
+
+Default is off because snapshots are rarely needed and add disk usage (~model_size × n_snapshots per context). Enable only for scaling-law experiments.
+
+---
+
+### Bootstrap confidence intervals (`bootstrap_samples`)
+
+**Config (`analysis:` section):**
+```yaml
+analysis:
+  bootstrap_samples: 0   # 0 = disabled; 1000 recommended for paper tables
+```
+
+**What it does:** When > 0, `analyze_windows.py` performs subject-level bootstrap resampling N times after computing point estimates. The 2.5th and 97.5th percentiles form 95% CIs. Four new columns appear in `window_analysis_{split}.csv` (and in the collected `analysis.csv`):
+- `mean_prob_auroc_ci_lo`, `mean_prob_auroc_ci_hi`
+- `mean_prob_bal_acc_ci_lo`, `mean_prob_bal_acc_ci_hi`
+
+**Why subject-level resampling:** Subjects are the independent unit, not windows. Resampling at the window level would underestimate variance because windows within a subject are correlated.
+
+**Why it was added:** Paper tables and saturation curves need uncertainty quantification (ANALYSIS_IDEAS §5). CIs are especially important when comparing across context lengths — a small AUROC difference between L=80m and L=120m may not be meaningful without CIs.
+
+**gen_commands.py integration:** The `analyze` subcommand reads `analysis.bootstrap_samples` from the config yaml automatically. If > 0, `--bootstrap N` is appended to the generated command — no manual editing required.
+
+---
+
+### New columns in `training.csv` and `analysis.csv`
+
+`collect_results_v2.py` now writes additional columns to support the new analyses:
+
+**`training.csv` — new columns:**
+
+| Column | Source | Purpose |
+|--------|--------|---------|
+| `is_overfit_epoch` | `training_curves.csv` | Flag; include these rows in U-shape plots, exclude from paper tables |
+| `n_overfit_epochs` | `metrics.json` | How many overfit epochs ran (0 if disabled) |
+| `batch_size` | `metrics.json` | Needed to compute FLOPs per step |
+| `seq_len` | `metrics.json` | Sequence length seen by the head (= N patches in context window) |
+| `steps_per_epoch` | `metrics.json` | Number of gradient steps per epoch |
+| `windows_per_subject_train` | `metrics.json` | K_train (for reproducibility and fairness docs) |
+| `n_trainable_params` | `metrics.json` | Model-size axis for scaling-law plots |
+| `input_dim`, `hidden_dim` | `metrics.json` | Needed for analytical FLOPs computation by head type |
+| `save_snapshots`, `snapshot_interval` | `metrics.json` | Know which runs have snapshots available for snapshot-based AUROC curves |
+
+FLOPs per step can be computed analytically post-hoc: for LSTM `∝ seq_len × hidden_dim²`; for Transformer `∝ seq_len² × hidden_dim`. Total training FLOPs to epoch E = `steps_per_epoch × FLOPs_per_step × E`.
+
+**`analysis.csv` — new columns:**
+
+| Column | Source | Purpose |
+|--------|--------|---------|
+| `mean_prob_auroc_ci_lo/hi` | `window_analysis_*.csv` | 95% CI bounds for error bars on saturation and K-sweep plots |
+| `mean_prob_bal_acc_ci_lo/hi` | `window_analysis_*.csv` | Same for balanced accuracy |
+
+All CI columns are `NaN` when `bootstrap_samples: 0` — backward compatible with existing plotting code.
+
+**Note on best-epoch detection:** `collect_training()` now filters out `is_overfit_epoch=True` rows before calling `idxmax()` to find the best epoch. This means `is_best_epoch=True` always points to the early-stopping optimum, even when overfit rows are present in the same CSV.
+
+---
+
+### Pending: new plot scripts
+
+The analyses described in `docs/ANALYSIS_IDEAS.md` require plot scripts that have not yet been written. The `mock/generate_all_plots.py` script shows what each plot looks like with synthetic data. The actual scripts (which will read real pipeline outputs) are planned:
+
+| Script | Analysis | Data source |
+|--------|----------|-------------|
+| `plot_scaling_laws.py` | U-shape curves + FLOPs vs AUROC power-law | `training.csv` (all rows) |
+| `plot_calibration.py` | ECE + reliability diagrams | `*_windows.parquet` (probabilities) |
+| `plot_window_position.py` | Window-position probability profiles | `*_windows.parquet` |
+| `plot_subject_consistency.py` | Within-subject variance across windows | `*_windows.parquet` |
+| `plot_task_comparison.py` | Cross-task sensitivity matrix | `analysis.csv` (multiple tasks) |
+| `plot_cohort_saturation.py` | Per-dataset saturation curves | `analysis.csv` + per-dataset breakdown in `analyze_windows.py` |
+| `plot_precision_recall.py` | PR curves at multiple thresholds | `*_windows.parquet` |
+| `plot_subject_kstar.py` | K* distribution and coverage curves | `window_analysis_*.csv` |
+
+Single-experiment plots (`calibration`, `window_position`, `subject_consistency`, `precision_recall`, `scaling_laws`) will read directly from the raw per-run output files (parquets and CSVs), following the same pattern as `plot_iso_compute.py`. Cross-experiment plots (`task_comparison`, `cohort_saturation`) will read from the collected `analysis.csv` since they need data from multiple experiment directories at once.
