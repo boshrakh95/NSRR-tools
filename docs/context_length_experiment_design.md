@@ -204,17 +204,18 @@ For each iso-compute diagonal: one line showing how AUROC varies as you move fro
 | Iso-compute curve (7 plots) | `plot_iso_compute.py` | **Already implemented** |
 | Collect all results into flat CSVs | `collect_results_v2.py` | **Already implemented** |
 | Bootstrap 95% CIs on AUROC / bal-acc | `analyze_windows.py --bootstrap N` | **Already implemented** (config-driven via `gen_commands.py`) |
-| U-shape overfitting curves | `plot_scaling_laws.py` | **Pending** — reads `training.csv` (all rows incl. overfit epochs) |
-| FLOPs vs AUROC scaling law | `plot_scaling_laws.py` | **Pending** — reads `training.csv` + FLOPs computed analytically |
-| ECE calibration + reliability diagrams | `plot_calibration.py` | **Pending** — reads `*_windows.parquet` |
-| Window-position probability profiles | `plot_window_position.py` | **Pending** — reads `*_windows.parquet` |
-| Within-subject variance across windows | `plot_subject_consistency.py` | **Pending** — reads `*_windows.parquet` |
-| Cross-task sensitivity matrix | `plot_task_comparison.py` | **Pending** — reads `analysis.csv` (multi-task) |
-| Per-dataset saturation curves | `plot_cohort_saturation.py` | **Pending** — reads `analysis.csv` + per-dataset breakdown |
-| Precision-recall curves at multiple thresholds | `plot_precision_recall.py` | **Pending** — reads `*_windows.parquet` |
-| K* distribution + coverage curves | `plot_subject_kstar.py` | **Pending** — reads `window_analysis_*.csv` |
+| U-shape overfitting curves | `plot_scaling_laws.py` | ✅ **Done** — reads `training.csv`; gen_commands: `scaling-laws` |
+| FLOPs vs AUROC scaling law | `plot_scaling_laws.py` | ✅ **Done** — reads `training.csv`; FLOPs computed analytically from `seq_len`, `hidden_dim`, `steps_per_epoch` |
+| ECE calibration + reliability diagrams | `plot_calibration.py` | ✅ **Done** — reads `*_windows.parquet`; gen_commands: `calibration` |
+| Window-position probability profiles | `plot_window_position.py` | ✅ **Done** — reads `*_windows.parquet`; gen_commands: `window-position` |
+| Within-subject variance across windows | `plot_subject_consistency.py` | ✅ **Done** — reads `*_windows.parquet`; gen_commands: `subject-consistency` |
+| Cross-task sensitivity matrix | `plot_task_comparison.py` | ✅ **Done** — reads `analysis.csv` (multi-task); gen_commands: `task-comparison` |
+| Per-dataset saturation curves | `plot_cohort_saturation.py` | ✅ **Done** — reads `*_windows.parquet` filtered by `dataset` column; gen_commands: `cohort-saturation` |
+| Precision-recall curves + vote sweep | `plot_precision_recall.py` | ✅ **Done** — reads `*_windows.parquet`; gen_commands: `precision-recall` |
+| K* distribution + coverage curves | `plot_subject_kstar.py` | ✅ **Done** — reads `*_windows.parquet` (not CSV); gen_commands: `subject-kstar` |
+| Saturation curves with CI bands | `plot_saturation.py --collected-dir` | ✅ **Done** — reads `analysis.csv` CI columns; gen_commands: `saturation --collected-dir` |
 
-See `docs/ANALYSIS_IDEAS.md` for the scientific motivation, expected outputs, and implementation notes for all pending scripts. Mock plots with synthetic data are in `mock/generate_all_plots.py`.
+See `docs/ANALYSIS_IDEAS.md` for the scientific motivation, expected outputs, and full implementation details for all scripts. Use `gen_commands.py` subcommands to generate the exact commands.
 
 **Results collection inputs and outputs:**
 
@@ -381,7 +382,10 @@ Current output not yet present:
 | Write `build_heatmap_df.py` | High | No | ✅ Done | See §13 Step 2 |
 | Write `plot_iso_compute.py` (7 plots) | High | No | ✅ Done | See §13 Step 3; replaces `plot_context_heatmap.py` |
 | Write `plot_saturation.py` | High | No | ✅ Done | See §13 Step 4 |
-| Integrate into `gen_commands.py` | High | No | ✅ Done | See §13 Step 5; 3 new subcommands |
+| Integrate into `gen_commands.py` (core) | High | No | ✅ Done | See §13 Step 5; 3 subcommands |
+| Write §1–§9 extended plot scripts | High | Partial | ✅ Done | All 8 scripts written; see §8 table and ANALYSIS_IDEAS.md |
+| Add 9 extended subcommands to `gen_commands.py` | High | No | ✅ Done | `collect`, `scaling-laws`, `calibration`, `window-position`, `subject-consistency`, `task-comparison`, `cohort-saturation`, `precision-recall`, `subject-kstar` |
+| Saturation CI bands (`plot_saturation.py`) | Medium | No | ✅ Done | `--collected-dir` flag reads bootstrap CI columns from `analysis.csv` |
 | ROC at iso-compute (Plot A) | Medium | No | ⬜ TODO | See §13 Step 6 |
 | Recall at fixed precision (Plot B) | Low | No | ⬜ TODO | See §13 Step 6 |
 | Metric comparison (Plot C) | Low | No | ⬜ TODO | See §13 Step 6 |

@@ -770,19 +770,171 @@ All CI columns are `NaN` when `bootstrap_samples: 0` — backward compatible wit
 
 ---
 
-### Pending: new plot scripts
+### Extended analysis plot scripts ✅ Implemented
 
-The analyses described in `docs/ANALYSIS_IDEAS.md` require plot scripts that have not yet been written. The `mock/generate_all_plots.py` script shows what each plot looks like with synthetic data. The actual scripts (which will read real pipeline outputs) are planned:
+All scripts described in `docs/ANALYSIS_IDEAS.md` are now implemented. Use `gen_commands.py` to generate the exact commands — you never need to remember the flags.
 
-| Script | Analysis | Data source |
-|--------|----------|-------------|
-| `plot_scaling_laws.py` | U-shape curves + FLOPs vs AUROC power-law | `training.csv` (all rows) |
-| `plot_calibration.py` | ECE + reliability diagrams | `*_windows.parquet` (probabilities) |
-| `plot_window_position.py` | Window-position probability profiles | `*_windows.parquet` |
-| `plot_subject_consistency.py` | Within-subject variance across windows | `*_windows.parquet` |
-| `plot_task_comparison.py` | Cross-task sensitivity matrix | `analysis.csv` (multiple tasks) |
-| `plot_cohort_saturation.py` | Per-dataset saturation curves | `analysis.csv` + per-dataset breakdown in `analyze_windows.py` |
-| `plot_precision_recall.py` | PR curves at multiple thresholds | `*_windows.parquet` |
-| `plot_subject_kstar.py` | K* distribution and coverage curves | `window_analysis_*.csv` |
+#### collect (prerequisite for §1 and §6)
 
-Single-experiment plots (`calibration`, `window_position`, `subject_consistency`, `precision_recall`, `scaling_laws`) will read directly from the raw per-run output files (parquets and CSVs), following the same pattern as `plot_iso_compute.py`. Cross-experiment plots (`task_comparison`, `cohort_saturation`) will read from the collected `analysis.csv` since they need data from multiple experiment directories at once.
+**Script:** `scripts/collect_results_v2.py`  
+**gen_commands.py:** `python scripts/gen_commands.py collect [<exp_id> ...] [--bootstrap 1000]`
+
+Gathers results from all or selected experiments into:
+- `{results_dir}/collected/training.csv` — per-epoch training curves including overfit rows
+- `{results_dir}/collected/analysis.csv` — per-(task, head, context, k) metrics with optional bootstrap CI columns
+
+Must be run before `scaling-laws` and `task-comparison`.
+
+---
+
+#### §1 — Overfitting curves and scaling laws
+
+**Script:** `scripts/plot_scaling_laws.py`  
+**gen_commands.py:** `python scripts/gen_commands.py scaling-laws sex_binary --heads lstm transformer mean_pool`
+
+Reads `{collected_dir}/training.csv`. Produces three plots:
+
+| Plot | Description |
+|------|-------------|
+| `1A` (U-shape) | train_loss + val_loss vs epoch; overfit rows shown dotted; fill_between for generalisation gap |
+| `1B` (scaling law) | best val AUROC vs estimated training FLOPs (log-log); power-law fit `y = a - A × FLOPs^(-b)` via scipy |
+| `1C` (optimal epoch) | bar chart of early-stop epoch per (head, context length) |
+
+FLOPs computation: analytical from `seq_len × steps_per_epoch × FLOPs_per_step` where FLOPs formulas are:
+- LSTM: `3 × seq_len × 4 × hidden_dim × (input_dim + hidden_dim)`
+- Transformer: `3 × seq_len × (seq_len × hidden_dim + 4 × hidden_dim²)`
+- MeanPool: `3 × seq_len × input_dim`
+
+**Output:** `{results_dir}/figures/scaling_laws/{task}_{head}_{1A|1B|1C}.{png,pdf}`
+
+---
+
+#### §2 — Model calibration and reliability
+
+**Script:** `scripts/plot_calibration.py`  
+**gen_commands.py:** `python scripts/gen_commands.py calibration sex_binary_lstm [--heads lstm transformer mean_pool]`
+
+Reads per-window parquets. Produces three plots:
+
+| Plot | Description |
+|------|-------------|
+| `2A` (reliability diagrams) | 10-bin calibration curves for 3 representative contexts; ECE annotated |
+| `2B` (ECE vs context) | Log-x saturation-style curve, one line per head; use `--heads` for multi-head |
+| `2C` (ECE vs K) | ECE as a function of K (windows aggregated), one line per context |
+
+**Output:** `{results_dir}/figures/{task}_{head}/calibration_2A_reliability.{png,pdf}` etc.
+
+---
+
+#### §4 — Window position and temporal structure
+
+**Script:** `scripts/plot_window_position.py`  
+**gen_commands.py:** `python scripts/gen_commands.py window-position sex_binary_lstm`
+
+Reads per-window parquets. Normalises `window_idx` to [0, 1] within each subject (0=night start, 1=night end), bins into 20 equal bins.
+
+| Plot | Description |
+|------|-------------|
+| `4A` (position profiles) | Mean prob_class1 ± 1 SD vs normalised position; separate panels for positive and negative subjects |
+| `4B` (variance vs position) | std(prob_class1) at each position bin, one line per context |
+
+**Output:** `{results_dir}/figures/{task}_{head}/window_position_4A_profiles.{png,pdf}` etc.
+
+---
+
+#### §5 — Per-subject consistency and prediction stability
+
+**Script:** `scripts/plot_subject_consistency.py`  
+**gen_commands.py:** `python scripts/gen_commands.py subject-consistency sex_binary_lstm`
+
+Reads per-window parquets.
+
+| Plot | Description |
+|------|-------------|
+| `5A` (variance distribution) | Violin plots of within-subject std(prob_class1) for correct vs incorrect subjects at 3 representative contexts |
+| `5B` (variance vs K) | std of per-subject K-window mean across subjects vs K; confirms aggregation stabilises predictions |
+| `5C` (hard subjects) | Histogram: x = number of context lengths at which subject is correctly classified; subjects at x=0 are never correctly classified |
+
+**Output:** `{results_dir}/figures/{task}_{head}/subject_consistency_5A_variance.{png,pdf}` etc.
+
+---
+
+#### §6 — Task × context sensitivity matrix
+
+**Script:** `scripts/plot_task_comparison.py`  
+**gen_commands.py:** `python scripts/gen_commands.py task-comparison --head lstm [--tasks sex_binary bmi_binary ...]`
+
+Reads `{collected_dir}/analysis.csv`. **Prerequisite: run `collect` first.**
+
+| Plot | Description |
+|------|-------------|
+| `6A` (sensitivity scatter) | Each task = 1 point; x = baseline difficulty (1 − AUROC@30s); y = context sensitivity (ΔAUROC 30s → best); reference lines at medians |
+| `6B` (AUROC bars) | Grouped bars per context per task; tasks sorted by context sensitivity ascending |
+| `6C` (L* per task) | Dot chart on log-x axis; L* = smallest context within 0.5% of best AUROC |
+
+**Output:** `{results_dir}/figures/task_comparison_6A_scatter.{png,pdf}` etc.
+
+---
+
+#### §7 — Cohort-stratified saturation
+
+**Script:** `scripts/plot_cohort_saturation.py`  
+**gen_commands.py:** `python scripts/gen_commands.py cohort-saturation sex_binary_lstm [--datasets apples shhs mros]`
+
+Reads per-window parquets, filters by `dataset` column.
+
+| Plot | Description |
+|------|-------------|
+| `7A` (per-cohort saturation) | One line per dataset on log-x context axis; N annotated on each point |
+| `7B` (per-cohort N) | Grouped bars showing subject count per (dataset, context_length) |
+
+**Output:** `{results_dir}/figures/{task}_{head}/cohort_saturation_7A.{png,pdf}` etc.
+
+---
+
+#### §8 — Precision-recall analysis
+
+**Script:** `scripts/plot_precision_recall.py`  
+**gen_commands.py:** `python scripts/gen_commands.py precision-recall sex_binary_lstm [--heads lstm transformer mean_pool]`
+
+Reads per-window parquets.
+
+| Plot | Description |
+|------|-------------|
+| `8A` (PR curves) | One PR curve per context at K=all; AP annotated in legend; chance line at prevalence |
+| `8B` (AUC-PR vs context) | Log-x axis, one line per head; use `--heads` for multi-head |
+| `8C` (vote sweep) | Majority-vote threshold sweep: t=1..K, t windows must vote positive; one curve per context showing PR tradeoff via vote threshold |
+
+**Output:** `{results_dir}/figures/{task}_{head}/pr_8A_curves.{png,pdf}` etc.
+
+---
+
+#### §9 — Per-subject K* (minimum windows to correct classification)
+
+**Script:** `scripts/plot_subject_kstar.py`  
+**gen_commands.py:** `python scripts/gen_commands.py subject-kstar sex_binary_lstm [--kmax 30] [--reps 20]`
+
+Reads per-window parquets. For each subject, estimates K* = minimum k such that a random subset of k windows produces a correct prediction (mean prob_class1 > 0.5 matches true_label). If never correct at any k ≤ kmax: K* = ∞.
+
+| Plot | Description |
+|------|-------------|
+| `9A` (K* histogram) | Up to 4 representative contexts side-by-side; "never correct" fraction annotated |
+| `9B` (coverage curves) | Fraction of subjects correctly classified using ≤K windows vs K; one line per context |
+
+**Note:** Runtime scales as O(n_subjects × kmax × reps). Start with `--kmax 15 --reps 10` to validate. Default is kmax=30, reps=20.
+
+**Output:** `{results_dir}/figures/{task}_{head}/kstar_9A_histogram.{png,pdf}` etc.
+
+---
+
+#### Saturation curves with CI bands (updated)
+
+`scripts/plot_saturation.py` now accepts `--collected-dir` to overlay bootstrap 95% CI bands:
+
+```bash
+python scripts/gen_commands.py saturation sex_binary \
+    --heads lstm transformer mean_pool \
+    --collected-dir results/collected
+```
+
+CI bands are drawn as shaded regions (alpha=0.15) around each line when `mean_prob_auroc_ci_lo/hi` columns are present in `analysis.csv`. The y-axis label notes "shading = 95% bootstrap CI".
