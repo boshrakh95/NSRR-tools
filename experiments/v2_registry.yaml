@@ -29,24 +29,56 @@ python_bin: /home/boshra95/sleepfm_env/bin/python
 # v2_inference_dir: /scratch/boshra95/psg/unified/results/phase0_v2/inference
 # v2_logs_dir: /home/boshra95/NSRR-tools/logs_v2
 
-# ── Gradient accumulation (optional) ────────────────────────────────────────────
+# ── Batch size modes ─────────────────────────────────────────────────────────────
+#
+# Two experiment modes are supported for the paper comparison:
+#
+# Mode 1 — "grad_accum" (default, main results):
+#   gradient_accumulation.enabled = true
+#   micro_batch × accum_steps = effective_batch (32) at every context length.
+#   Long-context gradient updates are as diverse (different subjects) as short ones.
+#   Use `batch_mode: grad_accum` (or omit) on an experiment entry.
+#
+# Mode 2 — "memory_bounded" (secondary, comparison results):
+#   No gradient accumulation. Batch size is whatever fits GPU memory at each context.
+#   Long-context batches are smaller → gradient updates may see fewer unique subjects.
+#   This is the "natural" behaviour without any accumulation tricks.
+#   Use `batch_mode: memory_bounded` on an experiment entry + a unique run_tag (e.g. "membnd").
+#   gen_commands reads memory_bounded.context_batch_size for the per-context batch size.
+#
+# Paper strategy: run Mode 1 for all experiments as primary results; run Mode 2 for
+# a subset of tasks (Tier 1 lstm at minimum) for the comparison / ablation section.
+#
+# ── Gradient accumulation (Mode 1) ──────────────────────────────────────────────
 # When enabled=true: gen_commands.py reads context_micro_batch to set BATCH_SIZE
 # and ACCUM_STEPS per context so that BATCH_SIZE × ACCUM_STEPS = effective_batch.
-# When enabled=false: batch_size from each experiment entry is used directly;
-# ACCUM_STEPS=1 (no accumulation). Switch to true only when OOM forces small batches.
 gradient_accumulation:
-  enabled: true       # flip to true to activate per-context micro-batch + accumulation
-  effective_batch: 32  # target effective batch size (micro_batch × accum_steps must equal this)
-  # GPU-feasible micro_batch sizes (LSTM head, ~40 GB VRAM).
+  enabled: true        # set to true for Mode 1 (default)
+  effective_batch: 32  # target effective batch size (micro_batch × accum_steps)
+  # GPU-feasible micro_batch sizes (LSTM head, H100 10GB slice).
   # accum_steps = effective_batch / micro_batch is computed automatically by gen_commands.py.
-  # Tune these downward if OOM; the accum_steps will increase correspondingly.
+  # Tune these downward if OOM; accum_steps increases correspondingly.
   context_micro_batch:
-    "30s":  32   # accum=1  — tiny tensors, no memory pressure
+    "30s":  32   # accum=1
     "10m":  32   # accum=1
     "40m":  16   # accum=2
     "80m":  8    # accum=4
     "120m": 8    # accum=4
     "240m": 4    # accum=8
+
+# ── Memory-bounded batch sizes (Mode 2) ─────────────────────────────────────────
+# Per-context batch sizes limited by GPU memory — same values as context_micro_batch
+# above, but used WITHOUT accumulation (each gradient step processes fewer samples).
+# Add `batch_mode: memory_bounded` to an experiment entry to activate this mode.
+# Also set a unique run_tag (e.g. "membnd") so results go to a separate folder.
+memory_bounded:
+  context_batch_size:
+    "30s":  32   # no memory pressure
+    "10m":  32
+    "40m":  16
+    "80m":  8
+    "120m": 8
+    "240m": 4
 
 # ── Tier 1: Large N, clinically broad ────────────────────────────────────────
 # Run all three heads to enable head comparison.
@@ -235,7 +267,7 @@ experiments:
     num_classes: 2
     head: lstm
     datasets: [mros]
-    contexts: [30s, 10m, 40m, 80m, 120m]
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
     batch_size: 32
     lr: 1.0e-4
     run_tag: ""

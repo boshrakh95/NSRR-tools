@@ -66,6 +66,19 @@ This is the source of the conceptual confusion, so it is worth being explicit:
 
 **The K dimension of the heatmap is free.** After running inference with all windows (which you already do), you can sweep any K you want in `analyze_windows.py` without touching the GPU. The only thing that costs compute is adding new rows to the grid (new context lengths L, or training K ablations).
 
+### The three K values and their windowing pools
+
+| K | Used where | Windowing pool | Value |
+|---|-----------|---------------|-------|
+| **K_train** | Training dataloader, each epoch | **Overlapping** — any start in [0, T−N] | `windows_per_subject` (default 5) |
+| **K_val** | Validation eval during training (early stopping) | **Non-overlapping** stride-N | min(K_train, T//N) |
+| **K_infer** | `infer_subject_windows.py` | **Non-overlapping** stride-N | T//N (all) |
+
+Important implications:
+- **K_val is not always equal to K_train.** For very long contexts (e.g. 240m with T//N = 2 for an 8h night), val evaluation uses only 2 windows per subject. The early-stopping AUROC signal is therefore noisier at long contexts — you may need more patience epochs for the val curve to stabilise.
+- **K_infer is always T//N** because `infer_subject_windows.py` sets `windows_per_subject = 99,999`, and the non-overlapping dataset branch returns all floor(T/N) positions deterministically.
+- The overlapping pool for K_train (any start in [0, T−N]) makes K=5 achievable even at 240m (n_valid=481 positions for an 8h night). Without this, K at 240m would be capped at T//N = 2 during training.
+
 ### Training K (K_train)
 
 `windows_per_subject` in your config (currently 5) controls how many windows per subject are sampled each training epoch. This is separate from the inference K that you sweep post-hoc.
@@ -378,17 +391,17 @@ Current output not yet present:
 | Item | Priority | Requires retraining? | Status | Notes |
 |------|----------|---------------------|--------|-------|
 | Add 240m context length to registry | High | **Yes** | ✅ Done | Added to all Tier 1 experiments |
-| Add `--k-dense` flag to `analyze_windows.py` | High | No | ✅ Done | See §13 Step 1 |
-| Write `build_heatmap_df.py` | High | No | ✅ Done | See §13 Step 2 |
-| Write `plot_iso_compute.py` (7 plots) | High | No | ✅ Done | See §13 Step 3; replaces `plot_context_heatmap.py` |
-| Write `plot_saturation.py` | High | No | ✅ Done | See §13 Step 4 |
-| Integrate into `gen_commands.py` (core) | High | No | ✅ Done | See §13 Step 5; 3 subcommands |
+| Add `--k-dense` flag to `analyze_windows.py` | High | No | ✅ Done | See §14 Step 1 |
+| Write `build_heatmap_df.py` | High | No | ✅ Done | See §14 Step 2 |
+| Write `plot_iso_compute.py` (7 plots) | High | No | ✅ Done | See §14 Step 3; replaces `plot_context_heatmap.py` |
+| Write `plot_saturation.py` | High | No | ✅ Done | See §14 Step 4 |
+| Integrate into `gen_commands.py` (core) | High | No | ✅ Done | See §14 Step 5; 3 subcommands |
 | Write §1–§9 extended plot scripts | High | Partial | ✅ Done | All 8 scripts written; see §8 table and ANALYSIS_IDEAS.md |
 | Add 9 extended subcommands to `gen_commands.py` | High | No | ✅ Done | `collect`, `scaling-laws`, `calibration`, `window-position`, `subject-consistency`, `task-comparison`, `cohort-saturation`, `precision-recall`, `subject-kstar` |
 | Saturation CI bands (`plot_saturation.py`) | Medium | No | ✅ Done | `--collected-dir` flag reads bootstrap CI columns from `analysis.csv` |
-| ROC at iso-compute (Plot A) | Medium | No | ⬜ TODO | See §13 Step 6 |
-| Recall at fixed precision (Plot B) | Low | No | ⬜ TODO | See §13 Step 6 |
-| Metric comparison (Plot C) | Low | No | ⬜ TODO | See §13 Step 6 |
+| ROC at iso-compute (Plot A) | Medium | No | ⬜ TODO | See §14 Step 6 |
+| Recall at fixed precision (Plot B) | Low | No | ⬜ TODO | See §14 Step 6 |
+| Metric comparison (Plot C) | Low | No | ⬜ TODO | See §14 Step 6 |
 
 ### 11.9 Required changes to `analyze_windows.py` for the heatmap
 
@@ -409,13 +422,66 @@ K values that exceed `max_windows_available` for a context length are silently s
 
 ---
 
-## 12. Configurable Training K Strategy
+## 12. Batch Size Modes for the Paper
 
-**Status: Implemented.** The `windows_strategy` option is live in `configs/phase0_v2_config.yaml` and `scripts/train_context_sweep.py`.
+Two strategies for controlling batch size across context lengths are supported and documented in `experiments/v2_registry.yaml`. Both produce separate result folders (via `run_tag`) and can be analyzed with identical scripts.
+
+### 12.1 Mode 1 — Gradient Accumulation (primary)
+
+**Scientific motivation:** At long context lengths (80m, 120m, 240m), a single training example (one context window of N=160–480 patches) is much larger than at 30s (N=1 patch). GPU memory limits the number of examples per gradient update (micro_batch). Without compensation, the effective batch size shrinks at long contexts — optimizer updates are noisier and see fewer unique subjects, which may disadvantage long-context models independently of the context length itself.
+
+**Solution:** Gradient accumulation. Set `micro_batch × accum_steps = 32` at every context length. `gen_commands.py` reads `gradient_accumulation.context_micro_batch` and computes `accum_steps` automatically. The optimizer always processes 32 effective examples per step, regardless of L.
+
+**Registry configuration:**
+```yaml
+gradient_accumulation:
+  enabled: true
+  effective_batch: 32
+  context_micro_batch:
+    "30s":  32   # accum=1
+    "10m":  32   # accum=1
+    "40m":  16   # accum=2
+    "80m":  8    # accum=4
+    "120m": 8    # accum=4
+    "240m": 4    # accum=8
+```
+
+Experiment entries use this mode by default (or with `batch_mode: grad_accum`).
+
+**Paper claim:** "All models were trained with effective batch size 32 via gradient accumulation at long contexts, ensuring gradient updates are equally diverse across all L."
+
+### 12.2 Mode 2 — Memory-Bounded (secondary, comparison)
+
+**Scientific motivation:** Gradient accumulation keeps effective_batch constant but changes the training dynamics — each step takes longer, and the model sees only a single micro_batch of subjects before a weight update. Some practitioners argue this is equivalent to a standard smaller batch; others argue the accumulated gradient is noisier. The memory-bounded baseline removes this variable.
+
+**Behaviour:** No accumulation. `ACCUM_STEPS=1` always. `BATCH_SIZE` varies per context according to `memory_bounded.context_batch_size` (same values as the grad_accum micro_batch). At 240m, the optimizer processes 4 examples per update; at 30s, 32.
+
+**Registry configuration:** Add entries with `batch_mode: memory_bounded` and `run_tag: "membnd"`:
+```yaml
+sex_binary_lstm_membnd:
+  task: sex_binary
+  head: lstm
+  ...same as base entry...
+  run_tag: "membnd"
+  batch_mode: memory_bounded
+  tier: 3               # run after Mode 1 results are complete
+```
+
+`memory_bounded.context_batch_size` in the registry holds the per-context limits (default matches context_micro_batch).
+
+**Paper strategy:** Run Mode 2 for at least one Tier 1 task (recommended: `sex_binary_lstm`) to produce a comparison figure. If Mode 1 and Mode 2 curves are nearly identical, gradient accumulation does not meaningfully change training quality — a reassuring robustness check. If they diverge, this is worth reporting as a finding about long-context training dynamics.
+
+**TODO for paper:** Run `sex_binary_lstm_membnd` (and optionally `bmi_binary_lstm_membnd`) after all Mode 1 runs are complete. Add a "Supplementary: Effect of Gradient Accumulation" section with saturation curves for both modes side by side.
+
+---
+
+## 13. Configurable Training K Strategy
+
+**Status: Implemented.** The `windows_strategy` option is live in `configs/phase0_v3_config.yaml` and `scripts/train_context_sweep.py`.
 
 ### 12.1 Config options
 
-In `configs/phase0_v2_config.yaml`, under `training:`:
+In `configs/phase0_v3_config.yaml`, under `training:`:
 
 ```yaml
   windows_strategy: "fixed"        # "fixed" | "token_budget"
@@ -443,7 +509,7 @@ sex_binary_lstm_kbudget:
   tier: 3
 ```
 
-Use a separate config with `windows_strategy: "token_budget"` and pass it via `--config`. Do not modify the main `phase0_v2_config.yaml` for the ablation.
+Use a separate config with `windows_strategy: "token_budget"` and pass it via `--config`. Do not modify the main `phase0_v3_config.yaml` for the ablation.
 
 ### 12.3 How to run the ablation
 
@@ -497,7 +563,7 @@ Either result is informative and publishable.
 
 ---
 
-## 13. Implementation Plan: Iso-Compute Plots
+## 14. Implementation Plan: Iso-Compute Plots
 
 This section is the step-by-step workplan for implementing the 7 core iso-compute plots (from `mock-compute-optimal-tradeoffs-plots-main/`) on real experimental data.
 
@@ -690,7 +756,7 @@ Use `sex_binary_lstm` (6 trained contexts: 30s, 10m, 40m, 80m, 120m, 240m; infer
 
 ---
 
-## 14. Extended Analyses for Paper Depth
+## 15. Extended Analyses for Paper Depth
 
 Beyond H1–H4 and the 7 iso-compute plots, a second set of analyses adds scientific depth. Full details and scientific motivation are in `docs/ANALYSIS_IDEAS.md`. This section summarises the design decisions that drove the pipeline changes made to support them.
 

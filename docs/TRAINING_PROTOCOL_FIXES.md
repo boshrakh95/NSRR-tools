@@ -64,21 +64,25 @@ else:
 
 With:
 ```python
-n_valid = T - N + 1                   # all valid (possibly overlapping) start positions
-K = min(self._K_max, n_valid)
-
 if self.split == "train":
-    # K random starts without replacement from all valid positions
-    starts = sorted(
-        rng.choice(n_valid, size=K, replace=False).tolist()
-    )
+    # Overlapping pool: any start in [0, T-N] is valid.
+    # Ensures K_max windows are always achievable at all context lengths.
+    n_valid = T - N + 1
+    K = min(self._K_max, n_valid)
+    starts = sorted(rng.choice(n_valid, size=K, replace=False).tolist())
 else:
-    # K evenly spaced starts across [0, T-N] (deterministic, for val/test during training)
-    starts = np.linspace(0, n_valid - 1, K, dtype=int).tolist()
+    # Non-overlapping pool: stride-N positions 0, N, 2N, …
+    # Inference with K_max=99_999 recovers all T//N non-redundant windows.
+    n_windows = T // N
+    K = min(self._K_max, n_windows)
+    positions = np.linspace(0, n_windows - 1, K, dtype=int)
+    starts = [int(p) * N for p in positions]
 
 for s in starts:
     index.append((row_idx, int(s), label))
 ```
+
+**Important:** the overlapping pool applies to the **train split only**. Val/test use the non-overlapping stride-N positions (same as v2). This is critical for inference correctness — see "What this does NOT change" below.
 
 **No other files need to change.** The `_get_seq2label_window` function already handles arbitrary `window_start` values correctly (it slices `emb[s : s+N]` and pads if needed). Since all starts now satisfy `s + N ≤ T`, no padding will occur.
 
@@ -118,9 +122,9 @@ The paper's claim ("K windows per subject per epoch") holds for any fixed K_max 
 
 ### What this does NOT change
 
-- The val/test split datasets used for training-time metrics still use K evenly-spaced windows, just with arbitrary (not N-aligned) spacing — same logic, different pool of positions
-- The inference script (`infer_subject_windows.py`) is unaffected — it already uses all possible non-overlapping windows for evaluation
-- Subjects with T < N (night shorter than the context window): still get one zero-padded window. This is correct; they can't provide a full context window regardless
+- **Val/test splits (training-time metrics):** use K evenly-spaced positions from the non-overlapping stride-N pool (positions 0, N, 2N, …), same as v2. This gives deterministic, reproducible validation curves.
+- **Inference (`infer_subject_windows.py`):** uses the val/test (non-overlapping) path with K_max=99,999, recovering all T//N windows per subject — systematic, non-redundant night coverage. **Note:** an earlier intermediate version of this fix incorrectly applied the overlapping pool to all splits; if you ran inference with that version, delete the parquets and rerun.
+- **Subjects with T < N** (night shorter than the context window): still get one zero-padded window. Correct regardless of overlap strategy.
 
 ### Impact on existing results
 
@@ -134,65 +138,38 @@ This is a **breaking change to training** — all experiments should be rerun af
 
 ### The problem
 
-At longer context lengths (2h, 4h), the GPU runs out of memory with the same batch size used at 30s or 5min. The training script currently has a single `batch_size` setting in the config. If you silently reduce the batch size to avoid OOM, the FLOPs comparison across context lengths is wrong unless you record what was actually used.
+At longer context lengths (120m, 240m), the GPU runs out of memory with batch_size=32. If you silently reduce the batch size to avoid OOM, the FLOPs comparison is wrong unless you record what was actually used, and training dynamics differ (fewer subjects per gradient update).
 
-This is not a methodological flaw in itself — varying batch size is standard practice. The flaw is in not recording or accounting for it.
+### The fix — gradient accumulation + recorded batch sizes
 
-### What NOT to do — gradient accumulation
+Use gradient accumulation so the **effective** batch size (micro_batch × accum_steps) stays constant at 32 across all context lengths, regardless of the GPU-level micro_batch. This is implemented in `train_context_sweep.py` (`--accum-steps` flag) and controlled via `gradient_accumulation` in `experiments/v2_registry.yaml`.
 
-Gradient accumulation (accumulate gradients over N micro-batches before stepping the optimizer) simulates a larger effective batch size but does not fix the memory problem: it runs N forward passes sequentially, which is just as slow and still OOMs on the backward pass of each micro-batch if the micro-batch itself is too large.
+When `gradient_accumulation.enabled: true` in the registry, `gen_commands.py` automatically computes `accum_steps = effective_batch / context_micro_batch[context]` and passes both `BATCH_SIZE` and `ACCUM_STEPS` to the sbatch command.
 
-More importantly for this paper:
-- Gradient accumulation adds code complexity and a new hyperparameter.
-- The scaling law plots (§1B) use total FLOPs = `batch_size × steps × per_window_FLOPs`. With accumulation, the effective batch size is `micro_batch × accumulation_steps`, which is easy to get wrong.
-- For a paper whose primary claim is final AUROC vs context length (not per-step training dynamics), identical total gradient steps matter more than identical per-step batch sizes.
+Default per-context micro_batch sizes (H100 40 GB, LSTM head):
 
-**Do not use gradient accumulation.**
+| Context L | N (patches) | micro_batch | accum_steps | effective_batch |
+|-----------|-------------|-------------|-------------|-----------------|
+| 30 s      | 1           | 32          | 1           | 32              |
+| 10 min    | 20          | 32          | 1           | 32              |
+| 40 min    | 80          | 16          | 2           | 32              |
+| 80 min    | 160         | 8           | 4           | 32              |
+| 120 min   | 240         | 8           | 4           | 32              |
+| 240 min   | 480         | 4           | 8           | 32              |
 
-### The fix — different batch sizes, always recorded
-
-Use different `batch_size` values for different context lengths. The value is already stored in `metrics.json` via the config. The critical requirement is that the value recorded is the actual batch size used, not a default.
-
-**Rule:** when you change batch size to avoid OOM, update the config (or the per-experiment override) before launching. Verify `metrics.json` contains the correct value after training.
+`metrics.json` records `batch_size` (micro_batch), `accum_steps`, `effective_batch_size`, and `effective_steps_per_epoch` for every run.
 
 **FLOPs formula using recorded values:**
 
 ```
-total_FLOPs = batch_size × total_steps × per_window_FLOPs(N, model_arch)
+total_FLOPs = effective_batch_size × effective_steps_per_epoch × n_epochs × per_window_FLOPs(N, model_arch)
 ```
 
-where `batch_size` comes from `metrics.json` (per-experiment), `total_steps` from `training_curves.csv` (`global_step` at final epoch), and `per_window_FLOPs` from the architecture-specific formula (§1B).
+where all quantities come from `metrics.json` per experiment.
 
-**Suggested batch sizes by context length (adjust for your GPU):**
+**Note:** gradient accumulation is **optional** — `gradient_accumulation.enabled: false` by default. When disabled, `ACCUM_STEPS=1` is passed to all jobs and batch_size from each experiment entry is used as-is. Enable only when OOM forces smaller micro_batches at long contexts.
 
-| Context L | N (patches) | Suggested batch_size |
-|-----------|-------------|----------------------|
-| 30 s      | 1           | 32                   |
-| 5 min     | 10          | 32                   |
-| 30 min    | 60          | 16                   |
-| 2 h       | 240         | 8                    |
-| 4 h       | 480         | 4–8                  |
-
-**Learning rate scaling (optional but recommended):** if batch size drops by 4× (e.g., from 32 to 8), consider scaling LR by √(1/4) = 0.5 (square-root rule) or by 1/4 (linear rule). Document whichever you choose in `metrics.json` via the config. For exploratory runs, keeping LR fixed is acceptable if you document it.
-
-### What changes in the code
-
-No code change strictly needed if the config already records `batch_size` correctly. The actual `batch_size` logged in `metrics.json` comes from:
-
-```python
-# train_context_sweep.py — already present:
-"batch_size": int(cfg["training"]["batch_size"]),
-```
-
-This is correct as long as the per-experiment config override sets the right value. The `windows_per_subject_train` fix (Issue 2) is independent and should be done alongside this.
-
-### What to verify before a run
-
-```bash
-grep batch_size configs/your_experiment_config.yaml   # check value is correct
-# after training:
-python -c "import json; d=json.load(open('results/your_run/metrics.json')); print(d['batch_size'])"
-```
+See `docs/BATCH_SIZE_AND_GRADIENT_ACCUMULATION.md` for the full analysis of why equal effective batch size (Option B) is the correct choice for this paper's research question.
 
 ---
 
@@ -280,23 +257,24 @@ This approximation is exact only if `steps_per_epoch` did not change between the
 
 ## What to keep unchanged
 
-- **Batch size**: will vary by context length to avoid OOM (see Issue 5). Record actual value in metrics.json. Do not use gradient accumulation. Do not equalize FLOPs per step — the per-step compute difference across L is inherent and scientifically meaningful.
+- **Effective batch size**: keep at 32 across all context lengths using gradient accumulation when GPU memory forces smaller micro_batches. Record `batch_size`, `accum_steps`, and `effective_batch_size` in metrics.json.
 - **K_max (windows_per_subject)**: keep the same value for all context lengths in a given comparison. K=5 is acceptable; K=10 is safer. After Issue 1 is fixed, K=K_max is achieved for essentially all subjects with T ≥ N.
-- **Epochs, LR, patience**: same for all context lengths. The only primary variable is L.
-- **Val/test inference**: `infer_subject_windows.py` is unaffected — it already uses all non-overlapping windows for evaluation, which is correct and should remain so.
+- **Epochs, LR, patience**: same for all context lengths (with the optional per-context LR override for 120m/240m). The only primary variable is L.
+- **Val/test inference**: `infer_subject_windows.py` uses the non-overlapping stride-N pool (val/test split path) with K_max=99,999 — giving all T//N windows per subject. This is correct and must remain so.
 
 ## Summary of changes (all implemented in v3)
 
 | Issue | File | Change | Status |
 |-------|------|--------|--------|
-| 1 (overlapping windows) | `src/nsrr_tools/datasets/context_window_dataset.py` | Sampling from all valid starts — K=K_max for all subjects | ✅ Done |
+| 1 (overlapping windows — train only) | `src/nsrr_tools/datasets/context_window_dataset.py` | Train split: overlapping pool (T-N+1 starts), K=K_max always achieved. Val/test: non-overlapping stride-N pool (T//N positions), same as v2. | ✅ Done |
 | 2 (actual K in metrics.json) | `scripts/train_context_sweep.py` | Compute average K from index after dataset is built | ✅ Done |
 | 3 (token budget comment) | `configs/phase0_v2_config.yaml`, `phase0_v3_config.yaml` | Warning comment; token_budget labelled SECONDARY ANALYSIS ONLY | ✅ Done |
 | 4 (global_step resume) | `scripts/train_context_sweep.py` | global_step saved in history/resume.pt and training_curves.csv | ✅ Done (prior session) |
-| 5 (batch size variation) | `experiments/v2_registry.yaml` | Per-experiment batch_size; smaller for longer contexts; recorded in metrics.json | ✅ Done (config-level; no code change) |
+| 5 (batch size + gradient accumulation) | `scripts/train_context_sweep.py`, `experiments/v2_registry.yaml`, `scripts/gen_commands.py`, shell scripts | Optional gradient accumulation (`--accum-steps`); gen_commands auto-computes per-context micro_batch+accum; metrics.json records batch_size, accum_steps, effective_batch_size | ✅ Done |
 | — (new directories) | `configs/phase0_v3_config.yaml`, `experiments/v2_registry.yaml`, shell scripts | Results → phase0_v3, logs → logs_v3; prevents mixing v2/v3 data | ✅ Done |
 | — (context LR overrides) | `scripts/train_context_sweep.py`, `configs/phase0_v3_config.yaml` | LR halved at 120m and 240m (5e-5) relative to short contexts | ✅ Done |
+| — (requeued job naming) | All 4 SLURM shell scripts | Resubmission passes `--output`/`--error` explicitly to match original submission name; SBATCH header fallback fixed from `infer_%x_%j` → `%x_%j` | ✅ Done |
 
 ## Claim you can make after these fixes (v3 protocol)
 
-> "All models were trained with the same protocol: K=5 randomly sampled context windows per subject per epoch, sampled from all valid start positions (overlapping windows allowed), giving exactly K=5 windows per subject at all context lengths for subjects with T ≥ N. The optimizer (AdamW), LR schedule (cosine), and early stopping criterion (AUROC patience=10) were identical across context lengths, except that a context-specific LR of 5×10⁻⁵ was used for 120m and 240m (vs 10⁻⁴ for shorter contexts) to compensate for higher gradient noise from overlapping windows and reduced batch size. Batch size was reduced for longer context lengths to avoid GPU OOM (32 for L ≤ 80min, smaller for L ≥ 120m); the actual batch size is recorded in each experiment's metrics.json and used in all FLOPs calculations. The only primary variable between experiments is the context length L."
+> "All models were trained with the same protocol: K=5 randomly sampled context windows per subject per epoch, sampled from all valid overlapping start positions (ensuring K=5 is achievable at all context lengths, including 240m). An effective batch size of 32 was maintained across all context lengths via gradient accumulation for longer contexts where the GPU-level micro_batch is smaller. The optimizer (AdamW), LR schedule (cosine), and early stopping criterion (val AUROC, patience=10) were identical across context lengths, except that a context-specific LR of 5×10⁻⁵ was used for 120m and 240m (vs 10⁻⁴ for shorter contexts). For inference and val/test evaluation, windows are placed at non-overlapping stride-N positions (0, N, 2N, …), giving T//N systematic, non-redundant windows per subject. The actual micro_batch, accum_steps, and effective_batch_size are recorded in each experiment's metrics.json. The only primary variable between experiments is the context length L."

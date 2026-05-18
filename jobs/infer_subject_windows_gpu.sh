@@ -7,8 +7,8 @@
 #SBATCH --mem=32000M
 #SBATCH --exclude=fc11006
 #SBATCH --signal=B:USR1@120            # send SIGUSR1 to bash 120s before wall time
-#SBATCH --output=/home/boshra95/NSRR-tools/logs_v3/infer_%x_%j.out
-#SBATCH --error=/home/boshra95/NSRR-tools/logs_v3/infer_%x_%j.err
+#SBATCH --output=/home/boshra95/NSRR-tools/logs_v3/%x_%j.out
+#SBATCH --error=/home/boshra95/NSRR-tools/logs_v3/%x_%j.err
 
 # Phase 0 — Subject-level inference (all windows)
 #
@@ -114,9 +114,17 @@ _timeout_handler() {
     echo ""
     echo "Time limit approaching — resubmitting for auto-resume ($(date))"
     [ -n "$_PYTHON_PID" ] && kill -TERM "$_PYTHON_PID" 2>/dev/null || true
+    # Pass --output/--error explicitly so resubmitted jobs get the same
+    # descriptive filename as the original submission (not the generic %x_%j fallback).
     _TIME_LIMIT=$(scontrol show job "$SLURM_JOB_ID" 2>/dev/null \
         | grep -oP 'TimeLimit=\K\S+' || echo "05:00:00")
-    NEW_JOB=$(sbatch --export=ALL --time="$_TIME_LIMIT" "$_SCRIPT_PATH" 2>&1)
+    _LOG_STEM="${_INFER_LOG%.log}"
+    NEW_JOB=$(sbatch \
+        --export=ALL \
+        --time="$_TIME_LIMIT" \
+        --output="${_LOG_STEM}_%j.out" \
+        --error="${_LOG_STEM}_%j.err" \
+        "$_SCRIPT_PATH" 2>&1)
     echo "$NEW_JOB"
     exit 0
 }

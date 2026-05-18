@@ -2,7 +2,9 @@
 
 This document is the definitive reference for running training, inference, and analysis experiments for Phase 0 V2 task definitions.
 
-> **V3 protocol (current):** Results are written to `phase0_v3/`, logs to `logs_v3/`. Training uses overlapping-window fixed-K sampling (K=5 per subject at all context lengths), context-specific LR at 120m/240m, and varying batch size recorded in metrics.json. Use `configs/phase0_v3_config.yaml` and `experiments/v2_registry.yaml` (already updated). Do NOT mix v2 and v3 results in the same comparison figure. See [TRAINING_PROTOCOL_FIXES.md](TRAINING_PROTOCOL_FIXES.md) for the rationale behind each change.
+> **V3 protocol (current):** Results are written to `phase0_v3/`, logs to `logs_v3/`. Training uses overlapping-window fixed-K sampling (K=5 per subject at all context lengths); **val/test/inference use non-overlapping stride-N windows** (T//N positions) to avoid redundant windows at evaluation time. Context-specific LR at 120m/240m and varying batch size recorded in metrics.json. Use `configs/phase0_v3_config.yaml` and `experiments/v2_registry.yaml` (already updated). Do NOT mix v2 and v3 results in the same comparison figure. See [TRAINING_PROTOCOL_FIXES.md](TRAINING_PROTOCOL_FIXES.md) for the rationale behind each change.
+>
+> **Note on path examples below:** The body of this document shows `logs_v2/` and `phase0_v2/` paths as illustrative examples. For V3 runs, substitute `logs_v3/` and `phase0_v3/` accordingly.
 
 ---
 
@@ -19,10 +21,12 @@ This document is the definitive reference for running training, inference, and a
 9. [Results Directory Structure](#results-directory-structure)
 10. [Expected Runtimes](#expected-runtimes)
 11. [Configurable Training K Strategy](#configurable-training-k-strategy)
-12. [Adding New Experiments](#adding-new-experiments)
-13. [Regression Tasks (Deferred)](#regression-tasks-deferred)
-14. [Notes on Specific Tasks](#notes-on-specific-tasks)
-15. [Results Collection](#results-collection)
+12. [K Windows: Training vs Val vs Inference](#k-windows-training-vs-val-vs-inference)
+13. [Batch Size Modes](#batch-size-modes)
+14. [Adding New Experiments](#adding-new-experiments)
+15. [Regression Tasks (Deferred)](#regression-tasks-deferred)
+16. [Notes on Specific Tasks](#notes-on-specific-tasks)
+17. [Results Collection](#results-collection)
 
 ---
 
@@ -138,7 +142,8 @@ results/{phase}/figures/
 
 | Config | Target Dir | Results Dir | Use for |
 |--------|-----------|------------|---------|
-| `configs/phase0_v2_config.yaml` | `targets_v2/` | `results/phase0_v2` | V2 tasks (current) |
+| `configs/phase0_v3_config.yaml` | `targets_v2/` | `results/phase0_v3` | **V3 tasks (current)** |
+| `configs/phase0_v2_config.yaml` | `targets_v2/` | `results/phase0_v2` | V2 tasks (archived) |
 | `configs/phase0_config.yaml` | `targets/` | `results/phase0` | Original v1 tasks |
 
 ---
@@ -329,7 +334,13 @@ Training jobs automatically handle timeouts without losing work.
 - W&B run ID (for seamless run continuation in W&B)
 - Accumulated training time across all restarts
 
-**Auto-requeue on timeout:** All jobs are submitted with `--requeue`. When SLURM kills a job at its time limit, SLURM automatically requeues it with the same parameters. The requeued job restarts the bash script from the top, but the Python training code detects `resume.pt` and picks up from the last completed epoch.
+**Auto-requeue on timeout (two mechanisms):**
+
+- **Wall-time handler (`--signal=B:USR1@120`):** SLURM sends SIGUSR1 to the bash process 120 seconds before the wall-time limit. The bash script's `_timeout_handler` trap fires, kills Python cleanly (SIGTERM), then manually calls `sbatch` to resubmit the same script with `--export=ALL` and an explicit `--output`/`--error` that preserves the descriptive log filename (e.g. `train_sex_binary_lstm_nocontext_lrdefault_%j.out`). The new job picks up from `resume.pt`.
+
+- **Node-failure requeue (`--requeue`):** All jobs are also submitted with `--requeue`. If SLURM cancels a job due to a node failure or preemption (not wall-time), SLURM automatically requeues it. The requeued job resumes from `resume.pt` as usual.
+
+Both mechanisms land in the same persistent `.log` file (via `tee -a`) and write a `TIMEOUT_REQUEUED` or `REQUEUED` event to the JSONL status file.
 
 **W&B continuity:** When resuming, W&B is initialized with `id=saved_run_id, resume="must"` so the resumed run appends metrics to the same W&B run — no duplicate entries.
 
@@ -340,17 +351,17 @@ Training jobs automatically handle timeouts without losing work.
 | Scenario | What happens |
 |----------|-------------|
 | Job completes normally | `metrics.json` written, `resume.pt` deleted, context skipped on any resubmit |
-| Job times out | SLURM requeues automatically; next run resumes from last epoch |
-| Node fails mid-epoch | SLURM requeues; epoch not committed → resumes from previous epoch |
+| Job times out | USR1 handler fires 120s early → kills Python → sbatch resubmit → resumes from last epoch |
+| Node fails mid-epoch | SLURM `--requeue` fires; epoch not committed → resumes from previous epoch |
 | You resubmit manually | `resume.pt` found → resumes; `metrics.json` found → skips entirely |
 | You want a forced fresh restart | Delete both `best_model.pt` and `resume.pt` from that `context_{L}/` directory |
 
 ### Force a fresh restart
 
 ```bash
-# For one context:
-rm /scratch/boshra95/psg/unified/results/phase0_v2/sex_binary_lstm/context_30s/best_model.pt
-rm /scratch/boshra95/psg/unified/results/phase0_v2/sex_binary_lstm/context_30s/resume.pt
+# For one context (substitute phase0_v3 for current runs):
+rm /scratch/boshra95/psg/unified/results/phase0_v3/sex_binary_lstm/context_30s/best_model.pt
+rm /scratch/boshra95/psg/unified/results/phase0_v3/sex_binary_lstm/context_30s/resume.pt
 
 # Then resubmit normally
 python scripts/gen_commands.py train sex_binary_lstm --context 30s | bash
@@ -360,12 +371,12 @@ python scripts/gen_commands.py train sex_binary_lstm --context 30s | bash
 
 ## Job Run History and Tracking
 
-Every job writes structured events to a JSONL file in `logs_v2/status/`. These files are separate from SLURM log output.
+Every job writes structured events to a JSONL file in `logs_v3/status/` (v3 protocol). These files are separate from SLURM log output.
 
 ### Status files
 
-- **Train:** `logs_v2/status/train_{task}_{head}_{context}_lr{lr}.jsonl`
-- **Infer:** `logs_v2/status/infer_{task}_{head}_{split}.jsonl`
+- **Train:** `logs_v3/status/train_{task}_{head}_{context}_lr{lr}.jsonl`
+- **Infer:** `logs_v3/status/infer_{task}_{head}_{split}.jsonl`
 
 Each line is one event (one JSON object):
 ```json
@@ -408,13 +419,16 @@ Sample output:
 
 ### Log files
 
-Raw SLURM stdout/stderr go to `logs_v2/` with descriptive filenames:
+Raw SLURM stdout/stderr go to `logs_v3/` with descriptive filenames. Both the original submission and any resubmitted jobs (after timeout or node failure) share the same log stem — the job ID suffix differs, but the prefix encodes the experiment:
 
 ```
-logs_v2/train_sex_binary_lstm_30s_lr1e-4_38373667.out
-logs_v2/train_sex_binary_lstm_30s_lr1e-4_38373667.err
-logs_v2/infer_sex_binary_lstm_lr1e-4_38400002.out
+logs_v3/train_sex_binary_lstm_nocontext_lrdefault_38373667.out
+logs_v3/train_sex_binary_lstm_nocontext_lrdefault_38373667.err
+logs_v3/infer_sex_binary_lstm_test_38400002.out
+logs_v3/infer_sex_binary_lstm_test_38400002.err
 ```
+
+Resubmitted jobs get a new job ID suffix but the same descriptive stem, because the `_timeout_handler` passes `--output`/`--error` explicitly to the resubmission `sbatch` call.
 
 ---
 
@@ -478,7 +492,7 @@ Context lengths:
 ## Results Directory Structure
 
 ```
-/scratch/boshra95/psg/unified/results/phase0_v2/
+/scratch/boshra95/psg/unified/results/phase0_v3/   # V3 (current); v2 uses phase0_v2/
 │
 ├── {task}_{head}/                    # e.g. sex_binary_lstm/
 │   ├── summary.csv                   # one row per context (val/test metrics)
@@ -494,7 +508,7 @@ Context lengths:
 │       ├── window_analysis.md            # markdown tables (all splits)
 │       ├── heatmap_df_{split}.csv        # iso-compute-ready: context_min, k, auroc, total_compute_min
 │       └── context_{L}/
-│           ├── {split}_windows.parquet   # per-window predictions
+│           ├── {split}_windows.parquet   # per-window predictions (non-overlapping T//N windows)
 │           └── {split}_subjects.parquet  # per-subject aggregations
 │
 └── figures/
@@ -509,12 +523,12 @@ Context lengths:
             ├── marginal_gain_{metric}.{png,pdf}
             └── double_tradeoff_{metric}.{png,pdf}
 
-/home/boshra95/NSRR-tools/logs_v2/
-├── train_sex_binary_lstm_30s_lr1e-4_{job_id}.out    # SLURM stdout
-├── train_sex_binary_lstm_30s_lr1e-4_{job_id}.err    # SLURM stderr
+/home/boshra95/NSRR-tools/logs_v3/   # V3 (current); v2 uses logs_v2/
+├── train_sex_binary_lstm_nocontext_lrdefault_{job_id}.out    # SLURM stdout
+├── train_sex_binary_lstm_nocontext_lrdefault_{job_id}.err    # SLURM stderr
 └── status/
-    ├── train_sex_binary_lstm_30s_lr1e-4.jsonl       # event log for this context
-    ├── train_sex_binary_lstm_10m_lr1e-4.jsonl
+    ├── train_sex_binary_lstm_nocontext_lrdefault.jsonl   # event log for this context
+    ├── train_sex_binary_lstm_10m_lrdefault.jsonl
     └── infer_sex_binary_lstm_test.jsonl
 ```
 
@@ -552,7 +566,7 @@ Total time scales roughly linearly with number of contexts. The generator estima
 
 ## Configurable Training K Strategy
 
-Training K (windows sampled per subject per epoch) can be controlled via `configs/phase0_v2_config.yaml`:
+Training K (windows sampled per subject per epoch) can be controlled via `configs/phase0_v3_config.yaml` (or the relevant config for your run):
 
 ```yaml
 training:
@@ -564,6 +578,76 @@ training:
 - **`token_budget`**: K = `max(1, floor(token_budget_minutes / ctx_minutes))` so that the total signal seen per subject is approximately constant across context lengths (e.g., 80min budget → K=160 for 30s context, K=2 for 40m context).
 
 The logic is applied in `train_context_sweep.py` before dataset construction and prints the K value at training time. Switching from `"fixed"` to `"token_budget"` requires retraining (and changing the config). To run a token-budget ablation without overwriting the K=5 baseline, use a separate `run_tag` and a separate config file — see `docs/context_length_experiment_design.md` §12 for details.
+
+---
+
+## K Windows: Training vs Val vs Inference
+
+There are three distinct K values in the pipeline. They use different sources and different windowing pools:
+
+| K concept | Where set | Pool | Typical value |
+|-----------|-----------|------|---------------|
+| **K_train** (windows/epoch) | `dataset.windows_per_subject` in config (or token_budget) | **Overlapping** — any start in [0, T−N] | 5 |
+| **K_val** (training-time val evaluation) | same `windows_per_subject` config | **Non-overlapping** stride-N positions | min(5, T//N) |
+| **K_infer** (inference, all windows) | `--all-windows` flag → K_max=99,999 | **Non-overlapping** stride-N positions | T//N (all) |
+| **K_analysis** (post-hoc sweep) | `analyze_windows.py --k-values` | Subsampled from K_infer parquet | 1,5,10,20,50,all |
+
+Key points:
+- **K_val during training is often < K_max.** For very long contexts (e.g. 240m with T//N = 2), val evaluation uses only 2 windows per subject — the early-stopping AUROC signal is noisier than for short contexts. This is inherent to long-context training on typical recording lengths.
+- **K_infer recovers all T//N windows** because `infer_subject_windows.py` overrides `windows_per_subject` to 99,999, then the val/test branch of the dataset returns all non-overlapping positions.
+- **K_analysis is completely separate** — it subsamples from the already-saved parquet rows in `analyze_windows.py`. No model or GPU needed.
+- K_train and K_val share the same config value (`windows_per_subject`) but use different windowing pools (overlapping vs non-overlapping). This is by design: training benefits from diverse window positions, while val evaluation needs deterministic, non-redundant coverage.
+
+---
+
+## Batch Size Modes
+
+Two batch-size strategies are supported for the paper comparison. Both write to separate result folders via `run_tag`, so they can coexist.
+
+### Mode 1 — Gradient Accumulation (default, primary results)
+
+`batch_mode: grad_accum` (default on all experiment entries).
+
+Effective batch size = 32 at every context length. When GPU memory forces a smaller micro_batch at long contexts, `accum_steps` is automatically set so that `micro_batch × accum_steps = 32`. Each optimizer update sees the same number of gradient contributions regardless of context length, so long-context experiments are directly comparable to short ones.
+
+**How it's controlled:** `gradient_accumulation.enabled: true` in `experiments/v2_registry.yaml` plus the `context_micro_batch` table. `gen_commands.py` reads this and sets `BATCH_SIZE` (micro) and `ACCUM_STEPS` per context.
+
+**Paper claim:** "All models were trained with effective batch size 32 via gradient accumulation at long contexts."
+
+### Mode 2 — Memory-Bounded (secondary, comparison results)
+
+`batch_mode: memory_bounded` on an experiment entry, with a unique `run_tag` (e.g. `membnd`).
+
+No gradient accumulation. Batch size is whatever fits GPU memory at each context length (from `memory_bounded.context_batch_size` in the registry). Long-context batches are smaller; optimizer updates may see fewer unique subjects. This is the "natural" behaviour without accumulation tricks.
+
+**Paper use:** Run Mode 2 for a selected subset of tasks (Tier 1 lstm at minimum) to report as a comparison/ablation. The difference in results (if any) isolates the effect of gradient accumulation on training quality.
+
+**How to add a Mode 2 experiment:**
+```yaml
+# In experiments/v2_registry.yaml:
+sex_binary_lstm_membnd:
+  task: sex_binary
+  task_type: seq2label
+  num_classes: 2
+  head: lstm
+  datasets: [apples, shhs]
+  contexts: [30s, 10m, 40m, 80m, 120m, 240m]
+  batch_size: 32        # used as fallback if context not in memory_bounded table
+  lr: 1.0e-4
+  run_tag: "membnd"     # results go to sex_binary_lstm_membnd/, logs tagged _membnd
+  batch_mode: memory_bounded
+  n_size: large
+  tier: 3               # run after Tier 1 grad_accum results are complete
+```
+
+Then generate commands normally:
+```bash
+python scripts/gen_commands.py train sex_binary_lstm_membnd | bash
+```
+
+`gen_commands.py` will show `Batch mode: MEMORY-BOUNDED` in the header and set per-context `BATCH_SIZE` with `ACCUM_STEPS=1`.
+
+**Comparing results:** Use the same `analyze_windows.py` and plot scripts. Both runs produce parquets in separate subfolders. The `run_tag` ensures `collect_results_v2.py` keeps them separate in the collected CSVs. For paper figures, plot Mode 1 and Mode 2 saturation curves side-by-side.
 
 ---
 
@@ -685,7 +769,7 @@ These features were added to support the deeper analyses described in `docs/ANAL
 
 ### Overfitting phase (`overfit_epochs`)
 
-**Config (`configs/phase0_v2_config.yaml`, under `training:`):**
+**Config (`configs/phase0_v3_config.yaml`, under `training:`):**
 ```yaml
 overfit_epochs: 0   # 0 = disabled (default); set e.g. to 20 to enable
 ```

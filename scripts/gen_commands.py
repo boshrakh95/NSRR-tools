@@ -69,6 +69,7 @@ Examples:
   python scripts/gen_commands.py train sex_binary_lstm
   python scripts/gen_commands.py train sex_binary_lstm --context 30s
   python scripts/gen_commands.py infer sex_binary_lstm
+  python scripts/gen_commands.py infer sex_binary_lstm --batch-size 64
   python scripts/gen_commands.py analyze sex_binary_lstm --plot
   python scripts/gen_commands.py analyze sex_binary_lstm --k-dense
   python scripts/gen_commands.py build-heatmap sex_binary_lstm
@@ -187,13 +188,21 @@ def infer_folder(exp: dict, registry: dict) -> Path:
     return infer_dir / f"{exp['task']}_{exp['head']}{suffix}"
 
 
-def _log_stem(exp: dict, step: str, context: str = "") -> str:
-    """Build a descriptive log filename stem (no extension, no %j)."""
+def _log_stem(exp: dict, step: str, context: str = "", split: str = "") -> str:
+    """Build a descriptive log filename stem (no extension, no %j).
+
+    Training logs include context and LR (both vary per job).
+    Inference logs include split but not LR (LR is irrelevant post-training),
+    matching the pattern the SLURM script uses for its persistent .log file so
+    that original-submission and timeout-resubmission filenames share the same
+    stem prefix.
+    """
     tag = exp.get("run_tag", "")
     tag_part = f"_{tag}" if tag else ""
-    lr_part = f"_lr{format_lr(exp['lr'])}"
     ctx_part = f"_{context}" if context else ""
-    return f"{step}_{exp['task']}_{exp['head']}{tag_part}{ctx_part}{lr_part}"
+    split_part = f"_{split}" if split else ""
+    lr_part = f"_lr{format_lr(exp['lr'])}" if step == "train" else ""
+    return f"{step}_{exp['task']}_{exp['head']}{tag_part}{ctx_part}{split_part}{lr_part}"
 
 
 # ── Status checks ─────────────────────────────────────────────────────────────
@@ -234,20 +243,36 @@ def resolve_batch_accum(exp: dict, registry: dict, context: str,
                         override_batch_size: int = None):
     """Return (micro_batch, accum_steps) for this context.
 
-    If gradient_accumulation.enabled is true in the registry, reads
-    context_micro_batch[context] and computes accum_steps automatically.
-    Otherwise uses the experiment's batch_size (or override) with accum_steps=1.
+    Two modes:
+      "grad_accum"     (default): reads gradient_accumulation.context_micro_batch[context]
+                                  and sets accum_steps so micro × accum = effective_batch.
+      "memory_bounded"          : reads memory_bounded.context_batch_size[context] with
+                                  accum_steps=1 always (no accumulation).
+
+    Experiment entries opt into mode 2 with `batch_mode: memory_bounded`.
+    A per-call override_batch_size disables both modes and uses the provided value.
     """
+    if override_batch_size is not None:
+        return override_batch_size, 1
+
+    batch_mode = exp.get("batch_mode", "grad_accum")
+
+    if batch_mode == "memory_bounded":
+        mb = registry.get("memory_bounded", {})
+        ctx_map = mb.get("context_batch_size", {})
+        batch_size = int(ctx_map.get(context, exp["batch_size"]))
+        return batch_size, 1
+
+    # Default: grad_accum mode (uses gradient_accumulation section when enabled)
     ga = registry.get("gradient_accumulation", {})
-    if ga.get("enabled", False) and override_batch_size is None:
+    if ga.get("enabled", False):
         effective_batch = int(ga.get("effective_batch", 32))
         ctx_map = ga.get("context_micro_batch", {})
         micro_batch = int(ctx_map.get(context, effective_batch))
         accum_steps = max(1, effective_batch // micro_batch)
         return micro_batch, accum_steps
     else:
-        batch_size = override_batch_size if override_batch_size is not None else exp["batch_size"]
-        return batch_size, 1
+        return exp["batch_size"], 1
 
 
 def build_train_cmd(exp: dict, registry: dict, context: str,
@@ -267,7 +292,7 @@ def build_train_cmd(exp: dict, registry: dict, context: str,
         f"DATASETS=\"{' '.join(exp['datasets'])}\"",
         f"BATCH_SIZE={micro_batch}",
         f"ACCUM_STEPS={accum_steps}",
-        f"LR={exp['lr']}",
+        f"LR={format_lr(exp['lr'])}",
     ]
     if exp.get("run_tag"):
         env_vars.append(f"RUN_TAG={exp['run_tag']}")
@@ -291,7 +316,7 @@ def build_infer_cmd(exp: dict, registry: dict, split: str = "test",
     contexts_trained = trained_contexts(exp, registry)
     ctx_list = contexts_trained if contexts_trained else exp["contexts"]
     wall_time = override_time if override_time else estimate_infer_time(n_size, exp["head"], ctx_list)
-    stem = _log_stem(exp, "infer")
+    stem = _log_stem(exp, "infer", split=split)
 
     env_vars = [
         f"TASK={exp['task']}",
@@ -432,10 +457,17 @@ def cmd_train(args, registry):
     n_size = exp.get("n_size", "large")
     ga = registry.get("gradient_accumulation", {})
     ga_enabled = ga.get("enabled", False)
+    batch_mode = exp.get("batch_mode", "grad_accum")
+    if batch_mode == "memory_bounded":
+        batch_label = "MEMORY-BOUNDED (accum_steps=1, batch varies by context)"
+    elif ga_enabled:
+        batch_label = f"GRAD-ACCUM (effective_batch={ga.get('effective_batch', 32)}, accum varies by context)"
+    else:
+        batch_label = f"FLAT batch={exp['batch_size']}, accum_steps=1"
     print(f"# Training commands for: {args.exp_id}")
     print(f"# Task: {exp['task']}  Head: {exp['head']}  LR: {exp['lr']}  N-size: {n_size}")
     print(f"# Datasets: {exp['datasets']}")
-    print(f"# Gradient accumulation: {'ENABLED (effective_batch=' + str(ga.get('effective_batch', 32)) + ')' if ga_enabled else 'disabled (accum_steps=1)'}")
+    print(f"# Batch mode: {batch_label}")
     print(f"# Logs → {registry.get('logs_dir', 'logs/')}")
     print()
     for ctx in contexts:

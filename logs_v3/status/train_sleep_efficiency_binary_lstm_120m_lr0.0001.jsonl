@@ -1,0 +1,2 @@
+{"ts":"2026-05-15T16:06:59-04:00","job_id":"12441999","node":"rg13002","status":"STARTED","task":"sleep_efficiency_binary","head":"lstm","context":"120m","lr":"0.0001","datasets":"apples shhs mros"}
+{"ts":"2026-05-15T19:30:33-04:00","job_id":"12441999","node":"rg13002","status":"FAILED","task":"sleep_efficiency_binary","head":"lstm","context":"120m","lr":"0.0001","datasets":"apples shhs mros"}
