@@ -4,7 +4,7 @@ This document is the definitive reference for running training, inference, and a
 
 > **V3 protocol (current):** Results are written to `phase0_v3/`, logs to `logs_v3/`. Training uses overlapping-window fixed-K sampling (K=5 per subject at all context lengths); **val/test/inference use non-overlapping stride-N windows** (T//N positions) to avoid redundant windows at evaluation time. Context-specific LR at 120m/240m and varying batch size recorded in metrics.json. Use `configs/phase0_v3_config.yaml` and `experiments/v2_registry.yaml` (already updated). Do NOT mix v2 and v3 results in the same comparison figure. See [TRAINING_PROTOCOL_FIXES.md](TRAINING_PROTOCOL_FIXES.md) for the rationale behind each change.
 >
-> **Note on path examples below:** The body of this document shows `logs_v2/` and `phase0_v2/` paths as illustrative examples. For V3 runs, substitute `logs_v3/` and `phase0_v3/` accordingly.
+> **Note on paths:** All examples in this document use V3 paths (`phase0_v3/`, `logs_v3/`). The archived V2 config (`phase0_v2_config.yaml`) is shown only in the Config Files table.
 
 ---
 
@@ -155,10 +155,10 @@ All experiments are defined in `experiments/v2_registry.yaml`. **Always generate
 ### Registry format
 
 ```yaml
-config: configs/phase0_v2_config.yaml
-results_dir: /scratch/boshra95/psg/unified/results/phase0_v2
-inference_dir: /scratch/boshra95/psg/unified/results/phase0_v2/inference
-logs_dir: /home/boshra95/NSRR-tools/logs_v2
+config: configs/phase0_v3_config.yaml
+results_dir: /scratch/boshra95/psg/unified/results/phase0_v3
+inference_dir: /scratch/boshra95/psg/unified/results/phase0_v3/inference
+logs_dir: /home/boshra95/NSRR-tools/logs_v3
 
 experiments:
   sex_binary_lstm:
@@ -166,8 +166,8 @@ experiments:
     task_type: seq2label
     num_classes: 2
     head: lstm
-    datasets: [apples, shhs, stages]
-    contexts: [30s, 10m, 40m, 80m, 120m]
+    datasets: [apples, shhs]
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
     batch_size: 32
     lr: 1.0e-4
     run_tag: ""
@@ -193,7 +193,8 @@ python scripts/gen_commands.py infer sex_binary_lstm --split val
 # Generate analysis command
 python scripts/gen_commands.py analyze sex_binary_lstm
 python scripts/gen_commands.py analyze sex_binary_lstm --plot
-python scripts/gen_commands.py analyze sex_binary_lstm --k-dense   # dense K sweep for iso-compute
+python scripts/gen_commands.py analyze sex_binary_lstm --k-dense                 # dense K sweep for iso-compute
+python scripts/gen_commands.py analyze sex_binary_lstm --k-dense --bootstrap 1000  # + bootstrap 95% CIs
 
 # Iso-compute analysis pipeline (Steps 4a–4c above)
 python scripts/gen_commands.py build-heatmap sex_binary_lstm
@@ -246,20 +247,21 @@ python scripts/gen_commands.py analyze sex_binary_lstm --plot | bash
 A generated train command looks like:
 ```bash
 TASK=sex_binary TASK_TYPE=seq2label HEAD=lstm CONTEXT=30s \
-  DATASETS="apples shhs" BATCH_SIZE=32 LR=0.0001 \
-  CONFIG=configs/phase0_v2_config.yaml \
+  DATASETS="apples shhs" BATCH_SIZE=32 ACCUM_STEPS=1 LR=1e-4 \
+  CONFIG=configs/phase0_v3_config.yaml \
   sbatch --requeue \
-    --time=04:00:00 \
-    --output=/home/boshra95/NSRR-tools/logs_v2/train_sex_binary_lstm_30s_lr1e-4_%j.out \
-    --error=/home/boshra95/NSRR-tools/logs_v2/train_sex_binary_lstm_30s_lr1e-4_%j.err \
-    /home/boshra95/NSRR-tools/jobs/train_context_sweep_gpu.sh
+    --time=01:30:00 \
+    --output=/home/boshra95/NSRR-tools/logs_v3/train_sex_binary_lstm_30s_lr1e-4_%j.out \
+    --error=/home/boshra95/NSRR-tools/logs_v3/train_sex_binary_lstm_30s_lr1e-4_%j.err \
+    /home/boshra95/NSRR-tools/jobs/train_context_sweep_gpu_rorqual.sh
 ```
 
 Key things that are set automatically:
-- `--requeue` — SLURM auto-requeues on timeout; training resumes from last saved epoch
+- `--requeue` — SLURM auto-requeues on node failure; wall-time timeouts are handled by the USR1 handler
 - `--time` — estimated from the `n_size` and head/context in the registry lookup table
-- `--output` / `--error` — go to `logs_v2/` with filename encoding task/head/context/lr/job-id
-- `CONFIG` — points to the v2 config file
+- `--output` / `--error` — go to `logs_v3/` with filename encoding task/head/context/lr/job-id
+- `ACCUM_STEPS` — set per-context so `BATCH_SIZE × ACCUM_STEPS = 32` (gradient accumulation mode)
+- `CONFIG` — points to the v3 config file
 
 ### Manual sbatch (when not using gen_commands.py)
 
@@ -272,18 +274,19 @@ TASK=sex_binary \
 TASK_TYPE=seq2label \
 HEAD=lstm \
 CONTEXT=30s \
-DATASETS="apples shhs stages" \
+DATASETS="apples shhs" \
 BATCH_SIZE=32 \
+ACCUM_STEPS=1 \
 LR=1e-4 \
-CONFIG=configs/phase0_v2_config.yaml \
+CONFIG=configs/phase0_v3_config.yaml \
 sbatch --requeue \
-  --time=04:00:00 \
-  --output=logs_v2/train_sex_binary_lstm_30s_lr1e-4_%j.out \
-  --error=logs_v2/train_sex_binary_lstm_30s_lr1e-4_%j.err \
-  jobs/train_context_sweep_gpu.sh
+  --time=01:30:00 \
+  --output=logs_v3/train_sex_binary_lstm_30s_lr1e-4_%j.out \
+  --error=logs_v3/train_sex_binary_lstm_30s_lr1e-4_%j.err \
+  jobs/train_context_sweep_gpu_rorqual.sh
 ```
 
-> **Important:** `--time`, `--output`, `--error` on the command line override the `#SBATCH` defaults inside the script. The bash scripts default to `logs_v2/` and a 24h time limit — the generator tightens the time limit per-context.
+> **Important:** `--time`, `--output`, `--error` on the command line override the `#SBATCH` defaults inside the script. The bash scripts default to `logs_v3/` and a 24h time limit — the generator tightens the time limit per-context.
 
 ### Typical workflow for one experiment
 
@@ -301,19 +304,23 @@ python scripts/gen_commands.py infer sex_binary_lstm | bash
 # 4. After inference: standard analysis (sparse K, markdown table + plots)
 python scripts/gen_commands.py analyze sex_binary_lstm --plot | bash
 
-# 5. Iso-compute analysis (dense K sweep → 7 plots per metric)
-python scripts/gen_commands.py analyze sex_binary_lstm --k-dense | bash
+# 5. Iso-compute analysis (dense K sweep + bootstrap CIs → 7 plots per metric)
+python scripts/gen_commands.py analyze sex_binary_lstm --k-dense --bootstrap 1000 | bash
 python scripts/gen_commands.py build-heatmap sex_binary_lstm | bash
 python scripts/gen_commands.py iso-plots sex_binary_lstm | bash
 
 # 6. Saturation curve — once all three heads are trained for this task
 python scripts/gen_commands.py saturation sex_binary --heads lstm transformer mean_pool | bash
 
-# 7. Collect all results into flat CSVs (run after any new training or inference)
-python scripts/collect_results_v2.py
-git add results/collected/ && git commit -m "collect results" && git push
+# 7. Collect all results into flat CSVs (prerequisite for scaling-laws and task-comparison)
+python scripts/gen_commands.py collect sex_binary_lstm sex_binary_transformer sex_binary_mean_pool | bash
 
-# 8. Check all experiments at once
+# 8. Extended plots (run after collect; or use run_analysis.sh to do steps 4–8 in one command)
+python scripts/gen_commands.py scaling-laws sex_binary --heads lstm transformer mean_pool | bash
+python scripts/gen_commands.py calibration sex_binary_lstm | bash
+# ... see scripts/run_analysis.sh for the full 13-step pipeline
+
+# 9. Check all experiments at once
 python scripts/gen_commands.py list
 ```
 
@@ -336,7 +343,7 @@ Training jobs automatically handle timeouts without losing work.
 
 **Auto-requeue on timeout (two mechanisms):**
 
-- **Wall-time handler (`--signal=B:USR1@120`):** SLURM sends SIGUSR1 to the bash process 120 seconds before the wall-time limit. The bash script's `_timeout_handler` trap fires, kills Python cleanly (SIGTERM), then manually calls `sbatch` to resubmit the same script with `--export=ALL` and an explicit `--output`/`--error` that preserves the descriptive log filename (e.g. `train_sex_binary_lstm_nocontext_lrdefault_%j.out`). The new job picks up from `resume.pt`.
+- **Wall-time handler (`--signal=B:USR1@120`):** SLURM sends SIGUSR1 to the bash process 120 seconds before the wall-time limit. The bash script's `_timeout_handler` trap fires, kills Python cleanly (SIGTERM), then manually calls `sbatch` to resubmit the same script with `--export=ALL` and an explicit `--output`/`--error` that preserves the descriptive log filename (e.g. `train_sex_binary_lstm_30s_lr1e-4_%j.out`). The new job picks up from `resume.pt`.
 
 - **Node-failure requeue (`--requeue`):** All jobs are also submitted with `--requeue`. If SLURM cancels a job due to a node failure or preemption (not wall-time), SLURM automatically requeues it. The requeued job resumes from `resume.pt` as usual.
 
@@ -422,13 +429,13 @@ Sample output:
 Raw SLURM stdout/stderr go to `logs_v3/` with descriptive filenames. Both the original submission and any resubmitted jobs (after timeout or node failure) share the same log stem — the job ID suffix differs, but the prefix encodes the experiment:
 
 ```
-logs_v3/train_sex_binary_lstm_nocontext_lrdefault_38373667.out
-logs_v3/train_sex_binary_lstm_nocontext_lrdefault_38373667.err
+logs_v3/train_sex_binary_lstm_30s_lr1e-4_38373667.out
+logs_v3/train_sex_binary_lstm_30s_lr1e-4_38373667.err
 logs_v3/infer_sex_binary_lstm_test_38400002.out
 logs_v3/infer_sex_binary_lstm_test_38400002.err
 ```
 
-Resubmitted jobs get a new job ID suffix but the same descriptive stem, because the `_timeout_handler` passes `--output`/`--error` explicitly to the resubmission `sbatch` call.
+Stem format: `{step}_{task}_{head}_{context}_{lr_or_split}` (train includes context+lr; infer includes split). Resubmitted jobs get a new job ID suffix but the same descriptive stem, because the `_timeout_handler` passes `--output`/`--error` explicitly to the resubmission `sbatch` call.
 
 ---
 
@@ -524,11 +531,11 @@ Context lengths:
             └── double_tradeoff_{metric}.{png,pdf}
 
 /home/boshra95/NSRR-tools/logs_v3/   # V3 (current); v2 uses logs_v2/
-├── train_sex_binary_lstm_nocontext_lrdefault_{job_id}.out    # SLURM stdout
-├── train_sex_binary_lstm_nocontext_lrdefault_{job_id}.err    # SLURM stderr
+├── train_sex_binary_lstm_30s_lr1e-4_{job_id}.out    # SLURM stdout
+├── train_sex_binary_lstm_30s_lr1e-4_{job_id}.err    # SLURM stderr
 └── status/
-    ├── train_sex_binary_lstm_nocontext_lrdefault.jsonl   # event log for this context
-    ├── train_sex_binary_lstm_10m_lrdefault.jsonl
+    ├── train_sex_binary_lstm_30s_lr1e-4.jsonl   # event log for this context
+    ├── train_sex_binary_lstm_10m_lr1e-4.jsonl
     └── infer_sex_binary_lstm_test.jsonl
 ```
 
@@ -863,7 +870,7 @@ All scripts described in `docs/ANALYSIS_IDEAS.md` are now implemented. Use `gen_
 #### collect (prerequisite for §1 and §6)
 
 **Script:** `scripts/collect_results_v2.py`  
-**gen_commands.py:** `python scripts/gen_commands.py collect [<exp_id> ...] [--bootstrap 1000]`
+**gen_commands.py:** `python scripts/gen_commands.py collect [<exp_id> ...]`
 
 Gathers results from all or selected experiments into:
 - `{results_dir}/collected/training.csv` — per-epoch training curves including overfit rows

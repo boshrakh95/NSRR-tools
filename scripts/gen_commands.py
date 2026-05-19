@@ -12,14 +12,16 @@ Experiment command generator for v2 task-definition experiments.
   python scripts/gen_commands.py infer <exp_id> [--split test|val]
       Print the sbatch command for inference (auto-discovers trained contexts).
 
-  python scripts/gen_commands.py analyze <exp_id> [--plot]
-      Print the python command for window analysis.
+  python scripts/gen_commands.py analyze <exp_id> [--plot] [--k-dense] [--bootstrap N]
+      Print the python command for window analysis. Use --k-dense for the
+      iso-compute pipeline (~25 K values). --bootstrap N overrides the
+      bootstrap_samples value from the config yaml (0 = off).
 
   python scripts/gen_commands.py status [<exp_id>]
       Show detailed file-level status for one or all experiments.
 
   python scripts/gen_commands.py runs [<exp_id>]
-      Show job run history (from logs_v2/status/*.jsonl tracking files).
+      Show job run history (from logs_v3/status/*.jsonl tracking files).
 
 ── Iso-compute pipeline ───────────────────────────────────────────────────────
   python scripts/gen_commands.py build-heatmap <exp_id> [--split test]
@@ -33,10 +35,11 @@ Experiment command generator for v2 task-definition experiments.
       Use --collected-dir to add bootstrap CI bands.
 
 ── Extended analyses (§1–§9) ─────────────────────────────────────────────────
-  python scripts/gen_commands.py collect [<exp_id> ...] [--bootstrap 1000]
+  python scripts/gen_commands.py collect [<exp_id> ...]
       Print collect_results_v2.py command to gather all results into
       training.csv and analysis.csv. Required before task-comparison and
-      scaling-laws subcommands.
+      scaling-laws subcommands. Note: bootstrap CIs are NOT produced here —
+      run 'analyze --bootstrap N' first; collect picks up the CI columns.
 
   python scripts/gen_commands.py scaling-laws <task> [--heads lstm ...] [--plots 1A 1B 1C]
       Print plot_scaling_laws.py command (§1 — U-shape + FLOPs scaling law).
@@ -72,10 +75,11 @@ Examples:
   python scripts/gen_commands.py infer sex_binary_lstm --batch-size 64
   python scripts/gen_commands.py analyze sex_binary_lstm --plot
   python scripts/gen_commands.py analyze sex_binary_lstm --k-dense
+  python scripts/gen_commands.py analyze sex_binary_lstm --k-dense --bootstrap 1000
   python scripts/gen_commands.py build-heatmap sex_binary_lstm
   python scripts/gen_commands.py iso-plots sex_binary_lstm
   python scripts/gen_commands.py saturation sex_binary --heads lstm transformer mean_pool
-  python scripts/gen_commands.py collect sex_binary_lstm sex_binary_transformer --bootstrap 1000
+  python scripts/gen_commands.py collect sex_binary_lstm sex_binary_transformer
   python scripts/gen_commands.py scaling-laws sex_binary --heads lstm transformer mean_pool
   python scripts/gen_commands.py calibration sex_binary_lstm
   python scripts/gen_commands.py window-position sex_binary_lstm
@@ -343,20 +347,24 @@ def build_infer_cmd(exp: dict, registry: dict, split: str = "test",
 
 
 def build_analyze_cmd(exp: dict, registry: dict, plot: bool = False,
-                      k_dense: bool = False) -> str:
+                      k_dense: bool = False,
+                      bootstrap_override: int = None) -> str:
     results_dir = Path(registry["results_dir"])
     tag = exp.get("run_tag", "")
     # Use the virtualenv Python directly — analyze_windows.py requires sklearn
     # (balanced_accuracy, AUROC, F1) which lives in sleepfm_env, not the system Python.
     python = registry.get("python_bin", "/home/boshra95/sleepfm_env/bin/python")
 
-    # Read bootstrap_samples from the experiment config yaml (analysis.bootstrap_samples)
-    bootstrap_n = 0
-    cfg_path = Path(registry.get("config", ""))
-    if cfg_path.exists():
-        with open(cfg_path) as _f:
-            _cfg = yaml.safe_load(_f)
-        bootstrap_n = int(_cfg.get("analysis", {}).get("bootstrap_samples", 0))
+    if bootstrap_override is not None:
+        bootstrap_n = bootstrap_override
+    else:
+        # Read bootstrap_samples from the experiment config yaml (analysis.bootstrap_samples)
+        bootstrap_n = 0
+        cfg_path = Path(registry.get("config", ""))
+        if cfg_path.exists():
+            with open(cfg_path) as _f:
+                _cfg = yaml.safe_load(_f)
+            bootstrap_n = int(_cfg.get("analysis", {}).get("bootstrap_samples", 0))
 
     cmd_parts = [
         f"{python} scripts/analyze_windows.py",
@@ -516,11 +524,12 @@ def cmd_analyze(args, registry):
         print(f"ERROR: experiment '{args.exp_id}' not found.", file=sys.stderr)
         sys.exit(1)
     exp = experiments[args.exp_id]
-    plot    = getattr(args, "plot", False)
-    k_dense = getattr(args, "k_dense", False)
+    plot             = getattr(args, "plot", False)
+    k_dense          = getattr(args, "k_dense", False)
+    bootstrap_override = getattr(args, "bootstrap", None)
     print(f"# Window analysis command for: {args.exp_id}")
     print()
-    print(build_analyze_cmd(exp, registry, plot, k_dense))
+    print(build_analyze_cmd(exp, registry, plot, k_dense, bootstrap_override))
 
 
 def cmd_build_heatmap(args, registry):
@@ -655,7 +664,6 @@ def cmd_runs(args, registry):
 # ── Extended analysis command builders ────────────────────────────────────────
 
 def build_collect_cmd(exp_ids: list, registry: dict,
-                      bootstrap_n: int = 0,
                       collected_dir: str = "") -> str:
     python = registry.get("python_bin", "/home/boshra95/sleepfm_env/bin/python")
     results_dir = Path(registry["results_dir"])
@@ -667,8 +675,6 @@ def build_collect_cmd(exp_ids: list, registry: dict,
     ]
     if exp_ids:
         cmd_parts.append(f"--exp-ids {' '.join(exp_ids)}")
-    if bootstrap_n > 0:
-        cmd_parts.append(f"--bootstrap {bootstrap_n}")
     return " ".join(cmd_parts)
 
 
@@ -838,17 +844,15 @@ def build_subject_kstar_cmd(exp: dict, registry: dict, split: str = "test",
 
 def cmd_collect(args, registry):
     exp_ids = getattr(args, "exp_ids", []) or []
-    bootstrap_n = getattr(args, "bootstrap", 0)
     collected_dir = getattr(args, "collected_dir", "")
     results_dir = Path(registry["results_dir"])
     cdir = collected_dir or str(results_dir / "collected")
     print("# Collect all experiment results into training.csv and analysis.csv")
     print(f"# Output → {cdir}/")
-    if bootstrap_n > 0:
-        print(f"# Bootstrap CIs: {bootstrap_n} resamples (adds ci_lo/hi columns to analysis.csv)")
+    print("# Note: bootstrap CIs are computed by analyze_windows.py (run 'analyze --bootstrap N' first)")
     print("# Prerequisite: inference parquets must exist (run infer first)")
     print()
-    print(build_collect_cmd(exp_ids, registry, bootstrap_n, collected_dir))
+    print(build_collect_cmd(exp_ids, registry, collected_dir))
 
 
 def cmd_scaling_laws(args, registry):
@@ -1008,6 +1012,8 @@ def main():
     p_analyze.add_argument("--plot", action="store_true", help="Include --plot flag")
     p_analyze.add_argument("--k-dense", action="store_true", dest="k_dense",
                            help="Include --k-dense flag (~25 K values for iso-compute pipeline)")
+    p_analyze.add_argument("--bootstrap", type=int, default=None,
+                           help="Override bootstrap_samples from config (0 = off, e.g. --bootstrap 1000)")
 
     p_bh = sub.add_parser("build-heatmap",
                            help="Print build_heatmap_df.py command (Step 2)")
@@ -1042,8 +1048,6 @@ def main():
                             help="Print collect_results_v2.py command (gather all results)")
     p_col.add_argument("exp_ids", nargs="*", default=[],
                        help="Experiment IDs to collect (default: all in registry)")
-    p_col.add_argument("--bootstrap", type=int, default=0,
-                       help="Number of bootstrap resamples for CI bounds (default: 0 = off)")
     p_col.add_argument("--collected-dir", default="", dest="collected_dir",
                        help="Output directory (default: {results_dir}/collected)")
 

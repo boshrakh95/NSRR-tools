@@ -652,7 +652,12 @@ All scripts are implemented. Use `gen_commands.py` to generate the exact command
 
 **Collect prerequisite** (needed for §1 and §6):
 ```
-python scripts/gen_commands.py collect sex_binary_lstm sex_binary_transformer --bootstrap 1000
+# Step 1: run analysis with bootstrap CIs (generates CI columns in window_analysis_*.csv)
+python scripts/gen_commands.py analyze sex_binary_lstm --k-dense --bootstrap 1000
+python scripts/gen_commands.py analyze sex_binary_transformer --k-dense --bootstrap 1000
+
+# Step 2: collect all results into training.csv + analysis.csv (picks up CI columns automatically)
+python scripts/gen_commands.py collect sex_binary_lstm sex_binary_transformer
 ```
 
 ### Phase 2 — Requires training code changes + retraining

@@ -47,16 +47,18 @@ This document covers `scripts/collect_results_v2.py`: what it collects, where ou
 
 ```bash
 cd /home/boshra95/NSRR-tools
-python scripts/collect_results_v2.py
+python scripts/collect_results_v2.py                               # uses phase0_v3 by default
+python scripts/collect_results_v2.py --results-dir /scratch/boshra95/psg/unified/results/phase0_v3
+python scripts/collect_results_v2.py --exp-ids sex_binary_lstm sex_binary_transformer  # filter to specific experiments
 ```
 
-No arguments needed. The script auto-discovers all experiments from the results directory structure. Run it from either cluster whenever new training or inference results are available.
+The script defaults to `phase0_v3`. Run it from either cluster whenever new training or inference results are available. It is also accessible via `gen_commands.py collect` which prints the full command with correct paths.
 
 Example output:
 ```
-Scanning:    /scratch/boshra95/psg/unified/results/phase0_v2
+Scanning:    /scratch/boshra95/psg/unified/results/phase0_v3
 Repo out:    /home/boshra95/NSRR-tools/results/collected
-Scratch out: /scratch/boshra95/psg/unified/results/phase0_v2/collected
+Scratch out: /scratch/boshra95/psg/unified/results/phase0_v3/collected
 
 Collecting training results...
   → 84 new rows
@@ -99,7 +101,7 @@ The predictions parquets are scratch-only (too large for git). They do not need 
 All inputs come from the scratch results directory:
 
 ```
-/scratch/boshra95/psg/unified/results/phase0_v2/
+/scratch/boshra95/psg/unified/results/phase0_v3/
 │
 ├── {task}_{head}/
 │   └── context_{L}/
@@ -124,7 +126,7 @@ The collector requires `training_curves.csv` to be present for a context to be i
     training.csv
     analysis.csv
 
-/scratch/boshra95/psg/unified/results/phase0_v2/collected/    ← scratch copy
+/scratch/boshra95/psg/unified/results/phase0_v3/collected/    ← scratch copy
     training.csv
     analysis.csv
     predictions/
@@ -233,7 +235,7 @@ To load all parquets at once (after they've been collected):
 ```python
 import pandas as pd
 pred = pd.read_parquet(
-    "/scratch/boshra95/psg/unified/results/phase0_v2/collected/predictions/"
+    "/scratch/boshra95/psg/unified/results/phase0_v3/collected/predictions/"
 )
 # pred is a single DataFrame with all tasks, heads, contexts, and splits
 ```
@@ -419,7 +421,7 @@ from sklearn.metrics import roc_auc_score
 
 # Load one parquet
 df = pd.read_parquet(
-    "/scratch/boshra95/psg/unified/results/phase0_v2/collected/predictions/"
+    "/scratch/boshra95/psg/unified/results/phase0_v3/collected/predictions/"
     "sex_binary_lstm_10m_test.parquet"
 )
 
