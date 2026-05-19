@@ -157,6 +157,21 @@ experiments:
     tier: 1
     notes: ""
 
+  sleep_efficiency_binary_transformer_membnd:
+    task: sleep_efficiency_binary
+    task_type: seq2label
+    num_classes: 2
+    head: transformer
+    datasets: [apples, shhs, mros]
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
+    batch_size: 32          # fallback only — overridden by batch_sizes.json after probe-batch
+    batch_mode: memory_bounded
+    lr: 1.0e-4
+    run_tag: "membnd"       # results go to sleep_efficiency_binary_transformer_membnd/
+    n_size: large
+    tier: 2
+    notes: "Ablation: same task/head as sleep_efficiency_binary_transformer but no grad accumulation. Run probe-batch first."
+
   sleep_efficiency_binary_mean_pool:
     task: sleep_efficiency_binary
     task_type: seq2label

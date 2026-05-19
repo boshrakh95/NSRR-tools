@@ -85,7 +85,11 @@ def load_summary(results_dir: Path, task: str, head: str, run_tag: str) -> pd.Da
     csv_path = results_dir / exp_id / "summary.csv"
     if not csv_path.exists():
         return pd.DataFrame()
-    df = pd.read_csv(csv_path)
+    try:
+        df = pd.read_csv(csv_path)
+    except Exception:
+        # Fall back to Python engine, which tolerates rows with more fields than the header
+        df = pd.read_csv(csv_path, engine="python", on_bad_lines="warn")
     df["context_length_min"] = df["context_length"].map(parse_context_min)
     return df.sort_values("context_length_min").reset_index(drop=True)
 

@@ -6,6 +6,11 @@ Experiment command generator for v2 task-definition experiments.
   python scripts/gen_commands.py list [--tier 1|2]
       List all experiments with status (pending/trained/inferred/analyzed).
 
+  python scripts/gen_commands.py probe-batch <exp_id> [--starting-batch-size 256]
+      Print sbatch command to probe the max GPU batch size for each context
+      (memory_bounded experiments only). Writes {exp_dir}/batch_sizes.json,
+      which 'train' picks up automatically. Run this BEFORE 'train'.
+
   python scripts/gen_commands.py train <exp_id> [--context 30s 10m ...]
       Print sbatch command(s) for training. One job per context.
 
@@ -22,6 +27,11 @@ Experiment command generator for v2 task-definition experiments.
 
   python scripts/gen_commands.py runs [<exp_id>]
       Show job run history (from logs_v3/status/*.jsonl tracking files).
+
+  Typical memory-bounded workflow:
+    1. python scripts/gen_commands.py probe-batch <exp_id>   # get sbatch cmd
+    2. <run that sbatch cmd on GPU node>                      # writes batch_sizes.json
+    3. python scripts/gen_commands.py train <exp_id>          # reads batch_sizes.json auto
 
 ── Iso-compute pipeline ───────────────────────────────────────────────────────
   python scripts/gen_commands.py build-heatmap <exp_id> [--split test]
@@ -69,6 +79,7 @@ Experiment command generator for v2 task-definition experiments.
 
 Examples:
   python scripts/gen_commands.py list --tier 1
+  python scripts/gen_commands.py probe-batch sleep_efficiency_binary_transformer_membnd
   python scripts/gen_commands.py train sex_binary_lstm
   python scripts/gen_commands.py train sex_binary_lstm --context 30s
   python scripts/gen_commands.py infer sex_binary_lstm
@@ -262,6 +273,13 @@ def resolve_batch_accum(exp: dict, registry: dict, context: str,
     batch_mode = exp.get("batch_mode", "grad_accum")
 
     if batch_mode == "memory_bounded":
+        # Prefer probed values from batch_sizes.json written by find_batch_size.py.
+        bsz_file = exp_folder(exp, registry) / "batch_sizes.json"
+        if bsz_file.exists():
+            probed = json.loads(bsz_file.read_text())
+            if context in probed:
+                return int(probed[context]), 1
+        # Fall back to registry-level memory_bounded defaults.
         mb = registry.get("memory_bounded", {})
         ctx_map = mb.get("context_batch_size", {})
         batch_size = int(ctx_map.get(context, exp["batch_size"]))
@@ -439,6 +457,37 @@ def build_saturation_cmd(task: str, heads: list, registry: dict,
     return " ".join(cmd_parts)
 
 
+def build_probe_batch_cmd(exp: dict, registry: dict,
+                          starting_batch_size: int = 256) -> str:
+    """Generate the sbatch command to run find_batch_size.py for a memory-bounded exp."""
+    python   = registry.get("python_bin", "/home/boshra95/sleepfm_env/bin/python")
+    cfg      = registry["config"]
+    logs_dir = registry.get("logs_dir", str(Path(__file__).parent.parent / "logs"))
+    out_dir  = exp_folder(exp, registry)
+    head     = exp["head"]
+    ctxs     = " ".join(exp["contexts"])
+    num_cls  = exp.get("num_classes", 2)
+    tag      = exp.get("run_tag", "")
+    tag_part = f"_{tag}" if tag else ""
+    stem     = f"probe_batch_{exp['task']}_{head}{tag_part}"
+
+    env_vars = [
+        f"HEAD={head}",
+        f"EXP_DIR={out_dir}",
+        f"CONFIG={cfg}",
+        f"CONTEXTS=\"{ctxs}\"",
+        f"NUM_CLASSES={num_cls}",
+        f"STARTING_BATCH_SIZE={starting_batch_size}",
+    ]
+    env_str = " ".join(env_vars)
+    sbatch_opts = (
+        f"--time=00:20:00 "
+        f"--output={logs_dir}/{stem}_%j.out "
+        f"--error={logs_dir}/{stem}_%j.err"
+    )
+    return f"{env_str} sbatch {sbatch_opts} {JOBS_DIR}/find_batch_size_gpu_rorqual.sh"
+
+
 # ── Subcommand handlers ───────────────────────────────────────────────────────
 
 def cmd_list(args, registry):
@@ -455,6 +504,29 @@ def cmd_list(args, registry):
         print(f"{exp_id:<45} {str(tier):<6} {len(exp['contexts']):<6} {datasets_str:<30} {status}")
 
 
+def cmd_probe_batch(args, registry):
+    experiments = registry["experiments"]
+    if args.exp_id not in experiments:
+        print(f"ERROR: experiment '{args.exp_id}' not found in registry.", file=sys.stderr)
+        sys.exit(1)
+    exp = experiments[args.exp_id]
+    if exp.get("batch_mode", "grad_accum") != "memory_bounded":
+        print(
+            f"WARNING: '{args.exp_id}' is not memory_bounded "
+            f"(batch_mode={exp.get('batch_mode', 'grad_accum')}). "
+            "probe-batch is only meaningful for memory_bounded experiments.",
+            file=sys.stderr,
+        )
+    bsz_file = exp_folder(exp, registry) / "batch_sizes.json"
+    probed_note = f"  # already probed: {bsz_file}" if bsz_file.exists() else ""
+    starting = getattr(args, "starting_batch_size", 256)
+    print(f"# Batch size probe for: {args.exp_id}  head={exp['head']}")
+    print(f"# Writes: {exp_folder(exp, registry)}/batch_sizes.json")
+    print(f"# Run BEFORE 'gen_commands.py train {args.exp_id}'{probed_note}")
+    print()
+    print(build_probe_batch_cmd(exp, registry, starting_batch_size=starting))
+
+
 def cmd_train(args, registry):
     experiments = registry["experiments"]
     if args.exp_id not in experiments:
@@ -467,7 +539,9 @@ def cmd_train(args, registry):
     ga_enabled = ga.get("enabled", False)
     batch_mode = exp.get("batch_mode", "grad_accum")
     if batch_mode == "memory_bounded":
-        batch_label = "MEMORY-BOUNDED (accum_steps=1, batch varies by context)"
+        bsz_file = exp_folder(exp, registry) / "batch_sizes.json"
+        src = f"probed ({bsz_file})" if bsz_file.exists() else "registry defaults (run probe-batch first)"
+        batch_label = f"MEMORY-BOUNDED (accum_steps=1, batch sizes from {src})"
     elif ga_enabled:
         batch_label = f"GRAD-ACCUM (effective_batch={ga.get('effective_batch', 32)}, accum varies by context)"
     else:
@@ -990,6 +1064,12 @@ def main():
     p_list = sub.add_parser("list", help="List all experiments and their status")
     p_list.add_argument("--tier", default=None, help="Filter by tier (1 or 2)")
 
+    p_pb = sub.add_parser("probe-batch",
+                           help="Print sbatch command to probe max batch size (memory_bounded only)")
+    p_pb.add_argument("exp_id", help="Experiment ID from registry (must have batch_mode: memory_bounded)")
+    p_pb.add_argument("--starting-batch-size", type=int, default=256, dest="starting_batch_size",
+                      help="Largest batch to try first; halved on OOM (default: 256)")
+
     p_train = sub.add_parser("train", help="Print train sbatch command(s)")
     p_train.add_argument("exp_id", help="Experiment ID from registry")
     p_train.add_argument("--context", nargs="+", default=None,
@@ -1128,6 +1208,7 @@ def main():
 
     dispatch = {
         "list":                 cmd_list,
+        "probe-batch":          cmd_probe_batch,
         "train":                cmd_train,
         "infer":                cmd_infer,
         "analyze":              cmd_analyze,

@@ -639,7 +639,7 @@ sex_binary_lstm_membnd:
   head: lstm
   datasets: [apples, shhs]
   contexts: [30s, 10m, 40m, 80m, 120m, 240m]
-  batch_size: 32        # used as fallback if context not in memory_bounded table
+  batch_size: 32        # fallback only — overridden by batch_sizes.json after probe-batch
   lr: 1.0e-4
   run_tag: "membnd"     # results go to sex_binary_lstm_membnd/, logs tagged _membnd
   batch_mode: memory_bounded
@@ -647,12 +647,37 @@ sex_binary_lstm_membnd:
   tier: 3               # run after Tier 1 grad_accum results are complete
 ```
 
-Then generate commands normally:
+**Full workflow for Mode 2 (memory-bounded):**
+
+Step 1 — find actual GPU batch sizes (one-time, runs in ~10 min):
 ```bash
-python scripts/gen_commands.py train sex_binary_lstm_membnd | bash
+# Generate the probe sbatch command:
+python scripts/gen_commands.py probe-batch sex_binary_lstm_membnd
+
+# Copy the printed command and run it.
+# It submits find_batch_size.py as a SLURM job.
+# When done, {results_dir}/sex_binary_lstm_membnd/batch_sizes.json is written.
 ```
 
-`gen_commands.py` will show `Batch mode: MEMORY-BOUNDED` in the header and set per-context `BATCH_SIZE` with `ACCUM_STEPS=1`.
+Step 2 — train (gen_commands.py reads batch_sizes.json automatically):
+```bash
+python scripts/gen_commands.py train sex_binary_lstm_membnd
+# Each context now shows its probed batch size in the comment.
+# If batch_sizes.json does not exist yet, falls back to memory_bounded.context_batch_size from registry.
+```
+
+`gen_commands.py` shows `Batch mode: MEMORY-BOUNDED` and whether batch sizes come from the probed file or the registry defaults.
+
+**How find_batch_size.py works:**
+
+Uses `accelerate.utils.find_executable_batch_size` (requires `accelerate>=0.20.0`).
+For each context it:
+1. Builds the actual model (same architecture as training)
+2. Allocates a batch of random embeddings and runs forward+backward+optimizer step with AMP
+3. If CUDA OOM occurs, halves the batch size and retries
+4. Writes the largest succeeding batch size to `batch_sizes.json`
+
+Starting from `--starting-batch-size 256` (default), it will find the true power-of-2 maximum in at most 8 attempts per context. The whole probe for 6 context lengths takes under 10 minutes.
 
 **Comparing results:** Use the same `analyze_windows.py` and plot scripts. Both runs produce parquets in separate subfolders. The `run_tag` ensures `collect_results_v2.py` keeps them separate in the collected CSVs. For paper figures, plot Mode 1 and Mode 2 saturation curves side-by-side.
 
