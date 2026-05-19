@@ -4,11 +4,14 @@ find_batch_size.py — Probe the maximum GPU batch size for memory-bounded train
 
 For each context length, runs a realistic forward+backward pass (same model
 architecture and AMP setting as training) with find_executable_batch_size from
-HuggingFace accelerate.  It starts at --starting-batch-size and halves on OOM
-until a batch fits, then writes the result to {exp_dir}/batch_sizes.json.
+HuggingFace accelerate.  It starts at --starting-batch-size and reduces on OOM
+until a batch fits.
 
-gen_commands.py train (memory_bounded mode) reads batch_sizes.json automatically
-so no registry edit is needed after probing.
+A safety factor (default 0.85) is then applied and the result is rounded DOWN to
+the nearest multiple of 8 (for tidy warp alignment).  Both the raw probed value
+and the conservative safe value are written to batch_sizes.json.
+
+gen_commands.py train (memory_bounded mode) reads the "safe" value automatically.
 
 Usage — generate the sbatch command via gen_commands.py:
 
@@ -23,11 +26,12 @@ Or run directly on a GPU node:
         [--contexts 30s 10m 40m 80m 120m 240m] \\
         [--num-classes 2] \\
         [--starting-batch-size 256] \\
+        [--safety-factor 0.85] \\
         [--no-amp]
 
 Output:
-    {exp_dir}/batch_sizes.json  — {context: batch_size} mapping
-    stdout                      — YAML snippet to optionally paste into registry
+    {exp_dir}/batch_sizes.json  — {context: {"probed": N, "safe": M}} mapping
+    stdout                      — summary table + optional registry YAML snippet
 """
 
 import argparse
@@ -49,6 +53,23 @@ from nsrr_tools.datasets.context_window_dataset import (
 from nsrr_tools.models.sequence_head import build_head
 
 
+def safe_batch_size(probed: int, safety_factor: float) -> int:
+    """Apply safety_factor and round DOWN to the nearest multiple of 8.
+
+    Multiple-of-8 keeps things aligned with CUDA warp sizes (32 threads,
+    but matrix ops tile in multiples of 8).  Safety factor gives headroom
+    for DataLoader buffers and framework overhead not captured by the probe.
+
+    Examples (safety_factor=0.85):
+        256 → int(256*0.85)=217 → floor(217/8)*8 = 216
+        207 → int(207*0.85)=175 → floor(175/8)*8 = 168
+          1 → max(1, ...) = 1
+    """
+    reduced = int(probed * safety_factor)
+    aligned = max(8, (reduced // 8) * 8)
+    return aligned
+
+
 def probe_context(
     cfg: dict,
     head_type: str,
@@ -58,7 +79,7 @@ def probe_context(
     use_amp: bool,
     starting_batch_size: int = 256,
 ) -> int:
-    """Return the largest batch size (power of 2) that fits in GPU memory.
+    """Return the raw largest batch size that fits in GPU memory (before safety rounding).
 
     Simulates a full training step: forward pass + loss + backward.
     Creates a fresh model for each attempt so no stale gradient state leaks
@@ -71,10 +92,11 @@ def probe_context(
         num_classes: Number of output classes.
         device: Target torch device (must be CUDA for meaningful results).
         use_amp: Whether to use torch.cuda.amp.autocast (matches training).
-        starting_batch_size: Largest batch to try first; halved on OOM.
+        starting_batch_size: Largest batch to try first; reduced on OOM.
 
     Returns:
-        The largest batch size that completed without OOM.
+        The raw probed batch size (before safety factor). Pass to safe_batch_size()
+        to get the value suitable for training.
     """
     from accelerate.utils import find_executable_batch_size
 
@@ -137,6 +159,10 @@ def main():
     parser.add_argument("--starting-batch-size", type=int, default=256,
                         dest="starting_batch_size",
                         help="Largest batch to try first; halved on OOM (default: 256)")
+    parser.add_argument("--safety-factor", type=float, default=0.85, dest="safety_factor",
+                        help="Fraction of probed batch to actually use (default: 0.85). "
+                             "Provides headroom for DataLoader buffers not captured by the probe. "
+                             "Result is rounded down to nearest multiple of 8.")
     parser.add_argument("--no-amp", action="store_true", dest="no_amp",
                         help="Disable AMP — probe in fp32 (use if training disables AMP)")
     parser.add_argument("--cpu", action="store_true",
@@ -173,10 +199,12 @@ def main():
     print(f"Head:                {args.head}")
     print(f"AMP:                 {use_amp}")
     print(f"Starting batch size: {args.starting_batch_size}")
+    print(f"Safety factor:       {args.safety_factor}  (safe = floor(probed × {args.safety_factor} / 8) × 8)")
     print(f"Output dir:          {exp_dir}")
     print()
 
-    results: dict[str, int] = {}
+    # results[ctx] = {"probed": int, "safe": int}
+    results: dict[str, dict] = {}
 
     for ctx in args.contexts:
         N = parse_context_length(ctx)
@@ -190,7 +218,7 @@ def main():
 
         print(f"Probing {ctx:6s} (seq_len={N:5d}) ...", end=" ", flush=True)
         try:
-            bs = probe_context(
+            probed = probe_context(
                 cfg=cfg,
                 head_type=args.head,
                 seq_len=N,
@@ -199,11 +227,12 @@ def main():
                 use_amp=use_amp,
                 starting_batch_size=args.starting_batch_size,
             )
-            results[ctx] = bs
-            print(f"max batch = {bs}")
+            safe = safe_batch_size(probed, args.safety_factor)
+            results[ctx] = {"probed": probed, "safe": safe}
+            print(f"probed={probed:4d}  →  safe={safe:4d}")
         except RuntimeError as exc:
             print(f"FAILED — {exc}")
-            results[ctx] = 1
+            results[ctx] = {"probed": 1, "safe": 1}
 
     # Write batch_sizes.json
     out_path = exp_dir / "batch_sizes.json"
@@ -211,14 +240,21 @@ def main():
         json.dump(results, f, indent=2)
     print(f"\nWrote: {out_path}")
 
-    # Print optional YAML snippet
+    # Summary table
     print()
-    print("# ── Probed batch sizes (gen_commands.py reads batch_sizes.json automatically) ──")
-    print("# To override the global memory_bounded defaults in v2_registry.yaml instead:")
+    print(f"{'Context':<8}  {'probed':>7}  {'safe (used)':>11}")
+    print("-" * 32)
+    for ctx, v in results.items():
+        print(f"{ctx:<8}  {v['probed']:>7}  {v['safe']:>11}")
+
+    # Optional registry YAML snippet (safe values only)
+    print()
+    print("# ── Safe batch sizes (gen_commands.py reads batch_sizes.json automatically) ──")
+    print("# To bake these into v2_registry.yaml memory_bounded defaults instead:")
     print("#   memory_bounded:")
     print("#     context_batch_size:")
-    for ctx, bs in results.items():
-        print(f'#       "{ctx}": {bs}')
+    for ctx, v in results.items():
+        print(f'#       "{ctx}": {v["safe"]}')
 
 
 if __name__ == "__main__":

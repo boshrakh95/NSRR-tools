@@ -274,11 +274,15 @@ def resolve_batch_accum(exp: dict, registry: dict, context: str,
 
     if batch_mode == "memory_bounded":
         # Prefer probed values from batch_sizes.json written by find_batch_size.py.
+        # Format: {context: {"probed": N, "safe": M}}  (legacy: {context: N})
         bsz_file = exp_folder(exp, registry) / "batch_sizes.json"
         if bsz_file.exists():
-            probed = json.loads(bsz_file.read_text())
-            if context in probed:
-                return int(probed[context]), 1
+            data = json.loads(bsz_file.read_text())
+            if context in data:
+                entry = data[context]
+                # New format stores a dict; legacy format stored a plain int.
+                batch_size = int(entry["safe"] if isinstance(entry, dict) else entry)
+                return batch_size, 1
         # Fall back to registry-level memory_bounded defaults.
         mb = registry.get("memory_bounded", {})
         ctx_map = mb.get("context_batch_size", {})
