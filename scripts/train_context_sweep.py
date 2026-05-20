@@ -334,7 +334,7 @@ def train_one_context(
 ):
     train_batch_size     = batch_size
     effective_batch_size = batch_size * accum_steps
-    eval_batch_size      = batch_size * 2
+    eval_batch_size      = batch_size # * 2
     if exp_id is None:
         exp_id = f"{task}_{head_type}"
     t_cfg = cfg["training"]
