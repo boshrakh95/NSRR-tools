@@ -29,56 +29,42 @@ python_bin: /home/boshra95/sleepfm_env/bin/python
 # v2_inference_dir: /scratch/boshra95/psg/unified/results/phase0_v2/inference
 # v2_logs_dir: /home/boshra95/NSRR-tools/logs_v2
 
-# ── Batch size modes ─────────────────────────────────────────────────────────────
+# ── Training protocol ────────────────────────────────────────────────────────────
 #
-# Two experiment modes are supported for the paper comparison:
+# Single protocol: batch_size=32, accum_steps=1 at ALL context lengths.
 #
-# Mode 1 — "grad_accum" (default, main results):
-#   gradient_accumulation.enabled = true
-#   micro_batch × accum_steps = effective_batch (32) at every context length.
-#   Long-context gradient updates are as diverse (different subjects) as short ones.
-#   Use `batch_mode: grad_accum` (or omit) on an experiment entry.
+# This is safe because:
+#   - dataset.min_recording_patches=2880 removes subjects shorter than 240m from all
+#     splits, ensuring all padding masks are all-False at every context length.
+#   - TransformerHead.forward() passes src_key_padding_mask=None when the mask is
+#     all-False → PyTorch selects Flash attention (O(N) memory, not O(N²) Math
+#     attention which would require ~42 GB at 240m on a 9.75 GiB MIG slice).
+#   - Confirmed in training logs: "[Attn] Flash (mask=None, O(N) memory) | N=2880".
 #
-# Mode 2 — "memory_bounded" (secondary, comparison results):
-#   No gradient accumulation. Batch size is whatever fits GPU memory at each context.
-#   Long-context batches are smaller → gradient updates may see fewer unique subjects.
-#   This is the "natural" behaviour without any accumulation tricks.
-#   Use `batch_mode: memory_bounded` on an experiment entry + a unique run_tag (e.g. "membnd").
-#   gen_commands reads memory_bounded.context_batch_size for the per-context batch size.
+# Paper claim: "All models were trained with batch size 32, identical across all
+# context lengths."
 #
-# Paper strategy: run Mode 1 for all experiments as primary results; run Mode 2 for
-# a subset of tasks (Tier 1 lstm at minimum) for the comparison / ablation section.
+# ── If you ever need to reduce micro-batch due to memory (e.g. new GPU/head) ────
+# Lower the context_micro_batch values and increase effective_batch or keep it at 32.
+# gen_commands.py automatically computes accum_steps = effective_batch / micro_batch.
+# Example: to run 240m at micro_batch=8 with effective_batch=32 → accum_steps=4:
+#   "240m": 8   (accum_steps computed as 32/8 = 4)
+# The training script applies gradient accumulation correctly in both train and eval
+# phases. No other changes needed.
 #
-# ── Gradient accumulation (Mode 1) ──────────────────────────────────────────────
-# When enabled=true: gen_commands.py reads context_micro_batch to set BATCH_SIZE
-# and ACCUM_STEPS per context so that BATCH_SIZE × ACCUM_STEPS = effective_batch.
+# The gradient_accumulation section is kept for code compatibility (gen_commands.py
+# reads it). With all context_micro_batch values at 32 and effective_batch=32,
+# accum_steps = 32/32 = 1 everywhere — functionally identical to no accumulation.
 gradient_accumulation:
-  enabled: true        # set to true for Mode 1 (default)
-  effective_batch: 32  # target effective batch size (micro_batch × accum_steps)
-  # GPU-feasible micro_batch sizes (LSTM head, H100 10GB slice).
-  # accum_steps = effective_batch / micro_batch is computed automatically by gen_commands.py.
-  # Tune these downward if OOM; accum_steps increases correspondingly.
+  enabled: true
+  effective_batch: 32
   context_micro_batch:
     "30s":  32   # accum=1
     "10m":  32   # accum=1
-    "40m":  16   # accum=2
-    "80m":  8    # accum=4
-    "120m": 8    # accum=4
-    "240m": 4    # accum=8
-
-# ── Memory-bounded batch sizes (Mode 2) ─────────────────────────────────────────
-# Per-context batch sizes limited by GPU memory — same values as context_micro_batch
-# above, but used WITHOUT accumulation (each gradient step processes fewer samples).
-# Add `batch_mode: memory_bounded` to an experiment entry to activate this mode.
-# Also set a unique run_tag (e.g. "membnd") so results go to a separate folder.
-memory_bounded:
-  context_batch_size:
-    "30s":  32   # no memory pressure
-    "10m":  32
-    "40m":  16
-    "80m":  8
-    "120m": 8
-    "240m": 4
+    "40m":  32   # accum=1
+    "80m":  32   # accum=1
+    "120m": 32   # accum=1
+    "240m": 32   # accum=1  (Flash attention: O(N) memory, fits on 9.75 GiB MIG slice)
 
 # ── Tier 1: Large N, clinically broad ────────────────────────────────────────
 # Run all three heads to enable head comparison.
@@ -106,13 +92,13 @@ experiments:
     num_classes: 2
     head: transformer
     datasets: [apples, shhs] # , stages
-    contexts: [30s, 10m, 40m, 80m, 120m, 240m]   # skip 80m if oom: O(N²) memory risk
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
     batch_size: 32
     lr: 1.0e-4
     run_tag: ""
     n_size: large
     tier: 1
-    notes: "80m onward should be excluded due to transformer memory constraints."
+    notes: ""
 
   sex_binary_mean_pool:
     task: sex_binary
@@ -156,21 +142,6 @@ experiments:
     n_size: large
     tier: 1
     notes: ""
-
-  sleep_efficiency_binary_transformer_membnd:
-    task: sleep_efficiency_binary
-    task_type: seq2label
-    num_classes: 2
-    head: transformer
-    datasets: [apples, shhs, mros]
-    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
-    batch_size: 32          # fallback only — overridden by batch_sizes.json after probe-batch
-    batch_mode: memory_bounded
-    lr: 1.0e-4
-    run_tag: "membnd"       # results go to sleep_efficiency_binary_transformer_membnd/
-    n_size: large
-    tier: 2
-    notes: "Ablation: same task/head as sleep_efficiency_binary_transformer but no grad accumulation. Run probe-batch first."
 
   sleep_efficiency_binary_mean_pool:
     task: sleep_efficiency_binary

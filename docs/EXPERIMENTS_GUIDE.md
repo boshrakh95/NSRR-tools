@@ -22,7 +22,7 @@ This document is the definitive reference for running training, inference, and a
 10. [Expected Runtimes](#expected-runtimes)
 11. [Configurable Training K Strategy](#configurable-training-k-strategy)
 12. [K Windows: Training vs Val vs Inference](#k-windows-training-vs-val-vs-inference)
-13. [Batch Size Modes](#batch-size-modes)
+13. [Batch Size Protocol](#batch-size-protocol)
 14. [Adding New Experiments](#adding-new-experiments)
 15. [Regression Tasks (Deferred)](#regression-tasks-deferred)
 16. [Notes on Specific Tasks](#notes-on-specific-tasks)
@@ -620,84 +620,46 @@ Key points:
 
 ---
 
-## Batch Size Modes
+## Batch Size Protocol
 
-Two batch-size strategies are supported for the paper comparison. Both write to separate result folders via `run_tag`, so they can coexist.
+**Single protocol — batch size 32, accum_steps 1, identical at all context lengths.**
 
-### Mode 1 — Gradient Accumulation (default, primary results)
+This was confirmed after fixing two issues that previously caused CUDA OOM at 240m on the Transformer head:
 
-`batch_mode: grad_accum` (default on all experiment entries).
+1. **Cohort filter** (`dataset.min_recording_patches=2880`): removes subjects shorter than 240m from all splits and context lengths, ensuring all padding masks are always all-False. See `docs/cohort_filter.md`.
+2. **Mask fix** (`TransformerHead.forward()`): passes `src_key_padding_mask=None` when the mask is all-False, so PyTorch selects Flash attention (O(N) memory). The previous code passed a float tensor even when all-zeros, which forced O(N²) Math attention — trying to allocate ~42 GB at N=2881, batch=168 on a 9.75 GiB H100 MIG slice.
 
-Effective batch size = 32 at every context length. When GPU memory forces a smaller micro_batch at long contexts, `accum_steps` is automatically set so that `micro_batch × accum_steps = 32`. Each optimizer update sees the same number of gradient contributions regardless of context length, so long-context experiments are directly comparable to short ones.
+With both fixes, batch=32 fits at every context length. Training logs now confirm:
+```
+[Attn] SDPA backends — flash=True mem_eff=True math=True  |  mask=None expected=True
+[Attn] Flash (mask=None, O(N) memory) | dtype=float32 | mode=train | N=2880 | any_padding=False
+```
 
-**How it's controlled:** `gradient_accumulation.enabled: true` in `experiments/v2_registry.yaml` plus the `context_micro_batch` table. `gen_commands.py` reads this and sets `BATCH_SIZE` (micro) and `ACCUM_STEPS` per context.
+**Paper claim:** "All models were trained with batch size 32, identical across all context lengths."
 
-**Paper claim:** "All models were trained with effective batch size 32 via gradient accumulation at long contexts."
+**How it's controlled:** `gradient_accumulation.context_micro_batch` in `experiments/v2_registry.yaml` is set to 32 for every context, with `effective_batch=32`. `gen_commands.py` computes `accum_steps = 32/32 = 1` for all contexts automatically.
 
-### Mode 2 — Memory-Bounded (secondary, comparison results)
+### Adjusting if memory constraints arise on a different GPU/head
 
-`batch_mode: memory_bounded` on an experiment entry, with a unique `run_tag` (e.g. `membnd`).
+Lower the relevant `context_micro_batch` entry; the gradient accumulation infrastructure handles the rest automatically:
 
-No gradient accumulation. Batch size is whatever fits GPU memory at each context length (from `memory_bounded.context_batch_size` in the registry). Long-context batches are smaller; optimizer updates may see fewer unique subjects. This is the "natural" behaviour without accumulation tricks.
-
-**Paper use:** Run Mode 2 for a selected subset of tasks (Tier 1 lstm at minimum) to report as a comparison/ablation. The difference in results (if any) isolates the effect of gradient accumulation on training quality.
-
-**How to add a Mode 2 experiment:**
 ```yaml
-# In experiments/v2_registry.yaml:
-sex_binary_lstm_membnd:
-  task: sex_binary
-  task_type: seq2label
-  num_classes: 2
-  head: lstm
-  datasets: [apples, shhs]
-  contexts: [30s, 10m, 40m, 80m, 120m, 240m]
-  batch_size: 32        # fallback only — overridden by batch_sizes.json after probe-batch
-  lr: 1.0e-4
-  run_tag: "membnd"     # results go to sex_binary_lstm_membnd/, logs tagged _membnd
-  batch_mode: memory_bounded
-  n_size: large
-  tier: 3               # run after Tier 1 grad_accum results are complete
+# Example: if 240m requires micro_batch=8 to fit in memory:
+gradient_accumulation:
+  effective_batch: 32
+  context_micro_batch:
+    "240m": 8   # gen_commands.py computes accum_steps = 32/8 = 4 automatically
 ```
 
-**Full workflow for Mode 2 (memory-bounded):**
+`gen_commands.py` will set `BATCH_SIZE=8 ACCUM_STEPS=4` for that context. The effective gradient update is mathematically identical to batch=32 with accum=1.
 
-Step 1 — find actual GPU batch sizes (one-time, runs in ~10 min):
-```bash
-# Generate the probe sbatch command:
-python scripts/gen_commands.py probe-batch sex_binary_lstm_membnd
+**Paper wording if accumulation is needed:** "All models were trained with effective batch size 32, achieved via gradient accumulation at context lengths where GPU memory required a smaller micro-batch."
 
-# Copy the printed command and run it.
-# It submits find_batch_size.py as a SLURM job.
-# When done, {results_dir}/sex_binary_lstm_membnd/batch_sizes.json is written.
-```
+### About find_batch_size.py
 
-Step 2 — train (gen_commands.py reads batch_sizes.json automatically):
-```bash
-python scripts/gen_commands.py train sex_binary_lstm_membnd
-# Each context now shows its probed batch size in the comment.
-# If batch_sizes.json does not exist yet, falls back to memory_bounded.context_batch_size from registry.
-```
+`scripts/find_batch_size.py` (run via `gen_commands.py probe-batch <exp_id>`) probes the maximum batch size that fits on the GPU for each context length. It is available but not needed for the standard batch=32 protocol. It may be useful to determine GPU headroom, or if a new task/head/GPU combination requires revisiting memory limits.
 
-`gen_commands.py` shows `Batch mode: MEMORY-BOUNDED` and whether batch sizes come from the probed file or the registry defaults.
-
-**How find_batch_size.py works:**
-
-Uses `accelerate.utils.find_executable_batch_size` (requires `accelerate>=0.20.0`).
-For each context it:
-1. Builds the actual model (same architecture as training)
-2. Allocates a batch of random embeddings with CrossEntropyLoss and runs forward+backward+optimizer step with AMP
-3. If CUDA OOM occurs, halves the batch size and retries
-4. Writes the largest succeeding batch size to `batch_sizes.json`
-
-Starting from `--starting-batch-size 256` (default), it will find the true power-of-2 maximum in at most 8 attempts per context. The whole probe for 6 context lengths takes under 10 minutes.
-
-**Probe assumption — requires cohort filter to be active:** The probe uses all-False padding masks (no padded positions). This is valid only when `dataset.min_recording_patches=2880` is set in the config, which guarantees that no real training/validation sample is shorter than its context window. Before this filter was added, the probe gave over-optimistic batch sizes for the Transformer head: real data occasionally had padded samples, which caused PyTorch's C++ attention kernel to switch from O(N) Flash/Efficient Attention to O(N²) Math Attention — using ~170× more memory at 240m and causing CUDA OOM at the probe's recommended batch size. The filter resolves this. See `docs/cohort_filter.md`.
-
-**Comparing results:** Use the same `analyze_windows.py` and plot scripts. Both runs produce parquets in separate subfolders. The `run_tag` ensures `collect_results_v2.py` keeps them separate in the collected CSVs. For paper figures, plot Mode 1 and Mode 2 saturation curves side-by-side.
-
-> **⚠ Note on future simplification of the two-mode design:**
-> The two-mode approach (Mode 1 with gradient accumulation vs Mode 2 memory-bounded) was motivated by the assumption that long-context Transformer training requires very small micro-batches (e.g. 4 at 240m), making gradient accumulation necessary to recover an effective batch size of 32. However, with `min_recording_patches=2880` in place, all padding masks are all-False and PyTorch's Transformer kernel consistently uses Flash/Efficient Attention (O(N) memory). If the probe confirms that a batch size of 32 or larger fits at all context lengths under these conditions, **the distinction between Mode 1 and Mode 2 becomes unnecessary and potentially confusing to reviewers**: if accum_steps=1 at all contexts, Mode 1 and Mode 2 are identical and there is nothing to compare. In that case, the recommendation is to collapse to a single training protocol with a fixed effective batch size (e.g. 32) and no gradient accumulation at any context length. The paper claim would then be cleaner: "all models trained with the same batch size and no accumulation tricks." Re-run the probe after activating the cohort filter to determine whether this simplification is feasible before committing to the two-mode design in the paper.
+The probe tests both train mode (backward pass) and eval mode (forward-only), since PyTorch selects different attention kernel paths in each. With `min_recording_patches=2880` and the mask fix in place, both modes use Flash attention and the probe results are reliable. Starting from `--starting-batch-size 256`, the probe for 6 context lengths completes in under 10 minutes.
 
 ---
 

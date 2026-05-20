@@ -422,17 +422,22 @@ K values that exceed `max_windows_available` for a context length are silently s
 
 ---
 
-## 12. Batch Size Modes for the Paper
+## 12. Batch Size Protocol for the Paper
 
-Two strategies for controlling batch size across context lengths are supported and documented in `experiments/v2_registry.yaml`. Both produce separate result folders (via `run_tag`) and can be analyzed with identical scripts.
+**Single protocol — batch size 32, accum_steps 1, at every context length.**
 
-### 12.1 Mode 1 — Gradient Accumulation (primary)
+This was established after resolving two root causes of CUDA OOM at 240m on the Transformer head:
 
-**Scientific motivation:** At long context lengths (80m, 120m, 240m), a single training example (one context window of N=160–480 patches) is much larger than at 30s (N=1 patch). GPU memory limits the number of examples per gradient update (micro_batch). Without compensation, the effective batch size shrinks at long contexts — optimizer updates are noisier and see fewer unique subjects, which may disadvantage long-context models independently of the context length itself.
+1. **Cohort filter** (`dataset.min_recording_patches=2880`): ensures all subjects across all context lengths have recordings ≥ 240m, so padding masks are always all-False. See `docs/cohort_filter.md`.
+2. **Mask fix** (`TransformerHead.forward()`): passes `src_key_padding_mask=None` when the mask is all-False → PyTorch selects Flash attention (O(N) memory). Without this, a float mask (even all-zeros) triggered O(N²) Math attention, trying to allocate ~42 GB at batch=168 on a 9.75 GiB GPU — always OOM.
 
-**Solution:** Gradient accumulation. Set `micro_batch × accum_steps = 32` at every context length. `gen_commands.py` reads `gradient_accumulation.context_micro_batch` and computes `accum_steps` automatically. The optimizer always processes 32 effective examples per step, regardless of L.
+With both fixes, batch=32 fits at every context length (confirmed: `[Attn] Flash (mask=None, O(N) memory) | N=2880`).
 
-**Registry configuration:**
+**Scientific justification:** Using the same batch size at all L ensures identical training dynamics across the sweep. Same subjects per gradient update, same number of gradient steps per epoch, same stochastic noise level. Context window length is the only variable between experiments, which is exactly what the paper needs to claim.
+
+**Paper claim:** "All models were trained with batch size 32, identical across all context lengths. No gradient accumulation was required."
+
+**Registry configuration (current):**
 ```yaml
 gradient_accumulation:
   enabled: true
@@ -440,38 +445,27 @@ gradient_accumulation:
   context_micro_batch:
     "30s":  32   # accum=1
     "10m":  32   # accum=1
-    "40m":  16   # accum=2
-    "80m":  8    # accum=4
-    "120m": 8    # accum=4
-    "240m": 4    # accum=8
+    "40m":  32   # accum=1
+    "80m":  32   # accum=1
+    "120m": 32   # accum=1
+    "240m": 32   # accum=1
 ```
 
-Experiment entries use this mode by default (or with `batch_mode: grad_accum`).
+`gen_commands.py` computes `accum_steps = effective_batch / micro_batch = 1` for all contexts. The gradient accumulation code path is kept for flexibility (see below) but is a no-op at these settings.
 
-**Paper claim:** "All models were trained with effective batch size 32 via gradient accumulation at long contexts, ensuring gradient updates are equally diverse across all L."
+### 12.1 If memory constraints arise on a different GPU or head
 
-### 12.2 Mode 2 — Memory-Bounded (secondary, comparison)
+Lower the `context_micro_batch` for the affected context; the infrastructure handles accumulation automatically:
 
-**Scientific motivation:** Gradient accumulation keeps effective_batch constant but changes the training dynamics — each step takes longer, and the model sees only a single micro_batch of subjects before a weight update. Some practitioners argue this is equivalent to a standard smaller batch; others argue the accumulated gradient is noisier. The memory-bounded baseline removes this variable.
-
-**Behaviour:** No accumulation. `ACCUM_STEPS=1` always. `BATCH_SIZE` varies per context according to `memory_bounded.context_batch_size` (same values as the grad_accum micro_batch). At 240m, the optimizer processes 4 examples per update; at 30s, 32.
-
-**Registry configuration:** Add entries with `batch_mode: memory_bounded` and `run_tag: "membnd"`:
 ```yaml
-sex_binary_lstm_membnd:
-  task: sex_binary
-  head: lstm
-  ...same as base entry...
-  run_tag: "membnd"
-  batch_mode: memory_bounded
-  tier: 3               # run after Mode 1 results are complete
+# Example: 240m requires micro_batch=8 on a smaller GPU:
+  context_micro_batch:
+    "240m": 8   # gen_commands.py sets ACCUM_STEPS=4 automatically
 ```
 
-`memory_bounded.context_batch_size` in the registry holds the per-context limits (default matches context_micro_batch).
+`gen_commands.py` emits `BATCH_SIZE=8 ACCUM_STEPS=4`, and the training script accumulates gradients over 4 micro-batches before each optimizer step. The effective gradient is mathematically identical to batch=32 with accum=1.
 
-**Paper strategy:** Run Mode 2 for at least one Tier 1 task (recommended: `sex_binary_lstm`) to produce a comparison figure. If Mode 1 and Mode 2 curves are nearly identical, gradient accumulation does not meaningfully change training quality — a reassuring robustness check. If they diverge, this is worth reporting as a finding about long-context training dynamics.
-
-**TODO for paper:** Run `sex_binary_lstm_membnd` (and optionally `bmi_binary_lstm_membnd`) after all Mode 1 runs are complete. Add a "Supplementary: Effect of Gradient Accumulation" section with saturation curves for both modes side by side.
+**Paper wording for this case:** "All models were trained with effective batch size 32, achieved via gradient accumulation at context lengths where GPU memory required a smaller micro-batch."
 
 ---
 
