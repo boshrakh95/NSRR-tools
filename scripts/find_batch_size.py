@@ -81,9 +81,21 @@ def probe_context(
 ) -> int:
     """Return the raw largest batch size that fits in GPU memory (before safety rounding).
 
-    Simulates a full training step: forward pass + CrossEntropyLoss + backward.
-    Creates a fresh model for each attempt so no stale gradient state leaks
-    across OOM retries.
+    Probes BOTH training and validation memory peaks, because the Transformer head
+    selects different PyTorch attention backends depending on model.training:
+
+    - model.train() (training phase): PyTorch slow path, SDPA backend chosen by
+      dtype + mask. With mask=None and fp32 on H100, Flash attention is used → O(N).
+    - model.eval() (validation phase): PyTorch fast path (_transformer_encoder_layer_fwd
+      C++ kernel), which on older versions forced Math attention (O(N²)) for any
+      non-None src_key_padding_mask — even an all-zeros float tensor.
+
+    The mask fix in TransformerHead.forward() (pass None when key_mask is all-False)
+    makes both modes use Flash attention. This probe tests eval mode specifically
+    because validation is where OOM was previously observed (train completed, val
+    crashed). Training forward+backward uses more peak memory than eval forward-only,
+    so the probe tests the higher-memory path (train) for the batch limit and also
+    confirms eval forward fits at the same batch.
 
     Mask assumption: all-False (no padded positions). This is valid because
     dataset.min_recording_patches=2880 in the config ensures every subject's
@@ -93,10 +105,8 @@ def probe_context(
 
     WARNING: if min_recording_patches is disabled or set below the longest context
     length in the sweep, padded samples will appear in real batches. The Transformer
-    head's C++ fused kernel (torch._transformer_encoder_layer_fwd) falls back to
-    O(N²) Math attention whenever any mask position is -inf, which uses drastically
-    more memory than Flash/Efficient attention. In that case, the probe's batch-size
-    recommendation will be dangerously optimistic. See docs/cohort_filter.md.
+    head then passes a non-None mask, forcing Math attention (O(N²)) with fp32,
+    which uses drastically more memory. See docs/cohort_filter.md.
 
     Args:
         cfg: Full phase0 config dict.
@@ -133,6 +143,10 @@ def probe_context(
         mask      = torch.zeros(batch_size, seq_len, dtype=torch.bool, device=device)
         y         = torch.randint(0, num_classes, (batch_size,), device=device)
 
+        # ── Training step (forward + backward) ────────────────────────────────
+        # Train mode must be tested first — backward pass consumes more memory
+        # than eval forward-only, so this is the binding memory constraint.
+        model.train()
         with torch.cuda.amp.autocast(enabled=use_amp):
             logits = model(x, mask)
             loss   = criterion(logits, y)
@@ -146,9 +160,22 @@ def probe_context(
             loss.backward()
             optimizer.step()
 
+        del logits, loss
+        gc.collect()
+        torch.cuda.empty_cache()
+
+        # ── Validation step (eval forward-only) ───────────────────────────────
+        # PyTorch selects a different attention kernel in eval mode
+        # (_transformer_encoder_layer_fwd C++ fast path). With mask=None (after
+        # the cohort filter) this also uses Flash attention, but we test it
+        # explicitly to catch any future regression.
+        model.eval()
+        with torch.no_grad(), torch.cuda.amp.autocast(enabled=use_amp):
+            logits_val = model(x, mask)
+
         result["batch_size"] = batch_size
 
-        del model, optimizer, x, mask, y, logits, loss
+        del model, optimizer, x, mask, y, logits_val
         gc.collect()
         torch.cuda.empty_cache()
 

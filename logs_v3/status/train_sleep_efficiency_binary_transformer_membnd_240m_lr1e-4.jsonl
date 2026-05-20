@@ -64,3 +64,8 @@
 {"ts":"2026-05-20T11:35:48-04:00","job_id":"12814040","node":"rg13503","status":"TIMEOUT_REQUEUED","task":"sleep_efficiency_binary","head":"transformer","context":"240m","lr":"1e-4","datasets":"apples shhs mros"}
 {"ts":"2026-05-20T11:36:15-04:00","job_id":"12815130","node":"rg13403","status":"STARTED","task":"sleep_efficiency_binary","head":"transformer","context":"240m","lr":"1e-4","datasets":"apples shhs mros"}
 {"ts":"2026-05-20T11:55:37-04:00","job_id":"12815130","node":"rg13403","status":"SUCCESS","task":"sleep_efficiency_binary","head":"transformer","context":"240m","lr":"1e-4","datasets":"apples shhs mros"}
+{"ts":"2026-05-20T15:50:11-04:00","job_id":"12830230","node":"rg13503","status":"STARTED","task":"sleep_efficiency_binary","head":"transformer","context":"240m","lr":"1e-4","datasets":"apples shhs mros"}
+{"ts":"2026-05-20T16:06:03-04:00","job_id":"12830230","node":"rg13503","status":"FAILED","reason":"240m: oom","task":"sleep_efficiency_binary","head":"transformer","context":"240m","lr":"1e-4","datasets":"apples shhs mros"}
+{"ts":"2026-05-20T16:41:34-04:00","job_id":"12833711","node":"rg12703","status":"STARTED","task":"sleep_efficiency_binary","head":"transformer","context":"240m","lr":"1e-4","datasets":"apples shhs mros"}
+{"ts":"2026-05-20T17:09:20-04:00","job_id":"12833711","node":"rg12703","status":"TIMEOUT_REQUEUED","task":"sleep_efficiency_binary","head":"transformer","context":"240m","lr":"1e-4","datasets":"apples shhs mros"}
+{"ts":"2026-05-20T17:10:32-04:00","job_id":"12837116","node":"rg12803","status":"STARTED","task":"sleep_efficiency_binary","head":"transformer","context":"240m","lr":"1e-4","datasets":"apples shhs mros"}

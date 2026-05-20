@@ -517,6 +517,16 @@ def train_one_context(
     model = build_head({**cfg, "model": m_cfg}).to(device)
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"  Trainable params: {n_params:,}")
+    if head_type == "transformer" and device.type == "cuda":
+        _flash_on  = torch.backends.cuda.flash_sdp_enabled()
+        _meff_on   = torch.backends.cuda.mem_efficient_sdp_enabled()
+        _math_on   = torch.backends.cuda.math_sdp_enabled()
+        _min_patch = cfg.get("dataset", {}).get("min_recording_patches", 0)
+        _mask_null = _min_patch >= parse_context_length(context_length)
+        print(
+            f"  [Attn] SDPA backends — flash={_flash_on} mem_eff={_meff_on} math={_math_on}"
+            f"  |  mask=None expected={_mask_null} (min_recording_patches={_min_patch})"
+        )
 
     # ── Capture training-setup metadata for metrics.json ──────────────────────
     # Compute actual average K from the built index (not the configured target).
