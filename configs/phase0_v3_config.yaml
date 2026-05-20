@@ -99,6 +99,14 @@ dataset:
   min_past_denom:       8
   max_min_past_patches: 240
 
+  # Cohort consistency filter: exclude subjects whose full recording is shorter
+  # than this many patches from ALL context lengths (not just from 240m).
+  # Ensures the same subject pool is used at every point on the sweep curve so
+  # that context-length comparisons are not confounded by cohort differences.
+  # Value = max context length in sweep: 240m × 60s/m ÷ 5s/patch = 2880.
+  # Set to 0 to disable. See docs/cohort_filter.md for details and exclusion list.
+  min_recording_patches: 2880
+
 # ── Sequence Head Model ──────────────────────────────────────────────────────
 model:
   input_dim: 512

@@ -439,6 +439,19 @@ Stem format: `{step}_{task}_{head}_{context}_{lr_or_split}` (train includes cont
 
 ---
 
+## Cohort Consistency Filter
+
+To ensure a valid context-length comparison, subjects whose full-night PSG recording is **shorter than the longest context window (240m = 2880 patches)** are excluded from **all** context lengths — not just from 240m. This prevents the cohort from silently shifting as context length grows, which would confound performance differences with population differences.
+
+- **Config key:** `dataset.min_recording_patches: 2880` in `configs/phase0_v3_config.yaml`
+- **Effect:** `ContextWindowDataset` drops subjects with `T < 2880` before building the window index, at every context length and every split.
+- **Excluded subjects:** 20 subjects for Tier 1 tasks (≤ 0.21%), 15–19 for APPLES-only Tier 2 tasks (≤ 1.72%). Full list: [`docs/excluded_subjects_T_lt_2880.csv`](excluded_subjects_T_lt_2880.csv).
+- **Full rationale and paper language:** [`docs/cohort_filter.md`](cohort_filter.md)
+
+This filter also eliminates the OOM root cause for the Transformer head at 240m (zero-padded windows triggered O(N²) Math attention; see `cohort_filter.md` for the technical explanation).
+
+---
+
 ## V2 Experiment Plan
 
 ### Tasks overview
@@ -673,13 +686,18 @@ python scripts/gen_commands.py train sex_binary_lstm_membnd
 Uses `accelerate.utils.find_executable_batch_size` (requires `accelerate>=0.20.0`).
 For each context it:
 1. Builds the actual model (same architecture as training)
-2. Allocates a batch of random embeddings and runs forward+backward+optimizer step with AMP
+2. Allocates a batch of random embeddings with CrossEntropyLoss and runs forward+backward+optimizer step with AMP
 3. If CUDA OOM occurs, halves the batch size and retries
 4. Writes the largest succeeding batch size to `batch_sizes.json`
 
 Starting from `--starting-batch-size 256` (default), it will find the true power-of-2 maximum in at most 8 attempts per context. The whole probe for 6 context lengths takes under 10 minutes.
 
+**Probe assumption — requires cohort filter to be active:** The probe uses all-False padding masks (no padded positions). This is valid only when `dataset.min_recording_patches=2880` is set in the config, which guarantees that no real training/validation sample is shorter than its context window. Before this filter was added, the probe gave over-optimistic batch sizes for the Transformer head: real data occasionally had padded samples, which caused PyTorch's C++ attention kernel to switch from O(N) Flash/Efficient Attention to O(N²) Math Attention — using ~170× more memory at 240m and causing CUDA OOM at the probe's recommended batch size. The filter resolves this. See `docs/cohort_filter.md`.
+
 **Comparing results:** Use the same `analyze_windows.py` and plot scripts. Both runs produce parquets in separate subfolders. The `run_tag` ensures `collect_results_v2.py` keeps them separate in the collected CSVs. For paper figures, plot Mode 1 and Mode 2 saturation curves side-by-side.
+
+> **⚠ Note on future simplification of the two-mode design:**
+> The two-mode approach (Mode 1 with gradient accumulation vs Mode 2 memory-bounded) was motivated by the assumption that long-context Transformer training requires very small micro-batches (e.g. 4 at 240m), making gradient accumulation necessary to recover an effective batch size of 32. However, with `min_recording_patches=2880` in place, all padding masks are all-False and PyTorch's Transformer kernel consistently uses Flash/Efficient Attention (O(N) memory). If the probe confirms that a batch size of 32 or larger fits at all context lengths under these conditions, **the distinction between Mode 1 and Mode 2 becomes unnecessary and potentially confusing to reviewers**: if accum_steps=1 at all contexts, Mode 1 and Mode 2 are identical and there is nothing to compare. In that case, the recommendation is to collapse to a single training protocol with a fixed effective batch size (e.g. 32) and no gradient accumulation at any context length. The paper claim would then be cleaner: "all models trained with the same batch size and no accumulation tricks." Re-run the probe after activating the cohort filter to determine whether this simplification is feasible before committing to the two-mode design in the paper.
 
 ---
 

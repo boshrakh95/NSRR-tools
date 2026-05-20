@@ -156,6 +156,22 @@ total_FLOPs = effective_batch_size × effective_steps_per_epoch × n_epochs × p
 
 ---
 
-## 7. Paper Claim After These Changes
+## 7. Potential Simplification: One Mode with No Accumulation
+
+> **Note (added after cohort filter investigation):** The two-mode design (Mode 1 gradient accumulation, Mode 2 memory-bounded) was motivated by the assumption that long-context Transformer training at 240m requires a very small micro-batch (4–8 samples), making accumulation necessary to reach effective batch = 32.
+>
+> This assumption was driven by a CUDA OOM that turned out to have a different root cause: subjects with recordings shorter than 240m produced zero-padded windows, and PyTorch's fused Transformer C++ kernel falls back from Flash/Efficient Attention (O(N) memory) to Math Attention (O(N²) memory) whenever any mask position is `−∞`. At N=2881 this required ~45 GB per batch of 168 — far exceeding the 9.75 GB GPU slice.
+>
+> The fix (`dataset.min_recording_patches=2880`) removes those subjects from all context lengths, eliminating padded masks entirely. With all-False masks, the Transformer uses Flash/Efficient Attention at every context length. The batch-size probe should be re-run to determine whether batch=32 (or larger) now fits at 240m.
+>
+> **If the probe confirms batch ≥ 32 at 240m:** the distinction between Mode 1 and Mode 2 is eliminated — both would run with accum_steps=1 and the same effective batch, making them identical. In that case, the paper should use a single training protocol with a fixed batch size (e.g. 32) and no gradient accumulation at any context length. This is a cleaner, more reviewable claim than "effective batch 32 via gradient accumulation at long contexts."
+>
+> **If the probe still finds batch < 32 at 240m:** Mode 1 (gradient accumulation) remains the correct primary protocol. Mode 2 can still be run as an ablation, but the section §2 caveat applies: Mode 2 batches at long contexts see fewer subjects per update, which could confound the comparison.
+>
+> **Action item:** Re-run `gen_commands.py probe-batch` for the transformer experiment after activating the cohort filter, and inspect the result before finalising the two-mode design for the paper.
+
+---
+
+## 8. Paper Claim After These Changes
 
 > "All models were trained with effective batch size 32 (achieved via gradient accumulation for longer context lengths where GPU memory is limiting), K=5 randomly sampled overlapping context windows per subject per epoch, and identical optimizer, LR schedule, and early stopping criterion across all L. The only variable between experiments is the context length L. Per-step FLOPs increase with L (a 240m window requires 480× more computation per gradient update than a 30s window); this is documented in metrics.json per experiment and used in the scaling-law analysis."

@@ -344,6 +344,33 @@ class ContextWindowDataset(Dataset):
         if limit is not None:
             self.df = self.df.iloc[:limit].reset_index(drop=True)
 
+        # ── Minimum recording length filter ───────────────────────────────
+        # Applied BEFORE index building and at ALL context lengths so that the
+        # same subject pool is used at every point on the context-length curve.
+        # Without this, subjects shorter than the longest context (240m = 2880
+        # patches) would appear at short contexts but be excluded at long ones,
+        # confounding context-length comparisons with cohort differences.
+        # See docs/cohort_filter.md for the full rationale and exclusion list.
+        self._min_recording_patches = ds_cfg.get("min_recording_patches", 0)
+        if self._min_recording_patches > 0:
+            T_series = self.df.apply(
+                lambda r: self._shape_cache.get(
+                    f"{r['dataset']}/{r['subject_id']}", 0
+                ),
+                axis=1,
+            )
+            keep = T_series >= self._min_recording_patches
+            n_excluded = (~keep).sum()
+            if n_excluded > 0:
+                min_min = self._min_recording_patches * 5 // 60
+                warnings.warn(
+                    f"[{split}] Cohort filter: {n_excluded} subject(s) excluded "
+                    f"(T < {self._min_recording_patches} patches / {min_min}m). "
+                    f"Set dataset.min_recording_patches=0 to disable.",
+                    stacklevel=2,
+                )
+            self.df = self.df[keep].reset_index(drop=True)
+
         # ── Build flat index ───────────────────────────────────────────────
         # Each entry: (subject_row_idx, aux_int, label_int)
         #   seq2seq   aux_int = anchor_patch_end  (exclusive, i.e., last patch+1)

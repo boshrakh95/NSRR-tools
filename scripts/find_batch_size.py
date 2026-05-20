@@ -81,9 +81,22 @@ def probe_context(
 ) -> int:
     """Return the raw largest batch size that fits in GPU memory (before safety rounding).
 
-    Simulates a full training step: forward pass + loss + backward.
+    Simulates a full training step: forward pass + CrossEntropyLoss + backward.
     Creates a fresh model for each attempt so no stale gradient state leaks
     across OOM retries.
+
+    Mask assumption: all-False (no padded positions). This is valid because
+    dataset.min_recording_patches=2880 in the config ensures every subject's
+    recording is at least as long as the longest context window (240m). With no
+    subjects shorter than the context, training and validation data never produce
+    padded masks, so the probe's all-False mask accurately represents real data.
+
+    WARNING: if min_recording_patches is disabled or set below the longest context
+    length in the sweep, padded samples will appear in real batches. The Transformer
+    head's C++ fused kernel (torch._transformer_encoder_layer_fwd) falls back to
+    O(N²) Math attention whenever any mask position is -inf, which uses drastically
+    more memory than Flash/Efficient attention. In that case, the probe's batch-size
+    recommendation will be dangerously optimistic. See docs/cohort_filter.md.
 
     Args:
         cfg: Full phase0 config dict.
@@ -102,6 +115,7 @@ def probe_context(
 
     input_dim = cfg["model"]["input_dim"]
     m_cfg = {**cfg, "model": {**cfg["model"], "num_classes": num_classes, "head_type": head_type}}
+    criterion = torch.nn.CrossEntropyLoss()
 
     result = {"batch_size": None}
 
@@ -114,10 +128,14 @@ def probe_context(
         model     = build_head(m_cfg).to(device)
         optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
         x         = torch.randn(batch_size, seq_len, input_dim, device=device)
+        # All-False mask: valid because min_recording_patches filter ensures no
+        # padded samples exist in real data. See docstring for the full reasoning.
         mask      = torch.zeros(batch_size, seq_len, dtype=torch.bool, device=device)
+        y         = torch.randint(0, num_classes, (batch_size,), device=device)
 
         with torch.cuda.amp.autocast(enabled=use_amp):
-            loss = model(x, mask).mean()
+            logits = model(x, mask)
+            loss   = criterion(logits, y)
 
         if use_amp:
             scaler = torch.cuda.amp.GradScaler()
@@ -130,7 +148,7 @@ def probe_context(
 
         result["batch_size"] = batch_size
 
-        del model, optimizer, x, mask, loss
+        del model, optimizer, x, mask, y, logits, loss
         gc.collect()
         torch.cuda.empty_cache()
 
