@@ -22,9 +22,13 @@ questions — only the amount of context given as input differs.
     Train split:    K = min(K_max, T-N+1) windows sampled from overlapping
                     positions so K_max windows are achievable at all context
                     lengths (including 240m).
-    Val/test split: K = min(K_max, T//N) windows at non-overlapping stride-N
-                    positions (0, N, 2N, …).  Inference with K_max=99_999
-                    recovers all T//N non-redundant windows.
+    Val/test split: K = min(K_max, T-N+1) windows evenly spaced across the
+                    overlapping pool (deterministic) — same pool as training,
+                    so K=K_max is achievable at all context lengths (240m: 5,
+                    not the 2 that non-overlapping stride-N would give).
+    Inference:      K_max=99_999 triggers the non-overlapping stride-N path
+                    (0, N, 2N, …), recovering all T//N non-redundant windows
+                    identical to v2 behaviour.
     K_max is fixed at every context length so __len__ is constant across the
     sweep (only breaks at full_night where K=1).
 
@@ -461,11 +465,18 @@ class ContextWindowDataset(Dataset):
                 starts = sorted(
                     rng.choice(n_valid, size=K, replace=False).tolist()
                 )
+            elif self._K_max <= 100:
+                # Val/test during training (K_max=5): overlapping pool,
+                # evenly spaced and deterministic. Same pool as training so
+                # K=K_max is achievable at all context lengths (240m: gives 5
+                # instead of the 2 that non-overlapping stride-N would give).
+                n_valid = T - N + 1
+                K = min(self._K_max, n_valid)
+                starts = np.linspace(0, n_valid - 1, K, dtype=int).tolist()
             else:
-                # Non-overlapping pool: stride-N positions 0, N, 2N, …
-                # Inference with K_max=99_999 recovers all T//N windows,
-                # giving systematic non-redundant night coverage identical
-                # to v2 behaviour.
+                # Inference (K_max=99_999): non-overlapping stride-N positions
+                # 0, N, 2N, … giving systematic, non-redundant night coverage
+                # identical to v2 behaviour.
                 n_windows = T // N
                 K = min(self._K_max, n_windows)
                 positions = np.linspace(0, n_windows - 1, K, dtype=int)

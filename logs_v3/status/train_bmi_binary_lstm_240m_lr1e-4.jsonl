@@ -1,0 +1,2 @@
+{"ts":"2026-05-20T18:55:56-04:00","job_id":"12843261","node":"rg13403","status":"STARTED","task":"bmi_binary","head":"lstm","context":"240m","lr":"1e-4","datasets":"apples shhs mros"}
+{"ts":"2026-05-20T20:34:52-04:00","job_id":"12843261","node":"rg13403","status":"FAILED","task":"bmi_binary","head":"lstm","context":"240m","lr":"1e-4","datasets":"apples shhs mros"}

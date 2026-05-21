@@ -70,14 +70,14 @@ This is the source of the conceptual confusion, so it is worth being explicit:
 
 | K | Used where | Windowing pool | Value |
 |---|-----------|---------------|-------|
-| **K_train** | Training dataloader, each epoch | **Overlapping** — any start in [0, T−N] | `windows_per_subject` (default 5) |
-| **K_val** | Validation eval during training (early stopping) | **Non-overlapping** stride-N | min(K_train, T//N) |
+| **K_train** | Training dataloader, each epoch | **Overlapping** — any start in [0, T−N], random | `windows_per_subject` (default 5) |
+| **K_val** | Validation eval during training (early stopping) | **Overlapping** — evenly spaced across [0, T−N], deterministic | K_max = 5 at all context lengths |
 | **K_infer** | `infer_subject_windows.py` | **Non-overlapping** stride-N | T//N (all) |
 
 Important implications:
-- **K_val is not always equal to K_train.** For very long contexts (e.g. 240m with T//N = 2 for an 8h night), val evaluation uses only 2 windows per subject. The early-stopping AUROC signal is therefore noisier at long contexts — you may need more patience epochs for the val curve to stabilise.
-- **K_infer is always T//N** because `infer_subject_windows.py` sets `windows_per_subject = 99,999`, and the non-overlapping dataset branch returns all floor(T/N) positions deterministically.
-- The overlapping pool for K_train (any start in [0, T−N]) makes K=5 achievable even at 240m (n_valid=481 positions for an 8h night). Without this, K at 240m would be capped at T//N = 2 during training.
+- **K_val = K_max = 5 at all context lengths.** Val and test during training use the overlapping pool (triggered when K_max ≤ 100), so K=5 is achieved at 240m just as at shorter contexts. The 5 positions are evenly spaced and fixed, so the early-stopping signal is equally stable across the entire context-length sweep.
+- **K_infer is always T//N** because `infer_subject_windows.py` sets `windows_per_subject = 99,999`, routing to the non-overlapping stride-N branch which returns all floor(T/N) positions deterministically. Inference is unaffected.
+- The overlapping pool makes K=5 achievable at all context lengths in both training and evaluation.
 
 ### Training K (K_train)
 

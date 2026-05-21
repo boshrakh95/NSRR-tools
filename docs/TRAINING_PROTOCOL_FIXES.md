@@ -82,7 +82,7 @@ for s in starts:
     index.append((row_idx, int(s), label))
 ```
 
-**Important:** the overlapping pool applies to the **train split only**. Val/test use the non-overlapping stride-N positions (same as v2). This is critical for inference correctness — see "What this does NOT change" below.
+**Important:** the overlapping pool applies to **train and val/test during training** (K_max ≤ 100). Inference (`infer_subject_windows.py`, K_max=99,999) continues to use the non-overlapping stride-N path — see "What this does NOT change" below.
 
 **No other files need to change.** The `_get_seq2label_window` function already handles arbitrary `window_start` values correctly (it slices `emb[s : s+N]` and pads if needed). Since all starts now satisfy `s + N ≤ T`, no padding will occur.
 
@@ -122,15 +122,15 @@ The paper's claim ("K windows per subject per epoch") holds for any fixed K_max 
 
 ### What this does NOT change
 
-- **Val/test splits (training-time metrics):** use K evenly-spaced positions from the non-overlapping stride-N pool (positions 0, N, 2N, …), same as v2. This gives deterministic, reproducible validation curves.
-- **Inference (`infer_subject_windows.py`):** uses the val/test (non-overlapping) path with K_max=99,999, recovering all T//N windows per subject — systematic, non-redundant night coverage. **Note:** an earlier intermediate version of this fix incorrectly applied the overlapping pool to all splits; if you ran inference with that version, delete the parquets and rerun.
+- **Val/test splits (training-time metrics):** use K evenly-spaced positions from the **overlapping** pool (K_max ≤ 100 branch), giving K=5 at all context lengths including 240m. Windows are deterministic (evenly spaced across [0, T-N]), so val curves are reproducible across epochs.
+- **Inference (`infer_subject_windows.py`):** uses K_max=99,999, which routes to the non-overlapping stride-N path, recovering all T//N windows per subject — systematic, non-redundant night coverage. Inference is unchanged by this fix.
 - **Subjects with T < N** (night shorter than the context window): still get one zero-padded window. Correct regardless of overlap strategy.
 
 ### Impact on existing results
 
 If you have already-trained models using the old non-overlapping strategy, their `training_curves.csv` files are valid as-is (they reflect the actual training that happened). **Do not mix** old-protocol and new-protocol runs in the same comparison figure — rerun all context lengths with the new protocol if you switch.
 
-This is a **breaking change to training** — all experiments should be rerun after this fix. It does not affect inference or analysis scripts.
+This is a **breaking change to training and val/test evaluation** — all experiments should be rerun after this fix. It does not affect inference or analysis scripts.
 
 ---
 
@@ -260,13 +260,13 @@ This approximation is exact only if `steps_per_epoch` did not change between the
 - **Effective batch size**: keep at 32 across all context lengths using gradient accumulation when GPU memory forces smaller micro_batches. Record `batch_size`, `accum_steps`, and `effective_batch_size` in metrics.json.
 - **K_max (windows_per_subject)**: keep the same value for all context lengths in a given comparison. K=5 is acceptable; K=10 is safer. After Issue 1 is fixed, K=K_max is achieved for essentially all subjects with T ≥ N.
 - **Epochs, LR, patience**: same for all context lengths (with the optional per-context LR override for 120m/240m). The only primary variable is L.
-- **Val/test inference**: `infer_subject_windows.py` uses the non-overlapping stride-N pool (val/test split path) with K_max=99,999 — giving all T//N windows per subject. This is correct and must remain so.
+- **Inference**: `infer_subject_windows.py` uses K_max=99,999, which routes to the non-overlapping stride-N pool — giving all T//N windows per subject. This is unchanged and must remain so.
 
 ## Summary of changes (all implemented in v3)
 
 | Issue | File | Change | Status |
 |-------|------|--------|--------|
-| 1 (overlapping windows — train only) | `src/nsrr_tools/datasets/context_window_dataset.py` | Train split: overlapping pool (T-N+1 starts), K=K_max always achieved. Val/test: non-overlapping stride-N pool (T//N positions), same as v2. | ✅ Done |
+| 1 (overlapping windows — train + val/test) | `src/nsrr_tools/datasets/context_window_dataset.py` | Train: overlapping pool (random K starts). Val/test (K_max≤100): overlapping pool (evenly spaced, deterministic), K=K_max at all context lengths. Inference (K_max=99,999): non-overlapping stride-N. | ✅ Done |
 | 2 (actual K in metrics.json) | `scripts/train_context_sweep.py` | Compute average K from index after dataset is built | ✅ Done |
 | 3 (token budget comment) | `configs/phase0_v2_config.yaml`, `phase0_v3_config.yaml` | Warning comment; token_budget labelled SECONDARY ANALYSIS ONLY | ✅ Done |
 | 4 (global_step resume) | `scripts/train_context_sweep.py` | global_step saved in history/resume.pt and training_curves.csv | ✅ Done (prior session) |
@@ -277,4 +277,4 @@ This approximation is exact only if `steps_per_epoch` did not change between the
 
 ## Claim you can make after these fixes (v3 protocol)
 
-> "All models were trained with the same protocol: K=5 randomly sampled context windows per subject per epoch, sampled from all valid overlapping start positions (ensuring K=5 is achievable at all context lengths, including 240m). An effective batch size of 32 was maintained across all context lengths via gradient accumulation for longer contexts where the GPU-level micro_batch is smaller. The optimizer (AdamW), LR schedule (cosine), and early stopping criterion (val AUROC, patience=10) were identical across context lengths, except that a context-specific LR of 5×10⁻⁵ was used for 120m and 240m (vs 10⁻⁴ for shorter contexts). For inference and val/test evaluation, windows are placed at non-overlapping stride-N positions (0, N, 2N, …), giving T//N systematic, non-redundant windows per subject. The actual micro_batch, accum_steps, and effective_batch_size are recorded in each experiment's metrics.json. The only primary variable between experiments is the context length L."
+> "All models were trained with the same protocol: K=5 context windows per subject per epoch sampled from the overlapping pool (any start in [0, T−N]), ensuring K=5 is achievable at all context lengths including 240m. Validation during training also used K=5 evenly-spaced windows from the overlapping pool (deterministic across epochs), providing a stable early-stopping signal at all context lengths. Inference used all T//N non-overlapping stride-N windows per subject. All models used batch size 32, accum_steps 1. The optimizer (AdamW), LR schedule (cosine), and early stopping criterion (val AUROC, patience=10) were identical across context lengths. The only primary variable between experiments is the context length L."

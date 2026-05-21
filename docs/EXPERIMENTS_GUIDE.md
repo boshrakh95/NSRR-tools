@@ -2,7 +2,7 @@
 
 This document is the definitive reference for running training, inference, and analysis experiments for Phase 0 V2 task definitions.
 
-> **V3 protocol (current):** Results are written to `phase0_v3/`, logs to `logs_v3/`. Training uses overlapping-window fixed-K sampling (K=5 per subject at all context lengths); **val/test/inference use non-overlapping stride-N windows** (T//N positions) to avoid redundant windows at evaluation time. Context-specific LR at 120m/240m and varying batch size recorded in metrics.json. Use `configs/phase0_v3_config.yaml` and `experiments/v2_registry.yaml` (already updated). Do NOT mix v2 and v3 results in the same comparison figure. See [TRAINING_PROTOCOL_FIXES.md](TRAINING_PROTOCOL_FIXES.md) for the rationale behind each change.
+> **V3 protocol (current):** Results are written to `phase0_v3/`, logs to `logs_v3/`. Training uses overlapping-window fixed-K sampling (K=5 per subject at all context lengths); **val/test during training also use K=5 overlapping windows** (evenly spaced, deterministic) so the early-stopping signal is equally reliable at all context lengths; **inference uses non-overlapping stride-N windows** (T//N positions) for systematic, non-redundant night coverage. Context-specific LR at 120m/240m. Use `configs/phase0_v3_config.yaml` and `experiments/v2_registry.yaml` (already updated). Do NOT mix v2 and v3 results in the same comparison figure. See [TRAINING_PROTOCOL_FIXES.md](TRAINING_PROTOCOL_FIXES.md) for the rationale behind each change.
 >
 > **Note on paths:** All examples in this document use V3 paths (`phase0_v3/`, `logs_v3/`). The archived V2 config (`phase0_v2_config.yaml`) is shown only in the Config Files table.
 
@@ -607,16 +607,16 @@ There are three distinct K values in the pipeline. They use different sources an
 
 | K concept | Where set | Pool | Typical value |
 |-----------|-----------|------|---------------|
-| **K_train** (windows/epoch) | `dataset.windows_per_subject` in config (or token_budget) | **Overlapping** — any start in [0, T−N] | 5 |
-| **K_val** (training-time val evaluation) | same `windows_per_subject` config | **Non-overlapping** stride-N positions | min(5, T//N) |
+| **K_train** (windows/epoch) | `dataset.windows_per_subject` in config (or token_budget) | **Overlapping** — any start in [0, T−N], random | 5 |
+| **K_val** (training-time val/test) | same `windows_per_subject` config | **Overlapping** — evenly spaced across [0, T−N], deterministic | 5 at all context lengths |
 | **K_infer** (inference, all windows) | `--all-windows` flag → K_max=99,999 | **Non-overlapping** stride-N positions | T//N (all) |
 | **K_analysis** (post-hoc sweep) | `analyze_windows.py --k-values` | Subsampled from K_infer parquet | 1,5,10,20,50,all |
 
 Key points:
-- **K_val during training is often < K_max.** For very long contexts (e.g. 240m with T//N = 2), val evaluation uses only 2 windows per subject — the early-stopping AUROC signal is noisier than for short contexts. This is inherent to long-context training on typical recording lengths.
-- **K_infer recovers all T//N windows** because `infer_subject_windows.py` overrides `windows_per_subject` to 99,999, then the val/test branch of the dataset returns all non-overlapping positions.
+- **K_val = K_max = 5 at all context lengths.** Val and test during training use the overlapping pool (K_max ≤ 100 branch), so K=5 is always achieved regardless of context length. The 5 positions are evenly spaced across [0, T−N] and fixed per subject, giving a deterministic, stable early-stopping signal.
+- **K_infer recovers all T//N windows** because `infer_subject_windows.py` overrides `windows_per_subject` to 99,999, routing to the non-overlapping stride-N branch. Inference is unaffected by the val windowing change.
 - **K_analysis is completely separate** — it subsamples from the already-saved parquet rows in `analyze_windows.py`. No model or GPU needed.
-- K_train and K_val share the same config value (`windows_per_subject`) but use different windowing pools (overlapping vs non-overlapping). This is by design: training benefits from diverse window positions, while val evaluation needs deterministic, non-redundant coverage.
+- The distinction between K_val and K_infer is implemented via K_max: ≤100 → overlapping (val/test), >100 → non-overlapping (inference).
 
 ---
 
