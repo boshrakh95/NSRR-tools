@@ -267,7 +267,7 @@ experiments:
     task_type: seq2label
     num_classes: 2
     head: lstm
-    datasets: [apples] # , stages
+    datasets: [apples, stages]
     contexts: [30s, 10m, 40m, 80m, 120m]   # skip 80m: small N per split
     batch_size: 32
     lr: 1.0e-4
