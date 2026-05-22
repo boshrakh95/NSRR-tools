@@ -452,24 +452,34 @@ This filter also eliminates the OOM root cause for the Transformer head at 240m 
 
 ---
 
-## V2 Experiment Plan
+## Experiment Plan
 
 ### Tasks overview
 
-| Task | Type | Classes | N total | Datasets | Tier |
-|------|------|---------|---------|----------|------|
-| `sex_binary` | seq2label | 2 | ~13k | APPLES, SHHS | 1 |
-| `sleep_efficiency_binary` | seq2label | 2 | ~13k | APPLES, SHHS, MrOS | 1 |
-| `bmi_binary` | seq2label | 2 | ~15k | APPLES, SHHS, MrOS | 1 |
-| `age_class` | seq2label | 3 | ~16k | APPLES, SHHS, MrOS | 1 |
-| `psqi_binary` | seq2label | 2 | ~4k | MrOS | 2 |
-| `depression_extreme_binary` | seq2label | 2 | ~1.8k | APPLES | 2 |
-| `osa_binary_apples_postqc` | seq2label | 2 | ~1.5k | APPLES | 2 |
-| `osa_severity_apples` | seq2label | 4 | ~1.5k | APPLES | 2 |
+All tasks run under v3 protocol and write results to `phase0_v3/`. Tasks originally from phase0 (legacy) have been added to the registry and re-run here for a consistent comparison baseline.
+
+| Task | Type | Classes | N | Datasets | Tier | Phase0? |
+|------|------|---------|---|----------|------|---------|
+| `sex_binary` | seq2label | 2 | ~13k | APPLES, SHHS | 1 | No |
+| `sleep_efficiency_binary` | seq2label | 2 | ~13k | APPLES, SHHS, MrOS | 1 | No |
+| `bmi_binary` | seq2label | 2 | ~15k | APPLES, SHHS, MrOS | 1 | No |
+| `age_class` | seq2label | 3 | ~16k | APPLES, SHHS, MrOS | 1 | No |
+| `apnea_binary` | seq2label | 2 | 14,097 | APPLES, SHHS, MrOS, STAGES | 1 | ✓ |
+| `sleep_staging` | seq2seq | 5 | 14,960 | SHHS, MrOS, STAGES, APPLES | 1 | ✓ |
+| `psqi_binary` | seq2label | 2 | ~4k | MrOS | 2 | No |
+| `depression_extreme_binary` | seq2label | 2 | ~1.8k | APPLES, STAGES | 2 | No |
+| `osa_binary_apples_postqc` | seq2label | 2 | ~1.5k | APPLES | 2 | No |
+| `osa_severity_apples` | seq2label | 4 | ~1.5k | APPLES | 2 | No |
+| `cvd_binary` | seq2label | 2 | 13,045 | SHHS, MrOS | 2 | ✓ |
+| `sleepiness_binary` | seq2label | 2 | 16,431 | APPLES, SHHS, MrOS, STAGES | 2 | ✓ |
+| `insomnia_binary` | seq2label | 2 | 1,710 | STAGES | deferred | ✓ |
+| `rested_morning` | seq2label | 2 | 3,934 | MrOS | deferred | ✓ |
+| `anxiety_binary` | seq2label | 2 | 1,698 | STAGES | deferred | ✓ |
 
 Context lengths:
-- **Tier 1:** `30s, 10m, 40m, 80m, 120m, 240m`
-- **Tier 2:** `30s, 10m, 40m, 80m, 120m` (smaller N; 240m not added)
+- **Tier 1:** `30s, 10m, 40m, 80m, 120m, 240m` (all 6)
+- **Tier 2:** `30s, 10m, 40m, 80m, 120m` (small N) or all 6 for large-N Tier 2 tasks (cvd, sleepiness)
+- **Deferred:** `30s, 10m, 40m, 80m, 120m`
 
 ### Experiments per task
 
@@ -477,35 +487,40 @@ Context lengths:
 
 | Experiment ID | Head | Notes |
 |--------------|------|-------|
-| `sex_binary_lstm` | lstm | |
-| `sex_binary_transformer` | transformer | |
-| `sex_binary_mean_pool` | mean_pool | batch_size=64 |
-| `sleep_efficiency_binary_lstm` | lstm | |
-| `sleep_efficiency_binary_transformer` | transformer | |
-| `sleep_efficiency_binary_mean_pool` | mean_pool | batch_size=128 |
-| `bmi_binary_lstm` | lstm | |
-| `bmi_binary_transformer` | transformer | |
-| `bmi_binary_mean_pool` | mean_pool | batch_size=128 |
-| `age_class_lstm` | lstm | 3-class |
-| `age_class_transformer` | transformer | 3-class |
-| `age_class_mean_pool` | mean_pool | 3-class, batch_size=128 |
+| `sex_binary_lstm/transformer/mean_pool` | all | |
+| `sleep_efficiency_binary_lstm/transformer/mean_pool` | all | |
+| `bmi_binary_lstm/transformer/mean_pool` | all | |
+| `age_class_lstm/transformer/mean_pool` | all | 3-class |
+| `apnea_binary_lstm/transformer/mean_pool` | all | legacy re-run |
+| `sleep_staging_lstm/transformer/mean_pool` | all | seq2seq, 5-class; primary metric: Cohen's κ |
 
-**Tier 2** — lstm only:
+**Tier 2** — lstm only (add more heads if results warrant):
 
 | Experiment ID | Head | Notes |
 |--------------|------|-------|
 | `psqi_binary_lstm` | lstm | MrOS only |
-| `depression_extreme_binary_lstm` | lstm | APPLES only, extreme-group design |
+| `depression_extreme_binary_lstm` | lstm | APPLES+STAGES, extreme-group design |
 | `osa_binary_apples_postqc_lstm` | lstm | APPLES only |
 | `osa_severity_apples_lstm` | lstm | APPLES only, 4-class |
+| `cvd_binary_lstm` | lstm | legacy re-run; mixed CVD definition (see Notes) |
+| `sleepiness_binary_lstm` | lstm | legacy re-run; borderline AUROC in phase0 |
+
+**Deferred** — run last, poor phase0 signal:
+
+| Experiment ID | Notes |
+|--------------|-------|
+| `insomnia_binary_lstm` | STAGES only; phase0 AUROC ~0.58 |
+| `rested_morning_lstm` | MrOS only; phase0 AUROC ~0.53 (near chance) |
+| `anxiety_binary_lstm` | STAGES only; phase0 AUROC ~0.57 |
 
 ### Suggested run order
 
 1. Submit Tier 1 lstm across all contexts first (validate pipeline end-to-end)
 2. Submit Tier 1 transformer and mean_pool in parallel
 3. After Tier 1 trains → run inference + analysis
-4. Submit Tier 2
+4. Submit Tier 2 (cvd and sleepiness are large N, schedule like Tier 1)
 5. Run inference + analysis for Tier 2
+6. Submit deferred tasks only if GPU budget allows
 
 ---
 
@@ -725,11 +740,21 @@ Labels are already prepared: `age_value` and `bmi_value` float columns in `targe
 
 **`bmi_binary`**: WHO obesity threshold (BMI≥30=1). MrOS visit-2 rows excluded from training (no harmonized v2 BMI available).
 
-**`depression_extreme_binary`**: Extreme-group design — middle BDI/PHQ-9 range subjects dropped. Reduces effective N from ~2.8k to ~1.8k.
+**`depression_extreme_binary`**: Extreme-group design — middle BDI/PHQ-9 range subjects dropped. Reduces effective N from ~2.8k to ~1.8k. Now includes STAGES (PHQ-9 ≤4 → 0, ≥15 → 1) alongside APPLES (BDI ≤9 → 0, ≥20 → 1). APPLES-only training failed (only 27 class-1 subjects in APPLES alone).
 
 **`osa_binary_apples_postqc`** and **`osa_severity_apples`**: APPLES-only. Small N (~1,516). Context lengths up to 120m included; be cautious with 80m+ given small per-split N.
 
 **`psqi_binary`**: MrOS-only. Both MrOS visits contribute (PSQI is visit-specific). N=~3,933 across both visits.
+
+**`apnea_binary`** (legacy re-run): AHI≥15 standard clinical threshold. 4 datasets, ~1:1 class balance, N=14,097. Phase0 AUROC reached 0.73 at 40m with lstm. This is the primary OSA result for the paper; `osa_binary_apples_postqc` is a supplementary ablation using clinician-adjudicated labels.
+
+**`sleep_staging`** (legacy re-run): Anchor-based seq2seq — model sees a context window and predicts the label of the centre epoch. 5 classes: Wake=0, N1=1, N2=2, N3=3, REM=4. Primary metric: Cohen's κ and per-stage F1 (AUROC also logged for reference). Phase0 κ=0.58–0.63 at 10–40m. N1 is minority (~5–8% of epochs) and will have lowest per-stage F1. mean_pool head loses position info and may underperform on this anchor task.
+
+**`cvd_binary`** (legacy re-run): SHHS uses composite any_cvd (CHD + stroke + heart failure + peripheral vascular); MrOS uses cvchd (coronary heart disease only) — these are different definitions. Merged here for consistency with phase0. For publication, consider reporting SHHS-only and MrOS-only separately. Phase0 AUROC 0.64–0.67.
+
+**`sleepiness_binary`** (legacy re-run): ESS≥11 threshold. N=16,431 across all 4 datasets. Phase0 AUROC 0.59–0.61 — borderline. Included as Tier 2 to test whether v3 overlapping-window protocol and 240m context improve the signal.
+
+**`insomnia_binary`**, **`rested_morning`**, **`anxiety_binary`** (deferred): All had AUROC ≤0.60 in phase0 (near-chance for rested_morning at 0.52–0.54). Run only if GPU budget allows; results are unlikely to change the paper's conclusions.
 
 ---
 

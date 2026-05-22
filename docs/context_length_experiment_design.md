@@ -145,34 +145,27 @@ With `[30s, 2m, 5m, 10m, 40m, 80m, 120m, 240m, full_night]` the heatmap covers 3
 
 ### Tier 1 experiments (full comparison, all three heads)
 
-Run all four Tier 1 tasks × recommended 9 context lengths × 3 heads.  
-This is the set that answers H1–H4 comprehensively.
+Six tasks × 6 context lengths × 3 heads:
+`sex_binary`, `sleep_efficiency_binary`, `bmi_binary`, `age_class`, `apnea_binary`, `sleep_staging`
 
-For paper: probably show the full grid for one task (sex_binary or bmi_binary) and a summary comparison across tasks.
+For paper: show the full heatmap grid for one representative task (bmi_binary or sex_binary) and the saturation curve across all Tier 1 tasks. `apnea_binary` is the primary OSA result. `sleep_staging` is the primary seq2seq result — primary metric is Cohen’s κ (not AUROC).
 
 ### Tier 2 experiments (lstm only)
 
-Run the 4 Tier 2 tasks × 5 original context lengths × lstm only. These are lower priority — run after Tier 1 is done.
+Six tasks × 5–6 context lengths × lstm only:
+`psqi_binary`, `depression_extreme_binary`, `osa_binary_apples_postqc`, `osa_severity_apples` (5 contexts, small N), `cvd_binary`, `sleepiness_binary` (6 contexts, large N)
 
-### Ablation: training K
-
-Run one task (recommended: `sex_binary_lstm`) with two additional training K settings:
-
-1. `run_tag: kall` — `windows_per_subject: 9999` (train on all available windows)
-2. `run_tag: kbudget` — `windows_per_subject = budget_min / L_min` where budget = 80 min (token budget approach)
-
-Use the same inference and analysis pipeline. If the heatmap shape is qualitatively similar to the K=5 baseline, your main conclusions are robust to this choice. If not, use the token budget approach for the main results.
-
-This ablation requires 2 × 9 = 18 additional training jobs for one task.
+Run after Tier 1 is complete.
 
 ### Seq2seq tasks (sleep staging)
 
-For sleep staging, subject-level aggregation doesn't apply (each 30-second epoch has its own label). The research questions simplify:
-- H1 (context saturation): Does segment-level accuracy increase with L?
+For sleep staging, subject-level aggregation doesn’t apply (each 30-second epoch has its own label). The research questions simplify:
+- H1 (context saturation): Does per-epoch accuracy / Cohen’s κ increase with L?
 - H4 does not apply (no aggregation)
-- No heatmap needed; just the saturation curve (AUROC vs L at K=all segments)
+- No heatmap needed; just the saturation curve (κ and per-stage F1 vs L)
+- Primary metric: Cohen’s κ and per-stage F1. AUROC also logged for reference.
 
-This is a simpler analysis — run the sweep and report the saturation curve.
+The mean_pool head loses position information and is expected to underperform on the anchor task; its saturation curve is included as a no-temporal-context baseline.
 
 ---
 
