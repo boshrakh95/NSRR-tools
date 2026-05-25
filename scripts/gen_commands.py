@@ -129,14 +129,14 @@ _INFER_SCRIPT = "infer_subject_windows_gpu_rorqual.sh" if _ON_RORQUAL else "infe
 # training state is lost (resume.pt is saved after every epoch).
 # Values are fractional hours; estimate_train_time() converts to HH:MM:SS.
 _TRAIN_HOURS = {
-    ("large",  "lstm"):        {"30s": 1.5, "10m": 2,   "40m": 2.5, "80m": 3.5, "120m": 5,   "240m": 9,   "full_night": 6 },
-    ("large",  "transformer"): {"30s": 1.5, "10m": 2.5, "40m": 3,   "80m": 6,   "120m": 9,   "240m": 18,  "full_night": 18},
+    ("large",  "lstm"):        {"30s": 1.5, "10m": 2,   "40m": 2.5, "80m": 3.5, "120m": 5,   "240m": 5,   "full_night": 6 },
+    ("large",  "transformer"): {"30s": 1, "10m": 1.5, "40m": 2,   "80m": 3,   "120m": 5,   "240m": 6,  "full_night": 18},
     ("large",  "mean_pool"):   {"30s": 1,   "10m": 1,   "40m": 1,   "80m": 1,   "120m": 1,   "240m": 1.5, "full_night": 2 },
-    ("medium", "lstm"):        {"30s": 1,   "10m": 1.5, "40m": 1.5, "80m": 2,   "120m": 3,   "240m": 6,   "full_night": 3 },
-    ("medium", "transformer"): {"30s": 1,   "10m": 1.5, "40m": 2,   "80m": 4,   "120m": 6,   "240m": 12,  "full_night": 18},
+    ("medium", "lstm"):        {"30s": 1,   "10m": 1.5, "40m": 1.5, "80m": 2,   "120m": 3,   "240m": 4,   "full_night": 3 },
+    ("medium", "transformer"): {"30s": 1,   "10m": 1.5, "40m": 2,   "80m": 4,   "120m": 6,   "240m": 5,  "full_night": 18},
     ("medium", "mean_pool"):   {"30s": 1,   "10m": 1,   "40m": 1,   "80m": 1,   "120m": 1,   "240m": 1,   "full_night": 1 },
     ("small",  "lstm"):        {"30s": 1,   "10m": 1,   "40m": 1,   "80m": 1.5, "120m": 2,   "240m": 3,   "full_night": 2 },
-    ("small",  "transformer"): {"30s": 1,   "10m": 1,   "40m": 1.5, "80m": 2,   "120m": 3,   "240m": 6,   "full_night": 18},
+    ("small",  "transformer"): {"30s": 1,   "10m": 1,   "40m": 1.5, "80m": 2,   "120m": 3,   "240m": 4,   "full_night": 18},
     ("small",  "mean_pool"):   {"30s": 1,   "10m": 1,   "40m": 1,   "80m": 1,   "120m": 1,   "240m": 1,   "full_night": 1 },
 }
 
