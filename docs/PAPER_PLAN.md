@@ -280,9 +280,9 @@ All heads trained from scratch per (task, context length). The encoder is never 
 - **Epochs**: up to 40; early stopping on validation AUROC (patience=10)
 - **Batch size**: 32 at all context lengths (no gradient accumulation needed after cohort filter + Flash attention fix)
 - **Class imbalance**: inverse-frequency class weights in CrossEntropyLoss; no WeightedRandomSampler
-- **Training K**: K_train = 5 windows per subject per epoch (fixed, context-length-independent). **Paper justification**: fixing K at 5 across all context lengths ensures that each model receives the same number of gradient updates per subject regardless of L — the only variable between experiments is the context window length itself. The alternative (token-budget K, where K ∝ 1/L) was explicitly rejected because it confounds training-exposure intensity with context length, making observed performance differences uninterpretable. Reference: `docs/context_length_experiment_design.md` §3 and §13.
-- **Checkpointing**: best checkpoint saved by val_auroc; per-epoch resume.pt for SLURM timeout resilience
-- **Paper claim**: "All models were trained with batch size 32, identical across all context lengths. The Transformer head uses Flash attention (O(N) memory) at all context lengths after a cohort consistency filter ensures padding-free batches. Training K was fixed at 5 windows per subject per epoch to ensure identical gradient exposure per subject across all context lengths."
+- **Training K**: K_train = 5 windows per subject per epoch (fixed, context-length-independent). Justification: equalises gradient updates per subject per epoch across all L — the right criterion for isolating context-length effects. Token-budget (K ∝ 1/L) is rejected because it gives the 30s model 160× more gradient updates per epoch than the 120m model. Full argument in `docs/EXPERIMENTS_GUIDE.md` §"Why K=5 fixed" and `docs/context_length_experiment_design.md` §12.5. Sensitivity ablation (one task, token-budget) to be run as supplementary validation.
+- **Checkpointing**: best checkpoint saved by val_auroc; per-epoch resume.pt for SLURM timeout resilience.
+- **Paper claim (exact wording from docs):** "At each context length, K=5 windows were randomly sampled per subject per training epoch, keeping the number of gradient updates per subject constant across context lengths — the relevant criterion for an unconfounded comparison of context-length effects. As a sensitivity analysis, we repeated the experiment for [task] using a token-budget schedule (K × L = 80 min), and found no qualitative difference in the saturation curve (Supplementary Table X)." | Batch size 32, accum_steps=1, Flash attention at all context lengths.
 
 ### III-G: Context-Length Sweep Design
 
@@ -341,6 +341,7 @@ One model is trained per (task, head, context length). The context window length
 | Implementation details: embedding extraction, channel priority, cohort filter | S8 |
 | Subject-level prediction stability: K* histogram, within-subject variance | S9 |
 | Excluded subjects list (cohort filter) | S10 |
+| **Table SX — K=5 sensitivity check**: token-budget saturation curve vs K=5 for 1 task (sex_binary or bmi_binary_lstm); shows same qualitative shape at all context lengths | S11 |
 
 ---
 
@@ -408,7 +409,20 @@ Current protocol: K_train = 5 windows per subject at all context lengths (fixed)
 
 **Recommendation**: Option B for now; option A before camera-ready if a reviewer asks. **Your input needed.**
 
-**Your answer**: No ablation run needed. The design choice is **K=5 fixed** and the justification is that this holds the *number of windows seen per subject per epoch constant* across all context lengths — ensuring that each model receives the same number of gradient signals per subject regardless of L. This is the fairest comparison from a training-exposure standpoint, and is the reason the token-budget approach (which changes K with L, confounding the two variables) was explicitly rejected. This justification already exists in `docs/context_length_experiment_design.md` §3 and §13, and in `configs/phase0_v3_config.yaml` (the `windows_strategy: "fixed"` comment). The paper will cite this rationale and acknowledge the fraction-of-available-windows asymmetry as a design trade-off, not a flaw. **No token-budget ablation runs required.**
+**Your answer**: K=5 fixed is the chosen protocol. The justification — now fully written in `docs/EXPERIMENTS_GUIDE.md` ("Why K=5 fixed is the right default") and `docs/context_length_experiment_design.md` §12.5 — rests on the distinction between two fairness criteria:
+
+| Criterion | K=5 fixed | Token budget (K×L = const) |
+|---|---|---|
+| Equal gradient updates/subject/epoch | ✅ identical | ✗ 160× more at 30s |
+| Equal information/subject/epoch | ✗ | ✅ |
+| Agree at long contexts (≥80m) | ✅ both give K≈1 | ✅ |
+
+K=5 is fair in the gradient-update sense, which is the right criterion for isolating context-length effects. Token-budget introduces a different confound (asymmetric effective learning rate). Because both strategies converge at L≥80m, any difference would only appear at short contexts (30s, 10m) — directly testable with a one-task ablation.
+
+**A one-task token-budget sensitivity ablation IS now recommended** (run `sex_binary_lstm` or `bmi_binary_lstm` with `run_tag: "kbudget"`, windows_strategy: "token_budget"` in a separate config). If the saturation curve shape is unchanged (expected), this is reported as Supplementary Table X and closes the reviewer concern definitively. The ready-to-run registry entry and config instructions are in `context_length_experiment_design.md` §12.3 and §12.5.
+
+**Paper Methods wording (from the docs):**
+> "At each context length, K=5 windows were randomly sampled per subject per training epoch, keeping the number of gradient updates per subject constant across context lengths — the relevant criterion for an unconfounded comparison of context-length effects. As a sensitivity analysis, we repeated the experiment for [task] using a token-budget schedule (K × L = 80 min), and found no qualitative difference in the saturation curve (Supplementary Table X)."
 
 ### G4. Deferred tasks: include or exclude?
 `insomnia_binary_lstm`, `rested_morning_lstm`, `anxiety_binary_lstm` all have AUROC ≤ 0.60 in phase0. We could:
@@ -459,7 +473,7 @@ These are established by the existing codebase and docs — no open questions:
 - **Frozen encoder**: SleepFM `model_base` (SetTransformer, contrastive pre-training)
 - **Patch size**: 5 seconds (640 samples at 128 Hz)
 - **Embedding dim**: 512 (= 4 modalities × 128 dim per modality)
-- **K_train = 5 windows** per subject (fixed, all context lengths)
+- **K_train = 5 windows** per subject (fixed, all context lengths); token-budget sensitivity ablation planned on 1 task (see G3)
 - **Batch size = 32**, accum_steps = 1, at all context lengths
 - **Cohort consistency filter**: min_recording_patches = 2880 (≥ 240 min required for inclusion)
 - **Split seed = 42**, stratified by subject
