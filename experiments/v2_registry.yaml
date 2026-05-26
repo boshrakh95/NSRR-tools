@@ -268,7 +268,7 @@ experiments:
     num_classes: 2
     head: lstm
     datasets: [apples, stages]
-    contexts: [30s, 10m, 40m, 80m, 120m]   # skip 80m: small N per split
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]   # skip 80m: small N per split
     batch_size: 32
     lr: 1.0e-4
     run_tag: ""
