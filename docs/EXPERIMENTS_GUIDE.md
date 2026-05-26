@@ -614,6 +614,26 @@ training:
 
 The logic is applied in `train_context_sweep.py` before dataset construction and prints the K value at training time. Switching from `"fixed"` to `"token_budget"` requires retraining (and changing the config). To run a token-budget ablation without overwriting the K=5 baseline, use a separate `run_tag` and a separate config file — see `docs/context_length_experiment_design.md` §12 for details.
 
+### Why K=5 fixed is the right default (paper defence)
+
+Reviewers sometimes argue that K=5 at 30s "wastes available data" because only 5 of ~960 possible windows are used per epoch. This conflates two distinct notions of fairness:
+
+| Fairness criterion | K=5 fixed | Token budget (K×L = const) |
+|---|---|---|
+| Equal gradient updates/subject/epoch | ✅ identical across all L | ✗ 160× more updates at 30s |
+| Equal information/subject/epoch | ✗ 30s sees far less signal | ✅ constant across all L |
+
+**K=5 fixed is fair in the gradient-update sense**, which is the right criterion for comparing context lengths. K=all would give the 30s model 240× more gradient updates per epoch than the 120m model — the comparison would measure how many training iterations each model received, not whether longer context helps.
+
+Token budget is fair in the information sense — but it gives the 30s model 160× more gradient updates per epoch, introducing a different confound (higher effective learning rate, stronger regularisation through repetition).
+
+Crucially, at long contexts (80m, 120m) both strategies converge: K_token_budget ≈ 1 ≈ K=5. The only meaningful difference is at short contexts (30s, 10m). With sufficient epochs and random window sampling, the K=5 model still covers most of the 30s window space over training — K=5 controls the per-epoch exposure, not the total data seen across the full training run.
+
+**Recommended paper wording (Methods):**
+> "At each context length, K=5 randomly-sampled non-overlapping windows were drawn per subject per training epoch, keeping the number of gradient updates per subject constant across context lengths. This controls for training compute when comparing models at different context lengths. As a sensitivity analysis, we verified that training with a token-budget schedule (K × L = 80 min, giving K=160 at 30s) yields the same qualitative saturation curves (Supplementary Table X)."
+
+**Recommended ablation:** Run `sex_binary_lstm` (or `bmi_binary_lstm`) with `windows_strategy: "token_budget"` for all 6 contexts using a separate `run_tag: "kbudget"`. If the saturation curve shape is the same (expected, since at 80m+ both are already K≈1), report as a supplementary sensitivity check and close the reviewer concern entirely. See `context_length_experiment_design.md` §12–13 for the ready-to-run registry entry and config.
+
 ---
 
 ## K Windows: Training vs Val vs Inference

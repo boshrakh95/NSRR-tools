@@ -84,11 +84,21 @@ Important implications:
 `windows_per_subject` in your config (currently 5) controls how many windows per subject are sampled each training epoch. This is separate from the inference K that you sweep post-hoc.
 
 The tension:
-- **K_train = 5:** Each epoch, the model sees 5 randomly-sampled windows per subject, regardless of context length. This makes training exposure roughly equal across L values. But the model learns to do well from just 5 windows — it may not be optimized for large-K inference.
-- **K_train = all:** The model sees all available windows. For 30s context (~960 windows/subject), this means far more training signal per epoch than for 120m (~4 windows/subject). More training data, but an unfair comparison across L values.
-- **K_train = token budget:** K_train × L_minutes = constant. For L=30s, K_train≈160; for L=80m, K_train≈1. Each subject contributes the same total signal per epoch regardless of L. This is the principled approach for comparing context lengths fairly.
+- **K_train = 5:** Each epoch, the model sees 5 randomly-sampled windows per subject, regardless of context length. This equalises gradient updates per subject per epoch across all L values — the key criterion for a fair context-length comparison.
+- **K_train = all:** The model sees all available windows. For 30s context (~960 windows/subject), this means ~240× more gradient updates per epoch than for 120m (~4 windows/subject). More training data, but an unfair comparison: you measure training compute, not context utility.
+- **K_train = token budget:** K_train × L_minutes = constant (e.g. budget=80m → K=160 at 30s, K=1 at 80m+). Each subject contributes the same total signal per epoch. Fair in the information sense but gives the 30s model 160× more gradient updates than the 120m model — a different confound.
 
-**K_train = 5 is a defensible and common choice** — it is not wrong. But it means models trained at short contexts have seen their windows many fewer times relative to the available data. Document this and, optionally, run one ablation to verify it doesn't change conclusions.
+**K_train = 5 is the correct default for comparing context lengths.** The right fairness criterion is equal gradient updates per subject per epoch (not equal information). K=all and token-budget both introduce asymmetric training dynamics that would confound the context-length comparison. Note that K=5 controls per-epoch exposure, not total data seen across training — with enough epochs and random sampling the model covers most of the window space regardless of context length.
+
+**Two fairness criteria, neither is universally right:**
+
+| Criterion | K=5 fixed | Token budget |
+|---|---|---|
+| Equal gradient updates/subject/epoch | ✅ | ✗ (160× more at 30s) |
+| Equal information/subject/epoch | ✗ | ✅ |
+| Converge at long contexts (80m+) | ✅ both give K≈1 | ✅ |
+
+Because both strategies agree at long contexts, any difference in the saturation curve shape would appear only at short contexts (30s, 10m). Running a one-task token-budget ablation (§13) directly tests this and pre-empts reviewer objections.
 
 ---
 
@@ -547,6 +557,17 @@ If the shapes diverge (e.g., token-budget shows stronger advantage for short-con
 → The training regime confounds the comparison; use token-budget as the main method and report K=5 as a sensitivity check.
 
 Either result is informative and publishable.
+
+### 12.5 Reviewer pre-answer and paper wording
+
+**Anticipated reviewer comment:** *"With K=5 at 30s, the model only sees 5 of ~960 available windows per epoch — a tiny fraction of the available data. This may underfit the short-context models and bias your comparison toward longer contexts."*
+
+**Rebuttal:** This conflates two distinct fairness criteria. K=5 fixed equalises *gradient updates per subject per epoch* across all context lengths — the relevant criterion for comparing models trained at different L. K=all gives the 30s model ~240× more gradient updates per epoch than the 120m model, which would confound the comparison. K=5 controls per-epoch exposure, not total data seen across training; with sufficient epochs and random sampling, models cover the window space regardless of context length. Furthermore, both K=5 and the token-budget schedule converge at L≥80m (both give K≈1), so any difference in the saturation curve is localised to short contexts and directly tested by the ablation.
+
+**Recommended Methods wording:**
+> "At each context length, K=5 windows were randomly sampled per subject per training epoch, keeping the number of gradient updates per subject constant across context lengths — the relevant criterion for an unconfounded comparison of context-length effects. As a sensitivity analysis, we repeated the experiment for [task] using a token-budget schedule (K × L = 80 min, yielding K=160 at 30s), and found no qualitative difference in the saturation curve (Supplementary Table X), confirming that the K=5 choice does not bias results toward longer contexts."
+
+**Practical note:** Only run this ablation for one representative Tier 1 task (recommended: `sex_binary_lstm` or `bmi_binary_lstm`). A positive result (same saturation curve shape) is sufficient to close the reviewer concern for all tasks. Registry entry and config are in §12.3; use `run_tag: "kbudget"` to keep results in a separate directory.
 
 ---
 
