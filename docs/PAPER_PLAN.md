@@ -158,19 +158,20 @@ This is the most objective section and can be **written now**. Full detail below
 
 ## C. Figure and Table Plan
 
-Target for main paper: **≤7 figures/tables** (JBHI standard). Push detail to supplementary.
+Target for main paper: **~8 figures/tables** at 12–14 pages. The exact count and which tasks are featured figures will be finalised once all results are in.
 
-### Main Paper Figures (proposed: 5 figures + 2 tables = 7 items)
+### Main Paper Figures (proposed: 6 figures + 2 tables = 8 items)
 
 | ID | Name | What it shows | Location | Requires | Generator |
 |---|---|---|---|---|---|
 | **Fig 1** | System overview | PSG → SleepFM (frozen) → patches → head → prediction pipeline | Main | None (can draw now) | Hand-drawn / matplotlib |
-| **Fig 2** | Saturation curves | AUROC vs context length (log x), one line per Tier 1 task (LSTM), with 95% CI bands | Main | Groups C+D ✗ PENDING | `plot_saturation.py --collected-dir` |
-| **Fig 3** | 2D iso-compute heatmap | L×K grid, AUROC heatmap, iso-compute lines; one hero task (apnea_binary or bmi_binary, LSTM) | Main | partial bmi_binary or PENDING apnea | `plot_iso_compute.py` (heatmap figure) |
-| **Fig 4** | Head comparison | Saturation curves for one task (3 heads — LSTM/Transformer/MeanPool); shows whether temporal modeling helps | Main | Groups C+D ✗ PENDING | `plot_saturation.py --heads lstm transformer mean_pool` |
-| **Fig 5** | Sleep staging saturation | Cohen's κ vs context length, 3 heads; plus per-stage F1 as inset or sub-panel | Main | Group D ✗ PENDING | `plot_saturation.py` (kappa metric) |
-| **Table I** | Main results | Best test AUROC per task × context (LSTM) × split; 95% CI; [PENDING] for missing runs | Main | All Groups | `collect_results_v2.py` → manual |
-| **Table II** | L* and context sensitivity | Per task: L* (min context within 0.5% of best), ΔAUROC (30s→best), class imbalance | Main | All Groups | `plot_task_comparison.py` (§6C) |
+| **Fig 2** | Saturation curves (2–3 tasks) | AUROC vs context length (log x), 3 heads per panel, 95% CI bands; 2–3 task panels chosen after results in (e.g., high-sensitivity apnea, low-sensitivity sleep_efficiency, mid-range bmi) | Main | Groups C+D ✗ PENDING | `plot_saturation.py --heads lstm transformer mean_pool --collected-dir` |
+| **Fig 3** | 2D iso-compute heatmap | L×K grid, AUROC as colour, iso-compute lines; 1 hero task (finalise after results) | Main | Partial (bmi_binary) or PENDING | `plot_iso_compute.py` (heatmap) |
+| **Fig 4** | Sleep staging saturation | Cohen's κ vs context length, 3 heads; per-stage F1 as inset or sub-panel | Main | Group D ✗ PENDING | `plot_saturation.py` (kappa metric) |
+| **Fig 5** | Task sensitivity scatter | ΔAUROC (30s→best) vs baseline difficulty (1−AUROC@30s); each dot = one task; reference lines at medians | Main | All Groups ✗ PENDING | `plot_task_comparison.py` (§6A) |
+| **Fig 6** | Modality ablation | Bar chart: AUROC for All / RESP+EKG / BAS only / No-BAS conditions at 2 contexts, 1–2 tasks | Main (if results available) | Ablation runs ✗ PENDING | Custom bar plot |
+| **Table I** | Main results | Best test AUROC per task × best context (LSTM head); all tasks with AUROC ≥ ~0.62; 95% CI; balanced accuracy at t_opt; [PENDING] cells where experiments not yet done | Main | All Groups | `collect_results_v2.py` → manual |
+| **Table II** | L* and context sensitivity | Per task: L* (min context within 0.5% of best), ΔAUROC (30s→best), N, datasets | Main | All Groups | `plot_task_comparison.py` (§6C) |
 
 ### Supplementary Figures
 
@@ -279,9 +280,9 @@ All heads trained from scratch per (task, context length). The encoder is never 
 - **Epochs**: up to 40; early stopping on validation AUROC (patience=10)
 - **Batch size**: 32 at all context lengths (no gradient accumulation needed after cohort filter + Flash attention fix)
 - **Class imbalance**: inverse-frequency class weights in CrossEntropyLoss; no WeightedRandomSampler
-- **Training K**: K_train = 5 windows per subject per epoch (fixed, context-length-independent)
+- **Training K**: K_train = 5 windows per subject per epoch (fixed, context-length-independent). **Paper justification**: fixing K at 5 across all context lengths ensures that each model receives the same number of gradient updates per subject regardless of L — the only variable between experiments is the context window length itself. The alternative (token-budget K, where K ∝ 1/L) was explicitly rejected because it confounds training-exposure intensity with context length, making observed performance differences uninterpretable. Reference: `docs/context_length_experiment_design.md` §3 and §13.
 - **Checkpointing**: best checkpoint saved by val_auroc; per-epoch resume.pt for SLURM timeout resilience
-- **Paper claim**: "All models were trained with batch size 32, identical across all context lengths. The Transformer head uses Flash attention (O(N) memory) at all context lengths after a cohort consistency filter ensures padding-free batches."
+- **Paper claim**: "All models were trained with batch size 32, identical across all context lengths. The Transformer head uses Flash attention (O(N) memory) at all context lengths after a cohort consistency filter ensures padding-free batches. Training K was fixed at 5 windows per subject per epoch to ensure identical gradient exposure per subject across all context lengths."
 
 ### III-G: Context-Length Sweep Design
 
@@ -311,36 +312,35 @@ One model is trained per (task, head, context length). The context window length
 
 ## E. Main Paper vs Supplementary Split
 
-**Principle**: main paper = the story (saturation, aggregation substitution, head comparison, key clinical tasks); supplementary = all tasks, per-dataset breakdowns, ablations, implementation details.
+**Principle**: main paper = the full story at 12–14 pages — saturation curves for 2–3 featured tasks, head comparison, iso-compute analysis, sleep staging, and a comprehensive results table covering all tasks with decent AUROC. Supplementary = per-task saturation figures for the remaining tasks, per-dataset breakdowns, ablation details, and implementation notes.
 
-### Main Paper (target: 10 pages)
+### Main Paper (target: 12–14 pages double-column)
 
 | Content | Justification |
 |---|---|
 | System overview (Fig 1) | Required for reader to understand the pipeline |
-| Saturation curves for Tier 1 tasks, LSTM (Fig 2) | Primary result for H1 |
-| 2D iso-compute heatmap for hero task (Fig 3) | Primary result for H2+H3 |
-| Head comparison saturation curves (Fig 4) | Primary result for H4 |
-| Sleep staging saturation (Fig 5) | Tier 1 seq2seq result |
-| Main results table — best AUROC per task (Table I) | Summary of all tasks |
-| L* and sensitivity table (Table II) | Actionable deployment guidance |
-| One Tier 2 task discussed if result is surprising (e.g., depression_extreme) | Only if AUROC is compelling |
+| Saturation curves for 2–3 featured tasks across all heads (Fig 2) | Primary result for H1 and H4 — chosen after all results are in |
+| 2D iso-compute heatmap for 1 hero task (Fig 3) | Primary result for H2+H3 |
+| Sleep staging saturation: Cohen's κ + per-stage F1 vs context length (Fig 4) | Full Tier 1 seq2seq result |
+| Task sensitivity scatter: ΔAUROC vs baseline difficulty (Fig 5) | Cross-task summary, shows task-specific context requirements |
+| Modality ablation summary (Fig 6, if results available) | Addresses reviewer question about which modalities matter |
+| Main results table — best AUROC + L* for ALL tasks with AUROC ≥ ~0.62 (Table I) | Full breadth claim supported; Tier 1 + Tier 2 in one table |
+| L* and context sensitivity summary (Table II) | Actionable deployment guidance |
 
 ### Supplementary
 
 | Content | Section |
 |---|---|
-| Per-task saturation curves (all 3 heads, all tasks) | S1 |
-| Iso-compute Pareto front, marginal gain, double-tradeoff (hero task) | S2 |
-| Aggregation saturation curves (AUROC vs K) | S3 |
-| Cross-task sensitivity scatter | S4 |
-| Per-dataset (cohort-level) saturation breakdown | S5 |
-| All Tier 2 results | S6 |
-| Post-hoc threshold tuning details and balanced accuracy tables | S7 |
-| Deferred task results (insomnia, anxiety, rested morning) | S8, only if any AUROC > 0.60 |
-| Implementation details: embedding extraction, channel priority, cohort filter details | S9 |
-| Subject-level stability analysis (K* histogram, within-subject variance) | S10 |
-| Excluded subjects list | S11 |
+| Per-task saturation curves for tasks not featured as main figures (all 3 heads) | S1 |
+| Iso-compute deep dive: Pareto front, marginal gain, double-tradeoff (hero task) | S2 |
+| Aggregation saturation curves (AUROC vs K, H3) for representative tasks | S3 |
+| Per-dataset (cohort-level) saturation breakdown for multi-dataset tasks | S4 |
+| Post-hoc threshold tuning: balanced accuracy tables at t_opt vs t=0.5 | S5 |
+| Modality ablation details for all conditions (full table if main paper shows summary only) | S6 |
+| Deferred task results (insomnia, anxiety, rested_morning) if AUROC > 0.60; else brief mention | S7 |
+| Implementation details: embedding extraction, channel priority, cohort filter | S8 |
+| Subject-level prediction stability: K* histogram, within-subject variance | S9 |
+| Excluded subjects list (cohort filter) | S10 |
 
 ---
 
@@ -362,7 +362,9 @@ One model is trained per (task, head, context length). The context window length
 | 12 | **Conclusion (VI)** | After results | Complete results |
 | 13 | **Abstract** | **LAST** | All results and sections |
 
-**Recommended starting point**: Write Methods (Section III) first — it is fully writeable today, it is the most objective section, and every other section references it. Then Related Work, then Introduction (can draft without numbers), then Results as experiments complete.
+**Recommended starting point**: Write Methods (Section III) first — it is fully writeable today, it is the most objective section, and every other section references it. Then Related Work, then Introduction (can draft without numbers), then Results as experiments complete (Groups A→B→C→D in parallel with writing).
+
+**Note on page budget (12–14 pages):** The extra page room vs a standard 10-page paper allows: (a) a fuller Methods section including the cohort table and all head architecture details, (b) 2–3 featured saturation figures instead of 1, (c) a fuller results table covering all tasks, and (d) the modality ablation subsection. Plan for ~2.5 pages Methods, ~3.5 pages Results, ~1 page Discussion, with the remaining budget split across Introduction, Related Work, and figures.
 
 ---
 
@@ -380,6 +382,8 @@ The 2D heatmap (L × K grid) is expensive to compute (requires dense K sweep) an
 
 **Recommendation**: bmi_binary_lstm for the initial heatmap (available soonest); apnea_binary for the paper if Group D finishes in time. Need your decision.
 
+**Your answer**: Not finalised — want at least 2–3 task figures in the paper. Will decide once all results are in and we can see which tasks tell the most distinct stories (e.g., one high-sensitivity task like apnea, one low-sensitivity task like sleep efficiency, and possibly one mid-range task). The heatmap figure will cover whichever task(s) show the clearest iso-compute structure.
+
 ### G2. Sleep staging: equal weight or secondary?
 Sleep staging is a different task type (seq2seq, anchor-based, per-epoch label) with different analysis (no K-aggregation, Cohen's κ not AUROC). Including it at equal weight with clinical prediction tasks may dilute the story; treating it as a secondary result simplifies the narrative.
 
@@ -389,6 +393,8 @@ Sleep staging is a different task type (seq2seq, anchor-based, per-epoch label) 
 - (C) Drop from this paper — keep for a separate methods/staging paper
 
 **Recommendation**: Option A, because staging is clinically important and the saturation result (κ improves 30s→40m then plateaus) is clean and interpretable. But if the paper is already long, move to supplementary. **Your call.**
+
+**Your answer**: Option A — sleep staging is included as a main-paper task with full Tier 1 treatment. Even where specific analyses do not apply (e.g., the K-aggregation sweep and iso-compute heatmap are not relevant for seq2seq), the saturation curve (κ vs context length) and per-stage F1 are reported in the main text. Experiments will be run soon.
 
 ### G3. Is the training K=5 ablation required before submission?
 Current protocol: K_train = 5 windows per subject at all context lengths (fixed). At 30s context there are ~960 possible windows; at 240m there are ~2. The model trained at 30s has seen a much smaller fraction of available windows per epoch.
@@ -402,6 +408,8 @@ Current protocol: K_train = 5 windows per subject at all context lengths (fixed)
 
 **Recommendation**: Option B for now; option A before camera-ready if a reviewer asks. **Your input needed.**
 
+**Your answer**: No ablation run needed. The design choice is **K=5 fixed** and the justification is that this holds the *number of windows seen per subject per epoch constant* across all context lengths — ensuring that each model receives the same number of gradient signals per subject regardless of L. This is the fairest comparison from a training-exposure standpoint, and is the reason the token-budget approach (which changes K with L, confounding the two variables) was explicitly rejected. This justification already exists in `docs/context_length_experiment_design.md` §3 and §13, and in `configs/phase0_v3_config.yaml` (the `windows_strategy: "fixed"` comment). The paper will cite this rationale and acknowledge the fraction-of-available-windows asymmetry as a design trade-off, not a flaw. **No token-budget ablation runs required.**
+
 ### G4. Deferred tasks: include or exclude?
 `insomnia_binary_lstm`, `rested_morning_lstm`, `anxiety_binary_lstm` all have AUROC ≤ 0.60 in phase0. We could:
 - (A) Run them under v3 protocol, include in supplementary regardless of AUROC ("completeness")
@@ -410,15 +418,21 @@ Current protocol: K_train = 5 windows per subject at all context lengths (fixed)
 
 **Recommendation**: Option B. Include in supplementary as "tasks where PSG provided no discriminative signal under any context length" — this is scientifically valid and shows the framework's limits. **Your call.**
 
+**Your answer**: Probably exclude deferred tasks from the paper if v3 results remain poor (AUROC < 0.60). Decision deferred until experiments run. If any deferred task improves above ~0.62 with the v3 overlapping-window protocol, it will be included in supplementary as a near-chance negative result with brief discussion.
+
 ### G5. Tier 2 tasks: how prominently featured?
 `depression_extreme_binary_lstm` (80m: 0.742, 120m: 0.750) and `osa_binary_apples_postqc_lstm` (40m: 0.738, 120m: 0.742) have decent AUROC but small N (~1.5–1.8k). Do they appear in Table I in the main paper, or only in supplementary?
 
 **Recommendation**: Include in Table I with a footnote about small N and single-dataset limitation. The depression result (AUROC 0.75 from PSG alone, extreme-group design) is a compelling Tier 2 highlight. **Your input needed.**
 
+**Your answer**: All tasks with decent results are included in the main text. The main results table (Table I) covers all tasks with AUROC ≥ ~0.62, regardless of tier. Per-task saturation figures for tasks beyond the 2–3 featured ones go in supplementary, but the summary numbers appear in the main paper. This keeps the breadth claim (15 tasks, 4 cohorts) fully supported by numbers in the main text without requiring a figure per task.
+
 ### G6. Page target: 8 or 10 pages?
 JBHI regular papers are typically 8–10 double-column pages. 8 pages requires aggressive supplementary pushing; 10 pages allows slightly more results detail.
 
 **Recommendation**: target 10 pages to accommodate the breadth (15 tasks, 6 contexts, 3 heads). Trim to 8 if reviewers request. **Confirm this is the right submission type.**
+
+**Your answer**: **12–14 pages** (double-column). This is a full-length journal paper with substantial breadth; 10 pages would be too tight to cover all tasks, figures, and the iso-compute analysis properly. May reconsider if venue changes later.
 
 ### G7. Modality ablation experiment
 SOTA_COMPARISON doc identifies the zero-out modality ablation (Experiment A) as Priority 1, moderate effort. The ablation (zero out 128-dim slices of the 512-dim embedding) answers the reviewer question "which modalities drive your results?" and directly addresses OSF's channel masking finding.
@@ -431,6 +445,8 @@ Running this adds ~12 training jobs (3 tasks × 2 context lengths × 4-5 modalit
 - (C) Run pilot on bmi_binary_lstm only to at least address the reviewer question
 
 **Recommendation**: Option C (pilot on bmi_binary_lstm at 10m and 120m) before submission. This is low-risk and directly counters a predictable reviewer concern. **Your call.**
+
+**Your answer**: Will run the modality zero-out ablation on **1–2 tasks** (e.g., apnea_binary and bmi_binary at representative context lengths). This directly addresses the expected OSF-related reviewer question. Results will go in supplementary if there is no space in main paper, or in main paper as a brief ablation subsection if the finding is notable. Running soon.
 
 ---
 
