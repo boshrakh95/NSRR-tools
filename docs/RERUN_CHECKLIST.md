@@ -50,34 +50,27 @@ Target protocol: `batch_size=32, accum_steps=1` for ALL contexts.
 
 These experiments exist in `results/phase0_v3/` and have results, but specific contexts used old protocol. **Rerun those contexts only; good contexts are already correct.**
 
-| Experiment | Bad contexts | Bad protocol | Current test AUROC | Action |
-|---|---|---|---|---|
-| `bmi_binary_lstm` | 120m | micro=16, accum=2 | 0.754 | Rerun 120m |
-| `psqi_binary_lstm` | 120m, 240m | micro=16, accum=2 | 120m: 0.520, 240m: 0.527 | Rerun 120m+240m |
-| `sleep_efficiency_binary_lstm` | 120m, 240m | 120m: micro=8 accum=4; 240m: micro=4 accum=8 | 120m: 0.717, 240m: 0.770 | Rerun 120m+240m |
-| `sleep_efficiency_binary_transformer` | 80m, 120m, 240m | 80m: micro=16 accum=2; others: micro=8/4 accum=4/8 | 80m: 0.721, 120m: 0.747, 240m: 0.797 | Rerun 80m+120m+240m |
+| Experiment | Bad contexts | Bad protocol | Old AUROC | Status | New AUROC |
+|---|---|---|---|---|---|
+| `bmi_binary_lstm` | 120m | micro=16, accum=2 | 0.754 | ✅ **DONE** (2026-05-25) | **0.729** |
+| `psqi_binary_lstm` | 120m | micro=16, accum=2 | 0.520 | ✅ **DONE** (2026-05-25) | **0.524** |
+| `psqi_binary_lstm` | 240m | micro=16, accum=2 | 0.527 | ✅ **DONE** (2026-05-25) | **0.522** |
+| `sleep_efficiency_binary_lstm` | 120m | micro=8, accum=4 | 0.717 | ⬜ **TODO** | — |
+| `sleep_efficiency_binary_lstm` | 240m | micro=4, accum=8 | 0.770 | ⬜ **TODO** | — |
+| `sleep_efficiency_binary_transformer` | 80m | micro=16, accum=2 | 0.721 | ✅ **DONE** (2026-05-26) | **0.722** |
+| `sleep_efficiency_binary_transformer` | 120m | micro=8, accum=4 | 0.747 | ✅ **DONE** (2026-05-26) | **0.747** |
+| `sleep_efficiency_binary_transformer` | 240m | micro=4, accum=8 | 0.797 | ✅ **DONE** (2026-05-26) | **0.800** |
 
-**Total: 8 context reruns**
+**Remaining: 2 context reruns (sleep_efficiency_binary_lstm 120m + 240m)**
 
 ### Commands
 
 ```bash
-# bmi_binary_lstm 120m
-python3 scripts/gen_commands.py train bmi_binary_lstm --context 120m
-
-# psqi_binary_lstm 120m + 240m
-python3 scripts/gen_commands.py train psqi_binary_lstm --context 120m 240m
-
-# sleep_efficiency_binary_lstm 120m + 240m
+# ⬜ Still needed:
 python3 scripts/gen_commands.py train sleep_efficiency_binary_lstm --context 120m 240m
-
-# sleep_efficiency_binary_transformer 80m + 120m + 240m
-python3 scripts/gen_commands.py train sleep_efficiency_binary_transformer --context 80m 120m 240m
 ```
 
-> **Note**: gen_commands marks these "# already trained" in the comment but the sbatch command itself is valid — running it will overwrite the bad-protocol context directory.
-
-> **Note**: `sleep_efficiency_binary_transformer_verify32` dir has a valid 240m run (accum=1) — safe to ignore once the main transformer directory is rerun.
+> **Note**: `sleep_efficiency_binary_transformer_verify32` dir has a valid 240m run (accum=1) — safe to ignore once the main transformer directory is rerun (now done).
 
 ---
 
@@ -85,29 +78,28 @@ python3 scripts/gen_commands.py train sleep_efficiency_binary_transformer --cont
 
 These experiments have SOME contexts done correctly in v3 but are missing specific contexts.
 
-| Experiment | Missing contexts | Already correct in v3 | Action |
-|---|---|---|---|
-| `depression_extreme_binary_lstm` | 30s (failed), 10m (failed), 40m (never) | 80m ✅, 120m ✅ | Run 30s+10m+40m |
-| `osa_binary_apples_postqc_lstm` | 30s (never), 10m (never) | 40m ✅, 80m ✅, 120m ✅ | Run 30s+10m |
-| `osa_severity_apples_lstm` | all 5 (10m CUDA error; rest never ran) | none | Run all 5 contexts |
+| Experiment | Context | Status | New AUROC | Notes |
+|---|---|---|---|---|
+| `depression_extreme_binary_lstm` | 30s | ✅ **DONE** (2026-05-25) | **0.750** | Previously failed |
+| `depression_extreme_binary_lstm` | 10m | ✅ **DONE** (2026-05-25) | **0.767** | Previously failed |
+| `depression_extreme_binary_lstm` | 40m | ✅ **DONE** (2026-05-25) | **0.756** | Was never run |
+| `depression_extreme_binary_lstm` | 240m | ✅ **DONE** (2026-05-25) | **0.737** | Added to registry (6 ctx total) |
+| `osa_binary_apples_postqc_lstm` | 30s | ✅ **DONE** (2026-05-25) | **0.664** | Was never run |
+| `osa_binary_apples_postqc_lstm` | 10m | ✅ **DONE** (2026-05-25) | **0.703** | Was never run |
+| `osa_severity_apples_lstm` | all 5 | ⬜ **TODO** | — | No jobs submitted yet |
 
-**Total: 10 additional context runs**
+**Remaining: osa_severity_apples_lstm (all 5 contexts)**
+
+> **Note on depression_extreme_binary_lstm**: Now all 6 contexts complete (registry updated to include 240m).
+> 80m (AUROC=0.742) and 120m (AUROC=0.750) were already correct; 30s/10m/40m/240m added in this batch.
+> All use batch=32, accum=1, APPLES+STAGES (n_train=5340).
 
 ### Commands
 
 ```bash
-# depression_extreme: run the 3 missing contexts
-python3 scripts/gen_commands.py train depression_extreme_binary_lstm --context 30s 10m 40m
-
-# osa_binary_apples_postqc: 2 missing short contexts
-python3 scripts/gen_commands.py train osa_binary_apples_postqc_lstm --context 30s 10m
-
-# osa_severity_apples: all 5 fresh
+# ⬜ Still needed:
 python3 scripts/gen_commands.py train osa_severity_apples_lstm
 ```
-
-> **Note on depression_extreme_binary_lstm**: 80m (AUROC=0.742) and 120m (AUROC=0.750) are already
-> done correctly with APPLES+STAGES (n_train=5340, batch=32, accum=1). Do NOT rerun those.
 
 ---
 
@@ -116,28 +108,25 @@ python3 scripts/gen_commands.py train osa_severity_apples_lstm
 All `phase0_v2` results used old training code (old mask, variable accum). V3 results dir has
 nothing for these. Also includes mean_pool heads that were never run for existing Tier 1 tasks.
 
-| Experiment | Previous status | Action |
+| Experiment | Status | Notes |
 |---|---|---|
-| `sex_binary_lstm` | Ran all 6 in v2 (old code) | Run all 6 fresh in v3 |
-| `sex_binary_transformer` | Ran 120m+240m only in v2 | Run all 6 fresh in v3 |
-| `sex_binary_mean_pool` | Never run | Run all 6 fresh in v3 |
-| `age_class_lstm` | Ran all 6 in v2 (old code) | Run all 6 fresh in v3 |
-| `age_class_transformer` | Ran all 6 in v2 (old code) | Run all 6 fresh in v3 |
-| `age_class_mean_pool` | Never run | Run all 6 fresh in v3 |
-| `bmi_binary_mean_pool` | Never run | Run all 6 fresh in v3 |
-| `sleep_efficiency_binary_mean_pool` | Never run | Run all 6 fresh in v3 |
+| `sex_binary_lstm` | ✅ **DONE** 6/6 (2026-05-26) | All batch=32, accum=1 ✅ |
+| `sex_binary_transformer` | ✅ **DONE** 6/6 (2026-05-26) | All batch=32, accum=1 ✅ |
+| `sex_binary_mean_pool` | ⬜ **TODO** | Never run |
+| `age_class_lstm` | ✅ **DONE** 6/6 (2026-05-26) | All batch=32, accum=1 ✅ |
+| `age_class_transformer` | 🔄 **RUNNING** 5/6 (job 41521400) | 240m still training; epoch ~28/40, best val AUROC=0.895; auto-requeue from job 41470727 |
+| `age_class_mean_pool` | ⬜ **TODO** | Never run |
+| `bmi_binary_mean_pool` | ⬜ **TODO** | Never run |
+| `sleep_efficiency_binary_mean_pool` | ⬜ **TODO** | Never run |
 
-**Total: 48 context runs (8 experiments × 6 contexts)**
+**Remaining: 4 experiments pending + 1 currently training**
 
 ### Commands
 
 ```bash
-python3 scripts/gen_commands.py train sex_binary_lstm
-python3 scripts/gen_commands.py train sex_binary_transformer
+# ⬜ Still needed:
 python3 scripts/gen_commands.py train sex_binary_mean_pool
-python3 scripts/gen_commands.py train age_class_lstm
-python3 scripts/gen_commands.py train age_class_transformer
-python3 scripts/gen_commands.py train age_class_mean_pool
+python3 scripts/gen_commands.py train age_class_mean_pool         # after job 41521400 finishes
 python3 scripts/gen_commands.py train bmi_binary_mean_pool
 python3 scripts/gen_commands.py train sleep_efficiency_binary_mean_pool
 ```
@@ -209,34 +198,36 @@ python3 scripts/gen_commands.py train anxiety_binary_lstm
 
 ## Summary counts
 
-| Group | Description | Context runs |
-|---|---|---|
-| A | v3 wrong protocol, partial rerun | 8 |
-| B | v3 missing contexts | 10 |
-| C | v2→v3 reruns + missing mean_pool heads | 48 |
-| D | Legacy Tier 1+2, fresh v3 runs | 48 |
-| **A–D subtotal** | **All priority runs** | **114** |
-| E | Deferred | 15 |
-| **Grand total** | | **129** |
+*Updated 2026-05-26 to reflect completed runs.*
+
+| Group | Description | Total | Done | Remaining |
+|---|---|---|---|---|
+| A | v3 wrong protocol, partial rerun | 8 | ✅ 6 | ⬜ 2 (sleep_eff_lstm 120m+240m) |
+| B | v3 missing contexts | 10 | ✅ 6 | ⬜ 1 exp (osa_severity all 5 ctx) |
+| C | v2→v3 reruns + missing mean_pool heads | 48 | ✅ 24 + 🔄 1 | ⬜ 23 (4 mean_pools + age_class_transformer 240m finishing) |
+| D | Legacy Tier 1+2, fresh v3 runs | 48 | ⬜ 0 | ⬜ 48 |
+| **Priority subtotal** | | **114** | **~37** | **~77** |
+| E | Deferred | 15 | ⬜ 0 | ⬜ 15 |
+| **Grand total** | | **129** | | |
 
 ---
 
-## Recommended submission order
+## What to submit next (as of 2026-05-26)
 
-1. **Group A** first — these are partial fixes to experiments that already have most contexts done.
-   Submit the 8 bad contexts as soon as possible.
+**Immediate (1–2 jobs):**
+1. `sleep_efficiency_binary_lstm --context 120m 240m` — last 2 Group A contexts
+2. `osa_severity_apples_lstm` — 5 jobs, completes Group B entirely
 
-2. **Group B** next — 10 missing contexts that complete existing experiment sets.
-   After these, bmi, psqi, sleep_efficiency, depression_extreme, osa_postqc, osa_severity will all be complete.
+**After those finish (Group C remainder):**
+3. `sex_binary_mean_pool` / `age_class_mean_pool` / `bmi_binary_mean_pool` / `sleep_efficiency_binary_mean_pool`
+   — 4 × 6 = 24 jobs; wait for job 41521400 (age_class_transformer 240m) to finish first
 
-3. **Group C** — 48 runs for sex_binary, age_class, and missing mean_pool heads. These are key Tier 1 tasks.
+**Then Group D (major batch):**
+4. apnea_binary (3 heads × 6 ctx = 18 jobs) — Tier 1, high priority
+5. sleep_staging (3 heads × 6 ctx = 18 jobs) — Tier 1, seq2seq
+6. cvd_binary_lstm + sleepiness_binary_lstm (12 jobs) — Tier 2
 
-4. **Group D Tier 1** — apnea_binary (3 heads) and sleep_staging (3 heads) = 36 jobs.
-   These are major tasks. Submit when cluster is available.
-
-5. **Group D Tier 2** — cvd_binary, sleepiness_binary = 12 jobs.
-
-6. **Group E** — only if time and cluster budget permit.
+**Deferred (Group E):** insomnia, rested_morning, anxiety — only if time permits.
 
 ---
 
