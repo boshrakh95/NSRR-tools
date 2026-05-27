@@ -471,6 +471,20 @@ experiments:
     tier: 2
     notes: "SHHS=any_cvd (composite), MrOS=cvchd (CHD only) — mixed definitions; see doc note. Minority=25%."
 
+  cvd_binary_transformer:
+    task: cvd_binary
+    task_type: seq2label
+    num_classes: 2
+    head: transformer
+    datasets: [shhs, mros]
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
+    batch_size: 32
+    lr: 1.0e-4
+    run_tag: ""
+    n_size: large
+    tier: 2
+    notes: "SHHS=any_cvd (composite), MrOS=cvchd (CHD only) — mixed definitions; see doc note. Minority=25%."
+
   # ── sleepiness_binary (N=16,431 — all 4 datasets) ───────────────────────────
   # ESS >= 11 = excessive daytime sleepiness. Largest N of all tasks.
   # Phase0 results: borderline AUROC 0.59-0.61 across all contexts (all 5 run).

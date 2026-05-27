@@ -1,0 +1,6 @@
+{"ts":"2026-05-26T20:08:45-07:00","job_id":"41566851","node":"fc11014","status":"STARTED","task":"cvd_binary","head":"transformer","context":"240m","lr":"1e-4","datasets":"shhs mros"}
+{"ts":"2026-05-26T23:05:51-07:00","job_id":"41566851","node":"fc11014","status":"TIMEOUT_REQUEUED","task":"cvd_binary","head":"transformer","context":"240m","lr":"1e-4","datasets":"shhs mros"}
+{"ts":"2026-05-26T23:07:08-07:00","job_id":"41603262","node":"fc11004","status":"STARTED","task":"cvd_binary","head":"transformer","context":"240m","lr":"1e-4","datasets":"shhs mros"}
+{"ts":"2026-05-27T02:03:58-07:00","job_id":"41603262","node":"fc11004","status":"TIMEOUT_REQUEUED","task":"cvd_binary","head":"transformer","context":"240m","lr":"1e-4","datasets":"shhs mros"}
+{"ts":"2026-05-27T02:04:47-07:00","job_id":"41623098","node":"fc11004","status":"STARTED","task":"cvd_binary","head":"transformer","context":"240m","lr":"1e-4","datasets":"shhs mros"}
+{"ts":"2026-05-27T02:39:34-07:00","job_id":"41623098","node":"fc11004","status":"SUCCESS","task":"cvd_binary","head":"transformer","context":"240m","lr":"1e-4","datasets":"shhs mros"}

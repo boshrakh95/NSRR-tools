@@ -1,0 +1,2 @@
+{"ts":"2026-05-26T20:04:50-07:00","job_id":"41566671","node":"fc11012","status":"STARTED","task":"cvd_binary","head":"lstm","context":"10m","lr":"1e-4","datasets":"shhs mros"}
+{"ts":"2026-05-26T20:27:45-07:00","job_id":"41566671","node":"fc11012","status":"SUCCESS","task":"cvd_binary","head":"lstm","context":"10m","lr":"1e-4","datasets":"shhs mros"}
