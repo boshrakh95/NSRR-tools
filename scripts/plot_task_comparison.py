@@ -31,9 +31,9 @@ Usage:
       --head lstm ...
 
 Output:
-  {results_dir}/figures/task_comparison_6A_scatter.{png,pdf}
-  {results_dir}/figures/task_comparison_6B_bars.{png,pdf}
-  {results_dir}/figures/task_comparison_6C_lstar.{png,pdf}
+  {results_dir}/figures/task_comparison/task_comparison_6A_scatter.{png,pdf}
+  {results_dir}/figures/task_comparison/task_comparison_6B_bars.{png,pdf}
+  {results_dir}/figures/task_comparison/task_comparison_6C_lstar.{png,pdf}
 """
 
 import argparse
@@ -316,7 +316,7 @@ def main() -> None:
     parser.add_argument("--plots", nargs="+", default=["6A", "6B", "6C"])
     args = parser.parse_args()
 
-    out_dir = args.results_dir / "figures"
+    out_dir = args.results_dir / "figures" / "task_comparison"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"Loading analysis.csv from {args.collected_dir} ...")

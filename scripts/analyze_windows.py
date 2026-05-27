@@ -555,6 +555,7 @@ def main():
         if args.plot:
             for pm in args.plot_metric:
                 out_fig = (args.results_dir / "figures" /
+                           f"{args.task}_{args.head}" /
                            f"{args.task}_{args.head}_{split}_window_sweep_{pm}.png")
                 plot_window_sweep(split_df, args.task, args.head, pm, out_fig)
 

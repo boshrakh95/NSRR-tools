@@ -28,7 +28,7 @@ Usage:
       --metric auroc
 
 Output:
-  {results_dir}/figures/saturation_{task}_{metric}.{png,pdf}
+  {results_dir}/figures/saturation/saturation_{task}_{metric}.{png,pdf}
 """
 
 import argparse
@@ -248,7 +248,7 @@ def main():
                              "If provided, CI bands are drawn as shaded regions.")
     args = parser.parse_args()
 
-    out_dir = args.results_dir / "figures"
+    out_dir = args.results_dir / "figures" / "saturation"
 
     print(f"Task: {args.task}  Heads: {args.heads}  Metrics: {args.metric}")
     if args.collected_dir:
