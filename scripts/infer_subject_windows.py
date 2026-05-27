@@ -156,7 +156,11 @@ def main():
                         help="Restrict to these datasets, e.g. shhs mros apples")
     parser.add_argument("--no-all-windows", action="store_true", dest="no_all_windows",
                         help="Use K=5 windows (reproduces training eval) instead of all windows")
-    parser.add_argument("--batch-size", default=512, type=int, dest="batch_size")
+    parser.add_argument("--batch-size", default=512, type=int, dest="batch_size",
+                        help="Upper-bound batch size (default 512). Auto-scaled down "
+                             "for long contexts: 64 at 240m, 128 at 120m, 192 at 80m, "
+                             "384 at 40m, 512 at ≤10m. Pass a lower value to reduce "
+                             "further if OOM persists.")
     parser.add_argument("--num-workers", default=4, type=int, dest="num_workers")
     parser.add_argument("--cpu",        action="store_true")
     parser.add_argument("--out-dir",    default=None, dest="out_dir",
@@ -244,9 +248,26 @@ def main():
 
             subject_ids = get_subject_ids(ds)
 
+            # ── Auto-scale batch size with context length ──────────────────────
+            # Training used batch=32 at 240m (N=2880 patches). Inference has no
+            # gradient tracking (~2× less memory), so we use 64 as the reference.
+            # We scale inversely with N to keep total tokens-per-batch constant,
+            # then cap at args.batch_size (default 512, user-overridable).
+            # This prevents OOM at long contexts without needing a manual flag.
+            N_patches  = ds.N                  # patches per window at this context
+            _ref_bs    = 64                    # safe batch at N=2880 (no gradients)
+            _ref_N     = 2880                  # reference context (240m)
+            eff_bs = min(args.batch_size,
+                         max(_ref_bs, int(_ref_bs * _ref_N / N_patches)))
+            if eff_bs != args.batch_size:
+                print(f"  Batch size:  {eff_bs} "
+                      f"(auto-scaled from {args.batch_size} for N={N_patches})")
+            else:
+                print(f"  Batch size:  {eff_bs}")
+
             loader = DataLoader(
                 ds,
-                batch_size=args.batch_size,
+                batch_size=eff_bs,
                 shuffle=False,
                 num_workers=args.num_workers,
                 pin_memory=(device.type == "cuda"),
