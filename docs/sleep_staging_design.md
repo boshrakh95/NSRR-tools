@@ -102,36 +102,41 @@ windows), and makes training prohibitively slow at 120m and 240m.
 
 ---
 
-## 3. K Strategy for seq2seq
+## 3. K Does Not Apply to seq2seq — Use All Complete-Context Epochs
 
-Since K=5 doesn't apply directly to seq2seq, define a new K criterion:
+The K concept is a **seq2label aggregation mechanism**: sample K windows per subject at
+inference, aggregate predictions across them (majority vote / mean probability) to get one
+subject-level score. K controls how much of the night is used to classify the subject.
 
-**Recommended: K_windows = 5 (complete-context windows per subject)**
+For seq2seq there is no subject-level aggregation. Each epoch is predicted independently
+and its prediction stands alone. There is no K to vary and no majority vote to compute.
 
-With Option A, each subject contributes all complete-context anchor epochs. To match the
-seq2label fairness criterion (5 context windows per subject per training epoch), we can
-**randomly sample 5 non-overlapping complete-context windows** and use all anchor epochs
-within them. This gives:
+**Training:** use ALL complete-context anchor epochs per subject. No K limit. Items/epoch
+grows with context length (a 240m window contributes 2880 anchor epochs; a 30s window
+contributes 6) — this is unavoidable and correct.
 
-| Context | Epochs per 5 windows | Items/subject |
-|---------|---------------------|--------------|
-| 30s     | 5 × 6 = 30          | 30           |
-| 10m     | 5 × 120 = 600       | 600          |
-| 40m     | 5 × 480 = 2400      | 2400         |
-| 80m     | 5 × 960 = 4800      | 4800         |
-| 120m    | 5 × 1440 = 7200     | 7200         |
-| 240m    | 5 × 2880 = 14400    | 14400        |
+**Evaluation:** compute metrics (kappa, per-stage recall, AUROC) averaged over ALL
+complete-context test epochs. The epoch count differs across context lengths (fewer at
+longer contexts since edge epochs are excluded) but the metrics remain comparable — they
+are epoch-averaged quantities. Report epoch counts per context in the Methods.
 
-Total training items: ~1700 subjects × K_windows epochs = 51K–24M depending on context.
-This grows with context, which is unavoidable — longer contexts inherently contribute more
-prediction targets per window. 
+**Do epoch counts need to match across contexts?** No. Kappa and AUROC are averages;
+a model evaluated on 200K epochs (30s) is directly comparable to one on 100K epochs
+(240m), as long as the protocol is consistent (complete-context only throughout).
+A reviewer might ask, but the answer is simple: the 240m model cannot score the first/last
+2 hours of the recording.
 
-**Alternative: fixed epoch cap** (e.g., 2880 epochs/subject regardless of context):
-Each subject contributes at most N_max = 2880 anchor epochs per training epoch. This keeps
-items/epoch roughly constant across contexts but requires different sampling logic.
+**Paper defence:**
+> "At each context length L, we evaluate on all anchor epochs where the full L-length
+> context window is available within the recording. The number of evaluated epochs decreases
+> as L increases (by design — a 240-min window cannot be centered on epochs within the first
+> or last 120 min of the recording), but Cohen's kappa and per-stage recall are
+> epoch-averaged metrics and remain directly comparable across context lengths."
 
-**Recommended for paper:** K_windows=5 (consistent with seq2label fairness argument; cite
-both criteria in Methods). Run sensitivity check with epoch-cap strategy.
+**Consequence for the analysis pipeline:** the K-sweep in `analyze_windows.py --k-dense`
+is meaningless for seq2seq and should be skipped. The primary analysis tool is simply
+the saturation curve (context length → kappa) which reads directly from `summary.csv`
+without needing any additional analysis step.
 
 ---
 
@@ -163,19 +168,19 @@ Metrics: AUROC, BalAcc, MacroF1, Cohen's Kappa per context and K.
 
 | Step | Script | Applicable? | Notes |
 |------|--------|-------------|-------|
-| 1. analyze --k-dense | analyze_windows.py | ✅ Yes | K = number of scored epochs; interpret as "how many epochs needed for stable metrics" |
-| 2. collect | collect_results.py | ✅ Yes | |
-| 3. build-heatmap | build_heatmap_df.py | ⚠️ Modified meaning | K axis = epoch count, not window count; still informative |
-| 4. iso-compute | plot_iso_compute.py | ⚠️ Weaker | Compute-efficiency tradeoff less clear for seq2seq |
-| 5. saturation | plot_saturation.py | ✅ Primary | Core context-length curve; use Kappa as primary metric |
-| 6. scaling-laws | plot_scaling_laws.py | ✅ Yes | |
-| 7. calibration | plot_calibration.py | ✅ Yes | Are per-epoch softmax probs calibrated? |
-| 8. window-position | plot_window_position.py | ⚠️ Reinterpret | Position = epoch index in night → becomes "time-of-night performance" |
-| 9. subject-consistency | plot_subject_consistency.py | ✅ Yes | Hard subjects = always misclassified across contexts |
-| 10. cohort-saturation | plot_cohort_saturation.py | ✅ Yes | SHHS vs MrOS vs STAGES vs APPLES |
-| 11. precision-recall | plot_precision_recall.py | ✅ Yes | Especially important for minority N1 class |
-| 12. subject-kstar | plot_subject_kstar.py | ⚠️ Weak | K* doesn't map cleanly to seq2seq |
-| 13. task-comparison | plot_task_comparison.py | ✅ Yes | Include sleep_staging alongside binary tasks |
+| 1. analyze --k-dense | analyze_windows.py | ❌ Skip | K sweep is a seq2label concept (aggregation over windows). For seq2seq every epoch is independent — there is nothing to aggregate. Metrics are already in summary.csv from training. |
+| 2. collect | collect_results.py | ✅ Yes | Aggregates summary.csv; works as-is. |
+| 3. build-heatmap | build_heatmap_df.py | ❌ Skip | Requires k-dense analysis output; K axis has no meaning for seq2seq. |
+| 4. iso-compute | plot_iso_compute.py | ❌ Skip | Depends on heatmap df; K-based compute tradeoff irrelevant. |
+| 5. saturation | plot_saturation.py | ✅ **Primary** | Core plot. Use Kappa as primary metric (add kappa to --metric). Reads summary.csv directly — no analyze step needed. |
+| 6. scaling-laws | plot_scaling_laws.py | ✅ Yes | Context-length scaling law; relevant. |
+| 7. calibration | plot_calibration.py | ✅ Yes | Per-epoch softmax calibration; meaningful for seq2seq. |
+| 8. window-position | plot_window_position.py | ⚠️ Reinterpret | "Window position" = epoch's index within its context window → becomes time-of-night performance. Needs relabelling for interpretability. |
+| 9. subject-consistency | plot_subject_consistency.py | ✅ Yes | Hard subjects = consistently misclassified regardless of context. Meaningful. |
+| 10. cohort-saturation | plot_cohort_saturation.py | ✅ Yes | Performance by dataset (SHHS vs MrOS vs STAGES vs APPLES). |
+| 11. precision-recall | plot_precision_recall.py | ✅ Yes | Per-class PR curves; critical for minority N1 class. |
+| 12. subject-kstar | plot_subject_kstar.py | ❌ Skip | K* = minimum K for correct subject-level prediction. Not applicable to per-epoch seq2seq. |
+| 13. task-comparison | plot_task_comparison.py | ✅ Yes | Include sleep_staging alongside binary tasks for cross-task comparison. |
 
 ### 5B. Sleep-Staging-Specific Analyses to Add
 
@@ -230,7 +235,6 @@ Do NOT report accuracy alone. N2 is ~50% of epochs so a trivial classifier gets 
 ## 7. Decision Checklist
 
 - [ ] Implement Option A (complete-context filtering) in ContextWindowDataset for seq2seq
-- [ ] Implement K_windows=5 sampling for seq2seq (5 non-overlapping complete windows/subject)
 - [ ] Restore architecture: hidden_dim=256, num_layers=2 in phase0_v3_config.yaml
 - [ ] Rerun sleep_staging_lstm all 6 contexts with new design
 - [ ] Rerun sleep_staging_transformer all 6 contexts with NO_WANDB=1
