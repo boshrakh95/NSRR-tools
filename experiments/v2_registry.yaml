@@ -283,7 +283,7 @@ experiments:
     num_classes: 2
     head: lstm
     datasets: [apples]
-    contexts: [30s, 10m, 40m, 80m, 120m]   # skip 80m: single dataset, small N
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]   # skip 80m: single dataset, small N
     batch_size: 32
     lr: 1.0e-4
     run_tag: ""
@@ -495,6 +495,20 @@ experiments:
     task_type: seq2label
     num_classes: 2
     head: lstm
+    datasets: [apples, shhs, mros, stages]
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
+    batch_size: 32
+    lr: 1.0e-4
+    run_tag: ""
+    n_size: large
+    tier: 2
+    notes: "ESS >= 11 = positive. Minority=29.7%. Phase0 AUROC 0.59-0.61 — borderline. v3 may improve."
+
+  sleepiness_binary_transformer:
+    task: sleepiness_binary
+    task_type: seq2label
+    num_classes: 2
+    head: transformer
     datasets: [apples, shhs, mros, stages]
     contexts: [30s, 10m, 40m, 80m, 120m, 240m]
     batch_size: 32

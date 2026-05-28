@@ -45,6 +45,8 @@ BOOTSTRAP=0
 SPLIT=test
 HEADS=()
 DRY_RUN=false
+SKIP_ANALYZE=false
+ANALYZE_ONLY=false
 EXP_IDS=()
 
 while [[ $# -gt 0 ]]; do
@@ -55,6 +57,10 @@ while [[ $# -gt 0 ]]; do
             SPLIT="$2"; shift 2 ;;
         --dry-run)
             DRY_RUN=true; shift ;;
+        --skip-analyze)
+            SKIP_ANALYZE=true; shift ;;
+        --analyze-only)
+            ANALYZE_ONLY=true; shift ;;
         --heads)
             shift
             while [[ $# -gt 0 && "${1:0:2}" != "--" ]]; do
@@ -118,12 +124,23 @@ echo "============================================================"
 # ── 1. Window analysis (k-dense, optional bootstrap) ──────────────────────
 echo ""
 echo "── Step 1: analyze --k-dense ────────────────────────────────────────────"
-for exp_id in "${EXP_IDS[@]}"; do
-    echo "   $exp_id"
-    ANALYZE_ARGS=(analyze "$exp_id" --k-dense)
-    [[ "$BOOTSTRAP" -gt 0 ]] && ANALYZE_ARGS+=(--bootstrap "$BOOTSTRAP")
-    run_step "$(gen_cmd "${ANALYZE_ARGS[@]}")"
-done
+if $SKIP_ANALYZE; then
+    echo "  [skipped via --skip-analyze]"
+else
+    for exp_id in "${EXP_IDS[@]}"; do
+        echo "   $exp_id"
+        ANALYZE_ARGS=(analyze "$exp_id" --k-dense --plot)
+        [[ "$BOOTSTRAP" -gt 0 ]] && ANALYZE_ARGS+=(--bootstrap "$BOOTSTRAP")
+        run_step "$(gen_cmd "${ANALYZE_ARGS[@]}")"
+    done
+fi
+
+if $ANALYZE_ONLY; then
+    echo ""
+    echo "  [--analyze-only] Stopping after Step 1."
+    echo "============================================================"
+    exit 0
+fi
 
 # ── 2. Collect ────────────────────────────────────────────────────────────
 echo ""

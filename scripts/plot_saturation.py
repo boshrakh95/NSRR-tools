@@ -84,7 +84,7 @@ def load_summary(results_dir: Path, task: str, head: str, run_tag: str) -> pd.Da
     exp_id   = f"{task}_{head}" + (f"_{run_tag}" if run_tag else "")
     csv_path = results_dir / exp_id / "summary.csv"
     if not csv_path.exists():
-        return pd.DataFrame()
+        return pd.DataFrame(columns=["context_length", "context_length_min"])
     try:
         df = pd.read_csv(csv_path)
     except Exception:

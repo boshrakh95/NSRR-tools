@@ -70,6 +70,7 @@ TASK_LABELS = {
 TASK_COLORS = [
     "#e41a1c", "#377eb8", "#4daf4a", "#984ea3",
     "#ff7f00", "#a65628", "#f781bf", "#999999",
+    "#66c2a5", "#fc8d62", "#8da0cb", "#e78ac3",
 ]
 
 plt.rcParams.update({
@@ -150,7 +151,7 @@ def plot_sensitivity_scatter(summary: pd.DataFrame, out_dir: Path) -> None:
 
     fig, ax = plt.subplots(figsize=(9, 6))
     task_list = summary["task"].tolist()
-    col_cycle = TASK_COLORS[:len(task_list)]
+    col_cycle = [TASK_COLORS[i % len(TASK_COLORS)] for i in range(len(task_list))]
 
     for (_, row), color in zip(summary.iterrows(), col_cycle):
         ax.scatter(row["difficulty"], row["sensitivity"],
