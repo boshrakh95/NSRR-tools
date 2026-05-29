@@ -182,6 +182,7 @@ class TransformerHead(nn.Module):
         self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
         self.dropout     = nn.Dropout(dropout)
         self.fc          = nn.Linear(hidden_dim, num_classes)
+        self._attn_logged = False   # log attention backend once on first forward call
 
     @staticmethod
     def _make_pos_enc(max_len: int, d_model: int) -> torch.Tensor:
@@ -216,11 +217,29 @@ class TransformerHead(nn.Module):
         cls_mask = torch.zeros(B, 1, dtype=torch.bool, device=mask.device)
         key_mask = torch.cat([cls_mask, mask], dim=1)    # (B, N+1)
 
-        # Convert bool mask → float additive mask to avoid sympy import inside
-        # PyTorch's bool-mask validation path
-        key_mask_f = key_mask.float().masked_fill(key_mask, float("-inf"))
+        # Pass None when no positions are masked → PyTorch selects Flash attention
+        # (O(N) memory). A non-None mask — even an all-zeros float tensor — forces
+        # Math attention (O(N²)), which at N=2881 allocates ~42 GB per batch.
+        # min_recording_patches=2880 guarantees all-False masks in practice,
+        # so this branch is taken for every real batch.
+        src_padding_mask = key_mask if key_mask.any() else None
 
-        out     = self.transformer(x, src_key_padding_mask=key_mask_f)
+        if not self._attn_logged:
+            self._attn_logged = True
+            _has_padding = src_padding_mask is not None
+            _dtype = str(x.dtype).replace("torch.", "")
+            _mode  = "train" if self.training else "eval"
+            if _has_padding:
+                _backend = "Math/MemEfficient (masked positions exist — NOT Flash)"
+            else:
+                _backend = "Flash (mask=None, O(N) memory)"
+            print(
+                f"  [Attn] {_backend} | dtype={_dtype} | mode={_mode} "
+                f"| N={N} | any_padding={_has_padding}",
+                flush=True,
+            )
+
+        out     = self.transformer(x, src_key_padding_mask=src_padding_mask)
         cls_out = out[:, 0, :]                           # (B, hidden_dim)
         return self.fc(self.dropout(cls_out))
 

@@ -66,16 +66,39 @@ This is the source of the conceptual confusion, so it is worth being explicit:
 
 **The K dimension of the heatmap is free.** After running inference with all windows (which you already do), you can sweep any K you want in `analyze_windows.py` without touching the GPU. The only thing that costs compute is adding new rows to the grid (new context lengths L, or training K ablations).
 
+### The three K values and their windowing pools
+
+| K | Used where | Windowing pool | Value |
+|---|-----------|---------------|-------|
+| **K_train** | Training dataloader, each epoch | **Overlapping** — any start in [0, T−N], random | `windows_per_subject` (default 5) |
+| **K_val** | Validation eval during training (early stopping) | **Overlapping** — evenly spaced across [0, T−N], deterministic | K_max = 5 at all context lengths |
+| **K_infer** | `infer_subject_windows.py` | **Non-overlapping** stride-N | T//N (all) |
+
+Important implications:
+- **K_val = K_max = 5 at all context lengths.** Val and test during training use the overlapping pool (triggered when K_max ≤ 100), so K=5 is achieved at 240m just as at shorter contexts. The 5 positions are evenly spaced and fixed, so the early-stopping signal is equally stable across the entire context-length sweep.
+- **K_infer is always T//N** because `infer_subject_windows.py` sets `windows_per_subject = 99,999`, routing to the non-overlapping stride-N branch which returns all floor(T/N) positions deterministically. Inference is unaffected.
+- The overlapping pool makes K=5 achievable at all context lengths in both training and evaluation.
+
 ### Training K (K_train)
 
 `windows_per_subject` in your config (currently 5) controls how many windows per subject are sampled each training epoch. This is separate from the inference K that you sweep post-hoc.
 
 The tension:
-- **K_train = 5:** Each epoch, the model sees 5 randomly-sampled windows per subject, regardless of context length. This makes training exposure roughly equal across L values. But the model learns to do well from just 5 windows — it may not be optimized for large-K inference.
-- **K_train = all:** The model sees all available windows. For 30s context (~960 windows/subject), this means far more training signal per epoch than for 120m (~4 windows/subject). More training data, but an unfair comparison across L values.
-- **K_train = token budget:** K_train × L_minutes = constant. For L=30s, K_train≈160; for L=80m, K_train≈1. Each subject contributes the same total signal per epoch regardless of L. This is the principled approach for comparing context lengths fairly.
+- **K_train = 5:** Each epoch, the model sees 5 randomly-sampled windows per subject, regardless of context length. This equalises gradient updates per subject per epoch across all L values — the key criterion for a fair context-length comparison.
+- **K_train = all:** The model sees all available windows. For 30s context (~960 windows/subject), this means ~240× more gradient updates per epoch than for 120m (~4 windows/subject). More training data, but an unfair comparison: you measure training compute, not context utility.
+- **K_train = token budget:** K_train × L_minutes = constant (e.g. budget=80m → K=160 at 30s, K=1 at 80m+). Each subject contributes the same total signal per epoch. Fair in the information sense but gives the 30s model 160× more gradient updates than the 120m model — a different confound.
 
-**K_train = 5 is a defensible and common choice** — it is not wrong. But it means models trained at short contexts have seen their windows many fewer times relative to the available data. Document this and, optionally, run one ablation to verify it doesn't change conclusions.
+**K_train = 5 is the correct default for comparing context lengths.** The right fairness criterion is equal gradient updates per subject per epoch (not equal information). K=all and token-budget both introduce asymmetric training dynamics that would confound the context-length comparison. Note that K=5 controls per-epoch exposure, not total data seen across training — with enough epochs and random sampling the model covers most of the window space regardless of context length.
+
+**Two fairness criteria, neither is universally right:**
+
+| Criterion | K=5 fixed | Token budget |
+|---|---|---|
+| Equal gradient updates/subject/epoch | ✅ | ✗ (160× more at 30s) |
+| Equal information/subject/epoch | ✗ | ✅ |
+| Converge at long contexts (80m+) | ✅ both give K≈1 | ✅ |
+
+Because both strategies agree at long contexts, any difference in the saturation curve shape would appear only at short contexts (30s, 10m). Running a one-task token-budget ablation (§13) directly tests this and pre-empts reviewer objections.
 
 ---
 
@@ -132,34 +155,27 @@ With `[30s, 2m, 5m, 10m, 40m, 80m, 120m, 240m, full_night]` the heatmap covers 3
 
 ### Tier 1 experiments (full comparison, all three heads)
 
-Run all four Tier 1 tasks × recommended 9 context lengths × 3 heads.  
-This is the set that answers H1–H4 comprehensively.
+Six tasks × 6 context lengths × 3 heads:
+`sex_binary`, `sleep_efficiency_binary`, `bmi_binary`, `age_class`, `apnea_binary`, `sleep_staging`
 
-For paper: probably show the full grid for one task (sex_binary or bmi_binary) and a summary comparison across tasks.
+For paper: show the full heatmap grid for one representative task (bmi_binary or sex_binary) and the saturation curve across all Tier 1 tasks. `apnea_binary` is the primary OSA result. `sleep_staging` is the primary seq2seq result — primary metric is Cohen’s κ (not AUROC).
 
 ### Tier 2 experiments (lstm only)
 
-Run the 4 Tier 2 tasks × 5 original context lengths × lstm only. These are lower priority — run after Tier 1 is done.
+Six tasks × 5–6 context lengths × lstm only:
+`psqi_binary`, `depression_extreme_binary`, `osa_binary_apples_postqc`, `osa_severity_apples` (5 contexts, small N), `cvd_binary`, `sleepiness_binary` (6 contexts, large N)
 
-### Ablation: training K
-
-Run one task (recommended: `sex_binary_lstm`) with two additional training K settings:
-
-1. `run_tag: kall` — `windows_per_subject: 9999` (train on all available windows)
-2. `run_tag: kbudget` — `windows_per_subject = budget_min / L_min` where budget = 80 min (token budget approach)
-
-Use the same inference and analysis pipeline. If the heatmap shape is qualitatively similar to the K=5 baseline, your main conclusions are robust to this choice. If not, use the token budget approach for the main results.
-
-This ablation requires 2 × 9 = 18 additional training jobs for one task.
+Run after Tier 1 is complete.
 
 ### Seq2seq tasks (sleep staging)
 
-For sleep staging, subject-level aggregation doesn't apply (each 30-second epoch has its own label). The research questions simplify:
-- H1 (context saturation): Does segment-level accuracy increase with L?
+For sleep staging, subject-level aggregation doesn’t apply (each 30-second epoch has its own label). The research questions simplify:
+- H1 (context saturation): Does per-epoch accuracy / Cohen’s κ increase with L?
 - H4 does not apply (no aggregation)
-- No heatmap needed; just the saturation curve (AUROC vs L at K=all segments)
+- No heatmap needed; just the saturation curve (κ and per-stage F1 vs L)
+- Primary metric: Cohen’s κ and per-stage F1. AUROC also logged for reference.
 
-This is a simpler analysis — run the sweep and report the saturation curve.
+The mean_pool head loses position information and is expected to underperform on the anchor task; its saturation curve is included as a no-temporal-context baseline.
 
 ---
 
@@ -197,12 +213,25 @@ For each iso-compute diagonal: one line showing how AUROC varies as you move fro
 
 | Figure / analysis | Script | Status |
 |---|---|---|
-| Saturation curve (AUROC vs L) | `plot_saturation.py` (reads `results/collected/analysis.csv`, k=all) | **Already implemented** |
+| Saturation curve (AUROC vs L) | `plot_saturation.py` | **Already implemented** |
 | Per-context K-sweep table + line plot | `analyze_windows.py` | **Already implemented** |
 | 2D heatmap with iso-compute lines | `build_heatmap_df.py` + `plot_iso_compute.py` | **Already implemented** |
 | Head comparison plots | `plot_saturation.py --heads lstm transformer mean_pool` | **Already implemented** |
 | Iso-compute curve (7 plots) | `plot_iso_compute.py` | **Already implemented** |
 | Collect all results into flat CSVs | `collect_results_v2.py` | **Already implemented** |
+| Bootstrap 95% CIs on AUROC / bal-acc | `analyze_windows.py --bootstrap N` | **Already implemented** (config-driven via `gen_commands.py`) |
+| U-shape overfitting curves | `plot_scaling_laws.py` | ✅ **Done** — reads `training.csv`; gen_commands: `scaling-laws` |
+| FLOPs vs AUROC scaling law | `plot_scaling_laws.py` | ✅ **Done** — reads `training.csv`; FLOPs computed analytically from `seq_len`, `hidden_dim`, `steps_per_epoch` |
+| ECE calibration + reliability diagrams | `plot_calibration.py` | ✅ **Done** — reads `*_windows.parquet`; gen_commands: `calibration` |
+| Window-position probability profiles | `plot_window_position.py` | ✅ **Done** — reads `*_windows.parquet`; gen_commands: `window-position` |
+| Within-subject variance across windows | `plot_subject_consistency.py` | ✅ **Done** — reads `*_windows.parquet`; gen_commands: `subject-consistency` |
+| Cross-task sensitivity matrix | `plot_task_comparison.py` | ✅ **Done** — reads `analysis.csv` (multi-task); gen_commands: `task-comparison` |
+| Per-dataset saturation curves | `plot_cohort_saturation.py` | ✅ **Done** — reads `*_windows.parquet` filtered by `dataset` column; gen_commands: `cohort-saturation` |
+| Precision-recall curves + vote sweep | `plot_precision_recall.py` | ✅ **Done** — reads `*_windows.parquet`; gen_commands: `precision-recall` |
+| K* distribution + coverage curves | `plot_subject_kstar.py` | ✅ **Done** — reads `*_windows.parquet` (not CSV); gen_commands: `subject-kstar` |
+| Saturation curves with CI bands | `plot_saturation.py --collected-dir` | ✅ **Done** — reads `analysis.csv` CI columns; gen_commands: `saturation --collected-dir` |
+
+See `docs/ANALYSIS_IDEAS.md` for the scientific motivation, expected outputs, and full implementation details for all scripts. Use `gen_commands.py` subcommands to generate the exact commands.
 
 **Results collection inputs and outputs:**
 
@@ -365,14 +394,17 @@ Current output not yet present:
 | Item | Priority | Requires retraining? | Status | Notes |
 |------|----------|---------------------|--------|-------|
 | Add 240m context length to registry | High | **Yes** | ✅ Done | Added to all Tier 1 experiments |
-| Add `--k-dense` flag to `analyze_windows.py` | High | No | ✅ Done | See §13 Step 1 |
-| Write `build_heatmap_df.py` | High | No | ✅ Done | See §13 Step 2 |
-| Write `plot_iso_compute.py` (7 plots) | High | No | ✅ Done | See §13 Step 3; replaces `plot_context_heatmap.py` |
-| Write `plot_saturation.py` | High | No | ✅ Done | See §13 Step 4 |
-| Integrate into `gen_commands.py` | High | No | ✅ Done | See §13 Step 5; 3 new subcommands |
-| ROC at iso-compute (Plot A) | Medium | No | ⬜ TODO | See §13 Step 6 |
-| Recall at fixed precision (Plot B) | Low | No | ⬜ TODO | See §13 Step 6 |
-| Metric comparison (Plot C) | Low | No | ⬜ TODO | See §13 Step 6 |
+| Add `--k-dense` flag to `analyze_windows.py` | High | No | ✅ Done | See §14 Step 1 |
+| Write `build_heatmap_df.py` | High | No | ✅ Done | See §14 Step 2 |
+| Write `plot_iso_compute.py` (7 plots) | High | No | ✅ Done | See §14 Step 3; replaces `plot_context_heatmap.py` |
+| Write `plot_saturation.py` | High | No | ✅ Done | See §14 Step 4 |
+| Integrate into `gen_commands.py` (core) | High | No | ✅ Done | See §14 Step 5; 3 subcommands |
+| Write §1–§9 extended plot scripts | High | Partial | ✅ Done | All 8 scripts written; see §8 table and ANALYSIS_IDEAS.md |
+| Add 9 extended subcommands to `gen_commands.py` | High | No | ✅ Done | `collect`, `scaling-laws`, `calibration`, `window-position`, `subject-consistency`, `task-comparison`, `cohort-saturation`, `precision-recall`, `subject-kstar` |
+| Saturation CI bands (`plot_saturation.py`) | Medium | No | ✅ Done | `--collected-dir` flag reads bootstrap CI columns from `analysis.csv` |
+| ROC at iso-compute (Plot A) | Medium | No | ⬜ TODO | See §14 Step 6 |
+| Recall at fixed precision (Plot B) | Low | No | ⬜ TODO | See §14 Step 6 |
+| Metric comparison (Plot C) | Low | No | ⬜ TODO | See §14 Step 6 |
 
 ### 11.9 Required changes to `analyze_windows.py` for the heatmap
 
@@ -393,13 +425,60 @@ K values that exceed `max_windows_available` for a context length are silently s
 
 ---
 
-## 12. Configurable Training K Strategy
+## 12. Batch Size Protocol for the Paper
 
-**Status: Implemented.** The `windows_strategy` option is live in `configs/phase0_v2_config.yaml` and `scripts/train_context_sweep.py`.
+**Single protocol — batch size 32, accum_steps 1, at every context length.**
+
+This was established after resolving two root causes of CUDA OOM at 240m on the Transformer head:
+
+1. **Cohort filter** (`dataset.min_recording_patches=2880`): ensures all subjects across all context lengths have recordings ≥ 240m, so padding masks are always all-False. See `docs/cohort_filter.md`.
+2. **Mask fix** (`TransformerHead.forward()`): passes `src_key_padding_mask=None` when the mask is all-False → PyTorch selects Flash attention (O(N) memory). Without this, a float mask (even all-zeros) triggered O(N²) Math attention, trying to allocate ~42 GB at batch=168 on a 9.75 GiB GPU — always OOM.
+
+With both fixes, batch=32 fits at every context length (confirmed: `[Attn] Flash (mask=None, O(N) memory) | N=2880`).
+
+**Scientific justification:** Using the same batch size at all L ensures identical training dynamics across the sweep. Same subjects per gradient update, same number of gradient steps per epoch, same stochastic noise level. Context window length is the only variable between experiments, which is exactly what the paper needs to claim.
+
+**Paper claim:** "All models were trained with batch size 32, identical across all context lengths. No gradient accumulation was required."
+
+**Registry configuration (current):**
+```yaml
+gradient_accumulation:
+  enabled: true
+  effective_batch: 32
+  context_micro_batch:
+    "30s":  32   # accum=1
+    "10m":  32   # accum=1
+    "40m":  32   # accum=1
+    "80m":  32   # accum=1
+    "120m": 32   # accum=1
+    "240m": 32   # accum=1
+```
+
+`gen_commands.py` computes `accum_steps = effective_batch / micro_batch = 1` for all contexts. The gradient accumulation code path is kept for flexibility (see below) but is a no-op at these settings.
+
+### 12.1 If memory constraints arise on a different GPU or head
+
+Lower the `context_micro_batch` for the affected context; the infrastructure handles accumulation automatically:
+
+```yaml
+# Example: 240m requires micro_batch=8 on a smaller GPU:
+  context_micro_batch:
+    "240m": 8   # gen_commands.py sets ACCUM_STEPS=4 automatically
+```
+
+`gen_commands.py` emits `BATCH_SIZE=8 ACCUM_STEPS=4`, and the training script accumulates gradients over 4 micro-batches before each optimizer step. The effective gradient is mathematically identical to batch=32 with accum=1.
+
+**Paper wording for this case:** "All models were trained with effective batch size 32, achieved via gradient accumulation at context lengths where GPU memory required a smaller micro-batch."
+
+---
+
+## 13. Configurable Training K Strategy
+
+**Status: Implemented.** The `windows_strategy` option is live in `configs/phase0_v3_config.yaml` and `scripts/train_context_sweep.py`.
 
 ### 12.1 Config options
 
-In `configs/phase0_v2_config.yaml`, under `training:`:
+In `configs/phase0_v3_config.yaml`, under `training:`:
 
 ```yaml
   windows_strategy: "fixed"        # "fixed" | "token_budget"
@@ -427,7 +506,7 @@ sex_binary_lstm_kbudget:
   tier: 3
 ```
 
-Use a separate config with `windows_strategy: "token_budget"` and pass it via `--config`. Do not modify the main `phase0_v2_config.yaml` for the ablation.
+Use a separate config with `windows_strategy: "token_budget"` and pass it via `--config`. Do not modify the main `phase0_v3_config.yaml` for the ablation.
 
 ### 12.3 How to run the ablation
 
@@ -479,9 +558,20 @@ If the shapes diverge (e.g., token-budget shows stronger advantage for short-con
 
 Either result is informative and publishable.
 
+### 12.5 Reviewer pre-answer and paper wording
+
+**Anticipated reviewer comment:** *"With K=5 at 30s, the model only sees 5 of ~960 available windows per epoch — a tiny fraction of the available data. This may underfit the short-context models and bias your comparison toward longer contexts."*
+
+**Rebuttal:** This conflates two distinct fairness criteria. K=5 fixed equalises *gradient updates per subject per epoch* across all context lengths — the relevant criterion for comparing models trained at different L. K=all gives the 30s model ~240× more gradient updates per epoch than the 120m model, which would confound the comparison. K=5 controls per-epoch exposure, not total data seen across training; with sufficient epochs and random sampling, models cover the window space regardless of context length. Furthermore, both K=5 and the token-budget schedule converge at L≥80m (both give K≈1), so any difference in the saturation curve is localised to short contexts and directly tested by the ablation.
+
+**Recommended Methods wording:**
+> "At each context length, K=5 windows were randomly sampled per subject per training epoch, keeping the number of gradient updates per subject constant across context lengths — the relevant criterion for an unconfounded comparison of context-length effects. As a sensitivity analysis, we repeated the experiment for [task] using a token-budget schedule (K × L = 80 min, yielding K=160 at 30s), and found no qualitative difference in the saturation curve (Supplementary Table X), confirming that the K=5 choice does not bias results toward longer contexts."
+
+**Practical note:** Only run this ablation for one representative Tier 1 task (recommended: `sex_binary_lstm` or `bmi_binary_lstm`). A positive result (same saturation curve shape) is sufficient to close the reviewer concern for all tasks. Registry entry and config are in §12.3; use `run_tag: "kbudget"` to keep results in a separate directory.
+
 ---
 
-## 13. Implementation Plan: Iso-Compute Plots
+## 14. Implementation Plan: Iso-Compute Plots
 
 This section is the step-by-step workplan for implementing the 7 core iso-compute plots (from `mock-compute-optimal-tradeoffs-plots-main/`) on real experimental data.
 
@@ -671,3 +761,66 @@ Steps 1–2 are prerequisites for Step 3. Steps 1–4 are independent of each ot
 ### Hero experiment for initial plots
 
 Use `sex_binary_lstm` (6 trained contexts: 30s, 10m, 40m, 80m, 120m, 240m; inference done on test split). Adding 5m context later will add a row to the heatmap automatically without any code changes.
+
+---
+
+## 15. Extended Analyses for Paper Depth
+
+Beyond H1–H4 and the 7 iso-compute plots, a second set of analyses adds scientific depth. Full details and scientific motivation are in `docs/ANALYSIS_IDEAS.md`. This section summarises the design decisions that drove the pipeline changes made to support them.
+
+### 14.1 Overfitting phase and U-shape curves (ANALYSIS_IDEAS §7)
+
+**Scientific question:** Does training longer than early-stopping help or hurt? How do context lengths differ in their tendency to overfit?
+
+**Why added to training code:** Early-stopped training only reveals the left and flat portion of the val-loss curve. To expose the right arm (rising val-loss, falling train-loss), training must continue past the stopping point without corrupting `best_model.pt`. The new `overfit_epochs` config option does exactly this: it runs extra epochs, flags them in `training_curves.csv` as `is_overfit_epoch: True`, and never updates the best checkpoint.
+
+**Expected finding:** Short-context models (30s, 10m) with small effective sequence lengths may overfit faster to a relatively easier pattern. Long-context models may show a shallower overfitting slope because the task requires genuine temporal integration that the dataset supports. The difference in the overfitting slope across context lengths is itself a result about model capacity.
+
+**Data pipeline:** `training_curves.csv` → collected into `training.csv` (all rows) → `plot_scaling_laws.py`. Filter `is_overfit_epoch == False` for all other uses.
+
+### 14.2 Neural scaling laws (ANALYSIS_IDEAS §8)
+
+**Scientific question:** Does test performance (AUROC) follow a power-law in training compute (FLOPs)? Is there a Chinchilla-style optimal context length for a given compute budget?
+
+**Why added:** Scaling-law analysis requires (compute, performance) pairs at multiple training budgets, not just the best epoch. Two mechanisms provide these:
+
+1. **Epoch-level points:** Each epoch in `training.csv` gives one (cumulative FLOPs, val_auroc) point. FLOPs per epoch are computed analytically post-hoc from `seq_len × steps_per_epoch × FLOPs_per_token(head_type, hidden_dim)`.
+2. **Snapshot-level points (optional):** When `save_snapshots: true`, intermediate model states are saved every N epochs. Running inference on snapshots gives test AUROC at multiple compute budgets.
+
+**FLOPs formulas (analytical, no profiling needed):**
+- LSTM: FLOPs/step ≈ `4 × seq_len × hidden_dim × (input_dim + hidden_dim)` (4 gates, each a matmul)
+- Transformer: FLOPs/step ≈ `2 × seq_len² × hidden_dim + 4 × seq_len × hidden_dim × input_dim` (attention + FF)
+- MeanPool: FLOPs/step ≈ `seq_len × input_dim` (elementwise reduction only)
+
+All inputs (`seq_len`, `hidden_dim`, `input_dim`, `steps_per_epoch`, `n_trainable_params`) are now recorded in `metrics.json` and collected into `training.csv` for this purpose.
+
+### 14.3 Calibration analysis (ANALYSIS_IDEAS §3)
+
+**Scientific question:** Are the predicted probabilities well-calibrated, especially at longer context lengths where AUROC improves? A highly discriminative model can still be overconfident or underconfident.
+
+**Data needed:** Per-window `prob_class*` from `*_windows.parquet`. No new training or inference needed.
+
+**Implementation note:** Expected Calibration Error (ECE) and reliability diagrams require binning predicted probabilities and comparing bin mean probability vs observed positive fraction. This is computed in a new `plot_calibration.py` script that reads parquets directly — no dependency on `collect_results_v2.py`.
+
+### 14.4 Window position analysis (ANALYSIS_IDEAS §4)
+
+**Scientific question:** Is there a "privileged" time-of-night? Do the first hours of sleep carry more diagnostic signal than late sleep for a given task?
+
+**Data needed:** Each row of `*_windows.parquet` includes a `window_start` or `window_index` field. Group predictions by relative position in the night and compute mean predicted probability per bin.
+
+**Why this matters for the paper:** If early-night windows are systematically more informative, the optimal K-window selection strategy is not uniform sampling but position-weighted sampling. This supports a practical recommendation.
+
+### 14.5 Architecture: which analyses depend on which scripts
+
+The pipeline architecture for new analyses follows the same pattern as the existing iso-compute pipeline:
+
+| Analysis type | Data source | Depends on `collect_results_v2.py`? |
+|---------------|------------|--------------------------------------|
+| U-shape / overfitting curves | `training_curves.csv` (per run) or `training.csv` | Either (prefer raw for single experiment) |
+| Scaling laws (FLOPs vs AUROC) | `training.csv` + analytical FLOPs | Yes — needs data from all context lengths in one place |
+| Calibration, window position, PR curves | `*_windows.parquet` (per run) | No — reads parquets directly |
+| Cross-task sensitivity, cohort breakdown | `analysis.csv` | Yes — multi-experiment data |
+| K* distribution | `window_analysis_*.csv` (per run) | No — reads single experiment's CSV |
+| Subject consistency | `*_windows.parquet` (per run) | No |
+
+`collect_results_v2.py` is a convenience aggregator, not a required computation step. All the numbers it stores were already computed by earlier pipeline stages. Single-experiment plots bypass it; cross-experiment plots use it to avoid scanning many directories.

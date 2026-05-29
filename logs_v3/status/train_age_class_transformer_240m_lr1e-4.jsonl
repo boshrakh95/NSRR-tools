@@ -1,0 +1,6 @@
+{"ts":"2026-05-26T08:48:32-07:00","job_id":"41470727","node":"fc10915","status":"STARTED","task":"age_class","head":"transformer","context":"240m","lr":"1e-4","datasets":"apples shhs mros"}
+{"ts":"2026-05-26T13:45:46-07:00","job_id":"41470727","node":"fc10915","status":"TIMEOUT_REQUEUED","task":"age_class","head":"transformer","context":"240m","lr":"1e-4","datasets":"apples shhs mros"}
+{"ts":"2026-05-26T13:47:49-07:00","job_id":"41521400","node":"fc11004","status":"STARTED","task":"age_class","head":"transformer","context":"240m","lr":"1e-4","datasets":"apples shhs mros"}
+{"ts":"2026-05-26T18:43:35-07:00","job_id":"41521400","node":"fc11004","status":"TIMEOUT_REQUEUED","task":"age_class","head":"transformer","context":"240m","lr":"1e-4","datasets":"apples shhs mros"}
+{"ts":"2026-05-26T18:46:27-07:00","job_id":"41561279","node":"fc11004","status":"STARTED","task":"age_class","head":"transformer","context":"240m","lr":"1e-4","datasets":"apples shhs mros"}
+{"ts":"2026-05-26T20:24:23-07:00","job_id":"41561279","node":"fc11004","status":"SUCCESS","task":"age_class","head":"transformer","context":"240m","lr":"1e-4","datasets":"apples shhs mros"}

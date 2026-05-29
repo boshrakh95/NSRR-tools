@@ -1,0 +1,2 @@
+{"ts":"2026-05-15T19:49:35-04:00","job_id":"12450789","node":"rg13203","status":"STARTED","task":"psqi_binary","head":"lstm","context":"40m","lr":"0.0001","datasets":"mros"}
+{"ts":"2026-05-15T19:56:04-04:00","job_id":"12450789","node":"rg13203","status":"SUCCESS","task":"psqi_binary","head":"lstm","context":"40m","lr":"0.0001","datasets":"mros"}

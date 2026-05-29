@@ -2,49 +2,104 @@
 """
 Experiment command generator for v2 task-definition experiments.
 
-Usage:
+── Core pipeline ─────────────────────────────────────────────────────────────
   python scripts/gen_commands.py list [--tier 1|2]
       List all experiments with status (pending/trained/inferred/analyzed).
 
+  python scripts/gen_commands.py probe-batch <exp_id> [--starting-batch-size 256]
+      Print sbatch command to probe the max GPU batch size for each context
+      (memory_bounded experiments only). Writes {exp_dir}/batch_sizes.json,
+      which 'train' picks up automatically. Run this BEFORE 'train'.
+
   python scripts/gen_commands.py train <exp_id> [--context 30s 10m ...]
       Print sbatch command(s) for training. One job per context.
-      Omit --context to print commands for all contexts in the registry.
 
   python scripts/gen_commands.py infer <exp_id> [--split test|val]
       Print the sbatch command for inference (auto-discovers trained contexts).
 
-  python scripts/gen_commands.py analyze <exp_id> [--plot]
-      Print the python command for window analysis.
+  python scripts/gen_commands.py analyze <exp_id> [--plot] [--k-dense] [--bootstrap N]
+      Print the python command for window analysis. Use --k-dense for the
+      iso-compute pipeline (~25 K values). --bootstrap N overrides the
+      bootstrap_samples value from the config yaml (0 = off).
 
   python scripts/gen_commands.py status [<exp_id>]
       Show detailed file-level status for one or all experiments.
 
   python scripts/gen_commands.py runs [<exp_id>]
-      Show job run history (from logs_v2/status/*.jsonl tracking files).
+      Show job run history (from logs_v3/status/*.jsonl tracking files).
 
+  Typical memory-bounded workflow:
+    1. python scripts/gen_commands.py probe-batch <exp_id>   # get sbatch cmd
+    2. <run that sbatch cmd on GPU node>                      # writes batch_sizes.json
+    3. python scripts/gen_commands.py train <exp_id>          # reads batch_sizes.json auto
+
+── Iso-compute pipeline ───────────────────────────────────────────────────────
   python scripts/gen_commands.py build-heatmap <exp_id> [--split test]
-      Print the build_heatmap_df.py command (Step 2 of iso-compute pipeline).
-      Run analyze --k-dense first to produce the dense window_analysis CSV.
+      Print the build_heatmap_df.py command (Step 2). Run analyze --k-dense first.
 
   python scripts/gen_commands.py iso-plots <exp_id> [--split test] [--metric auroc ...]
       Print the plot_iso_compute.py command (Step 3 — 7 iso-compute plots).
 
   python scripts/gen_commands.py saturation <task> [--heads lstm ...] [--metric auroc ...]
       Print the plot_saturation.py command (Step 4 — saturation curve across heads).
+      Use --collected-dir to add bootstrap CI bands.
+
+── Extended analyses (§1–§9) ─────────────────────────────────────────────────
+  python scripts/gen_commands.py collect [<exp_id> ...]
+      Print collect_results_v2.py command to gather all results into
+      training.csv and analysis.csv. Required before task-comparison and
+      scaling-laws subcommands. Note: bootstrap CIs are NOT produced here —
+      run 'analyze --bootstrap N' first; collect picks up the CI columns.
+
+  python scripts/gen_commands.py scaling-laws <task> [--heads lstm ...] [--plots 1A 1B 1C]
+      Print plot_scaling_laws.py command (§1 — U-shape + FLOPs scaling law).
+      Requires: collect first.
+
+  python scripts/gen_commands.py calibration <exp_id> [--split test] [--plots 2A 2B 2C]
+      Print plot_calibration.py command (§2 — reliability diagrams + ECE).
+
+  python scripts/gen_commands.py window-position <exp_id> [--split test] [--plots 4A 4B]
+      Print plot_window_position.py command (§4 — position-probability profiles).
+
+  python scripts/gen_commands.py subject-consistency <exp_id> [--split test] [--plots 5A 5B 5C]
+      Print plot_subject_consistency.py command (§5 — variance + hard subjects).
+
+  python scripts/gen_commands.py task-comparison [--tasks t1 t2 ...] [--head lstm]
+      Print plot_task_comparison.py command (§6 — cross-task sensitivity matrix).
+      Requires: collect first.
+
+  python scripts/gen_commands.py cohort-saturation <exp_id> [--split test] [--datasets apples shhs mros]
+      Print plot_cohort_saturation.py command (§7 — per-cohort saturation curves).
+
+  python scripts/gen_commands.py precision-recall <exp_id> [--split test] [--plots 8A 8B 8C]
+      Print plot_precision_recall.py command (§8 — PR curves + vote sweep).
+
+  python scripts/gen_commands.py subject-kstar <exp_id> [--split test] [--kmax 30] [--reps 20]
+      Print plot_subject_kstar.py command (§9 — K* distribution + coverage curves).
 
 Examples:
   python scripts/gen_commands.py list --tier 1
+  python scripts/gen_commands.py probe-batch sleep_efficiency_binary_transformer_membnd
   python scripts/gen_commands.py train sex_binary_lstm
   python scripts/gen_commands.py train sex_binary_lstm --context 30s
   python scripts/gen_commands.py infer sex_binary_lstm
-  python scripts/gen_commands.py infer sex_binary_lstm --split val
+  python scripts/gen_commands.py infer sex_binary_lstm --batch-size 64
   python scripts/gen_commands.py analyze sex_binary_lstm --plot
   python scripts/gen_commands.py analyze sex_binary_lstm --k-dense
+  python scripts/gen_commands.py analyze sex_binary_lstm --k-dense --bootstrap 1000
   python scripts/gen_commands.py build-heatmap sex_binary_lstm
   python scripts/gen_commands.py iso-plots sex_binary_lstm
   python scripts/gen_commands.py saturation sex_binary --heads lstm transformer mean_pool
+  python scripts/gen_commands.py collect sex_binary_lstm sex_binary_transformer
+  python scripts/gen_commands.py scaling-laws sex_binary --heads lstm transformer mean_pool
+  python scripts/gen_commands.py calibration sex_binary_lstm
+  python scripts/gen_commands.py window-position sex_binary_lstm
+  python scripts/gen_commands.py subject-consistency sex_binary_lstm
+  python scripts/gen_commands.py task-comparison --head lstm
+  python scripts/gen_commands.py cohort-saturation sex_binary_lstm
+  python scripts/gen_commands.py precision-recall sex_binary_lstm
+  python scripts/gen_commands.py subject-kstar sex_binary_lstm --kmax 20
   python scripts/gen_commands.py status
-  python scripts/gen_commands.py runs
   python scripts/gen_commands.py runs sex_binary_lstm
 """
 
@@ -66,22 +121,22 @@ _TRAIN_SCRIPT = "train_context_sweep_gpu_rorqual.sh" if _ON_RORQUAL else "train_
 _INFER_SCRIPT = "infer_subject_windows_gpu_rorqual.sh" if _ON_RORQUAL else "infer_subject_windows_gpu.sh"
 
 # ── Wall-time lookup tables ────────────────────────────────────────────────────
-# Conservative estimates with ~50-100% margin over observed runtimes.
-# (n_size, head) → {context: hours}
-
-# Calibrated from sex_binary_lstm (large, N~13k, K=5, batch=32) observed on H100:
+# Calibrated from sex_binary_lstm (large, N~13k, K=5, batch=32, overlapping-window
+# protocol v3) observed on H100:
 #   30s=31min/18ep, 10m=46min/17ep, 40m=80min/24ep, 80m=111min/22ep, 120m=185min/25ep
-# Estimates = max_epochs(30) × per_epoch × 1.5 safety, rounded to nearest 0.5h.
-# Checkpoint resume means underestimates just cause one requeue — no data loss.
+# Estimates = max_epochs(40) × per_epoch × 1.3 safety, rounded to nearest 0.5h.
+# Auto-requeue on timeout means an underestimate just triggers one extra job — no
+# training state is lost (resume.pt is saved after every epoch).
+# Values are fractional hours; estimate_train_time() converts to HH:MM:SS.
 _TRAIN_HOURS = {
-    ("large",  "lstm"):        {"30s": 2,   "10m": 3,   "40m": 3,   "80m": 4,   "120m": 6,   "240m": 12,  "full_night": 8 },
-    ("large",  "transformer"): {"30s": 2,   "10m": 3,   "40m": 4,   "80m": 8,   "120m": 12,  "240m": 24,  "full_night": 24},
-    ("large",  "mean_pool"):   {"30s": 1,   "10m": 1,   "40m": 1,   "80m": 1,   "120m": 1,   "240m": 2,   "full_night": 2 },
-    ("medium", "lstm"):        {"30s": 1,   "10m": 2,   "40m": 2,   "80m": 3,   "120m": 4,   "240m": 8,   "full_night": 4 },
-    ("medium", "transformer"): {"30s": 1,   "10m": 2,   "40m": 3,   "80m": 6,   "120m": 8,   "240m": 16,  "full_night": 24},
+    ("large",  "lstm"):        {"30s": 1.5, "10m": 2,   "40m": 2.5, "80m": 3.5, "120m": 5,   "240m": 5,   "full_night": 6 },
+    ("large",  "transformer"): {"30s": 1, "10m": 1.5, "40m": 2,   "80m": 3,   "120m": 5,   "240m": 6,  "full_night": 18},
+    ("large",  "mean_pool"):   {"30s": 1,   "10m": 1,   "40m": 1,   "80m": 1,   "120m": 1,   "240m": 1.5, "full_night": 2 },
+    ("medium", "lstm"):        {"30s": 1,   "10m": 1.5, "40m": 1.5, "80m": 2,   "120m": 3,   "240m": 4,   "full_night": 3 },
+    ("medium", "transformer"): {"30s": 1,   "10m": 1.5, "40m": 2,   "80m": 4,   "120m": 6,   "240m": 5,  "full_night": 18},
     ("medium", "mean_pool"):   {"30s": 1,   "10m": 1,   "40m": 1,   "80m": 1,   "120m": 1,   "240m": 1,   "full_night": 1 },
-    ("small",  "lstm"):        {"30s": 1,   "10m": 1,   "40m": 1,   "80m": 2,   "120m": 2,   "240m": 4,   "full_night": 2 },
-    ("small",  "transformer"): {"30s": 1,   "10m": 1,   "40m": 2,   "80m": 3,   "120m": 4,   "240m": 8,   "full_night": 24},
+    ("small",  "lstm"):        {"30s": 1,   "10m": 1,   "40m": 1,   "80m": 1.5, "120m": 2,   "240m": 3,   "full_night": 2 },
+    ("small",  "transformer"): {"30s": 1,   "10m": 1,   "40m": 1.5, "80m": 2,   "120m": 3,   "240m": 4,   "full_night": 18},
     ("small",  "mean_pool"):   {"30s": 1,   "10m": 1,   "40m": 1,   "80m": 1,   "120m": 1,   "240m": 1,   "full_night": 1 },
 }
 
@@ -105,7 +160,9 @@ _INFER_HOURS_PER_CTX = {
 
 def estimate_train_time(n_size: str, head: str, context: str) -> str:
     hours = _TRAIN_HOURS.get((n_size, head), {}).get(context, 24)
-    return f"{int(hours):02d}:00:00"
+    h = int(hours)
+    m = int(round((hours - h) * 60))
+    return f"{h:02d}:{m:02d}:00"
 
 
 def estimate_infer_time(n_size: str, head: str, contexts: list) -> str:
@@ -146,13 +203,21 @@ def infer_folder(exp: dict, registry: dict) -> Path:
     return infer_dir / f"{exp['task']}_{exp['head']}{suffix}"
 
 
-def _log_stem(exp: dict, step: str, context: str = "") -> str:
-    """Build a descriptive log filename stem (no extension, no %j)."""
+def _log_stem(exp: dict, step: str, context: str = "", split: str = "") -> str:
+    """Build a descriptive log filename stem (no extension, no %j).
+
+    Training logs include context and LR (both vary per job).
+    Inference logs include split but not LR (LR is irrelevant post-training),
+    matching the pattern the SLURM script uses for its persistent .log file so
+    that original-submission and timeout-resubmission filenames share the same
+    stem prefix.
+    """
     tag = exp.get("run_tag", "")
     tag_part = f"_{tag}" if tag else ""
-    lr_part = f"_lr{format_lr(exp['lr'])}"
     ctx_part = f"_{context}" if context else ""
-    return f"{step}_{exp['task']}_{exp['head']}{tag_part}{ctx_part}{lr_part}"
+    split_part = f"_{split}" if split else ""
+    lr_part = f"_lr{format_lr(exp['lr'])}" if step == "train" else ""
+    return f"{step}_{exp['task']}_{exp['head']}{tag_part}{ctx_part}{split_part}{lr_part}"
 
 
 # ── Status checks ─────────────────────────────────────────────────────────────
@@ -189,6 +254,53 @@ def exp_status(exp: dict, registry: dict) -> str:
 
 # ── Command builders ──────────────────────────────────────────────────────────
 
+def resolve_batch_accum(exp: dict, registry: dict, context: str,
+                        override_batch_size: int = None):
+    """Return (micro_batch, accum_steps) for this context.
+
+    Two modes:
+      "grad_accum"     (default): reads gradient_accumulation.context_micro_batch[context]
+                                  and sets accum_steps so micro × accum = effective_batch.
+      "memory_bounded"          : reads memory_bounded.context_batch_size[context] with
+                                  accum_steps=1 always (no accumulation).
+
+    Experiment entries opt into mode 2 with `batch_mode: memory_bounded`.
+    A per-call override_batch_size disables both modes and uses the provided value.
+    """
+    if override_batch_size is not None:
+        return override_batch_size, 1
+
+    batch_mode = exp.get("batch_mode", "grad_accum")
+
+    if batch_mode == "memory_bounded":
+        # Prefer probed values from batch_sizes.json written by find_batch_size.py.
+        # Format: {context: {"probed": N, "safe": M}}  (legacy: {context: N})
+        bsz_file = exp_folder(exp, registry) / "batch_sizes.json"
+        if bsz_file.exists():
+            data = json.loads(bsz_file.read_text())
+            if context in data:
+                entry = data[context]
+                # New format stores a dict; legacy format stored a plain int.
+                batch_size = int(entry["safe"] if isinstance(entry, dict) else entry)
+                return batch_size, 1
+        # Fall back to registry-level memory_bounded defaults.
+        mb = registry.get("memory_bounded", {})
+        ctx_map = mb.get("context_batch_size", {})
+        batch_size = int(ctx_map.get(context, exp["batch_size"]))
+        return batch_size, 1
+
+    # Default: grad_accum mode (uses gradient_accumulation section when enabled)
+    ga = registry.get("gradient_accumulation", {})
+    if ga.get("enabled", False):
+        effective_batch = int(ga.get("effective_batch", 32))
+        ctx_map = ga.get("context_micro_batch", {})
+        micro_batch = int(ctx_map.get(context, effective_batch))
+        accum_steps = max(1, effective_batch // micro_batch)
+        return micro_batch, accum_steps
+    else:
+        return exp["batch_size"], 1
+
+
 def build_train_cmd(exp: dict, registry: dict, context: str,
                     override_time: str = None, override_batch_size: int = None) -> str:
     cfg = registry["config"]
@@ -196,7 +308,7 @@ def build_train_cmd(exp: dict, registry: dict, context: str,
     n_size = exp.get("n_size", "large")
     wall_time = override_time if override_time else estimate_train_time(n_size, exp["head"], context)
     stem = _log_stem(exp, "train", context)
-    batch_size = override_batch_size if override_batch_size is not None else exp["batch_size"]
+    micro_batch, accum_steps = resolve_batch_accum(exp, registry, context, override_batch_size)
 
     env_vars = [
         f"TASK={exp['task']}",
@@ -204,8 +316,9 @@ def build_train_cmd(exp: dict, registry: dict, context: str,
         f"HEAD={exp['head']}",
         f"CONTEXT={context}",
         f"DATASETS=\"{' '.join(exp['datasets'])}\"",
-        f"BATCH_SIZE={batch_size}",
-        f"LR={exp['lr']}",
+        f"BATCH_SIZE={micro_batch}",
+        f"ACCUM_STEPS={accum_steps}",
+        f"LR={format_lr(exp['lr'])}",
     ]
     if exp.get("run_tag"):
         env_vars.append(f"RUN_TAG={exp['run_tag']}")
@@ -229,7 +342,7 @@ def build_infer_cmd(exp: dict, registry: dict, split: str = "test",
     contexts_trained = trained_contexts(exp, registry)
     ctx_list = contexts_trained if contexts_trained else exp["contexts"]
     wall_time = override_time if override_time else estimate_infer_time(n_size, exp["head"], ctx_list)
-    stem = _log_stem(exp, "infer")
+    stem = _log_stem(exp, "infer", split=split)
 
     env_vars = [
         f"TASK={exp['task']}",
@@ -256,12 +369,25 @@ def build_infer_cmd(exp: dict, registry: dict, split: str = "test",
 
 
 def build_analyze_cmd(exp: dict, registry: dict, plot: bool = False,
-                      k_dense: bool = False) -> str:
+                      k_dense: bool = False,
+                      bootstrap_override: int = None) -> str:
     results_dir = Path(registry["results_dir"])
     tag = exp.get("run_tag", "")
     # Use the virtualenv Python directly — analyze_windows.py requires sklearn
     # (balanced_accuracy, AUROC, F1) which lives in sleepfm_env, not the system Python.
     python = registry.get("python_bin", "/home/boshra95/sleepfm_env/bin/python")
+
+    if bootstrap_override is not None:
+        bootstrap_n = bootstrap_override
+    else:
+        # Read bootstrap_samples from the experiment config yaml (analysis.bootstrap_samples)
+        bootstrap_n = 0
+        cfg_path = Path(registry.get("config", ""))
+        if cfg_path.exists():
+            with open(cfg_path) as _f:
+                _cfg = yaml.safe_load(_f)
+            bootstrap_n = int(_cfg.get("analysis", {}).get("bootstrap_samples", 0))
+
     cmd_parts = [
         f"{python} scripts/analyze_windows.py",
         f"--task {exp['task']}",
@@ -272,6 +398,8 @@ def build_analyze_cmd(exp: dict, registry: dict, plot: bool = False,
         cmd_parts.append(f"--run-tag {tag}")
     if k_dense:
         cmd_parts.append("--k-dense")
+    if bootstrap_n > 0:
+        cmd_parts.append(f"--bootstrap {bootstrap_n}")
     if plot:
         cmd_parts.append("--plot")
         cmd_parts.append("--plot-metric auroc balanced_accuracy")
@@ -333,6 +461,37 @@ def build_saturation_cmd(task: str, heads: list, registry: dict,
     return " ".join(cmd_parts)
 
 
+def build_probe_batch_cmd(exp: dict, registry: dict,
+                          starting_batch_size: int = 256) -> str:
+    """Generate the sbatch command to run find_batch_size.py for a memory-bounded exp."""
+    python   = registry.get("python_bin", "/home/boshra95/sleepfm_env/bin/python")
+    cfg      = registry["config"]
+    logs_dir = registry.get("logs_dir", str(Path(__file__).parent.parent / "logs"))
+    out_dir  = exp_folder(exp, registry)
+    head     = exp["head"]
+    ctxs     = " ".join(exp["contexts"])
+    num_cls  = exp.get("num_classes", 2)
+    tag      = exp.get("run_tag", "")
+    tag_part = f"_{tag}" if tag else ""
+    stem     = f"probe_batch_{exp['task']}_{head}{tag_part}"
+
+    env_vars = [
+        f"HEAD={head}",
+        f"EXP_DIR={out_dir}",
+        f"CONFIG={cfg}",
+        f"CONTEXTS=\"{ctxs}\"",
+        f"NUM_CLASSES={num_cls}",
+        f"STARTING_BATCH_SIZE={starting_batch_size}",
+    ]
+    env_str = " ".join(env_vars)
+    sbatch_opts = (
+        f"--time=00:20:00 "
+        f"--output={logs_dir}/{stem}_%j.out "
+        f"--error={logs_dir}/{stem}_%j.err"
+    )
+    return f"{env_str} sbatch {sbatch_opts} {JOBS_DIR}/find_batch_size_gpu_rorqual.sh"
+
+
 # ── Subcommand handlers ───────────────────────────────────────────────────────
 
 def cmd_list(args, registry):
@@ -349,6 +508,29 @@ def cmd_list(args, registry):
         print(f"{exp_id:<45} {str(tier):<6} {len(exp['contexts']):<6} {datasets_str:<30} {status}")
 
 
+def cmd_probe_batch(args, registry):
+    experiments = registry["experiments"]
+    if args.exp_id not in experiments:
+        print(f"ERROR: experiment '{args.exp_id}' not found in registry.", file=sys.stderr)
+        sys.exit(1)
+    exp = experiments[args.exp_id]
+    if exp.get("batch_mode", "grad_accum") != "memory_bounded":
+        print(
+            f"WARNING: '{args.exp_id}' is not memory_bounded "
+            f"(batch_mode={exp.get('batch_mode', 'grad_accum')}). "
+            "probe-batch is only meaningful for memory_bounded experiments.",
+            file=sys.stderr,
+        )
+    bsz_file = exp_folder(exp, registry) / "batch_sizes.json"
+    probed_note = f"  # already probed: {bsz_file}" if bsz_file.exists() else ""
+    starting = getattr(args, "starting_batch_size", 256)
+    print(f"# Batch size probe for: {args.exp_id}  head={exp['head']}")
+    print(f"# Writes: {exp_folder(exp, registry)}/batch_sizes.json")
+    print(f"# Run BEFORE 'gen_commands.py train {args.exp_id}'{probed_note}")
+    print()
+    print(build_probe_batch_cmd(exp, registry, starting_batch_size=starting))
+
+
 def cmd_train(args, registry):
     experiments = registry["experiments"]
     if args.exp_id not in experiments:
@@ -357,9 +539,21 @@ def cmd_train(args, registry):
     exp = experiments[args.exp_id]
     contexts = args.context if args.context else exp["contexts"]
     n_size = exp.get("n_size", "large")
+    ga = registry.get("gradient_accumulation", {})
+    ga_enabled = ga.get("enabled", False)
+    batch_mode = exp.get("batch_mode", "grad_accum")
+    if batch_mode == "memory_bounded":
+        bsz_file = exp_folder(exp, registry) / "batch_sizes.json"
+        src = f"probed ({bsz_file})" if bsz_file.exists() else "registry defaults (run probe-batch first)"
+        batch_label = f"MEMORY-BOUNDED (accum_steps=1, batch sizes from {src})"
+    elif ga_enabled:
+        batch_label = f"GRAD-ACCUM (effective_batch={ga.get('effective_batch', 32)}, accum varies by context)"
+    else:
+        batch_label = f"FLAT batch={exp['batch_size']}, accum_steps=1"
     print(f"# Training commands for: {args.exp_id}")
     print(f"# Task: {exp['task']}  Head: {exp['head']}  LR: {exp['lr']}  N-size: {n_size}")
     print(f"# Datasets: {exp['datasets']}")
+    print(f"# Batch mode: {batch_label}")
     print(f"# Logs → {registry.get('logs_dir', 'logs/')}")
     print()
     for ctx in contexts:
@@ -368,7 +562,13 @@ def cmd_train(args, registry):
             continue
         trained = ctx in trained_contexts(exp, registry)
         wall = estimate_train_time(n_size, exp["head"], ctx)
-        status_tag = "  # already trained" if trained else f"  # est. {wall}"
+        micro_batch, accum_steps = resolve_batch_accum(
+            exp, registry, ctx,
+            override_batch_size=getattr(args, "override_batch_size", None),
+        )
+        eff_batch = micro_batch * accum_steps
+        batch_tag = f"micro={micro_batch} accum={accum_steps} eff={eff_batch}"
+        status_tag = "  # already trained" if trained else f"  # est. {wall}  [{batch_tag}]"
         print(build_train_cmd(exp, registry, ctx,
                               override_time=getattr(args, "override_time", None),
                               override_batch_size=getattr(args, "override_batch_size", None)) + status_tag)
@@ -402,11 +602,12 @@ def cmd_analyze(args, registry):
         print(f"ERROR: experiment '{args.exp_id}' not found.", file=sys.stderr)
         sys.exit(1)
     exp = experiments[args.exp_id]
-    plot    = getattr(args, "plot", False)
-    k_dense = getattr(args, "k_dense", False)
+    plot             = getattr(args, "plot", False)
+    k_dense          = getattr(args, "k_dense", False)
+    bootstrap_override = getattr(args, "bootstrap", None)
     print(f"# Window analysis command for: {args.exp_id}")
     print()
-    print(build_analyze_cmd(exp, registry, plot, k_dense))
+    print(build_analyze_cmd(exp, registry, plot, k_dense, bootstrap_override))
 
 
 def cmd_build_heatmap(args, registry):
@@ -438,15 +639,21 @@ def cmd_iso_plots(args, registry):
 
 
 def cmd_saturation(args, registry):
-    task    = args.task
-    heads   = getattr(args, "heads", ["lstm", "transformer", "mean_pool"])
-    metrics = getattr(args, "metric", None) or ["auroc", "balanced_accuracy"]
-    split   = getattr(args, "split", "test")
-    run_tag = getattr(args, "run_tag", "")
+    task         = args.task
+    heads        = getattr(args, "heads", ["lstm", "transformer", "mean_pool"])
+    metrics      = getattr(args, "metric", None) or ["auroc", "balanced_accuracy"]
+    split        = getattr(args, "split", "test")
+    run_tag      = getattr(args, "run_tag", "")
+    collected_dir = getattr(args, "collected_dir", "")
     print(f"# Saturation curve for task: {task}  heads: {heads}")
     print(f"# Reads {task}_{{head}}/summary.csv — no dense K sweep needed")
+    if collected_dir:
+        print(f"# CI bands: loading from {collected_dir}/analysis.csv")
     print()
-    print(build_saturation_cmd(task, heads, registry, metrics, split, run_tag))
+    cmd = build_saturation_cmd(task, heads, registry, metrics, split, run_tag)
+    if collected_dir:
+        cmd += f" --collected-dir {collected_dir}"
+    print(cmd)
 
 
 def cmd_status(args, registry):
@@ -467,11 +674,11 @@ def cmd_status(args, registry):
 
 
 def cmd_runs(args, registry):
-    logs_dir = Path(registry.get("logs_dir", str(Path(__file__).parent.parent / "logs_v2")))
+    logs_dir = Path(registry.get("logs_dir", str(Path(__file__).parent.parent / "logs_v3")))
     status_dir = logs_dir / "status"
 
     if not status_dir.exists():
-        print("No status directory found yet (logs_v2/status/). No jobs tracked.")
+        print(f"No status directory found yet ({logs_dir}/status/). No jobs tracked.")
         return
 
     target_id = getattr(args, "exp_id", None)
@@ -488,7 +695,7 @@ def cmd_runs(args, registry):
 
     files = sorted(status_dir.glob("*.jsonl"))
     if not files:
-        print("No job history found in logs_v2/status/.")
+        print(f"No job history found in {logs_dir}/status/.")
         return
 
     shown = 0
@@ -532,6 +739,320 @@ def cmd_runs(args, registry):
             print("No tracking records found.")
 
 
+# ── Extended analysis command builders ────────────────────────────────────────
+
+def build_collect_cmd(exp_ids: list, registry: dict,
+                      collected_dir: str = "") -> str:
+    python = registry.get("python_bin", "/home/boshra95/sleepfm_env/bin/python")
+    results_dir = Path(registry["results_dir"])
+    cdir = collected_dir or str(results_dir / "collected")
+    cmd_parts = [
+        f"{python} scripts/collect_results_v2.py",
+        f"--results-dir {results_dir}",
+        f"--out-dir {cdir}",
+    ]
+    if exp_ids:
+        cmd_parts.append(f"--exp-ids {' '.join(exp_ids)}")
+    return " ".join(cmd_parts)
+
+
+def build_scaling_laws_cmd(task: str, heads: list, registry: dict,
+                            collected_dir: str = "",
+                            plots: list = None) -> str:
+    python = registry.get("python_bin", "/home/boshra95/sleepfm_env/bin/python")
+    results_dir = Path(registry["results_dir"])
+    cdir = collected_dir or str(results_dir / "collected")
+    plots = plots or ["1A", "1B", "1C"]
+    cmd_parts = [
+        f"{python} scripts/plot_scaling_laws.py",
+        f"--task {task}",
+        f"--heads {' '.join(heads)}",
+        f"--collected-dir {cdir}",
+        f"--results-dir {results_dir}",
+        f"--plots {' '.join(plots)}",
+    ]
+    return " ".join(cmd_parts)
+
+
+def build_calibration_cmd(exp: dict, registry: dict, split: str = "test",
+                           heads_extra: list = None, plots: list = None) -> str:
+    python = registry.get("python_bin", "/home/boshra95/sleepfm_env/bin/python")
+    results_dir = Path(registry["results_dir"])
+    tag = exp.get("run_tag", "")
+    plots = plots or ["2A", "2B", "2C"]
+    cmd_parts = [
+        f"{python} scripts/plot_calibration.py",
+        f"--task {exp['task']}",
+        f"--head {exp['head']}",
+        f"--results-dir {results_dir}",
+        f"--split {split}",
+        f"--plots {' '.join(plots)}",
+    ]
+    if tag:
+        cmd_parts.append(f"--run-tag {tag}")
+    if heads_extra:
+        cmd_parts.append(f"--heads {' '.join(heads_extra)}")
+    return " ".join(cmd_parts)
+
+
+def build_window_position_cmd(exp: dict, registry: dict, split: str = "test",
+                               plots: list = None) -> str:
+    python = registry.get("python_bin", "/home/boshra95/sleepfm_env/bin/python")
+    results_dir = Path(registry["results_dir"])
+    tag = exp.get("run_tag", "")
+    plots = plots or ["4A", "4B"]
+    cmd_parts = [
+        f"{python} scripts/plot_window_position.py",
+        f"--task {exp['task']}",
+        f"--head {exp['head']}",
+        f"--results-dir {results_dir}",
+        f"--split {split}",
+        f"--plots {' '.join(plots)}",
+    ]
+    if tag:
+        cmd_parts.append(f"--run-tag {tag}")
+    return " ".join(cmd_parts)
+
+
+def build_subject_consistency_cmd(exp: dict, registry: dict, split: str = "test",
+                                   plots: list = None) -> str:
+    python = registry.get("python_bin", "/home/boshra95/sleepfm_env/bin/python")
+    results_dir = Path(registry["results_dir"])
+    tag = exp.get("run_tag", "")
+    plots = plots or ["5A", "5B", "5C"]
+    cmd_parts = [
+        f"{python} scripts/plot_subject_consistency.py",
+        f"--task {exp['task']}",
+        f"--head {exp['head']}",
+        f"--results-dir {results_dir}",
+        f"--split {split}",
+        f"--plots {' '.join(plots)}",
+    ]
+    if tag:
+        cmd_parts.append(f"--run-tag {tag}")
+    return " ".join(cmd_parts)
+
+
+def build_task_comparison_cmd(tasks: list, head: str, split: str,
+                               registry: dict, collected_dir: str = "",
+                               plots: list = None) -> str:
+    python = registry.get("python_bin", "/home/boshra95/sleepfm_env/bin/python")
+    results_dir = Path(registry["results_dir"])
+    cdir = collected_dir or str(results_dir / "collected")
+    plots = plots or ["6A", "6B", "6C"]
+    cmd_parts = [
+        f"{python} scripts/plot_task_comparison.py",
+        f"--head {head}",
+        f"--split {split}",
+        f"--collected-dir {cdir}",
+        f"--results-dir {results_dir}",
+        f"--plots {' '.join(plots)}",
+    ]
+    if tasks:
+        cmd_parts.append(f"--tasks {' '.join(tasks)}")
+    return " ".join(cmd_parts)
+
+
+def build_cohort_saturation_cmd(exp: dict, registry: dict, split: str = "test",
+                                 datasets: list = None, plots: list = None) -> str:
+    python = registry.get("python_bin", "/home/boshra95/sleepfm_env/bin/python")
+    results_dir = Path(registry["results_dir"])
+    tag = exp.get("run_tag", "")
+    datasets = datasets or ["apples", "shhs", "mros"]
+    plots = plots or ["7A", "7B"]
+    cmd_parts = [
+        f"{python} scripts/plot_cohort_saturation.py",
+        f"--task {exp['task']}",
+        f"--head {exp['head']}",
+        f"--results-dir {results_dir}",
+        f"--split {split}",
+        f"--datasets {' '.join(datasets)}",
+        f"--plots {' '.join(plots)}",
+    ]
+    if tag:
+        cmd_parts.append(f"--run-tag {tag}")
+    return " ".join(cmd_parts)
+
+
+def build_precision_recall_cmd(exp: dict, registry: dict, split: str = "test",
+                                heads_extra: list = None,
+                                plots: list = None) -> str:
+    python = registry.get("python_bin", "/home/boshra95/sleepfm_env/bin/python")
+    results_dir = Path(registry["results_dir"])
+    tag = exp.get("run_tag", "")
+    plots = plots or ["8A", "8B", "8C"]
+    cmd_parts = [
+        f"{python} scripts/plot_precision_recall.py",
+        f"--task {exp['task']}",
+        f"--head {exp['head']}",
+        f"--results-dir {results_dir}",
+        f"--split {split}",
+        f"--plots {' '.join(plots)}",
+    ]
+    if tag:
+        cmd_parts.append(f"--run-tag {tag}")
+    if heads_extra:
+        cmd_parts.append(f"--heads {' '.join(heads_extra)}")
+    return " ".join(cmd_parts)
+
+
+def build_subject_kstar_cmd(exp: dict, registry: dict, split: str = "test",
+                             k_max: int = 30, reps: int = 20,
+                             plots: list = None) -> str:
+    python = registry.get("python_bin", "/home/boshra95/sleepfm_env/bin/python")
+    results_dir = Path(registry["results_dir"])
+    tag = exp.get("run_tag", "")
+    plots = plots or ["9A", "9B"]
+    cmd_parts = [
+        f"{python} scripts/plot_subject_kstar.py",
+        f"--task {exp['task']}",
+        f"--head {exp['head']}",
+        f"--results-dir {results_dir}",
+        f"--split {split}",
+        f"--kmax {k_max}",
+        f"--reps {reps}",
+        f"--plots {' '.join(plots)}",
+    ]
+    if tag:
+        cmd_parts.append(f"--run-tag {tag}")
+    return " ".join(cmd_parts)
+
+
+# ── Extended analysis handlers ─────────────────────────────────────────────────
+
+def cmd_collect(args, registry):
+    exp_ids = getattr(args, "exp_ids", []) or []
+    collected_dir = getattr(args, "collected_dir", "")
+    results_dir = Path(registry["results_dir"])
+    cdir = collected_dir or str(results_dir / "collected")
+    print("# Collect all experiment results into training.csv and analysis.csv")
+    print(f"# Output → {cdir}/")
+    print("# Note: bootstrap CIs are computed by analyze_windows.py (run 'analyze --bootstrap N' first)")
+    print("# Prerequisite: inference parquets must exist (run infer first)")
+    print()
+    print(build_collect_cmd(exp_ids, registry, collected_dir))
+
+
+def cmd_scaling_laws(args, registry):
+    task    = args.task
+    heads   = getattr(args, "heads", ["lstm", "transformer", "mean_pool"])
+    plots   = getattr(args, "plots", ["1A", "1B", "1C"])
+    cdir    = getattr(args, "collected_dir", "")
+    results_dir = Path(registry["results_dir"])
+    cdir_display = cdir or str(results_dir / "collected")
+    print(f"# Scaling law plots (§1) for task: {task}  heads: {heads}")
+    print(f"# Reads training.csv from: {cdir_display}/")
+    print("# Prerequisite: run 'collect' first")
+    print()
+    print(build_scaling_laws_cmd(task, heads, registry, cdir, plots))
+
+
+def cmd_calibration(args, registry):
+    experiments = registry["experiments"]
+    if args.exp_id not in experiments:
+        print(f"ERROR: experiment '{args.exp_id}' not found.", file=sys.stderr)
+        sys.exit(1)
+    exp   = experiments[args.exp_id]
+    split = getattr(args, "split", "test")
+    plots = getattr(args, "plots", ["2A", "2B", "2C"])
+    heads_extra = getattr(args, "heads", None)
+    print(f"# Calibration plots (§2) for: {args.exp_id}  split={split}")
+    print("# Prerequisite: inference parquets must exist")
+    print()
+    print(build_calibration_cmd(exp, registry, split, heads_extra, plots))
+
+
+def cmd_window_position(args, registry):
+    experiments = registry["experiments"]
+    if args.exp_id not in experiments:
+        print(f"ERROR: experiment '{args.exp_id}' not found.", file=sys.stderr)
+        sys.exit(1)
+    exp   = experiments[args.exp_id]
+    split = getattr(args, "split", "test")
+    plots = getattr(args, "plots", ["4A", "4B"])
+    print(f"# Window position plots (§4) for: {args.exp_id}  split={split}")
+    print("# Prerequisite: inference parquets must exist")
+    print()
+    print(build_window_position_cmd(exp, registry, split, plots))
+
+
+def cmd_subject_consistency(args, registry):
+    experiments = registry["experiments"]
+    if args.exp_id not in experiments:
+        print(f"ERROR: experiment '{args.exp_id}' not found.", file=sys.stderr)
+        sys.exit(1)
+    exp   = experiments[args.exp_id]
+    split = getattr(args, "split", "test")
+    plots = getattr(args, "plots", ["5A", "5B", "5C"])
+    print(f"# Subject consistency plots (§5) for: {args.exp_id}  split={split}")
+    print("# Prerequisite: inference parquets must exist")
+    print()
+    print(build_subject_consistency_cmd(exp, registry, split, plots))
+
+
+def cmd_task_comparison(args, registry):
+    tasks   = getattr(args, "tasks", None) or []
+    head    = getattr(args, "head", "lstm")
+    split   = getattr(args, "split", "test")
+    plots   = getattr(args, "plots", ["6A", "6B", "6C"])
+    cdir    = getattr(args, "collected_dir", "")
+    results_dir = Path(registry["results_dir"])
+    cdir_display = cdir or str(results_dir / "collected")
+    print(f"# Task comparison plots (§6)  head={head}  split={split}")
+    print(f"# Reads analysis.csv from: {cdir_display}/")
+    print("# Prerequisite: run 'collect' for all tasks first")
+    print()
+    print(build_task_comparison_cmd(tasks, head, split, registry, cdir, plots))
+
+
+def cmd_cohort_saturation(args, registry):
+    experiments = registry["experiments"]
+    if args.exp_id not in experiments:
+        print(f"ERROR: experiment '{args.exp_id}' not found.", file=sys.stderr)
+        sys.exit(1)
+    exp      = experiments[args.exp_id]
+    split    = getattr(args, "split", "test")
+    datasets = getattr(args, "datasets", ["apples", "shhs", "mros"])
+    plots    = getattr(args, "plots", ["7A", "7B"])
+    print(f"# Cohort-stratified saturation plots (§7) for: {args.exp_id}  split={split}")
+    print(f"# Datasets: {datasets}")
+    print("# Prerequisite: inference parquets must exist and include 'dataset' column")
+    print()
+    print(build_cohort_saturation_cmd(exp, registry, split, datasets, plots))
+
+
+def cmd_precision_recall(args, registry):
+    experiments = registry["experiments"]
+    if args.exp_id not in experiments:
+        print(f"ERROR: experiment '{args.exp_id}' not found.", file=sys.stderr)
+        sys.exit(1)
+    exp   = experiments[args.exp_id]
+    split = getattr(args, "split", "test")
+    plots = getattr(args, "plots", ["8A", "8B", "8C"])
+    heads_extra = getattr(args, "heads", None)
+    print(f"# Precision-recall plots (§8) for: {args.exp_id}  split={split}")
+    print("# Prerequisite: inference parquets must exist")
+    print()
+    print(build_precision_recall_cmd(exp, registry, split, heads_extra, plots))
+
+
+def cmd_subject_kstar(args, registry):
+    experiments = registry["experiments"]
+    if args.exp_id not in experiments:
+        print(f"ERROR: experiment '{args.exp_id}' not found.", file=sys.stderr)
+        sys.exit(1)
+    exp   = experiments[args.exp_id]
+    split = getattr(args, "split", "test")
+    k_max = getattr(args, "kmax", 30)
+    reps  = getattr(args, "reps", 20)
+    plots = getattr(args, "plots", ["9A", "9B"])
+    print(f"# Subject K* plots (§9) for: {args.exp_id}  split={split}")
+    print(f"# kmax={k_max}  reps={reps}  (note: may be slow for large datasets)")
+    print("# Prerequisite: inference parquets must exist")
+    print()
+    print(build_subject_kstar_cmd(exp, registry, split, k_max, reps, plots))
+
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 def main():
@@ -546,6 +1067,12 @@ def main():
 
     p_list = sub.add_parser("list", help="List all experiments and their status")
     p_list.add_argument("--tier", default=None, help="Filter by tier (1 or 2)")
+
+    p_pb = sub.add_parser("probe-batch",
+                           help="Print sbatch command to probe max batch size (memory_bounded only)")
+    p_pb.add_argument("exp_id", help="Experiment ID from registry (must have batch_mode: memory_bounded)")
+    p_pb.add_argument("--starting-batch-size", type=int, default=256, dest="starting_batch_size",
+                      help="Largest batch to try first; halved on OOM (default: 256)")
 
     p_train = sub.add_parser("train", help="Print train sbatch command(s)")
     p_train.add_argument("exp_id", help="Experiment ID from registry")
@@ -569,6 +1096,8 @@ def main():
     p_analyze.add_argument("--plot", action="store_true", help="Include --plot flag")
     p_analyze.add_argument("--k-dense", action="store_true", dest="k_dense",
                            help="Include --k-dense flag (~25 K values for iso-compute pipeline)")
+    p_analyze.add_argument("--bootstrap", type=int, default=None,
+                           help="Override bootstrap_samples from config (0 = off, e.g. --bootstrap 1000)")
 
     p_bh = sub.add_parser("build-heatmap",
                            help="Print build_heatmap_df.py command (Step 2)")
@@ -594,6 +1123,79 @@ def main():
                        help="Metrics to plot (default: auroc balanced_accuracy)")
     p_sat.add_argument("--split", default="test", choices=["val", "test"])
     p_sat.add_argument("--run-tag", default="", dest="run_tag")
+    p_sat.add_argument("--collected-dir", default="", dest="collected_dir",
+                       help="Dir with analysis.csv (adds bootstrap CI bands if present)")
+
+    # ── Extended analysis subcommands ──────────────────────────────────────────
+
+    p_col = sub.add_parser("collect",
+                            help="Print collect_results_v2.py command (gather all results)")
+    p_col.add_argument("exp_ids", nargs="*", default=[],
+                       help="Experiment IDs to collect (default: all in registry)")
+    p_col.add_argument("--collected-dir", default="", dest="collected_dir",
+                       help="Output directory (default: {results_dir}/collected)")
+
+    p_sl = sub.add_parser("scaling-laws",
+                           help="Print plot_scaling_laws.py command (§1 U-shape + scaling law)")
+    p_sl.add_argument("task", help="Task name, e.g. sex_binary")
+    p_sl.add_argument("--heads", nargs="+",
+                      default=["lstm", "transformer", "mean_pool"])
+    p_sl.add_argument("--plots", nargs="+", default=["1A", "1B", "1C"])
+    p_sl.add_argument("--collected-dir", default="", dest="collected_dir")
+
+    p_cal = sub.add_parser("calibration",
+                            help="Print plot_calibration.py command (§2 reliability + ECE)")
+    p_cal.add_argument("exp_id", help="Experiment ID from registry")
+    p_cal.add_argument("--split", default="test", choices=["train", "val", "test"])
+    p_cal.add_argument("--heads", nargs="+", default=None,
+                       help="Extra heads for 2B multi-head ECE comparison")
+    p_cal.add_argument("--plots", nargs="+", default=["2A", "2B", "2C"])
+
+    p_wp = sub.add_parser("window-position",
+                           help="Print plot_window_position.py command (§4 position profiles)")
+    p_wp.add_argument("exp_id", help="Experiment ID from registry")
+    p_wp.add_argument("--split", default="test", choices=["train", "val", "test"])
+    p_wp.add_argument("--plots", nargs="+", default=["4A", "4B"])
+
+    p_sc = sub.add_parser("subject-consistency",
+                           help="Print plot_subject_consistency.py command (§5 variance + hard subjects)")
+    p_sc.add_argument("exp_id", help="Experiment ID from registry")
+    p_sc.add_argument("--split", default="test", choices=["train", "val", "test"])
+    p_sc.add_argument("--plots", nargs="+", default=["5A", "5B", "5C"])
+
+    p_tc = sub.add_parser("task-comparison",
+                           help="Print plot_task_comparison.py command (§6 sensitivity matrix)")
+    p_tc.add_argument("--tasks", nargs="+", default=None,
+                      help="Task names to include (default: all in analysis.csv)")
+    p_tc.add_argument("--head", default="lstm")
+    p_tc.add_argument("--split", default="test", choices=["val", "test"])
+    p_tc.add_argument("--plots", nargs="+", default=["6A", "6B", "6C"])
+    p_tc.add_argument("--collected-dir", default="", dest="collected_dir")
+
+    p_cs = sub.add_parser("cohort-saturation",
+                           help="Print plot_cohort_saturation.py command (§7 per-dataset saturation)")
+    p_cs.add_argument("exp_id", help="Experiment ID from registry")
+    p_cs.add_argument("--split", default="test", choices=["train", "val", "test"])
+    p_cs.add_argument("--datasets", nargs="+", default=["apples", "shhs", "mros"])
+    p_cs.add_argument("--plots", nargs="+", default=["7A", "7B"])
+
+    p_pr = sub.add_parser("precision-recall",
+                           help="Print plot_precision_recall.py command (§8 PR curves + vote sweep)")
+    p_pr.add_argument("exp_id", help="Experiment ID from registry")
+    p_pr.add_argument("--split", default="test", choices=["train", "val", "test"])
+    p_pr.add_argument("--heads", nargs="+", default=None,
+                      help="Extra heads for 8B AUC-PR vs context comparison")
+    p_pr.add_argument("--plots", nargs="+", default=["8A", "8B", "8C"])
+
+    p_ks = sub.add_parser("subject-kstar",
+                           help="Print plot_subject_kstar.py command (§9 K* distribution + coverage)")
+    p_ks.add_argument("exp_id", help="Experiment ID from registry")
+    p_ks.add_argument("--split", default="test", choices=["train", "val", "test"])
+    p_ks.add_argument("--kmax", type=int, default=30,
+                      help="Maximum K to evaluate (default: 30)")
+    p_ks.add_argument("--reps", type=int, default=20,
+                      help="Random draws per (subject, k) (default: 20)")
+    p_ks.add_argument("--plots", nargs="+", default=["9A", "9B"])
 
     p_status = sub.add_parser("status", help="Show file-level status for experiment(s)")
     p_status.add_argument("exp_id", nargs="?", default=None,
@@ -609,15 +1211,25 @@ def main():
     registry = load_registry()
 
     dispatch = {
-        "list":           cmd_list,
-        "train":          cmd_train,
-        "infer":          cmd_infer,
-        "analyze":        cmd_analyze,
-        "build-heatmap":  cmd_build_heatmap,
-        "iso-plots":      cmd_iso_plots,
-        "saturation":     cmd_saturation,
-        "status":         cmd_status,
-        "runs":           cmd_runs,
+        "list":                 cmd_list,
+        "probe-batch":          cmd_probe_batch,
+        "train":                cmd_train,
+        "infer":                cmd_infer,
+        "analyze":              cmd_analyze,
+        "build-heatmap":        cmd_build_heatmap,
+        "iso-plots":            cmd_iso_plots,
+        "saturation":           cmd_saturation,
+        "collect":              cmd_collect,
+        "scaling-laws":         cmd_scaling_laws,
+        "calibration":          cmd_calibration,
+        "window-position":      cmd_window_position,
+        "subject-consistency":  cmd_subject_consistency,
+        "task-comparison":      cmd_task_comparison,
+        "cohort-saturation":    cmd_cohort_saturation,
+        "precision-recall":     cmd_precision_recall,
+        "subject-kstar":        cmd_subject_kstar,
+        "status":               cmd_status,
+        "runs":                 cmd_runs,
     }
 
     if args.command not in dispatch:

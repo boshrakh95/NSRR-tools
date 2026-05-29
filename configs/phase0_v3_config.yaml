@@ -1,0 +1,172 @@
+# ============================================================
+# Phase 0 — V3 Config — Overlapping-Window Fixed-K Protocol
+# ============================================================
+# Changes from phase0_v2_config.yaml:
+#   results_dir    → results/phase0_v3
+#   logs           → logs_v3/
+#   window sampling → overlapping (K = min(K_max, T-N+1)) — see dataset code
+#   context_lr_overrides → enabled for 120m and 240m
+#
+# All v2 experiments must be rerun with this config; do NOT mix v2 and v3
+# results in the same comparison figure.
+
+# ── Embedding Extraction ─────────────────────────────────────────────────────
+embedding:
+  checkpoint_dir: "/home/boshra95/sleepfm-clinical/sleepfm/checkpoints/model_base"
+  output_dir: "/scratch/boshra95/psg/unified/embeddings/sleepfm_5sec"
+  chunk_batch_size: 16
+  datasets:
+    - apples
+    - shhs
+    - mros
+    - stages
+
+# ── HDF5 Signal Data ─────────────────────────────────────────────────────────
+data:
+  hdf5_dir: "/scratch/boshra95/psg"
+  sampling_freq: 128
+  chunk_seconds: 300
+  patch_size: 640
+  patches_per_chunk: 60
+  max_channels:
+    BAS: 10
+    RESP: 7
+    EKG: 2
+    EMG: 4
+  channel_priority:
+    BAS:
+      - C3-M2
+      - C4-M1
+      - LOC
+      - ROC
+      - O1-M2
+      - O2-M1
+      - F3-M2
+      - F4-M1
+      - A1
+      - A2
+    RESP:
+      - Airflow
+      - Thor
+      - ABD
+      - SpO2
+      - HR
+      - Snore
+      - RespRate
+    EKG:
+      - EKG
+      - ECG-L
+      - ECG-R
+    EMG:
+      - CHIN
+      - LLEG
+      - RLEG
+      - EMG
+
+# ── Context-Window Dataset ───────────────────────────────────────────────────
+dataset:
+  embedding_dir: "/scratch/boshra95/psg/unified/embeddings/sleepfm_5sec"
+
+  # V2 targets (shared — only results dir changes in v3)
+  label_source: "/scratch/boshra95/psg/unified/targets_v2/master_targets.parquet"
+  task_subject_dir: "/scratch/boshra95/psg/unified/targets_v2/task_subjects"
+
+  sleep_stage_dir: "/scratch/boshra95/psg"
+
+  context_lengths:
+    - "30s"
+    - "10m"
+    - "40m"
+    - "80m"
+    - "120m"
+    - "240m"
+
+  task: "sex_binary"
+  task_type: "seq2label"
+
+  datasets:
+    - apples
+    - shhs
+    - mros
+    - stages
+
+  train_split: 0.70
+  val_split:   0.15
+  test_split:  0.15
+  split_seed:  42
+
+  windows_per_subject: 5
+  min_past_denom:       8
+  max_min_past_patches: 240
+
+  # Cohort consistency filter: exclude subjects whose full recording is shorter
+  # than this many patches from ALL context lengths (not just from 240m).
+  # Ensures the same subject pool is used at every point on the sweep curve so
+  # that context-length comparisons are not confounded by cohort differences.
+  # Value = max context length in sweep: 240m × 60s/m ÷ 5s/patch = 2880.
+  # Set to 0 to disable. See docs/cohort_filter.md for details and exclusion list.
+  min_recording_patches: 2880
+
+# ── Sequence Head Model ──────────────────────────────────────────────────────
+model:
+  input_dim: 512
+  head_type: "lstm"
+  hidden_dim: 128
+  num_layers: 1
+  num_heads:  8
+  dropout:    0.3
+  num_classes: 2
+
+# ── Training ─────────────────────────────────────────────────────────────────
+training:
+  epochs: 40
+  lr: 1.0e-4
+  weight_decay: 1.0e-3
+  optimizer: "adamw"
+  scheduler: "cosine"
+  early_stopping_patience: 10
+  device: "cuda"
+  mixed_precision: false
+  class_weights: "auto"
+  early_stopping_monitor: "val_auroc"
+  weighted_sampler: false
+
+  # K-selection strategy for training windows per subject:
+  #   "fixed"        — RECOMMENDED for context-length comparison experiments.
+  #                    Uses dataset.windows_per_subject as K_max for all context
+  #                    lengths. With overlapping-window sampling (see dataset code),
+  #                    K=K_max is achieved for essentially all subjects at every L.
+  #   "token_budget" — ⚠ SECONDARY ANALYSIS ONLY. Do NOT use as the primary
+  #                    training protocol: it sets K ∝ 1/L (short contexts get many
+  #                    more windows than long contexts), which confounds K and L.
+  #                    Any observed performance gap could reflect K differences,
+  #                    not context quality. Only use for §10 (equal-compute analysis).
+  windows_strategy: "fixed"
+  token_budget_minutes: 240  # only relevant when windows_strategy: "token_budget"
+  k_max: 50                  # hard cap for token_budget mode
+
+  # Per-context LR overrides — applied only when no --lr flag is passed from CLI.
+  # Longer contexts (120m, 240m) use a slightly lower LR because:
+  #   (a) overlapping windows at long L are more correlated, producing noisier
+  #       gradient estimates than at short L;
+  #   (b) smaller batch size (required to avoid OOM) already reduces effective LR.
+  # Halving LR at 120m/240m is a conservative compensation.
+  # Set to null to disable (all contexts use training.lr).
+  context_lr_overrides:
+    "120m": 5.0e-5
+    "240m": 5.0e-5
+
+  # ── Overfitting / scaling-law analysis ───────────────────────────────────────
+  overfit_epochs: 0
+
+  # ── Periodic snapshot checkpoints ────────────────────────────────────────────
+  save_snapshots: true
+  snapshot_interval: 5
+
+# ── Analysis ─────────────────────────────────────────────────────────────────
+analysis:
+  bootstrap_samples: 0
+
+# ── Logging & Output ─────────────────────────────────────────────────────────
+logging:
+  results_dir: "/scratch/boshra95/psg/unified/results/phase0_v3"

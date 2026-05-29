@@ -7,8 +7,8 @@
 #SBATCH --mem=32000M
 #SBATCH --exclude=fc11006
 #SBATCH --signal=B:USR1@120            # send SIGUSR1 to bash 120s before wall time
-#SBATCH --output=/home/boshra95/NSRR-tools/logs_v2/infer_%x_%j.out
-#SBATCH --error=/home/boshra95/NSRR-tools/logs_v2/infer_%x_%j.err
+#SBATCH --output=/home/boshra95/NSRR-tools/logs_v3/%x_%j.out
+#SBATCH --error=/home/boshra95/NSRR-tools/logs_v3/%x_%j.err
 
 # Phase 0 — Subject-level inference (all windows)
 #
@@ -53,8 +53,8 @@ _SCRIPT_PATH="$(realpath "$0")"
 _PYTHON_PID=""
 
 cd /home/boshra95/NSRR-tools
-mkdir -p logs_v2
-mkdir -p logs_v2/status
+mkdir -p logs_v3
+mkdir -p logs_v3/status
 
 # ── Environment ───────────────────────────────────────────────────────────────
 module load python/3.11 2>/dev/null || true
@@ -70,7 +70,7 @@ python -c "import torch; assert torch.cuda.is_available(), 'CUDA not available o
 }
 
 # ── Job parameters ────────────────────────────────────────────────────────────
-CONFIG=${CONFIG:-"configs/phase0_config.yaml"}
+CONFIG=${CONFIG:-"configs/phase0_v3_config.yaml"}
 TASK=${TASK:-""}
 TASK_TYPE=${TASK_TYPE:-"seq2label"}
 HEAD=${HEAD:-"lstm"}
@@ -84,10 +84,10 @@ RUN_TAG=${RUN_TAG:-""}                 # must match RUN_TAG used during training
 # ── Job run tracking ──────────────────────────────────────────────────────────
 _EXP_TAG="${TASK}_${HEAD}"
 [ -n "$RUN_TAG" ] && _EXP_TAG="${_EXP_TAG}_${RUN_TAG}"
-_STATUS_FILE="logs_v2/status/infer_${_EXP_TAG}_${SPLIT}.jsonl"
+_STATUS_FILE="logs_v3/status/infer_${_EXP_TAG}_${SPLIT}.jsonl"
 
 # Persistent inference log — all resubmissions append here.
-_INFER_LOG="logs_v2/infer_${_EXP_TAG}_${SPLIT}.log"
+_INFER_LOG="logs_v3/infer_${_EXP_TAG}_${SPLIT}.log"
 exec > >(tee -a "$_INFER_LOG") 2>&1
 
 _write_status() {
@@ -114,9 +114,17 @@ _timeout_handler() {
     echo ""
     echo "Time limit approaching — resubmitting for auto-resume ($(date))"
     [ -n "$_PYTHON_PID" ] && kill -TERM "$_PYTHON_PID" 2>/dev/null || true
+    # Pass --output/--error explicitly so resubmitted jobs get the same
+    # descriptive filename as the original submission (not the generic %x_%j fallback).
     _TIME_LIMIT=$(scontrol show job "$SLURM_JOB_ID" 2>/dev/null \
         | grep -oP 'TimeLimit=\K\S+' || echo "05:00:00")
-    NEW_JOB=$(sbatch --export=ALL --time="$_TIME_LIMIT" "$_SCRIPT_PATH" 2>&1)
+    _LOG_STEM="${_INFER_LOG%.log}"
+    NEW_JOB=$(sbatch \
+        --export=ALL \
+        --time="$_TIME_LIMIT" \
+        --output="${_LOG_STEM}_%j.out" \
+        --error="${_LOG_STEM}_%j.err" \
+        "$_SCRIPT_PATH" 2>&1)
     echo "$NEW_JOB"
     exit 0
 }

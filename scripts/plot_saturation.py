@@ -8,6 +8,10 @@ Reads summary.csv files (no parquet or heatmap DF needed).
 Answers H1 (does longer context improve performance, and where does it saturate?)
 and H4 (which head benefits most from longer context?).
 
+Optional CI bands: if --collected-dir points to a directory containing
+analysis.csv (from collect_results_v2.py --bootstrap N), bootstrap 95% CI
+bounds are drawn as shaded bands around the saturation curves.
+
 Usage:
   python scripts/plot_saturation.py \\
       --task sex_binary \\
@@ -15,8 +19,16 @@ Usage:
       --results-dir /scratch/boshra95/psg/unified/results/phase0_v2 \\
       --metric auroc balanced_accuracy
 
+  # With bootstrap CI bands:
+  python scripts/plot_saturation.py \\
+      --task sex_binary \\
+      --heads lstm transformer mean_pool \\
+      --results-dir /scratch/boshra95/psg/unified/results/phase0_v2 \\
+      --collected-dir results/collected \\
+      --metric auroc
+
 Output:
-  {results_dir}/figures/saturation_{task}_{metric}.{png,pdf}
+  {results_dir}/figures/saturation/saturation_{task}_{metric}.{png,pdf}
 """
 
 import argparse
@@ -50,6 +62,12 @@ METRIC_LABEL = {
     "macro_f1":          "Macro F1",
 }
 
+# Maps metric name → (ci_lo column, ci_hi column) in analysis.csv
+CI_COLS = {
+    "auroc":             ("mean_prob_auroc_ci_lo",    "mean_prob_auroc_ci_hi"),
+    "balanced_accuracy": ("mean_prob_bal_acc_ci_lo",  "mean_prob_bal_acc_ci_hi"),
+}
+
 
 def parse_context_min(s: str) -> float:
     if s in CONTEXT_TO_MIN:
@@ -66,21 +84,56 @@ def load_summary(results_dir: Path, task: str, head: str, run_tag: str) -> pd.Da
     exp_id   = f"{task}_{head}" + (f"_{run_tag}" if run_tag else "")
     csv_path = results_dir / exp_id / "summary.csv"
     if not csv_path.exists():
-        return pd.DataFrame()
-    df = pd.read_csv(csv_path)
+        return pd.DataFrame(columns=["context_length", "context_length_min"])
+    try:
+        df = pd.read_csv(csv_path)
+    except Exception:
+        # Fall back to Python engine, which tolerates rows with more fields than the header
+        df = pd.read_csv(csv_path, engine="python", on_bad_lines="warn")
     df["context_length_min"] = df["context_length"].map(parse_context_min)
     return df.sort_values("context_length_min").reset_index(drop=True)
 
 
+def load_ci_data(collected_dir: Path, task: str, head: str,
+                 split: str, metric: str) -> dict:
+    """
+    Load bootstrap CI bounds from analysis.csv for (task, head, split, k=all).
+    Returns dict: context_label -> (ci_lo, ci_hi) or empty dict if unavailable.
+    """
+    if collected_dir is None:
+        return {}
+    p = collected_dir / "analysis.csv"
+    if not p.exists():
+        return {}
+    ci_lo_col, ci_hi_col = CI_COLS.get(metric, (None, None))
+    if ci_lo_col is None:
+        return {}
+    df = pd.read_csv(p)
+    sub = df[
+        (df["task"]  == task)  &
+        (df["head"]  == head)  &
+        (df["split"] == split) &
+        (df["k"].astype(str) == "all") &
+        df[ci_lo_col].notna() &
+        df[ci_hi_col].notna()
+    ]
+    return {
+        str(row["context_length"]): (float(row[ci_lo_col]), float(row[ci_hi_col]))
+        for _, row in sub.iterrows()
+    }
+
+
 def plot_saturation(task: str, heads: list, results_dir: Path,
                     metrics: list, run_tag: str, out_dir: Path,
-                    split: str = "test"):
+                    split: str = "test",
+                    collected_dir: Path | None = None):
     for metric in metrics:
         val_col  = f"val_{metric}"
         test_col = f"{split}_{metric}"
 
         fig, ax = plt.subplots(figsize=(9, 6))
         any_data = False
+        has_ci   = False
 
         for head in heads:
             df = load_summary(results_dir, task, head, run_tag)
@@ -110,6 +163,25 @@ def plot_saturation(task: str, heads: list, results_dir: Path,
                 ax.annotate(f"{y:.1f}", (x, y),
                             textcoords="offset points", xytext=(0, 7),
                             fontsize=8, ha="center", color=style["color"])
+
+            # Optional CI bands from analysis.csv
+            ci_map = load_ci_data(collected_dir, task, head, split, metric)
+            if ci_map:
+                ctx_str_map = {v: k for k, v in CONTEXT_TO_MIN.items()}
+                ci_lo_vals, ci_hi_vals = [], []
+                ci_xs = []
+                for x, ctx_min in zip(xs, df["context_length_min"].values):
+                    ctx_lbl = ctx_str_map.get(ctx_min)
+                    if ctx_lbl and ctx_lbl in ci_map:
+                        lo, hi = ci_map[ctx_lbl]
+                        ci_xs.append(x)
+                        ci_lo_vals.append(lo * 100)
+                        ci_hi_vals.append(hi * 100)
+                if ci_xs:
+                    ax.fill_between(ci_xs, ci_lo_vals, ci_hi_vals,
+                                    color=style["color"], alpha=0.15)
+                    has_ci = True
+
             any_data = True
 
         if not any_data:
@@ -128,7 +200,10 @@ def plot_saturation(task: str, heads: list, results_dir: Path,
         ax.xaxis.set_minor_formatter(mticker.NullFormatter())
 
         ax.set_xlabel("Context length (log scale)", fontsize=12)
-        ax.set_ylabel(f"{METRIC_LABEL.get(metric, metric)} ({split}) (%)", fontsize=12)
+        ylabel = f"{METRIC_LABEL.get(metric, metric)} ({split}) (%)"
+        if has_ci:
+            ylabel += "  [shading = 95% bootstrap CI]"
+        ax.set_ylabel(ylabel, fontsize=12)
         ax.set_title(f"{task}  —  {METRIC_LABEL.get(metric, metric)} vs Context Length",
                      fontsize=13)
         ax.legend(fontsize=10)
@@ -143,7 +218,8 @@ def plot_saturation(task: str, heads: list, results_dir: Path,
                         dpi=150 if ext == "png" else None,
                         bbox_inches="tight")
         plt.close(fig)
-        print(f"  Saved: {out_dir.name}/{stem}.{{png,pdf}}")
+        print(f"  Saved: {out_dir.name}/{stem}.{{png,pdf}}"
+              + ("  (with CI bands)" if has_ci else ""))
 
 
 def main():
@@ -165,11 +241,18 @@ def main():
                         choices=["val", "test"],
                         help="Which split to use (default: test)")
     parser.add_argument("--run-tag", default="", dest="run_tag")
+    parser.add_argument("--collected-dir", type=Path, default=None,
+                        dest="collected_dir",
+                        help="Directory containing analysis.csv with bootstrap CI bounds "
+                             "(from collect_results_v2.py --bootstrap N). "
+                             "If provided, CI bands are drawn as shaded regions.")
     args = parser.parse_args()
 
-    out_dir = args.results_dir / "figures"
+    out_dir = args.results_dir / "figures" / "saturation"
 
     print(f"Task: {args.task}  Heads: {args.heads}  Metrics: {args.metric}")
+    if args.collected_dir:
+        print(f"  CI bands: loading from {args.collected_dir}/analysis.csv")
     plot_saturation(
         task=args.task,
         heads=args.heads,
@@ -178,6 +261,7 @@ def main():
         run_tag=args.run_tag,
         out_dir=out_dir,
         split=args.split,
+        collected_dir=args.collected_dir,
     )
 
 

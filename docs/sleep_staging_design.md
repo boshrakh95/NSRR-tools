@@ -1,0 +1,273 @@
+# Sleep Staging — Design Decisions & Analysis Plan
+
+> Created: 2026-05-28  
+> Covers: window selection strategy, training fairness, and analysis/plotting plan for the
+> seq2seq sleep-staging task. Update this file as decisions are made.
+
+---
+
+## 1. The Two Problems with the Current Setup
+
+### 1A. K=5 Does Not Work for seq2seq
+
+For seq2label tasks (apnea, BMI, …), `windows_per_subject=5` correctly limits each subject
+to 5 non-overlapping context windows per epoch → ~47K training items.
+
+For seq2seq (sleep staging), each "item" is a single-epoch prediction. K=5 windows of
+length L would contribute only 5 × L/5sec prediction targets per subject — which is a tiny
+number and ignores most of the night. The dataset code instead falls back to all anchor
+epochs in valid windows, giving **K ≈ 966/subject** (measured across all contexts).
+Result: **1.6M training items** vs ~47K for seq2label (35× more), and epochs take 30–70
+min depending on context length.
+
+### 1B. Edge Epochs Are Mostly Padding
+
+For a centered context window of length L, an anchor epoch within L/2 of the recording
+start/end has real signal on only one side. At 240m context, the first and last 2 hours of
+every recording are dominated by padding. Observed effect:
+
+| Context | N patches | Flash? | Cause |
+|---------|-----------|--------|-------|
+| 30s (N=6)   | ✅ Flash | No padding (6-patch window never hits edges for valid recordings) |
+| 10m (N=120) | ❌ No Flash | Some edge epochs padded |
+| 40m (N=480) | ✅ Flash | Apparently few/no padded windows in sampled batch |
+| 80m (N=960) | ❌ No Flash | Padded edge epochs exist |
+| 120m (N=1440)| ❌ No Flash | Many padded edge epochs |
+| 240m (N=2880)| ❌ No Flash | Large fraction padded |
+
+Padding disables Flash attention for any batch containing a padded window, making training
+dramatically slower at long contexts.
+
+---
+
+## 2. Window Selection Options
+
+### Option A — Complete-Context Only (Recommended)
+
+Only include anchor epochs where the full L-length window fits entirely within the recording:
+`anchor_idx ≥ L/2  AND  anchor_idx ≤ T − L/2`
+
+**Effect on dataset:**
+
+| Context | Excluded epochs per recording | Remaining fraction |
+|---------|------------------------------|-------------------|
+| 30s     | ~6 epochs (~30 sec)          | ~99.9%            |
+| 10m     | ~120 epochs (~10 min total)  | ~97%              |
+| 40m     | ~480 epochs (~40 min total)  | ~91%              |
+| 80m     | ~960 epochs (~80 min total)  | ~83%              |
+| 120m    | ~1440 epochs (~120 min total)| ~75%              |
+| 240m    | ~2880 epochs (~240 min total)| ~50%              |
+
+**Pros:**
+- No padding → Flash fires for ALL contexts → 2–5× faster training
+- Clean training signal: every gradient comes from real PSG data
+- **Fairest comparison**: each model is evaluated on the epochs where it operates under
+  its full promised context. The performance curve truly answers "does more context help?"
+- Items/epoch drops substantially (fewer edge epochs) → faster epochs
+
+**Cons:**
+- Test set shrinks with context length. At 240m, ~50% of epochs are excluded from evaluation.
+  This must be stated clearly in the Methods section.
+- Cannot score the very beginning/end of the night with long-context models.
+
+**Paper defence:**
+> "We restrict both training and evaluation to anchor epochs where the full context window
+> is available within the recording (anchor ≥ L/2 from both boundaries). This ensures no
+> padding is introduced, enables efficient Flash attention, and allows a fair comparison
+> across context lengths: each model is evaluated under identical conditions — given its full
+> promised context. We show in the appendix that including edge epochs (with padding) does
+> not change the relative ordering of context lengths."
+
+---
+
+### Option B — Causal / Past-Only Context
+
+Context window = L minutes *before* the anchor epoch (no future signal).
+
+**Pros:** No padding needed at start-of-night; clinically motivated (real-time scoring).  
+**Cons:** Different task (measures "how much past helps" not "how much context helps");
+not comparable with literature using bidirectional context; future signal is also informative
+for staging (especially at night transitions).  
+**Verdict:** Reserve for a sensitivity analysis or future work. Not the primary design.
+
+---
+
+### Option C — All Epochs with Padding (Current)
+
+Keep all epochs; pad missing signal.
+
+**Verdict:** Not recommended as primary. Keeps Flash disabled at most contexts, confounds
+the context-length analysis (long-context models are penalized by serving mostly-padded
+windows), and makes training prohibitively slow at 120m and 240m.
+
+---
+
+## 3. K Does Not Apply to seq2seq — Use All Complete-Context Epochs
+
+The K concept is a **seq2label aggregation mechanism**: sample K windows per subject at
+inference, aggregate predictions across them (majority vote / mean probability) to get one
+subject-level score. K controls how much of the night is used to classify the subject.
+
+For seq2seq there is no subject-level aggregation. Each epoch is predicted independently
+and its prediction stands alone. There is no K to vary and no majority vote to compute.
+
+**Training:** use ALL complete-context anchor epochs per subject. No K limit. Items/epoch
+grows with context length (a 240m window contributes 2880 anchor epochs; a 30s window
+contributes 6) — this is unavoidable and correct.
+
+**Evaluation:** compute metrics (kappa, per-stage recall, AUROC) averaged over ALL
+complete-context test epochs. The epoch count differs across context lengths (fewer at
+longer contexts since edge epochs are excluded) but the metrics remain comparable — they
+are epoch-averaged quantities. Report epoch counts per context in the Methods.
+
+**Do epoch counts need to match across contexts?** No. Kappa and AUROC are averages;
+a model evaluated on 200K epochs (30s) is directly comparable to one on 100K epochs
+(240m), as long as the protocol is consistent (complete-context only throughout).
+A reviewer might ask, but the answer is simple: the 240m model cannot score the first/last
+2 hours of the recording.
+
+**Paper defence:**
+> "At each context length L, we evaluate on all anchor epochs where the full L-length
+> context window is available within the recording. The number of evaluated epochs decreases
+> as L increases (by design — a 240-min window cannot be centered on epochs within the first
+> or last 120 min of the recording), but Cohen's kappa and per-stage recall are
+> epoch-averaged metrics and remain directly comparable across context lengths."
+
+**Consequence for the analysis pipeline:** the K-sweep in `analyze_windows.py --k-dense`
+is meaningless for seq2seq and should be skipped. The primary analysis tool is simply
+the saturation curve (context length → kappa) which reads directly from `summary.csv`
+without needing any additional analysis step.
+
+---
+
+## 4. Architecture Issue (Must Fix Before Final Runs)
+
+V1 (SHHS+MrOS+APPLES, 3 datasets) used **2-layer bidirectional LSTM, hidden=256 → 3.16M params**.
+V3 currently uses **1-layer bidirectional LSTM, hidden=128 → 658K params** (4.8× smaller).
+
+V3 is significantly worse across all contexts and stages (Kappa: ~0.58 → ~0.54 at 10m;
+N3 recall: 0.78 → 0.60). This is primarily the architecture downgrade, not the STAGES
+addition. **Restore hidden=256, num_layers=2 before final runs.**
+
+Config change needed in `configs/phase0_v3_config.yaml`:
+```yaml
+model:
+  hidden_dim: 256   # was 128
+  num_layers: 2     # was 1
+```
+
+---
+
+## 5. Analysis Plan for Sleep Staging
+
+### 5A. Analyses from run_analysis.sh That WORK for seq2seq
+
+`analyze_windows.py` already handles seq2seq correctly: it reports **segment-level only**
+(no majority-vote or mean-prob aggregation, which don't apply to per-epoch prediction).
+Metrics: AUROC, BalAcc, MacroF1, Cohen's Kappa per context and K.
+
+| Step | Script | Applicable? | Notes |
+|------|--------|-------------|-------|
+| 1. analyze --k-dense | analyze_windows.py | ❌ Skip | K sweep is a seq2label concept (aggregation over windows). For seq2seq every epoch is independent — there is nothing to aggregate. Metrics are already in summary.csv from training. |
+| 2. collect | collect_results.py | ✅ Yes | Aggregates summary.csv; works as-is. |
+| 3. build-heatmap | build_heatmap_df.py | ❌ Skip | Requires k-dense analysis output; K axis has no meaning for seq2seq. |
+| 4. iso-compute | plot_iso_compute.py | ❌ Skip | Depends on heatmap df; K-based compute tradeoff irrelevant. |
+| 5. saturation | plot_saturation.py | ✅ **Primary** | Core plot. Use Kappa as primary metric (add kappa to --metric). Reads summary.csv directly — no analyze step needed. |
+| 6. scaling-laws | plot_scaling_laws.py | ✅ Yes | Context-length scaling law; relevant. |
+| 7. calibration | plot_calibration.py | ✅ Yes | Per-epoch softmax calibration; meaningful for seq2seq. |
+| 8. window-position | plot_window_position.py | ⚠️ Reinterpret | "Window position" = epoch's index within its context window → becomes time-of-night performance. Needs relabelling for interpretability. |
+| 9. subject-consistency | plot_subject_consistency.py | ✅ Yes | Hard subjects = consistently misclassified regardless of context. Meaningful. |
+| 10. cohort-saturation | plot_cohort_saturation.py | ✅ Yes | Performance by dataset (SHHS vs MrOS vs STAGES vs APPLES). |
+| 11. precision-recall | plot_precision_recall.py | ✅ Yes | Per-class PR curves; critical for minority N1 class. |
+| 12. subject-kstar | plot_subject_kstar.py | ❌ Skip | K* = minimum K for correct subject-level prediction. Not applicable to per-epoch seq2seq. |
+| 13. task-comparison | plot_task_comparison.py | ✅ Yes | Include sleep_staging alongside binary tasks for cross-task comparison. |
+
+### 5B. Sleep-Staging-Specific Analyses to Add
+
+These don't exist yet and would strengthen the paper significantly:
+
+#### Per-stage saturation curves
+Plot each stage's recall/F1/AUROC vs context length separately.
+Expected finding: N1 and N3 benefit most from longer context (harder stages); W and REM
+plateau early. This is the most paper-worthy sleep-staging-specific plot.
+
+```bash
+# Conceptual command — needs a new script: plot_per_stage_saturation.py
+python scripts/plot_per_stage_saturation.py \
+  --task sleep_staging --head lstm \
+  --results-dir ... --split test
+```
+
+#### Confusion matrix evolution
+5×5 confusion matrix at each context length: W, N1, N2, N3, REM.
+Shows which confusions are resolved by more context (e.g., N1/W confusion at 30s →
+resolved at 40m; N3/N2 confusion persists even at 240m).
+
+#### Time-of-night performance
+Divide the night into 1-hour bins. Compute Cohen's kappa per bin vs context length.
+Shows whether context helps more at night transitions (lights-out, REM cycles) than
+in the middle of stable sleep.
+
+#### Stage transition accuracy
+Separate evaluation on epochs that are at a sleep stage transition vs mid-stage epochs.
+Transitions (e.g., N2→N3) are the hardest cases and most sensitive to context length.
+
+#### N1 deep-dive
+N1 is ~5–8% of epochs (most imbalanced). Plot N1 recall and precision separately across
+context lengths. N1 is where the context-length story is probably strongest.
+
+---
+
+## 6. Primary Metrics for the Paper
+
+For seq2seq sleep staging, use in this order of importance:
+
+1. **Cohen's Kappa** — standard in sleep staging literature; accounts for chance agreement
+2. **Per-stage recall** (W, N1, N2, N3, REM) — reviewer expectation for staging papers
+3. **Macro-F1** — summary of per-stage performance
+4. **AUROC** (macro OvR) — for context-length curve; comparable across tasks
+5. **Accuracy** — report but not primary (inflated by N2 majority class)
+
+Do NOT report accuracy alone. N2 is ~50% of epochs so a trivial classifier gets ~50% accuracy.
+
+---
+
+## 7. Decision Checklist
+
+- [ ] Implement Option A (complete-context filtering) in ContextWindowDataset for seq2seq
+- [ ] Restore architecture: hidden_dim=256, num_layers=2 in phase0_v3_config.yaml
+- [ ] Rerun sleep_staging_lstm all 6 contexts with new design
+- [ ] Rerun sleep_staging_transformer all 6 contexts with NO_WANDB=1
+- [ ] Add `sleep_staging` to SEQ2SEQ_TASKS set in run_analysis.sh / gen_commands.py
+      (already in analyze_windows.py; check plot scripts handle 5-class correctly)
+- [ ] Write plot_per_stage_saturation.py
+- [ ] Write plot_confusion_evolution.py
+- [ ] Run run_analysis.sh on sleep_staging after inference completes
+- [ ] Run per-stage and confusion analyses
+
+---
+
+## 8. What Changes in the Code
+
+### ContextWindowDataset (seq2seq mode)
+
+Current behaviour: `windows_per_subject=5` is ignored; all anchor epochs are included
+including edge epochs → K≈966, padding present.
+
+Needed changes:
+1. In seq2seq mode, filter anchor epochs to complete-context only:
+   `anchor_patch_idx >= half_N  AND  anchor_patch_idx <= T - half_N`
+2. Implement window-based K sampling: group anchors into non-overlapping windows of size N,
+   sample K_max such windows per subject, include all anchors within them.
+
+### analyze_windows.py
+
+Already handles seq2seq correctly (segment-level only, reports Kappa). No change needed
+for the standard pipeline. Add `--plot-metric kappa cohen_kappa` support if not present.
+
+### plot scripts
+
+Most scripts operate on parquet files (subject_id, true_label, pred_label, prob_class*)
+and are agnostic to seq2seq vs seq2label. They should work for sleep_staging as-is.
+Exception: `plot_window_position.py` — its "position" axis needs relabelling as
+"time of night (epoch index)" for seq2seq to be interpretable.

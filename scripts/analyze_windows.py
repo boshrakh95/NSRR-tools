@@ -67,6 +67,59 @@ try:
 except ImportError:
     HAS_SKLEARN = False
 
+
+# ── Bootstrap CI ─────────────────────────────────────────────────────────────
+
+def bootstrap_subject_ci(
+    subj_targets:   np.ndarray,
+    subj_mean_probs: np.ndarray,
+    subj_mean_preds: np.ndarray,
+    num_classes:    int,
+    n_boot:         int = 1000,
+    ci:             float = 0.95,
+    seed:           int = 42,
+) -> dict:
+    """
+    Subject-level bootstrap CIs for AUROC and balanced_accuracy (mean-prob).
+
+    Resamples subjects (not windows) with replacement N times.
+    Returns dict with keys: auroc_ci_lo, auroc_ci_hi, bal_acc_ci_lo, bal_acc_ci_hi.
+    All values are NaN when bootstrap is disabled or data is insufficient.
+    """
+    nan4 = {"mean_prob_auroc_ci_lo": float("nan"), "mean_prob_auroc_ci_hi": float("nan"),
+            "mean_prob_bal_acc_ci_lo": float("nan"), "mean_prob_bal_acc_ci_hi": float("nan")}
+    if not HAS_SKLEARN or n_boot <= 0 or len(subj_targets) < 10:
+        return nan4
+
+    rng     = np.random.default_rng(seed)
+    n_subj  = len(subj_targets)
+    aurocs, bal_accs = [], []
+
+    for _ in range(n_boot):
+        idx = rng.integers(0, n_subj, size=n_subj)
+        t, probs, preds = subj_targets[idx], subj_mean_probs[idx], subj_mean_preds[idx]
+        if len(np.unique(t)) < 2:
+            continue
+        try:
+            if num_classes == 2:
+                auc = float(roc_auc_score(t, probs[:, 1]))
+            else:
+                auc = float(roc_auc_score(t, probs, multi_class="ovr", average="macro"))
+            aurocs.append(auc)
+        except ValueError:
+            pass
+        bal_accs.append(float(balanced_accuracy_score(t, preds)))
+
+    alpha = (1 - ci) / 2
+    result = nan4.copy()
+    if len(aurocs) >= 10:
+        result["mean_prob_auroc_ci_lo"] = float(np.percentile(aurocs, alpha * 100))
+        result["mean_prob_auroc_ci_hi"] = float(np.percentile(aurocs, (1 - alpha) * 100))
+    if len(bal_accs) >= 10:
+        result["mean_prob_bal_acc_ci_lo"] = float(np.percentile(bal_accs, alpha * 100))
+        result["mean_prob_bal_acc_ci_hi"] = float(np.percentile(bal_accs, (1 - alpha) * 100))
+    return result
+
 # ── Config ────────────────────────────────────────────────────────────────────
 
 DEFAULT_K_VALUES = [1, 5, 10, 20, 50, "all"]
@@ -123,7 +176,8 @@ def compute_metrics_from_arrays(targets: np.ndarray, preds: np.ndarray,
 
 
 def evaluate_at_k(df: pd.DataFrame, k_val: int | str,
-                  num_classes: int, task: str, strategy: str) -> dict:
+                  num_classes: int, task: str, strategy: str,
+                  n_bootstrap: int = 0) -> dict:
     """
     Given the full all-windows parquet for one (context, task, head),
     evaluate at K windows per subject.
@@ -176,7 +230,7 @@ def evaluate_at_k(df: pd.DataFrame, k_val: int | str,
     subj_majority_preds = np.array(subj_majority_preds)
     subj_mean_probs     = np.vstack(subj_mean_probs)
 
-    seg_metrics      = compute_metrics_from_arrays(seg_targets, seg_preds, seg_probs, num_classes, task)
+    seg_metrics       = compute_metrics_from_arrays(seg_targets, seg_preds, seg_probs, num_classes, task)
     mean_prob_metrics = compute_metrics_from_arrays(subj_targets, subj_mean_preds, subj_mean_probs, num_classes, task)
     majority_metrics  = compute_metrics_from_arrays(subj_targets, subj_majority_preds, subj_mean_probs, num_classes, task)
 
@@ -191,6 +245,14 @@ def evaluate_at_k(df: pd.DataFrame, k_val: int | str,
         row[f"mean_prob_{k}"] = v
     for k, v in majority_metrics.items():
         row[f"majority_{k}"] = v
+
+    # Optional bootstrap CIs (subject-level, mean-prob aggregation)
+    if n_bootstrap > 0:
+        ci_dict = bootstrap_subject_ci(
+            subj_targets, subj_mean_probs, np.array(subj_mean_preds),
+            num_classes, n_boot=n_bootstrap,
+        )
+        row.update(ci_dict)
 
     return row
 
@@ -366,6 +428,10 @@ def main():
                         choices=["auroc", "balanced_accuracy", "macro_f1"],
                         help="Metrics to plot (default: auroc balanced_accuracy). "
                              "Accepts multiple: --plot-metric auroc balanced_accuracy macro_f1")
+    parser.add_argument("--bootstrap", default=0, type=int, metavar="N",
+                        help="Bootstrap resamples for 95%% CI on AUROC and balanced_accuracy "
+                             "(subject-level resampling). 0 = disabled (default). "
+                             "1000 is recommended for paper tables.")
     parser.add_argument("--splits", nargs="+", default=["test"],
                         choices=["train", "val", "test"],
                         help="Splits to analyse (default: test). Use --splits val test for both.")
@@ -443,7 +509,7 @@ def main():
                     continue
 
                 row = evaluate_at_k(df, k_val, num_classes, args.task,
-                                    args.window_strategy)
+                                    args.window_strategy, n_bootstrap=args.bootstrap)
                 row["context_length"] = ctx
                 row["split"]          = split
                 split_rows.append(row)
@@ -489,6 +555,7 @@ def main():
         if args.plot:
             for pm in args.plot_metric:
                 out_fig = (args.results_dir / "figures" /
+                           f"{args.task}_{args.head}" /
                            f"{args.task}_{args.head}_{split}_window_sweep_{pm}.png")
                 plot_window_sweep(split_df, args.task, args.head, pm, out_fig)
 

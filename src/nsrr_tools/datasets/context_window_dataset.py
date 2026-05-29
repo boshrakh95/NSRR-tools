@@ -19,9 +19,18 @@ questions — only the amount of context given as input differs.
 
   seq2label (night-level tasks):
     Index unit = (subject, window_k).
-    K = min(K_max, n_available_windows) non-overlapping windows per subject.
-    K_max is the same at every context length, so __len__ is approximately
-    equal across the sweep (exact equality only breaks at full_night where K=1).
+    Train split:    K = min(K_max, T-N+1) windows sampled from overlapping
+                    positions so K_max windows are achievable at all context
+                    lengths (including 240m).
+    Val/test split: K = min(K_max, T-N+1) windows evenly spaced across the
+                    overlapping pool (deterministic) — same pool as training,
+                    so K=K_max is achievable at all context lengths (240m: 5,
+                    not the 2 that non-overlapping stride-N would give).
+    Inference:      K_max=99_999 triggers the non-overlapping stride-N path
+                    (0, N, 2N, …), recovering all T//N non-redundant windows
+                    identical to v2 behaviour.
+    K_max is fixed at every context length so __len__ is constant across the
+    sweep (only breaks at full_night where K=1).
 
 INPUT FILES
 ───────────
@@ -339,6 +348,33 @@ class ContextWindowDataset(Dataset):
         if limit is not None:
             self.df = self.df.iloc[:limit].reset_index(drop=True)
 
+        # ── Minimum recording length filter ───────────────────────────────
+        # Applied BEFORE index building and at ALL context lengths so that the
+        # same subject pool is used at every point on the context-length curve.
+        # Without this, subjects shorter than the longest context (240m = 2880
+        # patches) would appear at short contexts but be excluded at long ones,
+        # confounding context-length comparisons with cohort differences.
+        # See docs/cohort_filter.md for the full rationale and exclusion list.
+        self._min_recording_patches = ds_cfg.get("min_recording_patches", 0)
+        if self._min_recording_patches > 0:
+            T_series = self.df.apply(
+                lambda r: self._shape_cache.get(
+                    f"{r['dataset']}/{r['subject_id']}", 0
+                ),
+                axis=1,
+            )
+            keep = T_series >= self._min_recording_patches
+            n_excluded = (~keep).sum()
+            if n_excluded > 0:
+                min_min = self._min_recording_patches * 5 // 60
+                warnings.warn(
+                    f"[{split}] Cohort filter: {n_excluded} subject(s) excluded "
+                    f"(T < {self._min_recording_patches} patches / {min_min}m). "
+                    f"Set dataset.min_recording_patches=0 to disable.",
+                    stacklevel=2,
+                )
+            self.df = self.df[keep].reset_index(drop=True)
+
         # ── Build flat index ───────────────────────────────────────────────
         # Each entry: (subject_row_idx, aux_int, label_int)
         #   seq2seq   aux_int = anchor_patch_end  (exclusive, i.e., last patch+1)
@@ -420,22 +456,34 @@ class ContextWindowDataset(Dataset):
                 index.append((row_idx, 0, label))
                 continue
 
-            n_windows = T // N                    # non-overlapping windows
-            K = min(self._K_max, n_windows)
-
             if self.split == "train":
-                # K random start positions (without replacement)
+                # Overlapping pool: any start in [0, T-N] is valid.
+                # Ensures K_max windows are always achievable at all context
+                # lengths, including 240m where non-overlapping gives only 2.
+                n_valid = T - N + 1
+                K = min(self._K_max, n_valid)
                 starts = sorted(
-                    rng.choice(n_windows, size=K, replace=False).tolist()
+                    rng.choice(n_valid, size=K, replace=False).tolist()
                 )
-                starts = [s * N for s in starts]
+            elif self._K_max <= 100:
+                # Val/test during training (K_max=5): overlapping pool,
+                # evenly spaced and deterministic. Same pool as training so
+                # K=K_max is achievable at all context lengths (240m: gives 5
+                # instead of the 2 that non-overlapping stride-N would give).
+                n_valid = T - N + 1
+                K = min(self._K_max, n_valid)
+                starts = np.linspace(0, n_valid - 1, K, dtype=int).tolist()
             else:
-                # K evenly spaced windows (deterministic)
+                # Inference (K_max=99_999): non-overlapping stride-N positions
+                # 0, N, 2N, … giving systematic, non-redundant night coverage
+                # identical to v2 behaviour.
+                n_windows = T // N
+                K = min(self._K_max, n_windows)
                 positions = np.linspace(0, n_windows - 1, K, dtype=int)
                 starts = [int(p) * N for p in positions]
 
             for s in starts:
-                index.append((row_idx, s, label))
+                index.append((row_idx, int(s), label))
 
         return index
 
