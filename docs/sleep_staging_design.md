@@ -399,3 +399,193 @@ Most scripts operate on parquet files (agnostic to window design). They work for
 sleep_staging as-is. Exception: `plot_window_position.py` — its position axis represents
 epoch position within the context window; for seq2seq the meaningful axis would be
 time-of-night, which needs a new script.
+
+---
+
+## 9. Full Experiment Pipeline (Train → Analysis)
+
+Reference for running the complete sleep staging experiment from scratch on the
+`sleep-stage-redesign` branch. Assumes all implementation steps in §8 are done.
+
+### Pre-conditions checklist
+
+- [ ] On branch `sleep-stage-redesign`
+- [ ] Old results archived: `sleep_staging_{lstm,transformer}_old_arch128/`
+- [ ] Old logs archived: `logs_v3/archive_old_arch128/`
+- [ ] Config: `seq2seq_context_mode: "centered"`, `seq2seq_padding_policy: "complete_only"`,
+      `hidden_dim: 256`, `num_layers: 2`
+
+---
+
+### Step 1 — Training (primary)
+
+Generate commands and submit. `NO_WANDB=1` is required to avoid W&B port-bind crashes.
+
+```bash
+cd /home/boshra95/NSRR-tools
+
+# Get exact sbatch commands
+python scripts/gen_commands.py train sleep_staging_lstm
+python scripts/gen_commands.py train sleep_staging_transformer
+
+# Submit (add NO_WANDB=1 to each sbatch --export line)
+# Example:
+sbatch --export=ALL,TASK=sleep_staging,TASK_TYPE=seq2seq,HEAD=lstm,\
+DATASETS="shhs mros stages apples",BATCH_SIZE=32,LR=1e-4,\
+WANDB_PROJECT=nsrr-phase0-v3,NO_WANDB=1 \
+  jobs/train_context_sweep_gpu_rorqual.sh
+
+sbatch --export=ALL,TASK=sleep_staging,TASK_TYPE=seq2seq,HEAD=transformer,\
+DATASETS="shhs mros stages apples",BATCH_SIZE=32,LR=1e-4,\
+WANDB_PROJECT=nsrr-phase0-v3,NO_WANDB=1 \
+  jobs/train_context_sweep_gpu_rorqual.sh
+```
+
+**What to expect:**
+- 240m context needs many auto-resubmits (7+ hours/epoch without flash at early epochs;
+  improves once early epochs are excluded by `complete_only`). Flash fires for all contexts
+  with this new setup → expect faster convergence than the old `allow_all` runs.
+- Training creates `summary.csv` in `results/phase0_v3/sleep_staging_{lstm,transformer}/`.
+- Check progress: `python scripts/gen_commands.py status sleep_staging_lstm`
+
+---
+
+### Step 2 — Inference
+
+Run after all 6 contexts are trained for each head.
+
+```bash
+source /home/boshra95/sleepfm_env/bin/activate
+
+python scripts/gen_commands.py infer sleep_staging_lstm | bash
+python scripts/gen_commands.py infer sleep_staging_transformer | bash
+```
+
+**Key difference from other tasks:** inference parquets now include `anchor_patch_end`
+column (added for seq2seq tasks). This is needed for Step 5 (common eval set analysis).
+
+Check output: `results/phase0_v3/inference/sleep_staging_{lstm,transformer}/context_*/test_windows.parquet`
+
+---
+
+### Step 3 — Saturation curve (primary result)
+
+Reads directly from `summary.csv` — no analysis step needed.
+
+```bash
+python scripts/gen_commands.py saturation sleep_staging \
+  --heads lstm transformer \
+  --metric auroc balanced_accuracy | bash
+```
+
+**Note:** `cohen_kappa` is not yet a supported `--metric` in `plot_saturation.py`.
+Until it is added, use `balanced_accuracy` as the proxy or read kappa directly from
+`summary.csv`. Adding kappa support to `plot_saturation.py` is a TODO.
+
+---
+
+### Step 4 — All per-context plots
+
+Run `run_analysis.sh` with `--skip-analyze` (K-sweep is not meaningful for seq2seq).
+This runs: collect, saturation, scaling-laws, calibration, window-position,
+subject-consistency, cohort-saturation, precision-recall, task-comparison.
+
+```bash
+source /home/boshra95/sleepfm_env/bin/activate
+
+bash scripts/run_analysis.sh \
+  sleep_staging_lstm sleep_staging_transformer \
+  --heads lstm transformer \
+  --skip-analyze 2>&1 | tee logs_v3/analysis_sleep_staging.log
+```
+
+**Steps that will produce output:**
+
+| Step | Script | Output location |
+|------|--------|----------------|
+| collect | collect_results.py | `results/.../collected/` |
+| saturation | plot_saturation.py | `figures/saturation/` |
+| scaling-laws | plot_scaling_laws.py | `figures/scaling_laws/` |
+| calibration | plot_calibration.py | `figures/sleep_staging_{lstm,transformer}/` |
+| window-position | plot_window_position.py | same (position axis = epoch-in-window) |
+| subject-consistency | plot_subject_consistency.py | same |
+| cohort-saturation | plot_cohort_saturation.py | same |
+| precision-recall | plot_precision_recall.py | same |
+| task-comparison | plot_task_comparison.py | `figures/task_comparison/` |
+
+**Steps automatically skipped (no data):** build-heatmap, iso-plots, subject-kstar
+(these require K-sweep analysis which is not run for seq2seq).
+
+---
+
+### Step 5 — Common evaluation set (supplementary)
+
+Run after inference for both heads. Produces the robustness check for the paper
+supplementary (see §3b for full motivation).
+
+```bash
+python scripts/analyze_common_eval_set.py \
+    --config configs/phase0_v3_config.yaml \
+    --task sleep_staging --head lstm --split test
+
+python scripts/analyze_common_eval_set.py \
+    --config configs/phase0_v3_config.yaml \
+    --task sleep_staging --head transformer --split test
+```
+
+Output: `results/phase0_v3/inference/sleep_staging_{lstm,transformer}/common_eval_test_summary.csv`
+
+---
+
+### Step 6 — Sleep-staging-specific plots (TODO after seeing results)
+
+These scripts do not yet exist and should be written once primary results are available:
+
+- `scripts/plot_per_stage_saturation.py` — F1/recall per stage (W/N1/N2/N3/REM) vs L
+- `scripts/plot_confusion_evolution.py` — 5×5 confusion matrix at each context length
+
+---
+
+### Step 7 — Optional sensitivity: `max_fraction` policy
+
+**When to run:** only if reviewers challenge whether `complete_only` discards too many
+anchors. This runs one head with partial-padding allowed and shows the trend is identical.
+
+**What `max_fraction` means:** `seq2seq_max_padding_fraction: X` allows anchors where at
+most X fraction of the N-patch window is padding. For example, `0.25` allows up to 25%
+padding — at 240m (N=2880), this includes anchors from the outer ~720 patches (first/last
+~60 min) of each recording, which `complete_only` excludes.
+
+**How to run:**
+
+1. Change config: `seq2seq_padding_policy: "max_fraction"`, `seq2seq_max_padding_fraction: 0.25`
+2. Add `run_tag: "mf25"` to the registry entry for `sleep_staging_lstm`
+3. Train: `python scripts/gen_commands.py train sleep_staging_lstm` → submit
+4. Infer, then compare saturation curve to `complete_only` run
+
+If the curves overlap (expected), report in supplementary as a robustness check.
+
+---
+
+### Log and results archive
+
+| Location | Contents |
+|----------|----------|
+| `logs_v3/archive_old_arch128/` | All LSTM/transformer train logs from old arch128 runs (causal, allow_all, hidden=128) |
+| `logs_v3/archive_old_arch128/status/` | Status JSONL files from old runs |
+| `results/phase0_v3/sleep_staging_lstm_old_arch128/` | Old model checkpoints and summary.csv |
+| `results/phase0_v3/sleep_staging_transformer_old_arch128/` | Same for transformer |
+| `logs_v3/train_sleep_staging_*` | New runs (centered, complete_only, hidden=256) — created fresh |
+
+---
+
+### Paper figure plan
+
+| Figure | Source | Section |
+|--------|--------|---------|
+| Saturation curve: kappa and AUROC vs L (lstm + transformer) | `summary.csv` | Main results |
+| Per-stage F1 vs L | `plot_per_stage_saturation.py` | Main results |
+| Confusion matrix evolution | `plot_confusion_evolution.py` | Main results |
+| Saturation on common eval set | `common_eval_test_summary.csv` | Supplementary |
+| Cohort saturation (SHHS/MrOS/STAGES/APPLES) | `plot_cohort_saturation.py` | Supplementary |
+| Calibration reliability diagrams | `plot_calibration.py` | Supplementary |
