@@ -247,27 +247,73 @@ Do NOT report accuracy alone. N2 is ~50% of epochs so a trivial classifier gets 
 
 ---
 
-## 8. What Changes in the Code
+## 8. Implementation (completed on sleep-stage-redesign branch)
 
-### ContextWindowDataset (seq2seq mode)
+### Code changes
 
-Current behaviour: `windows_per_subject=5` is ignored; all anchor epochs are included
-including edge epochs → K≈966, padding present.
+**`src/nsrr_tools/datasets/context_window_dataset.py`**
 
-Needed changes:
-1. In seq2seq mode, filter anchor epochs to complete-context only:
-   `anchor_patch_idx >= half_N  AND  anchor_patch_idx <= T - half_N`
-2. Implement window-based K sampling: group anchors into non-overlapping windows of size N,
-   sample K_max such windows per subject, include all anchors within them.
+Three new config params read from `cfg["dataset"]`:
+
+| Param | Type | Default | Meaning |
+|---|---|---|---|
+| `seq2seq_context_mode` | str | `"causal"` | `"causal"` or `"centered"` |
+| `seq2seq_padding_policy` | str | `"allow_all"` | `"allow_all"`, `"max_fraction"`, or `"complete_only"` |
+| `seq2seq_max_padding_fraction` | float | `0.5` | threshold for `"max_fraction"` policy |
+
+**Context mode semantics (N = total patches, 6 patches = 1 epoch = 30 sec):**
+
+- `causal`: window = `[anchor_end - N : anchor_end]` — past N patches ending at anchor.
+- `centered`: window = `[anchor_start - half_past : anchor_end + half_future]`
+  where `half_past = (N - 6) // 2`, `half_future = N - 6 - half_past`.
+
+  | Context | half_past | half_future | Excluded from each end |
+  |---------|-----------|-------------|------------------------|
+  | 30s  (N=6)    | 0    | 0    | 0 epochs (~0 min)     |
+  | 10m  (N=120)  | 57   | 57   | 9 epochs (~4.75 min)  |
+  | 40m  (N=480)  | 237  | 237  | 39 epochs (~19.75 min)|
+  | 80m  (N=960)  | 477  | 477  | 79 epochs (~39.75 min)|
+  | 120m (N=1440) | 717  | 717  | 119 epochs (~59.75 min)|
+  | 240m (N=2880) | 1437 | 1437 | 239 epochs (~119.75 min each end)|
+
+**Padding policy:**
+
+- `allow_all`: existing behaviour. Causal mode still applies legacy `min_past` filter
+  (`min_past_denom=8`, `max_min_past_patches=240`). Centered includes all anchors.
+- `max_fraction`: exclude anchors where `total_padding / N > max_padding_fraction`.
+- `complete_only`: exclude anchors with any padding (zero-padding guarantee).
+  For centered: requires `anchor_start >= half_past AND anchor_end + half_future <= T_eff`.
+  For causal: requires `anchor_end >= N`.
+
+**Default values preserve existing behaviour exactly** — old results can be reproduced
+without changing any call site.
+
+New methods added:
+- `_get_causal_window(emb, T, anchor_patch_end)` — extracted from old `_get_seq2seq_window`
+- `_get_centered_window(emb, T, anchor_patch_end)` — new symmetric window extraction
+- `_get_seq2seq_window` now dispatches to the above based on `seq2seq_context_mode`
+
+### Config (`configs/phase0_v3_config.yaml`)
+
+New params added under `dataset:` with their defaults. Model size updated for sleep staging.
+
+**Results directory → model size mapping:**
+
+| Results directory | context_mode | padding_policy | hidden_dim | num_layers |
+|---|---|---|---|---|
+| `sleep_staging_lstm_old_arch128` | causal | allow_all | 128 | 1 |
+| `sleep_staging_transformer_old_arch128` | causal | allow_all | 128 | 1 |
+| `sleep_staging_lstm` (new) | centered | complete_only | 256 | 2 |
+| `sleep_staging_transformer` (new) | centered | complete_only | 256 | 2 |
 
 ### analyze_windows.py
 
-Already handles seq2seq correctly (segment-level only, reports Kappa). No change needed
-for the standard pipeline. Add `--plot-metric kappa cohen_kappa` support if not present.
+Already handles seq2seq correctly (segment-level only, Kappa). No change needed for
+the standard pipeline.
 
 ### plot scripts
 
-Most scripts operate on parquet files (subject_id, true_label, pred_label, prob_class*)
-and are agnostic to seq2seq vs seq2label. They should work for sleep_staging as-is.
-Exception: `plot_window_position.py` — its "position" axis needs relabelling as
-"time of night (epoch index)" for seq2seq to be interpretable.
+Most scripts operate on parquet files (agnostic to window design). They work for
+sleep_staging as-is. Exception: `plot_window_position.py` — its position axis represents
+epoch position within the context window; for seq2seq the meaningful axis would be
+time-of-night, which needs a new script.

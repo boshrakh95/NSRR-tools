@@ -50,9 +50,17 @@ OUTPUT PER __getitem__
   y    : int64 tensor    []         scalar class label
 
   For seq2seq (anchor-based):
-    N patches ending at anchor_t (past-only causal window).
-    LEFT-padded when the recording start is less than N patches before anchor_t.
+    context_mode="causal"   — N patches ending at anchor_t (past-only).
+                              LEFT-padded when recording start < N patches before anchor_t.
+    context_mode="centered" — N patches centred on anchor_t:
+                              [(N-6)//2 patches before] + [6 anchor patches] + [(N-6)//2 after].
+                              LEFT- and/or RIGHT-padded when near recording boundaries.
     y = stage of anchor_t epoch.
+
+  padding_policy controls which anchors are included:
+    "allow_all"    — all anchors; legacy min_past filter still applies for causal.
+    "max_fraction" — anchors where padding/N <= seq2seq_max_padding_fraction.
+    "complete_only"— anchors where padding == 0 (full context guaranteed).
 
   For seq2label (K-window):
     N patches starting at window_start.
@@ -257,7 +265,30 @@ class ContextWindowDataset(Dataset):
         self.N = parse_context_length(context_length)
         self.is_full_night = (self.N == FULL_NIGHT_SENTINEL)
 
-        # min_past config (seq2seq only)
+        # ── seq2seq window design ─────────────────────────────────────────────
+        # These three params control context mode and padding for seq2seq tasks.
+        # Defaults reproduce the original behaviour (causal, allow_all).
+        self._seq2seq_context_mode     = ds_cfg.get("seq2seq_context_mode",        "causal")
+        self._seq2seq_padding_policy   = ds_cfg.get("seq2seq_padding_policy",      "allow_all")
+        self._seq2seq_max_padding_frac = float(ds_cfg.get("seq2seq_max_padding_fraction", 0.5))
+
+        assert self._seq2seq_context_mode in ("causal", "centered"), (
+            f"seq2seq_context_mode must be 'causal' or 'centered', "
+            f"got {self._seq2seq_context_mode!r}"
+        )
+        assert self._seq2seq_padding_policy in ("allow_all", "max_fraction", "complete_only"), (
+            f"seq2seq_padding_policy must be 'allow_all', 'max_fraction', or "
+            f"'complete_only', got {self._seq2seq_padding_policy!r}"
+        )
+
+        # Precompute half-window sizes for centered mode
+        if task_type == "seq2seq" and not self.is_full_night:
+            self._half_past   = (self.N - PATCHES_PER_EPOCH) // 2
+            self._half_future = self.N - PATCHES_PER_EPOCH - self._half_past
+        else:
+            self._half_past = self._half_future = 0
+
+        # min_past config (seq2seq only — used only when padding_policy="allow_all")
         min_past_denom   = ds_cfg.get("min_past_denom",   8)
         max_min_past     = ds_cfg.get("max_min_past_patches", 240)
         self._min_past   = _compute_min_past(self.N, min_past_denom, max_min_past)
@@ -398,38 +429,63 @@ class ContextWindowDataset(Dataset):
     # ── Index builders ─────────────────────────────────────────────────────
 
     def _build_seq2seq_index(self) -> List[Tuple[int, int, int]]:
-        """Build (row_idx, anchor_patch_end, stage_label) for every valid anchor."""
+        """Build (row_idx, anchor_patch_end, stage_label) for every valid anchor.
+
+        Anchor selection respects seq2seq_context_mode and seq2seq_padding_policy:
+          context_mode="causal"  : padding = max(0, N - anchor_patch_end)
+          context_mode="centered": padding = left_pad + right_pad around anchor
+          padding_policy determines whether/how much padding is tolerated.
+        """
+        policy    = self._seq2seq_padding_policy
+        mode      = self._seq2seq_context_mode
+        N         = self.N
+        half_past = self._half_past
+        half_fut  = self._half_future
+
         index = []
         for row_idx, row in self.df.iterrows():
             cache_key = f"{row['dataset']}/{row['subject_id']}"
             T = self._shape_cache[cache_key]
 
-            # Load stage annotations (small array — OK to load here)
             ann_path = Path(row["annotation_path"])
             if not ann_path.exists():
                 warnings.warn(f"Annotation not found: {ann_path} — subject skipped.")
                 continue
-            raw_stages = np.load(ann_path)        # (n_epochs,) int8
+            raw_stages = np.load(ann_path)
             stages     = _remap_stages(raw_stages)
 
-            # Align: embedding patches vs annotation epochs
-            # Each epoch = PATCHES_PER_EPOCH patches; total aligned patches:
             T_ann = len(stages) * PATCHES_PER_EPOCH
-            T_eff = min(T, T_ann)                 # usable length
-
+            T_eff = min(T, T_ann)
             n_epochs = T_eff // PATCHES_PER_EPOCH
 
             for epoch_idx in range(n_epochs):
-                anchor_patch_end = (epoch_idx + 1) * PATCHES_PER_EPOCH
-                # anchor_patch_end is the index AFTER the last patch of this epoch
-                # past context available = anchor_patch_end patches
-
-                if anchor_patch_end < self._min_past:
-                    continue                       # too close to recording start
+                anchor_patch_start = epoch_idx * PATCHES_PER_EPOCH
+                anchor_patch_end   = anchor_patch_start + PATCHES_PER_EPOCH
 
                 label = int(stages[epoch_idx])
                 if label < 0 or label > 4:
                     continue                       # unknown / artefact stage
+
+                # ── Padding filter ────────────────────────────────────────────
+                if self.is_full_night:
+                    pass                           # full_night: no filter
+                elif policy == "allow_all":
+                    # Legacy behaviour: causal min_past check only
+                    if mode == "causal" and anchor_patch_end < self._min_past:
+                        continue
+                else:
+                    # Compute actual padding for this anchor
+                    if mode == "causal":
+                        pad = max(0, N - anchor_patch_end)
+                    else:  # centered
+                        left_pad  = max(0, half_past - anchor_patch_start)
+                        right_pad = max(0, (anchor_patch_end + half_fut) - T_eff)
+                        pad       = left_pad + right_pad
+
+                    if policy == "complete_only" and pad > 0:
+                        continue
+                    elif policy == "max_fraction" and pad / N > self._seq2seq_max_padding_frac:
+                        continue
 
                 index.append((row_idx, anchor_patch_end, label))
 
@@ -517,35 +573,81 @@ class ContextWindowDataset(Dataset):
     def _get_seq2seq_window(
         self, emb: np.ndarray, T: int, anchor_patch_end: int
     ) -> Tuple[np.ndarray, np.ndarray]:
-        """Extract past-only window ending at anchor_patch_end.
+        """Extract context window for seq2seq anchor.
 
-        Window covers [anchor_patch_end - N : anchor_patch_end].
-        Left-padded when anchor_patch_end < N (early-night anchors).
+        Dispatches to causal or centered based on seq2seq_context_mode.
+        full_night is always causal (window = all past patches up to anchor).
 
         Returns:
             x    : (N, 512) float32
-            mask : (N,)     bool — True = left-padded position
+            mask : (N,)     bool — True = padded position (no real signal)
         """
-        if self.is_full_night:
-            N = anchor_patch_end            # use all available past context
+        if self.is_full_night or self._seq2seq_context_mode == "causal":
+            return self._get_causal_window(emb, T, anchor_patch_end)
         else:
-            N = self.N
+            return self._get_centered_window(emb, T, anchor_patch_end)
 
+    def _get_causal_window(
+        self, emb: np.ndarray, T: int, anchor_patch_end: int
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """Past-only window: [anchor_patch_end - N : anchor_patch_end].
+        Left-padded when anchor_patch_end < N.
+        """
+        N = anchor_patch_end if self.is_full_night else self.N
         win_start = anchor_patch_end - N    # may be negative
 
         if win_start >= 0:
-            # Normal case: slice directly from embedding
-            window = emb[win_start : anchor_patch_end]   # (N, 4, 128)
+            window = emb[win_start : anchor_patch_end]
             mask   = np.zeros(N, dtype=bool)
         else:
-            # Recording starts after the window start: left-pad
-            pad_len = -win_start
-            real_len = anchor_patch_end        # = N - pad_len
+            pad_len  = -win_start
+            real_len = anchor_patch_end
             window = np.concatenate([
                 np.zeros((pad_len, N_MODALITIES, EMBED_DIM), dtype=np.float16),
                 emb[:real_len],
-            ], axis=0)                         # (N, 4, 128)
+            ], axis=0)
             mask = np.array([True] * pad_len + [False] * real_len, dtype=bool)
+
+        x = window.astype(np.float32).reshape(N, FLAT_DIM)
+        return x, mask
+
+    def _get_centered_window(
+        self, emb: np.ndarray, T: int, anchor_patch_end: int
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """Symmetric window centred on anchor epoch.
+
+        Window layout (total = N patches):
+            [half_past patches before anchor] [6 anchor patches] [half_future patches after]
+        Left- and/or right-padded when near recording boundaries.
+        """
+        N                  = self.N
+        anchor_patch_start = anchor_patch_end - PATCHES_PER_EPOCH
+        win_start          = anchor_patch_start - self._half_past   # may be negative
+        win_end            = anchor_patch_end   + self._half_future  # may exceed T
+
+        if win_start >= 0 and win_end <= T:
+            window = emb[win_start : win_end]
+            mask   = np.zeros(N, dtype=bool)
+        else:
+            pieces_w, pieces_m = [], []
+
+            if win_start < 0:
+                lp = -win_start
+                pieces_w.append(np.zeros((lp, N_MODALITIES, EMBED_DIM), dtype=np.float16))
+                pieces_m.append(np.ones(lp, dtype=bool))
+
+            real_s = max(0, win_start)
+            real_e = min(T, win_end)
+            pieces_w.append(emb[real_s : real_e])
+            pieces_m.append(np.zeros(real_e - real_s, dtype=bool))
+
+            if win_end > T:
+                rp = win_end - T
+                pieces_w.append(np.zeros((rp, N_MODALITIES, EMBED_DIM), dtype=np.float16))
+                pieces_m.append(np.ones(rp, dtype=bool))
+
+            window = np.concatenate(pieces_w, axis=0)
+            mask   = np.concatenate(pieces_m)
 
         x = window.astype(np.float32).reshape(N, FLAT_DIM)
         return x, mask

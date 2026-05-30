@@ -1081,3 +1081,58 @@ python scripts/gen_commands.py saturation sex_binary \
 ```
 
 CI bands are drawn as shaded regions (alpha=0.15) around each line when `mean_prob_auroc_ci_lo/hi` columns are present in `analysis.csv`. The y-axis label notes "shading = 95% bootstrap CI".
+
+---
+
+## seq2seq Window Design (Sleep Staging)
+
+Sleep staging uses `task_type: seq2seq`. The context window and anchor filtering logic
+differs from seq2label and is controlled by three config params under `dataset:`.
+
+### seq2seq_context_mode
+
+**`"causal"` (original):** Window covers the N patches immediately before (and including)
+the anchor epoch. Past-only; no future signal.
+
+**`"centered"` (recommended for sleep staging):** Window is symmetric around the anchor
+epoch: `[(N-6)//2 past patches] + [6 anchor patches] + [(N-6)//2 future patches]`.
+Uses both past and future context. Better absolute performance; standard in the sleep
+staging literature.
+
+At 30s (N=6): centered == causal (no room for extra context — window IS the anchor epoch).
+
+### seq2seq_padding_policy
+
+Controls which anchor epochs are included in the dataset index:
+
+| Policy | Included anchors | Padding |
+|--------|-----------------|---------|
+| `"allow_all"` | All epochs; causal mode applies legacy `min_past` filter | Possible |
+| `"max_fraction"` | Epochs where `padding/N <= seq2seq_max_padding_fraction` | Bounded |
+| `"complete_only"` | Only epochs where full context fits within recording | None |
+
+`"complete_only"` eliminates all padding → Flash attention fires at all context lengths
+→ 2–5× faster training. Anchors excluded are those within `(N-6)//2` patches of the
+recording boundary (centered) or within the first N patches (causal).
+
+### Results history and config used
+
+| Results directory | context_mode | padding_policy | hidden_dim | num_layers |
+|---|---|---|---|---|
+| `sleep_staging_lstm_old_arch128` | `causal` | `allow_all` | 128 | 1 |
+| `sleep_staging_transformer_old_arch128` | `causal` | `allow_all` | 128 | 1 |
+| `sleep_staging_lstm` | `centered` | `complete_only` | 256 | 2 |
+| `sleep_staging_transformer` | `centered` | `complete_only` | 256 | 2 |
+
+The old `_old_arch128` results used the default config values (causal, allow_all, hidden=128).
+New results use the sleep-stage-redesign branch config (centered, complete_only, hidden=256).
+
+### Paper Methods wording
+
+> "For sleep staging we adopt a symmetric context window of length L centred on each anchor
+> epoch, comprising ⌊(L−30s)/2⌋ seconds of past signal, the 30-second anchor epoch, and
+> ⌊(L−30s)/2⌋ seconds of future signal. We include only anchor epochs for which the full
+> context window lies within the recording, ensuring no zero-padding is introduced and
+> enabling Flash attention throughout. At context length L, this excludes the first and
+> last ⌊L/2⌋ − 15 seconds of each recording. At 30s the window reduces to the anchor epoch
+> alone; at 240m approximately the central 4 hours of each recording are evaluated."

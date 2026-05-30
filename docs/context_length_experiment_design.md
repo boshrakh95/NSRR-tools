@@ -177,6 +177,17 @@ For sleep staging, subject-level aggregation doesn’t apply (each 30-second epo
 
 The mean_pool head loses position information and is expected to underperform on the anchor task; its saturation curve is included as a no-temporal-context baseline.
 
+**Window design for sleep staging (implemented on sleep-stage-redesign branch):**
+
+Context is **centred** on the anchor epoch (not causal/past-only), using only anchors where
+the full window fits within the recording (`complete_only` policy, zero padding). This
+enables Flash attention at all context lengths and ensures the comparison is clean: each
+model is evaluated under its full promised context. The first/last `(N-6)/2` patches of
+every recording are excluded from training and evaluation (e.g., first/last ~2 hours at
+240m context). Architecture: 2-layer bidirectional LSTM, hidden_dim=256 (3.16M params),
+matching the V1 setup that produced substantially higher kappa than the old arch128 runs.
+See `docs/sleep_staging_design.md` for full details and paper Methods wording.
+
 ---
 
 ## 7. Outputs and Figures for the Paper
