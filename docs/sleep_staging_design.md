@@ -120,23 +120,105 @@ complete-context test epochs. The epoch count differs across context lengths (fe
 longer contexts since edge epochs are excluded) but the metrics remain comparable — they
 are epoch-averaged quantities. Report epoch counts per context in the Methods.
 
-**Do epoch counts need to match across contexts?** No. Kappa and AUROC are averages;
-a model evaluated on 200K epochs (30s) is directly comparable to one on 100K epochs
-(240m), as long as the protocol is consistent (complete-context only throughout).
-A reviewer might ask, but the answer is simple: the 240m model cannot score the first/last
-2 hours of the recording.
+**Do epoch counts need to match across contexts?**
 
-**Paper defence:**
+Strictly no — kappa and AUROC are averages. But the epoch *composition* differs:
+short contexts (30s) include sleep-onset epochs (first ~0 min excluded) while long
+contexts (240m) exclude the first/last ~2 hours. The epochs at recording boundaries
+are predominantly Wake and N1 transitions:
+- Wake (first and last few minutes): usually easy to stage (strong alpha activity)
+- N1 transitions (sleep onset): hardest class (~5% prevalence, lowest recall)
+
+Net effect: short contexts include slightly more hard N1 epochs in their test set
+→ their kappa is slightly deflated relative to 240m → the context-length curve
+**understates** the benefit of long context. This is a conservative bias, not a
+liberal one, but it is still a confound.
+
+**→ See §9 for the post-hoc Common Evaluation Set analysis that resolves this.**
+
+**Paper defence (primary results):**
 > "At each context length L, we evaluate on all anchor epochs where the full L-length
-> context window is available within the recording. The number of evaluated epochs decreases
-> as L increases (by design — a 240-min window cannot be centered on epochs within the first
-> or last 120 min of the recording), but Cohen's kappa and per-stage recall are
-> epoch-averaged metrics and remain directly comparable across context lengths."
+> context window is available within the recording. The number of evaluated epochs
+> decreases as L increases (by design — a 240-min window cannot be centred on epochs
+> within the first or last 120 min of the recording). Cohen's kappa and per-stage
+> recall are epoch-averaged metrics; we additionally verify in the Supplementary
+> that restricting all models to the common evaluation set (anchors valid at 240m)
+> does not change the qualitative trend."
 
 **Consequence for the analysis pipeline:** the K-sweep in `analyze_windows.py --k-dense`
-is meaningless for seq2seq and should be skipped. The primary analysis tool is simply
-the saturation curve (context length → kappa) which reads directly from `summary.csv`
-without needing any additional analysis step.
+is meaningless for seq2seq and should be skipped. The primary analysis tool is the
+saturation curve (context length → kappa) which reads directly from `summary.csv`.
+
+---
+
+## 3b. Common Evaluation Set Problem and Post-hoc Analysis
+
+### The problem
+
+When `seq2seq_padding_policy` is `"complete_only"` or `"max_fraction"`, each context
+length evaluates on a different subset of anchor epochs:
+
+| Context | Excluded per end (centered) | Approximate % of 8h night evaluated |
+|---------|----------------------------|--------------------------------------|
+| 30s     | ~0 min                     | ~100%                                |
+| 10m     | ~5 min                     | ~98%                                 |
+| 40m     | ~20 min                    | ~92%                                 |
+| 80m     | ~40 min                    | ~83%                                 |
+| 120m    | ~60 min                    | ~75%                                 |
+| 240m    | ~120 min                   | ~50%                                 |
+
+Comparing kappa at 30s vs 240m is comparing on **different epoch populations**.
+The bias direction: short contexts see harder sleep-onset N1 epochs → kappa
+slightly deflated → context-length effect is *understated*, not overstated.
+
+This applies to both `complete_only` and `max_fraction` (any policy that excludes
+different fractions of the night at different context lengths).
+
+It does NOT apply to `allow_all` (all contexts evaluate all epochs, equal populations).
+
+### The solution: common evaluation set
+
+Restrict ALL context lengths to the same anchor set: the epochs that are valid at
+the **longest context** (240m by default). This is the intersection of all per-context
+valid sets.
+
+Implementation: the 240m inference parquet already contains only 240m-valid anchors.
+For each other context, filter its parquet to rows whose
+`(subject_id, dataset, anchor_patch_end)` triple appears in the 240m parquet.
+
+The `anchor_patch_end` column is saved in the inference parquet by
+`infer_subject_windows.py` for all seq2seq tasks.
+
+### What goes where in the paper
+
+| Analysis | Results section |
+|---|---|
+| Each model evaluated on its own complete-context set | **Main results** (Table 1, Figure 1) |
+| All models evaluated on the 240m-valid common set | **Supplementary** (robustness check) |
+
+The supplementary analysis defends against the reviewer comment
+*"Your short-context and long-context models were evaluated on different epoch
+subsets — the comparison may not be fair."*
+
+If the qualitative trend is the same in both analyses (expected), the paper is robust.
+
+### Code
+
+```bash
+# Run after inference for all contexts
+python scripts/analyze_common_eval_set.py \
+    --config configs/phase0_v3_config.yaml \
+    --task sleep_staging --head lstm \
+    --split test
+
+# Output: results/phase0_v3/inference/sleep_staging_lstm/common_eval_test_summary.csv
+# Columns: context_length, common_kappa, common_auroc, common_balanced_accuracy,
+#          common_recall_class{0-4}, n_epochs_common, n_epochs_all, common_fraction
+```
+
+Use `plot_saturation.py` side-by-side on `summary.csv` (main) and
+`common_eval_test_summary.csv` (supplementary) to produce the two versions of
+the saturation curve.
 
 ---
 

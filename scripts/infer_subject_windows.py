@@ -116,6 +116,19 @@ def get_subject_ids(ds: ContextWindowDataset) -> list:
     return ids
 
 
+def get_anchor_patch_ends(ds: ContextWindowDataset) -> np.ndarray:
+    """Return anchor_patch_end for every index entry (seq2seq only).
+
+    For seq2seq, aux_int in _index is anchor_patch_end (the patch index
+    immediately after the last patch of the anchor epoch).  Stored in
+    the parquet so post-hoc analyses can identify the common evaluation
+    set across context lengths (e.g. filter to 240m-valid anchors).
+
+    Returns int32 array aligned to ds._index.
+    """
+    return np.array([aux for _, aux, _ in ds._index], dtype=np.int32)
+
+
 def run_inference(model: torch.nn.Module, loader: DataLoader,
                   device: torch.device, num_classes: int):
     """Return (logits_np, targets_np) over the full loader."""
@@ -247,6 +260,13 @@ def main():
             print(f"  Dataset items: {len(ds):,}  (subjects: {len(ds.df):,})")
 
             subject_ids = get_subject_ids(ds)
+            # For seq2seq tasks, record anchor position so post-hoc analyses
+            # can compute the common evaluation set across context lengths.
+            anchor_ends = (
+                get_anchor_patch_ends(ds)
+                if args.task_type == "seq2seq"
+                else None
+            )
 
             # ── Auto-scale batch size with context length ──────────────────────
             # Training used batch=32 at 240m (N=2880 patches). Inference has no
@@ -321,6 +341,12 @@ def main():
                 window_idx[i] = seen.get(key, 0)
                 seen[key] = seen.get(key, 0) + 1
             rows["window_idx"] = window_idx
+            # seq2seq only: anchor position within the recording.
+            # Used by analyze_common_eval_set.py to restrict all context lengths
+            # to the same anchor set (those valid at the longest context) so
+            # that the kappa comparison is not confounded by test-set composition.
+            if anchor_ends is not None:
+                rows["anchor_patch_end"] = anchor_ends
 
             df_out = pd.DataFrame(rows)
             df_out.to_parquet(out_parquet, index=False)

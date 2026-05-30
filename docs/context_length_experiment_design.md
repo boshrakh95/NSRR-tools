@@ -186,7 +186,14 @@ model is evaluated under its full promised context. The first/last `(N-6)/2` pat
 every recording are excluded from training and evaluation (e.g., first/last ~2 hours at
 240m context). Architecture: 2-layer bidirectional LSTM, hidden_dim=256 (3.16M params),
 matching the V1 setup that produced substantially higher kappa than the old arch128 runs.
-See `docs/sleep_staging_design.md` for full details and paper Methods wording.
+
+**Test-set composition confound (applies to both `complete_only` and `max_fraction`):**
+Different context lengths evaluate on different epoch subsets. Short contexts include
+sleep-onset N1 epochs (hard); long contexts exclude them. Bias direction: short contexts
+slightly deflated → effect of long context understated. Post-hoc fix: evaluate all models
+on the common set (240m-valid anchors only) using `scripts/analyze_common_eval_set.py`.
+Primary results use per-context sets; supplementary results use the common set.
+See `docs/sleep_staging_design.md §3b` for full details.
 
 ---
 
