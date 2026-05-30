@@ -1136,3 +1136,90 @@ New results use the sleep-stage-redesign branch config (centered, complete_only,
 > enabling Flash attention throughout. At context length L, this excludes the first and
 > last ⌊L/2⌋ − 15 seconds of each recording. At 30s the window reduces to the anchor epoch
 > alone; at 240m approximately the central 4 hours of each recording are evaluated."
+
+---
+
+## Post-hoc Decision Threshold Tuning (binary tasks only)
+
+For class-imbalanced binary tasks the default t=0.5 threshold under-predicts the minority
+class. This section describes the post-hoc threshold tuning step that should be run after
+inference is complete for all seq2label binary tasks.
+
+**Does not require retraining.** AUROC is unchanged. Only balanced accuracy and per-class
+recall change. See `docs/POSTHOC_THRESHOLD_TUNING.md` for full background and task table.
+
+### Which tasks need it (v3 results)
+
+| Task | AUROC | Recall gap | Priority |
+|---|---|---|---|
+| `osa_binary_apples_postqc_lstm` | 0.742 | 0.587 | CRITICAL |
+| `bmi_binary_lstm` | 0.729 | 0.205 | YES |
+| `cvd_binary_transformer` | 0.679 | 0.286 | YES |
+| `sleepiness_binary_transformer` | 0.622 | 0.206 | YES |
+| All others (binary) | — | <0.15 | Include for consistency |
+| `age_class`, `sleep_staging` | — | N/A | Skip (multiclass / seq2seq) |
+
+### Step 1 — Run val inference
+
+Val parquets do not exist yet (inference was only run on test). Re-run inference with
+`--split val` for each binary experiment — reuses trained model, no GPU needed:
+
+```bash
+python scripts/gen_commands.py infer <exp_id> --split val | bash
+```
+
+For all binary seq2label experiments at once (adjust list as needed):
+```bash
+for exp in bmi_binary_lstm bmi_binary_transformer \
+           sleep_efficiency_binary_lstm sleep_efficiency_binary_transformer \
+           sex_binary_lstm sex_binary_transformer \
+           depression_extreme_binary_lstm \
+           osa_binary_apples_postqc_lstm \
+           apnea_binary_lstm apnea_binary_transformer \
+           cvd_binary_lstm cvd_binary_transformer \
+           sleepiness_binary_lstm sleepiness_binary_transformer; do
+  python scripts/gen_commands.py infer $exp --split val | bash
+done
+```
+
+### Step 2 — Run threshold tuning
+
+```bash
+source /home/boshra95/sleepfm_env/bin/activate
+
+for exp in bmi_binary_lstm bmi_binary_transformer \
+           sleep_efficiency_binary_lstm sleep_efficiency_binary_transformer \
+           sex_binary_lstm sex_binary_transformer \
+           depression_extreme_binary_lstm \
+           osa_binary_apples_postqc_lstm \
+           apnea_binary_lstm apnea_binary_transformer \
+           cvd_binary_lstm cvd_binary_transformer \
+           sleepiness_binary_lstm sleepiness_binary_transformer; do
+  python scripts/gen_commands.py threshold-tuning $exp | bash
+done
+```
+
+Or for a single experiment with check output:
+```bash
+python scripts/gen_commands.py threshold-tuning bmi_binary_lstm
+# Shows command + warns if val parquet is missing
+python scripts/gen_commands.py threshold-tuning bmi_binary_lstm | bash
+```
+
+### Output
+
+Each experiment gets a new file (existing results untouched):
+
+```
+results/phase0_v3/inference/{exp_id}/threshold_tuning.csv
+```
+
+Contains both `orig_*` (t=0.5) and `tuned_*` (t_opt) metrics side by side.
+`auroc` is included and is identical in both — threshold-free.
+
+### Paper reporting
+
+Use tuned metrics as primary for balanced accuracy and recall in paper tables.
+Keep original t=0.5 results available in `threshold_tuning.csv` for supplementary.
+Include a single footnote: *"Balanced accuracy at t∗ selected on validation set
+(Youden's Index); AUROC is unaffected."*

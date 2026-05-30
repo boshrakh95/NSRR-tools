@@ -1,6 +1,7 @@
 # Post-hoc Threshold Tuning — Planning Document
 
-*Written May 2026. Do not implement until all v3 training/inference runs are finished.*
+*Written May 2026. Implementation completed on sleep-stage-redesign branch (2026-05-30).*
+*See `scripts/apply_threshold_tuning.py` and `scripts/gen_commands.py threshold-tuning`.*
 
 ## What is threshold tuning?
 
@@ -92,108 +93,112 @@ with v3's larger context and overlapping window protocol. Phase0 used only 40m c
 
 ---
 
-## Implementation plan
+## Implementation (completed)
 
-### What needs to change
+### Design: add columns, never replace
 
-**Current state**: inference saves `test_windows.parquet` with columns
-`[subject_id, dataset, true_label, pred_label, prob_class0, prob_class1, window_idx]`.
-Val parquets are NOT saved. Threshold is implicitly 0.5 via `pred_label = argmax(logits)`.
+Results are stored in a **separate CSV** alongside the existing parquets. Nothing is overwritten.
+The original `summary.csv` (training-time K=5 metrics) and `test_windows.parquet` are untouched.
 
-**Required additions**:
-1. **Save `val_windows.parquet`** during inference — same format as test, on the val split.
-   This is the held-out data for threshold selection. Must be added to `infer_context_sweep.py`.
-2. **Threshold selection script** — reads val parquet, finds optimal threshold, applies to test.
-3. **Reporting** — replace `test_balanced_accuracy`/`test_recall_classX` in summary with
-   threshold-tuned versions; add `optimal_threshold` column.
+**Output:** `{inference_dir}/{exp_id}/threshold_tuning.csv`
 
-### Files to modify (when implementing)
+One row per context length. Columns:
+
+| Column group | Columns |
+|---|---|
+| Identity | `context_length`, `n_subjects`, `n_windows_test` |
+| Threshold-free | `auroc` (unchanged by threshold) |
+| Original at t=0.5 | `orig_balanced_accuracy`, `orig_recall_class0`, `orig_recall_class1`, `orig_accuracy`, `orig_macro_f1` |
+| Threshold info | `optimal_threshold`, `val_n_subjects`, `val_balanced_accuracy_at_opt` |
+| Tuned at t_opt | `tuned_balanced_accuracy`, `tuned_recall_class0`, `tuned_recall_class1`, `tuned_accuracy`, `tuned_macro_f1` |
+| Gains | `balanced_accuracy_gain`, `recall_class0_gain`, `recall_class1_gain` |
+
+`orig_*` and `tuned_*` are both computed from the K=all parquet using mean-prob subject aggregation.
+This differs slightly from `summary.csv` (K=5 training eval) — both are correct, different K values.
+
+### Files added / modified
 
 | File | Change |
-|------|--------|
-| `scripts/infer_context_sweep.py` | Add val-split inference pass; save `val_windows.parquet` |
-| `scripts/analyze_results.py` (or equivalent) | Add `apply_threshold_tuning()` function after loading parquets |
-| `scripts/build_heatmap_df.py` | Use tuned balanced accuracy for heatmap colour column |
+|---|---|
+| `scripts/apply_threshold_tuning.py` | **New** — standalone script; reads val+test parquets, writes `threshold_tuning.csv` |
+| `scripts/gen_commands.py` | **New subcommand** `threshold-tuning <exp_id>` — prints command with val-parquet check |
+| `scripts/infer_subject_windows.py` | Unchanged — val parquets created by re-running with `--split val` |
 
-### Core logic (do not add to codebase yet — reference only)
+### How to run
 
-```python
-import numpy as np
-import pandas as pd
-from sklearn.metrics import balanced_accuracy_score, recall_score
+**Step 1 — Generate val parquets** (re-uses trained model, fast):
 
-def tune_threshold(val_parquet_path: str, test_parquet_path: str,
-                   agg: str = "mean") -> dict:
-    """
-    Select decision threshold on val set, apply to test set.
-    agg: how to aggregate window-level scores to subject level ('mean' or 'max').
-    Returns dict with threshold, tuned test metrics.
-    """
-    val_df  = pd.read_parquet(val_parquet_path)
-    test_df = pd.read_parquet(test_parquet_path)
+```bash
+# Via gen_commands (generates the full infer sbatch command with --split val):
+python scripts/gen_commands.py infer bmi_binary_lstm --split val | bash
+python scripts/gen_commands.py infer osa_binary_apples_postqc_lstm --split val | bash
+python scripts/gen_commands.py infer cvd_binary_transformer --split val | bash
+python scripts/gen_commands.py infer sleepiness_binary_lstm --split val | bash
+python scripts/gen_commands.py infer sleepiness_binary_transformer --split val | bash
+python scripts/gen_commands.py infer bmi_binary_transformer --split val | bash
+# Include all others for consistency:
+python scripts/gen_commands.py infer sleep_efficiency_binary_lstm --split val | bash
+python scripts/gen_commands.py infer sex_binary_lstm --split val | bash
+python scripts/gen_commands.py infer sex_binary_transformer --split val | bash
+python scripts/gen_commands.py infer apnea_binary_lstm --split val | bash
+python scripts/gen_commands.py infer apnea_binary_transformer --split val | bash
+python scripts/gen_commands.py infer depression_extreme_binary_lstm --split val | bash
+python scripts/gen_commands.py infer cvd_binary_lstm --split val | bash
+```
 
-    def aggregate(df):
-        return df.groupby("subject_id").agg(
-            true_label=("true_label", "first"),
-            score=("prob_class1", agg)
-        ).reset_index()
+**Step 2 — Run threshold tuning** (CPU, fast, ~1 min per experiment):
 
-    val_agg  = aggregate(val_df)
-    test_agg = aggregate(test_df)
+```bash
+source /home/boshra95/sleepfm_env/bin/activate
 
-    # Find threshold maximising val balanced accuracy
-    thresholds = np.linspace(0.01, 0.99, 200)
-    best_t = max(
-        thresholds,
-        key=lambda t: balanced_accuracy_score(
-            val_agg["true_label"], (val_agg["score"] > t).astype(int)
-        )
-    )
+for exp in bmi_binary_lstm bmi_binary_transformer \
+           sleep_efficiency_binary_lstm \
+           sex_binary_lstm sex_binary_transformer \
+           depression_extreme_binary_lstm \
+           osa_binary_apples_postqc_lstm \
+           apnea_binary_lstm apnea_binary_transformer \
+           cvd_binary_lstm cvd_binary_transformer \
+           sleepiness_binary_lstm sleepiness_binary_transformer; do
+  python scripts/gen_commands.py threshold-tuning $exp | bash
+done
+```
 
-    # Apply to test
-    test_preds = (test_agg["score"] > best_t).astype(int)
-    labels = test_agg["true_label"].values
-    n_classes = labels.max() + 1
-
-    result = {
-        "optimal_threshold":        round(float(best_t), 4),
-        "test_balanced_accuracy":   float(balanced_accuracy_score(labels, test_preds)),
-    }
-    for c in range(n_classes):
-        result[f"test_recall_class{c}"] = float(
-            recall_score(labels, test_preds, pos_label=c, average="binary")
-        )
-    return result
+Or run the check + command together:
+```bash
+python scripts/gen_commands.py threshold-tuning bmi_binary_lstm
+# Prints: python scripts/apply_threshold_tuning.py --config ... --task bmi_binary --head lstm
+# Also warns if val parquets are missing
 ```
 
 ### Only for binary tasks — skip multiclass and seq2seq
 
-Apply only when `num_classes == 2`. For `age_class` (3-class), `osa_severity_apples` (4-class),
-and `sleep_staging` (5-class seq2seq), skip entirely and use existing metrics.
+`num_classes == 2` check is enforced in the script. `age_class` (3-class),
+`osa_severity_apples` (4-class), `sleep_staging` (5-class seq2seq) are automatically
+skipped — use existing balanced_accuracy and per-class recall for those.
 
 ### Reporting convention for paper
 
-- **Primary metric**: AUROC (unchanged, threshold-free)
-- **Secondary**: balanced accuracy at `t_opt` (selected on val, applied to test)
-- **Footer note** in tables: "Balanced accuracy reported at decision threshold selected on the
-  validation set to maximise balanced accuracy; AUROC is unaffected."
+- **Primary metric in tables**: AUROC (unchanged, threshold-free) — always report
+- **Secondary**: balanced accuracy at `t_opt` from `threshold_tuning.csv`
+- **Table footnote**: *"Balanced accuracy reported at the decision threshold t∗ selected on
+  the held-out validation set to maximise balanced accuracy (Youden's Index). AUROC is
+  unaffected by the threshold."*
+- **Original t=0.5 results**: available in `threshold_tuning.csv` as `orig_balanced_accuracy`
+  columns; show in supplementary alongside tuned results if needed
 
 ---
 
-## Priority order when implementing
+## Priority by v3 results (updated from initial estimates)
 
-1. `bmi_binary` — confirmed +0.015 gain, already has inference parquets (missing val parquet)
-2. `osa_binary_apples_postqc` — est. +0.06–0.09 gain, will materially change reported numbers
-3. `depression_extreme_binary` — critical only if AUROC > 0.60 with STAGES
-4. `sleep_efficiency_binary` — marginal but large N, worth including for consistency
-5. `cvd_binary` — only if re-added to v3 registry
-6. All others — either N/A or not worth implementing
-
----
-
-## When to implement
-
-After all v3 training and inference runs are complete. Do not implement piecemeal — apply to
-all tasks in one pass so the paper tables are consistent.
-
-Estimated effort: 1 day (modify infer script + add analysis function + re-run analysis).
+| Task | AUROC | Recall gap @best ctx | Verdict |
+|---|---|---|---|
+| `osa_binary_apples_postqc_lstm` | 0.742 | 0.587 | **CRITICAL** — will materially change numbers |
+| `bmi_binary_lstm` | 0.729 | 0.205 | **YES** — confirmed +0.015 gain |
+| `cvd_binary_transformer` | 0.679 | 0.286 | **YES** — notable gap |
+| `sleepiness_binary_transformer` | 0.622 | 0.206 @240m | **YES** — borderline AUROC |
+| `sleepiness_binary_lstm` | 0.608 | varies | **YES** — include for consistency |
+| `bmi_binary_transformer` | 0.761 | 0.149 | **MARGINAL** — small, include for consistency |
+| `psqi_binary_lstm` | 0.525 | — | **NO** — AUROC near chance; tuning cannot fix absent signal |
+| `depression_extreme_binary_lstm` | 0.767 | 0.030 | **NO** — class weighting worked; near balanced |
+| `sex_binary`, `apnea_binary`, `sleep_efficiency_binary_transformer` | — | <0.09 | **NO** — near balanced |
+| `age_class`, `sleep_staging` | — | N/A | **N/A** — multiclass / seq2seq |

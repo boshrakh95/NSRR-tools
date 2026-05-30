@@ -108,7 +108,6 @@ import json
 import re
 import socket
 import sys
-from collections import defaultdict
 from pathlib import Path
 
 import yaml
@@ -464,7 +463,6 @@ def build_saturation_cmd(task: str, heads: list, registry: dict,
 def build_probe_batch_cmd(exp: dict, registry: dict,
                           starting_batch_size: int = 256) -> str:
     """Generate the sbatch command to run find_batch_size.py for a memory-bounded exp."""
-    python   = registry.get("python_bin", "/home/boshra95/sleepfm_env/bin/python")
     cfg      = registry["config"]
     logs_dir = registry.get("logs_dir", str(Path(__file__).parent.parent / "logs"))
     out_dir  = exp_folder(exp, registry)
@@ -654,6 +652,45 @@ def cmd_saturation(args, registry):
     if collected_dir:
         cmd += f" --collected-dir {collected_dir}"
     print(cmd)
+
+
+def cmd_threshold_tuning(args, registry):
+    """Print the apply_threshold_tuning.py command for a binary experiment."""
+    experiments = registry["experiments"]
+    if args.exp_id not in experiments:
+        print(f"ERROR: experiment '{args.exp_id}' not found.", file=sys.stderr)
+        sys.exit(1)
+    exp = experiments[args.exp_id]
+    if exp.get("num_classes", 2) != 2:
+        print(f"# NOTE: {args.exp_id} has {exp.get('num_classes')} classes — "
+              "threshold tuning only applies to binary tasks.", file=sys.stderr)
+        sys.exit(1)
+
+    python  = registry.get("python_bin", "/home/boshra95/sleepfm_env/bin/python")
+    cfg     = registry["config"]
+    tag     = exp.get("run_tag", "")
+    inf_dir = Path(registry["inference_dir"]) / (
+        f"{exp['task']}_{exp['head']}" + (f"_{tag}" if tag else "")
+    )
+    val_missing = [
+        ctx for ctx in trained_contexts(exp, registry)
+        if not (inf_dir / f"context_{ctx}" / "val_windows.parquet").exists()
+    ]
+
+    print(f"# Threshold tuning for: {args.exp_id}")
+    if val_missing:
+        print(f"# ⚠ val parquets missing for: {val_missing}")
+        print(f"#   Run val inference first (see gen_commands.py infer {args.exp_id} --split val)")
+    print()
+    cmd_parts = [
+        f"{python} scripts/apply_threshold_tuning.py",
+        f"--config {cfg}",
+        f"--task {exp['task']}",
+        f"--head {exp['head']}",
+    ]
+    if tag:
+        cmd_parts.append(f"--run-tag {tag}")
+    print(" ".join(cmd_parts))
 
 
 def cmd_status(args, registry):
@@ -1197,6 +1234,10 @@ def main():
                       help="Random draws per (subject, k) (default: 20)")
     p_ks.add_argument("--plots", nargs="+", default=["9A", "9B"])
 
+    p_tt = sub.add_parser("threshold-tuning",
+                          help="Print apply_threshold_tuning.py command for a binary experiment")
+    p_tt.add_argument("exp_id", help="Experiment ID, e.g. bmi_binary_lstm")
+
     p_status = sub.add_parser("status", help="Show file-level status for experiment(s)")
     p_status.add_argument("exp_id", nargs="?", default=None,
                           help="Specific experiment ID (default: all)")
@@ -1228,6 +1269,7 @@ def main():
         "cohort-saturation":    cmd_cohort_saturation,
         "precision-recall":     cmd_precision_recall,
         "subject-kstar":        cmd_subject_kstar,
+        "threshold-tuning":     cmd_threshold_tuning,
         "status":               cmd_status,
         "runs":                 cmd_runs,
     }
