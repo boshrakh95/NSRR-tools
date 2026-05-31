@@ -303,10 +303,40 @@ def main():
             cfg["model"]["num_classes"] = num_classes
             cfg["model"]["head_type"]   = args.head_type
 
+            # Auto-detect model architecture from checkpoint weights.
+            # This lets inference work correctly even when the config has been
+            # updated (e.g. hidden_dim changed for sleep staging) without
+            # requiring manual config edits per task.
+            ckpt_state = torch.load(ckpt_path, map_location="cpu")
+
+            if args.head_type == "lstm" and "lstm.weight_ih_l0" in ckpt_state:
+                # weight_ih_l0: [4*hidden, input_dim]  (bidirectional — same size)
+                ckpt_hidden = ckpt_state["lstm.weight_ih_l0"].shape[0] // 4
+                ckpt_layers = sum(
+                    1 for k in ckpt_state
+                    if k.startswith("lstm.weight_ih_l") and not k.endswith("_reverse")
+                )
+                cfg["model"]["hidden_dim"] = ckpt_hidden
+                cfg["model"]["num_layers"] = ckpt_layers
+            elif args.head_type == "transformer":
+                # in_proj_weight: [3*d_model, d_model]
+                for k, v in ckpt_state.items():
+                    if "self_attn.in_proj_weight" in k:
+                        cfg["model"]["hidden_dim"] = v.shape[1]
+                        break
+                layer_idxs = {
+                    int(k.split(".")[2]) for k in ckpt_state
+                    if k.startswith("transformer.layers.")
+                    and len(k.split(".")) > 2 and k.split(".")[2].isdigit()
+                }
+                if layer_idxs:
+                    cfg["model"]["num_layers"] = max(layer_idxs) + 1
+            elif args.head_type == "mean_pool" and "fc.weight" in ckpt_state:
+                cfg["model"]["hidden_dim"] = ckpt_state["fc.weight"].shape[1]
+
             # For transformer heads, match max_seq_len to what the checkpoint
             # was trained with (pos_enc is a registered buffer saved in state
             # dict; shape mismatch causes load failure if the default changed).
-            ckpt_state = torch.load(ckpt_path, map_location="cpu")
             if "pos_enc" in ckpt_state:
                 # pos_enc shape: [1, max_seq_len+1, hidden_dim]
                 cfg["model"]["max_seq_len"] = ckpt_state["pos_enc"].shape[1] - 1
