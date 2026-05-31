@@ -245,11 +245,19 @@ python3 scripts/gen_commands.py precision-recall         # PR curves (imbalanced
 python3 scripts/gen_commands.py subject-kstar            # min windows to correct prediction
 ```
 
-### Step 5 — Post-hoc threshold tuning (imbalanced tasks only)
+### Step 5 — Post-hoc threshold tuning (imbalanced tasks only) ✅ COMPLETED 2026-05-30
 
-See `docs/POSTHOC_THRESHOLD_TUNING.md`. Requires saving `val_windows.parquet` during inference
-(not yet implemented). Priority: `bmi_binary` (+0.015 confirmed), `osa_binary_apples_postqc`
-(est. +0.06–0.09). Apply after all other analysis is complete.
+Val inference and threshold tuning run for all 14 binary experiments.
+Results in `inference/{exp_id}/threshold_tuning.csv`.
+
+**Use tuned BA for paper:** `osa_binary_apples_postqc_lstm` (best +0.22!),
+`depression_extreme_binary_lstm` (+0.065 at 80m — surprise), `bmi_binary_transformer` (+0.013 avg),
+`bmi_binary_lstm` (+0.006 avg), `sex_binary_lstm` (+0.009 avg), `sleepiness_binary_*` (+0.006 avg).
+
+**Keep t=0.5:** `cvd_binary_*` (tuning hurts — val set too small), `apnea_binary_*`,
+`sleep_efficiency_binary_*`, `sex_binary_transformer` (all near zero or negative).
+
+See `docs/POSTHOC_THRESHOLD_TUNING.md` for full numbers, surprises, and final paper wording.
 
 ---
 
