@@ -1148,16 +1148,35 @@ inference is complete for all seq2label binary tasks.
 **Does not require retraining.** AUROC is unchanged. Only balanced accuracy and per-class
 recall change. See `docs/POSTHOC_THRESHOLD_TUNING.md` for full background and task table.
 
-### Which tasks need it (v3 results)
+### Which tasks need it (v3 results — COMPLETED 2026-05-30)
 
-| Task | AUROC | Recall gap | Priority |
-|---|---|---|---|
-| `osa_binary_apples_postqc_lstm` | 0.742 | 0.587 | CRITICAL |
-| `bmi_binary_lstm` | 0.729 | 0.205 | YES |
-| `cvd_binary_transformer` | 0.679 | 0.286 | YES |
-| `sleepiness_binary_transformer` | 0.622 | 0.206 | YES |
-| All others (binary) | — | <0.15 | Include for consistency |
-| `age_class`, `sleep_staging` | — | N/A | Skip (multiclass / seq2seq) |
+Val inference and tuning have been run for all binary tasks. Results in
+`inference/{exp_id}/threshold_tuning.csv`. See `docs/POSTHOC_THRESHOLD_TUNING.md`
+for the full per-context numbers and surprises. Summary:
+
+**Use tuned BA in paper (positive gain):**
+
+| Task | Best gain | Note |
+|---|---|---|
+| `osa_binary_apples_postqc_lstm` | **+0.22 at 10m** | MUST use — t=0.5 predicts class 1 for ~98% of subjects |
+| `depression_extreme_binary_lstm` | **+0.065 at 80m** | Surprise — balanced at short ctx, biased at long ctx |
+| `bmi_binary_transformer` | +0.027 avg +0.013 | Consistently positive across contexts |
+| `bmi_binary_lstm` | +0.013 avg +0.006 | Smaller than predicted (val-based threshold more conservative) |
+| `sex_binary_lstm` | +0.020 avg +0.009 | Small but real |
+| `sleepiness_binary_lstm` | avg +0.006 | Small; include for consistency |
+| `sleepiness_binary_transformer` | avg +0.006 | Small; include for consistency |
+
+**Keep t=0.5 (tuning zero or negative):**
+
+| Task | Reason |
+|---|---|
+| `cvd_binary_lstm` | Tuning HURTS (avg −0.005) — val too small to reliably generalise |
+| `cvd_binary_transformer` | Near zero or negative |
+| `sex_binary_transformer` | Near zero |
+| `apnea_binary_lstm/transformer` | Near zero |
+| `sleep_efficiency_binary_*` | Near zero, some negative |
+
+**Skip (not binary):** `age_class` (3-class), `sleep_staging` (5-class seq2seq), `psqi_binary_lstm` (AUROC=0.525, near chance).
 
 ### Step 1 — Run val inference
 
