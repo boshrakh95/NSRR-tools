@@ -1,0 +1,10 @@
+{"ts":"2026-05-30T17:57:18-07:00","job_id":"42391353","node":"fc11007","status":"STARTED","task":"bmi_binary","head":"lstm","contexts":"30s 10m 40m 80m 120m 240m","split":"val","datasets":"apples shhs mros"}
+{"ts":"2026-05-30T18:02:32-07:00","job_id":"42391353","node":"fc11007","status":"FAILED","reason":"30s: error: RuntimeError: Error(s) in loading state_dict for LSTMHead:
+	Missing key(s) in state_dict: 'lstm.weight_ih_l1', 'lstm.weight_hh_l1', 'l; 10m: error: RuntimeError: Error(s) in loading state_dict for LSTMHead:
+	Missing key(s) in state_dict: 'lstm.weight_ih_l1', 'lstm.weight_hh_l1', 'l; 40m: error: RuntimeError: Error(s) in loading state_dict for LSTMHead:
+	Missing key(s) in state_dict: 'lstm.weight_ih_l1', 'lstm.weight_hh_l1', 'l; 80m: error: RuntimeError: Error(s) in loading state_dict for LSTMHead:
+	Missing key(s) in state_dict: 'lstm.weight_ih_l1', 'lstm.weight_hh_l1', 'l; 120m: error: RuntimeError: Error(s) in loading state_dict for LSTMHead:
+	Missing key(s) in state_dict: 'lstm.weight_ih_l1', 'lstm.weight_hh_l1', 'l; 240m: error: RuntimeError: Error(s) in loading state_dict for LSTMHead:
+	Missing key(s) in state_dict: 'lstm.weight_ih_l1', 'lstm.weight_hh_l1', 'l","task":"bmi_binary","head":"lstm","contexts":"30s 10m 40m 80m 120m 240m","split":"val","datasets":"apples shhs mros"}
+{"ts":"2026-05-30T18:09:33-07:00","job_id":"42395531","node":"fc11004","status":"STARTED","task":"bmi_binary","head":"lstm","contexts":"30s 10m 40m 80m 120m 240m","split":"val","datasets":"apples shhs mros"}
+{"ts":"2026-05-30T18:43:25-07:00","job_id":"42395531","node":"fc11004","status":"SUCCESS","task":"bmi_binary","head":"lstm","contexts":"30s 10m 40m 80m 120m 240m","split":"val","datasets":"apples shhs mros"}
