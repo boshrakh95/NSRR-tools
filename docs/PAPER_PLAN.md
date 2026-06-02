@@ -1,5 +1,6 @@
-# Paper Plan — JBHI Submission
-*Written 2026-05-26. Do not start writing LaTeX until this plan is approved.*
+# Paper Plan — TBME Submission
+*Written 2026-05-26. Updated 2026-06-02: journal changed from JBHI to TBME.*
+*Do not start writing LaTeX until this plan is approved.*
 
 ---
 
@@ -11,13 +12,17 @@
 2. **"How Much of the Night Do You Need? Systematic Context-Length Analysis for Clinical Prediction from Overnight Polysomnography"** *(more conversational, broader appeal)*
 3. **"Long Context or Many Short Windows? An Iso-Compute Analysis of Overnight PSG for Clinical Prediction"** *(emphasises H2, the most novel analysis angle)*
 
-**Recommendation:** Candidate 1 or 3. Candidate 1 is most JBHI-appropriate (methods + clinical framing). Candidate 3 is most distinctive — no other PSG paper asks this question explicitly. **Decision needed from you.**
+**Recommendation:** Candidate 1 or 3. Candidate 1 is most TBME-appropriate (methods + clinical framing). Candidate 3 is most distinctive — no other PSG paper asks this question explicitly. **Decision needed from you.**
 
 ### Target Venue
-IEEE Journal of Biomedical and Health Informatics (JBHI).
-IEEE Transactions double-column format. Target: **10 pages** main text (including references, figures, tables) + unlimited supplementary material. Abstract: 150–250 words.
+**IEEE Transactions on Biomedical Engineering (TBME).**
+IEEE Transactions double-column format. Regular papers: **10 printed pages** (including figures and tables); extended up to ~14 pages with page charges. Abstract: 150–250 words. Supplementary material: unlimited.
 
-The template in `JBHI_submission/main.tex` is the standard IEEE Transactions/Journal color template — correct format.
+TBME scope is a strong fit: the paper is fundamentally about methodology for biomedical signal analysis — a systematic evaluation of temporal context requirements for clinical prediction from PSG. TBME publishes both methods papers and clinical applications; this sits squarely in between.
+
+The template is `TBME_submission/generic-color.tex` using `ieeecolor2.cls` (TBME-specific colour scheme).
+
+**Page budget decision**: Target **10 pages** main body (strict TBME regular-paper limit without charges). If results are very broad, pay for 2 additional pages (to 12). The supplementary is unlimited. All Tier 2 tasks in Table I is achievable within 10 pages with careful layout.
 
 ### Core Hypothesis / Main Claim (2–3 sentences)
 
@@ -312,9 +317,9 @@ One model is trained per (task, head, context length). The context window length
 
 ## E. Main Paper vs Supplementary Split
 
-**Principle**: main paper = the full story at 12–14 pages — saturation curves for 2–3 featured tasks, head comparison, iso-compute analysis, sleep staging, and a comprehensive results table covering all tasks with decent AUROC. Supplementary = per-task saturation figures for the remaining tasks, per-dataset breakdowns, ablation details, and implementation notes.
+**Principle**: main paper = the full story within 10 TBME pages — saturation curves for 2–3 featured tasks, head comparison, iso-compute analysis, sleep staging, and a comprehensive results table covering all tasks with decent AUROC. Supplementary = per-task saturation figures, per-dataset breakdowns, ablation details, and full implementation notes.
 
-### Main Paper (target: 12–14 pages double-column)
+### Main Paper (target: 10 pages double-column; up to 12 with page charges)
 
 | Content | Justification |
 |---|---|
@@ -345,7 +350,35 @@ One model is trained per (task, head, context length). The context window length
 
 ---
 
-## F. Writing Order
+## F. Section MD → LaTeX Workflow
+
+**For every section, follow this two-step process:**
+
+**Step 1 — Draft the section MD file** (in `docs/sections/<section>.md`):
+- Contains every bullet, number, claim, table entry, and equation that could possibly go in that section or its supplementary equivalent
+- Includes questions to the user marked `**[QUESTION]**`
+- Serves as the extended/uncut version of the section — more detail than the paper will print
+- Approved by the user before any LaTeX is written
+
+**Step 2 — Write the LaTeX** (in `TBME_submission/generic-color.tex`):
+- Written directly from the approved MD file
+- Only include what fits the page budget; everything else is already in the MD for supplementary use later
+
+**Section MD files to create (in order):**
+
+| File | Section | Status |
+|---|---|---|
+| `docs/sections/methods.md` | III. Methods | **CREATED** — ready for review |
+| `docs/sections/introduction.md` | I. Introduction | Not started |
+| `docs/sections/related_work.md` | II. Related Work | Not started |
+| `docs/sections/results.md` | IV. Results | Blocked on experiments |
+| `docs/sections/discussion.md` | V. Discussion | Blocked on results |
+| `docs/sections/conclusion.md` | VI. Conclusion | Blocked on results |
+| `docs/sections/abstract.md` | Abstract | Last |
+
+---
+
+## G. LaTeX Writing Order (within step 2 of the workflow above)
 
 | Priority | Section | Can write now? | Blocking on |
 |---|---|---|---|
@@ -369,7 +402,7 @@ One model is trained per (task, head, context length). The context window length
 
 ---
 
-## G. Open Questions for Your Approval
+## H. Open Questions for Your Approval
 
 These are framing and scope decisions that affect the structure of the paper. I need your input before writing begins.
 
@@ -446,7 +479,7 @@ JBHI regular papers are typically 8–10 double-column pages. 8 pages requires a
 
 **Recommendation**: target 10 pages to accommodate the breadth (15 tasks, 6 contexts, 3 heads). Trim to 8 if reviewers request. **Confirm this is the right submission type.**
 
-**Your answer**: **12–14 pages** (double-column). This is a full-length journal paper with substantial breadth; 10 pages would be too tight to cover all tasks, figures, and the iso-compute analysis properly. May reconsider if venue changes later.
+**Your answer (updated for TBME)**: TBME regular-paper limit is **10 pages**. Target 10 pages strictly; pay for up to 2 extra pages (12 total) only if needed. Supplementary is unlimited — detailed per-task figures and implementation go there. The 10-page budget is tight but workable: compress the dataset table, keep Methods at ~2 columns, Results at ~3 columns.
 
 ### G7. Modality ablation experiment
 SOTA_COMPARISON doc identifies the zero-out modality ablation (Experiment A) as Priority 1, moderate effort. The ablation (zero out 128-dim slices of the 512-dim embedding) answers the reviewer question "which modalities drive your results?" and directly addresses OSF's channel masking finding.
@@ -464,7 +497,7 @@ Running this adds ~12 training jobs (3 tasks × 2 context lengths × 4-5 modalit
 
 ---
 
-## H. Key Design Decisions Already Fixed (Do Not Change)
+## I. Key Design Decisions Already Fixed (Do Not Change)
 
 These are established by the existing codebase and docs — no open questions:
 
@@ -482,7 +515,7 @@ These are established by the existing codebase and docs — no open questions:
 
 ---
 
-## I. Summary of What Is Currently Available vs Pending
+## J. Summary of What Is Currently Available vs Pending
 
 ### Available now (v3 protocol, correct accum=1):
 
