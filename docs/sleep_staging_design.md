@@ -589,3 +589,98 @@ If the curves overlap (expected), report in supplementary as a robustness check.
 | Saturation on common eval set | `common_eval_test_summary.csv` | Supplementary |
 | Cohort saturation (SHHS/MrOS/STAGES/APPLES) | `plot_cohort_saturation.py` | Supplementary |
 | Calibration reliability diagrams | `plot_calibration.py` | Supplementary |
+
+---
+
+## 10. Empirical Findings from Initial v3 Runs (2026-06)
+
+### 10a. Including STAGES dataset hurts performance
+
+The first v3 runs used `datasets: [shhs, mros, stages, apples]` (all 4 datasets).
+Performance was lower than the phase0 baseline at every context length:
+
+| Context | Phase0 (shhs+mros+apples) | v3 with STAGES | Difference |
+|---------|--------------------------|----------------|------------|
+| 30s  | 0.580 | 0.552 | −0.028 |
+| 10m  | 0.620 | 0.550 | −0.070 |
+| 40m  | 0.628 | 0.534 | −0.094 |
+| 80m  | ~0.60 | 0.529 | — |
+
+**Why:** STAGES subjects have ~11× longer annotated recordings than the other
+datasets (847 epochs/subject vs 80 for SHHS/MrOS/APPLES). With 1,040 STAGES
+train subjects, STAGES contributes **54% of all training items** while being
+only 10% of subjects. The model is effectively trained on STAGES scoring
+conventions and generalises poorly to SHHS/MrOS/APPLES subjects.
+
+Phase0 used `shhs mros apples` only — and the architecture was identical
+(hidden_dim=256, num_layers=2, same 3,156,485 params). The 0.07 kappa gap
+at 10m is entirely explained by the dataset composition, not the architecture.
+
+**Action taken:** Results archived to `sleep_staging_lstm_with_stages/` and
+`sleep_staging_transformer_with_stages/`. Registry updated so `sleep_staging_lstm`
+and `sleep_staging_transformer` now use `[shhs, mros, apples]` only. Reruns
+submitted to confirm the performance recovers.
+
+Logs from with-stages runs archived to `logs_v3/archive_with_stages/`.
+
+---
+
+### 10b. `complete_only` at long contexts: worse results were expected
+
+With `complete_only` padding policy and centered windows, the first/last
+`half_past = (N−6)//2` patches of every recording are excluded from both
+training and evaluation:
+
+| Context | Excluded per end | % of night evaluated |
+|---------|-----------------|----------------------|
+| 30s     | 0 min           | ~100%                |
+| 10m     | ~2.5 min        | ~98%                 |
+| 40m     | ~17 min         | ~93%                 |
+| 80m     | ~37 min         | ~84%                 |
+| 120m    | ~57 min         | ~76%                 |
+| 240m    | ~117 min        | ~51%                 |
+
+**Effect on training data at long contexts:**
+
+| Context | arch128 allow_all n_train | arch256 complete_only n_train | Reduction |
+|---------|--------------------------|-------------------------------|-----------|
+| 30s  | 1,636,110 | 1,636,110 | 0% |
+| 10m  | 1,633,262 | 1,608,711 | −1.5% |
+| 120m | 1,593,420 | 1,269,387 | −20% |
+| 240m | n/a       |   877,881 | ~46% vs 30s |
+
+At 240m, nearly half of all anchor epochs are removed. These are mostly
+**Wake and N1 transition epochs** at the start/end of the recording — the
+hardest classes. Training only on the middle of the night means the model
+never sees these challenging edge epochs, which can hurt generalization.
+
+**Why this was expected:**
+- Less training data → harder to converge, especially with a larger model
+- Edge epochs (Wake, N1 transitions) provide useful gradient signal
+- At 240m after 16 epochs the model had kappa=0.177 — clearly unconverged
+- At 120m after 33 epochs the model had kappa=0.441 vs arch128/allow_all's
+  0.497 at 21 epochs — fewer training items means slower convergence
+
+**Status:** These runs also used the STAGES dataset (54% of training data
+from STAGES alone). It is not yet clear how much of the long-context
+degradation is due to `complete_only` data reduction vs STAGES dominance.
+The rerun with `shhs+mros+apples` only will clarify this — if the saturation
+curve improves at long contexts too, the STAGES effect was dominant. If
+long contexts remain slow/degraded, `complete_only` is also contributing.
+
+**Alternative to consider after rerun:** If long contexts remain poor, try
+`seq2seq_padding_policy: "allow_all"` for the rerun to separate the two
+effects. See §2 for trade-offs.
+
+---
+
+### 10c. Results archive summary
+
+| Folder | Datasets | Policy | arch | Status |
+|--------|----------|--------|------|--------|
+| `sleep_staging_lstm_old_arch128` | shhs+mros+stages+apples | causal, allow_all | 128/1 | Complete, superseded |
+| `sleep_staging_lstm_with_stages` | shhs+mros+stages+apples | centered, complete_only | 256/2 | Partial (240m training) |
+| `sleep_staging_lstm` | **shhs+mros+apples** | centered, complete_only | 256/2 | **Rerunning — primary** |
+| `sleep_staging_transformer_old_arch128` | shhs+mros+stages+apples | causal, allow_all | 128/1 | Complete, superseded |
+| `sleep_staging_transformer_with_stages` | shhs+mros+stages+apples | centered, complete_only | 256/2 | Partial (30s–80m only) |
+| `sleep_staging_transformer` | **shhs+mros+apples** | centered, complete_only | 256/2 | **Rerunning — primary** |
