@@ -1,7 +1,7 @@
 # Methods Section — Extended Reference Document
 *Status: DRAFT — ready for user review. Questions marked **[QUESTION]**.*
 *Corresponding LaTeX section: `generic-color.tex` → `\section{Methods}`*
-*Last updated: 2026-06-02*
+*Last updated: 2026-06-03 (major revision: corrected sleep staging context mode to centered; added STAGES exclusion, REM remapping, v2 K-bug fix, cohort filter per-task numbers, sleep staging architecture details)*
 
 ---
 
@@ -230,25 +230,53 @@ Specifically: 30s → 6, 10m → 120, 40m → 480, 80m → 960, 120m → 1440, 2
 - **Input:** `E[window_start : window_start + N, :]` — N consecutive patches
 - **Label:** scalar (same for all windows of the same subject; night-level label)
 - **Padding:** if `window_start + N > T` (window extends past the end), trailing positions are zero-padded and flagged mask=True. In practice, rare after the 240-min cohort filter.
-- **Training window sampling (K_train = 5):**
-  - Draw 5 start positions uniformly at random from `[0, T − N]` (overlapping windows are allowed)
-  - The same 5 windows are used for the entire mini-batch; positions re-drawn each epoch
-  - Rationale: fixes gradient updates per subject per epoch at 5, regardless of L — isolates context-length effects from training-exposure asymmetry (see §III-F)
-- **Validation/test window sampling during training (K_val = 5):**
-  - 5 evenly-spaced positions across `[0, T − N]`, deterministic (same each epoch)
-  - Provides stable early-stopping signal across all context lengths
-- **Inference (K_infer = all):**
-  - All non-overlapping stride-N windows: positions `{0, N, 2N, ..., T//N * N}`
-  - Saves per-window predictions as parquet; subject-level AUROC computed by aggregating
+
+**Training window sampling (K_train = 5) — OVERLAPPING POOL:**
+- Draw 5 start positions uniformly at random from ALL valid positions `[0, T − N]` (any start in the range; overlapping windows are explicitly allowed)
+- n_valid = T − N + 1 valid positions. For an 8h night at 240m context (N=2880): n_valid = 960 − 2880 + 1 = 481 → K=5 is achievable.
+- Positions re-drawn each epoch (different random subset each time)
+- **Why overlapping matters:** The v2 protocol used NON-overlapping windows only (stride-N positions), giving n_windows = T // N. For a 240m context on an 8h night: only 2 non-overlapping windows exist → K=min(5,2)=2. This meant the 240m model trained on 40% fewer gradient steps per epoch than the 30s model — a hidden training asymmetry. The v3 overlapping-pool fix ensures K=5 at ALL context lengths, making the gradient update count identical. This was the most important protocol fix before paper submission. (See `docs/TRAINING_PROTOCOL_FIXES.md` Issue 1 for full analysis.)
+
+**Validation/test window sampling during training (K_val = 5) — also overlapping pool:**
+- 5 evenly-spaced positions across `[0, T − N]`, deterministic (same each epoch)
+- Also uses the overlapping pool: `K=5` is achievable at 240m (vs only 2 with the old stride-N val pool)
+- Provides a stable early-stopping signal at ALL context lengths
+
+**Inference (K_infer = T // N) — NON-overlapping, stride-N:**
+- K_max = 99,999 is passed to the dataset → triggers the non-overlapping stride-N path
+- All non-overlapping stride-N windows: positions `{0, N, 2N, ..., ⌊T/N⌋·N}`
+- This ensures systematic, non-redundant coverage of the full night
+- Per-window predictions saved as parquet; subject-level AUROC computed by aggregating
+
+**Shape cache:** a JSON shape cache (`{embedding_dir}/shape_cache.json`) stores T (recording length in patches) for each subject. Built on first run, loaded on subsequent runs. This avoids loading the full float16 array just to determine recording length during dataset index construction.
 
 ### seq2seq mode (sleep staging only)
 
-- **Index unit:** (subject, anchor_patch_index) where anchor = one 6-patch (30-sec) epoch
-- **Input:** N patches ending at the anchor: `E[anchor − N + 1 : anchor + 1, :]`
-- **Label:** sleep stage of the anchor epoch (0=W, 1=N1, 2=N2, 3=N3, 4=REM)
-- **Causal structure:** the model sees only past signal (past-only window). This matches clinical staging: scorers assess what just happened, not what will happen.
-- **Early anchors (insufficient history):** when `anchor < N`, the input is left-padded with zeros (mask=True). The minimum history threshold `min_past = max(6, min(N//8, 240))` is applied — anchors with fewer valid (non-padded) patches than `min_past` are excluded from training and evaluation.
-- **Note on subject-level aggregation:** unlike seq2label, each anchor has its own label. There is no meaningful "subject-level AUROC" for staging — we report per-epoch metrics (Cohen's κ, per-stage F1) directly.
+**Context mode — CENTERED (NOT causal):**
+This is the active design decision as of v3 (`seq2seq_context_mode: "centered"`, `seq2seq_padding_policy: "complete_only"` in `configs/phase0_v3_config.yaml`). Previous documentation erroneously described it as "causal/past-only" — that was the *archived* v1 design (see `sleep_staging_lstm_old_arch128`). The current implementation is symmetric/centered.
+
+- **Index unit:** (subject, anchor_epoch_index) where anchor = one 6-patch (30-sec) epoch
+- **Context window composition (centered):**
+  - Let `half_past = (N − 6) // 2` and `half_future = N − 6 − half_past`
+  - Input = `E[anchor_start − half_past : anchor_end + half_future, :]` — total N patches
+  - The anchor's 6 patches are centred in the window; `half_past` patches precede and `half_future` patches follow
+  - This is symmetric: both past and future sleep structure inform the prediction
+- **Label:** sleep stage of the anchor epoch remapped to 5-class (see REM remapping below)
+- **Padding policy (`complete_only`):** only anchors where the full N-patch symmetric window fits entirely within the recording are included. This means anchors in the first `half_past` patches and the last `half_future` patches of each recording are excluded from both training and evaluation. At 240m context, this excludes approximately the first and last ~120 minutes of each recording (~50% excluded).
+- **Why complete_only:** avoids zero-padded batches → Flash attention fires at all context lengths; also avoids the confound of comparing models trained on different fractions of padded signal.
+- **Training vs causal:** the centered design is used because (a) human sleep scorers also use bidirectional context and (b) the research question is "does more context about the night improve staging?" not "can you stage in real time?" The causal design is reserved as a sensitivity analysis (see `sleep_staging_design.md` §2).
+
+**REM stage remapping:**
+NSRR raw annotations encode REM as stage 5. The code remaps: stage 5 → stage 4, producing the 5-class scheme W=0, N1=1, N2=2, N3=3, REM=4. This remapping is applied in `_remap_stages()` in `context_window_dataset.py` and is done once when annotations are loaded.
+
+**STAGES excluded from sleep staging:**
+The STAGES dataset is NOT used for sleep staging despite being used for all other tasks. Reason (documented in `sleep_staging_design.md` §10): STAGES subjects have ~847 epochs/subject vs ~80 for SHHS/MrOS/APPLES, so STAGES alone contributes ~54% of all training items despite being only 10% of subjects. This causes the model to be trained primarily on STAGES scoring conventions and generalises poorly. Final sleep staging cohort: SHHS + MrOS + APPLES only.
+
+**Subject-level aggregation:** each anchor epoch has its own label. There is no subject-level majority vote or mean-probability aggregation for staging. Cohen's κ and per-stage F1 are computed across all test anchor epochs.
+
+**Common evaluation set issue:** Different context lengths evaluate on different anchor subsets (longer contexts exclude more edge epochs). This means kappa at 30s and 240m are computed on slightly different epoch populations — 30s includes all epochs, 240m excludes the first/last ~120 min per recording. The bias direction: short contexts include harder sleep-onset N1 epochs → kappa is slightly deflated at short contexts, making the context-length benefit an *underestimate*. A common-evaluation-set supplementary analysis (restricting all models to anchors valid at 240m) is planned to verify that the qualitative trend is unchanged (`analyze_common_eval_set.py`).
+
+**Architecture exception:** for sleep staging, the LSTMHead uses `hidden_dim=256, num_layers=2` (~3.16M params) instead of the 128/1 configuration used for all binary/multiclass tasks. Motivation: the 5-class seq2seq task requires substantially more model capacity; prior work (phase0 runs) showed kappa dropped from ~0.62 to ~0.54 with the smaller architecture. See §III-E for full details.
 
 ### Cohort consistency filter
 
@@ -258,7 +286,23 @@ Subjects with total recording T < 2,880 patches (< 240 minutes) are excluded fro
 
 **Implementation:** `dataset.min_recording_patches = 2880` in `configs/phase0_v3_config.yaml`. Applied before split assignment — the same subjects are excluded from train/val/test at every L.
 
-**Impact:** 20 subjects total excluded across all tasks (≤ 0.21% of largest tasks). Full list: `docs/excluded_subjects_T_lt_2880.csv`.
+**Impact (from `docs/cohort_filter.md`):**
+
+| Task | Total subjects | Excluded | % lost |
+|---|---|---|---|
+| sex_binary (APPLES+SHHS) | 9,547 | 20 | 0.21% |
+| sleep_efficiency_binary (APPLES+SHHS+MrOS) | 13,480 | 20 | 0.15% |
+| bmi_binary (APPLES+SHHS+MrOS) | 12,385 | 20 | 0.16% |
+| age_class (APPLES+SHHS+MrOS) | 12,410 | 20 | 0.16% |
+| psqi_binary (MrOS only) | 3,929 | 0 | 0% |
+| depression_extreme_binary (APPLES) | 874 | 15 | 1.72% |
+| osa_binary_apples_postqc (APPLES) | 1,103 | 19 | 1.72% |
+| osa_severity_apples (APPLES) | 1,103 | 19 | 1.72% |
+
+The 19–20 excluded subjects are from APPLES (recordings ranging from 5 to 230 minutes — clearly truncated acquisitions rather than full overnight studies) and 1 from SHHS (180-min recording). Full list: `docs/excluded_subjects_T_lt_2880.csv`.
+
+**Paper language (from cohort_filter.md):**
+> "To ensure a fair comparison across context lengths, subjects whose full-night PSG recording was shorter than the longest context window (240 min, 2,880 × 5-second patches) were excluded from all context lengths. This affected 20 of 9,547–13,480 subjects (≤ 0.2%) for Tier 1 tasks and 15–19 of 874–1,103 subjects (≤ 1.7%) for Tier 2 tasks. The excluded recordings ranged from 5 to 230 minutes and appear to be truncated acquisitions rather than full-night studies."
 
 **Secondary benefit:** eliminates CUDA OOM at L=240m for the Transformer head. Short recordings produce partially-padded batches; even a single all-zeros mask forces PyTorch to use O(N²) Math attention instead of O(N) Flash attention. With the filter, all masks are all-False, and Flash attention is used throughout.
 
@@ -282,19 +326,32 @@ logits  = Linear(512, C)(Dropout(p=0.3)(pooled))
 
 ### LSTMHead
 
+Two configurations exist depending on task type:
+
+**For binary/multiclass seq2label tasks (hidden=128, num_layers=1):**
 ```
 packed = pack_padded_sequence(x, lengths, enforce_sorted=False)
 _, (h_n, _) = BiLSTM(input=512, hidden=128, layers=1, bidirectional=True)(packed)
 h = cat([h_n[-2], h_n[-1]], dim=-1)   # (B, 256)
 logits = Linear(256, C)(Dropout(p=0.3)(h))
 ```
+- **Parameters:** 4 × (512 + 128) × 128 × 2 (BiLSTM L1) + 256 × C ≈ 655K + head
 
-- **Parameters:** 4 × (512 + 128) × 128 × 2 (BiLSTM) + 256 × C ≈ 655K + head
-- **`pack_padded_sequence`:** skips padded patches; the LSTM never sees zero-padded inputs — important for correctness at short-history anchors (seq2seq) and at long L where some windows may be partially padded
-- **BiLSTM:** the final hidden state concatenates the forward (last-to-anchor) and backward (anchor-to-first) passes, giving the head access to the full context window
-- **For seq2seq:** the BiLSTM is still valid even in the anchor-based (causal) task setup, because the model is evaluated on the anchor position (centre of the context window in general) — there is no future leakage since the anchor IS the last patch
+**For sleep staging seq2seq (hidden=256, num_layers=2):**
+```
+_, (h_n, _) = BiLSTM(input=512, hidden=256, layers=2, bidirectional=True)(packed)
+h = cat([h_n[-2], h_n[-1]], dim=-1)   # (B, 512)
+logits = Linear(512, C)(Dropout(p=0.3)(h))
+```
+- **Parameters:** ~3.16M (Layer 1: 4×(512+256)×256×2; Layer 2: 4×(512+256)×256×2; head)
+- **Rationale:** Phase 0 experiments showed a substantial performance drop (kappa: 0.62 → 0.54 at 10m) when using the smaller architecture for the 5-class seq2seq task. The 5-class problem requires higher model capacity than binary tasks.
 
-**[QUESTION 11]** The BiLSTM processes backward (from anchor toward the past). For the staging task specifically, is it appropriate to use a bidirectional LSTM? In a real deployment, you wouldn't have "future" patches — but in our anchor-based setup, the context window ends at the anchor, so the backward LSTM only goes backwards into past context. Confirm this understanding is correct before we write the Methods.
+**Shared properties of both configurations:**
+- **`pack_padded_sequence`:** skips padded patches; LSTM never processes zero-padded inputs
+- **BiLSTM:** final hidden concatenates last valid forward and backward states → full window access
+- **For centered seq2seq:** both forward and backward LSTM passes see different halves of the symmetric window around the anchor — the forward pass processes from past to future, the backward from future to past. This is appropriate for the centered (non-causal) staging design.
+
+**[QUESTION 11 — UPDATED]** The current design uses centered context (future + past both visible). BiLSTM is fully appropriate here. The earlier concern about "future leakage" was based on a misunderstanding of the design — the centered symmetric window explicitly includes future patches, and the BiLSTM is designed to exploit both directions. Bidirectionality is well-suited to the centered context mode.
 
 ### TransformerHead
 
