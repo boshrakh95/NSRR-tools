@@ -350,7 +350,27 @@ One model is trained per (task, head, context length). The context window length
 
 ---
 
-## F. Section MD → LaTeX Workflow
+## F. IEEE / TBME Style Guide — CHECK BEFORE EVERY WRITING SESSION
+
+The original `generic-color.tex` template contained detailed IEEE formatting instructions.
+These have been extracted and saved to:
+
+**`TBME_submission/TBME_template_style_guide.md`**
+
+**Rules to remember for every section (summary):**
+- Abstract: 150–250 words, one paragraph, no abbreviations, no equations, no references.
+- `\IEEEPARstart` only in the very first paragraph of the Introduction.
+- Equations: use `\eqref{}`, use `{align}` not `{eqnarray}`.
+- Figures: use "Fig." always (even sentence-start), caption *below*, Arabic numbering.
+- Tables: write "Table" in full, caption *above*, Roman numerals (Table I, Table II, …).
+- References in square brackets, inside punctuation. Only first word capitalised in paper titles.
+- Active voice, no contractions, serial comma, zero before decimals.
+
+**Open `TBME_template_style_guide.md` before writing or reviewing any section.**
+
+---
+
+## G. Section MD → LaTeX Workflow
 
 **For every section, follow this two-step process:**
 
