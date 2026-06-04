@@ -42,7 +42,9 @@ source /home/boshra95/sleepfm_env/bin/activate
 export PYTHONPATH="/home/boshra95/sleepfm-clinical:/home/boshra95/sleepfm-clinical/sleepfm:$PYTHONPATH"
 
 # ── Job parameters ────────────────────────────────────────────────────────────
-CONFIG="configs/phase0_config.yaml"
+# CONFIG can be overridden via env variable, e.g.:
+#   CONFIG=configs/phase0_v3_full_config.yaml sbatch --export=ALL,CONFIG=...,START=0,END=2500 jobs/extract_embeddings_gpu.sh
+CONFIG=${CONFIG:-"configs/phase0_v3_config.yaml"}
 START=${START:-0}
 END_IDX=${END:-""}      # empty = process to end of list
 
@@ -52,6 +54,7 @@ echo "========================================================================"
 echo "Job ID:     $SLURM_JOB_ID"
 echo "Node:       $SLURM_NODELIST"
 echo "GPU:        $(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null || echo 'N/A')"
+echo "Config:     $CONFIG"
 echo "Subject range: [$START : ${END_IDX:-end}]"
 echo "Start time: $(date)"
 echo "========================================================================"
