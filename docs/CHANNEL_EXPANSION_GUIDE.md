@@ -13,6 +13,7 @@ EXISTING — do NOT touch                     NEW — channel expansion run
 ─────────────────────────────────────────   ──────────────────────────────────────────
 /scratch/boshra95/psg/                      /scratch/boshra95/psg_full/
   {dataset}/derived/hdf5_signals/   (7ch)     {dataset}/derived/hdf5_signals/  (23ch)
+logs_v3/                                    logs_v3_expand_channel/  (preprocess + embed)
   unified/embeddings/sleepfm_5sec/             unified/embeddings/sleepfm_5sec/
   unified/results/phase0_v3/                   unified/results/phase0_v3_full/
   unified/targets_v2/               ◄──── SHARED (read-only, not duplicated)
@@ -270,7 +271,17 @@ Step 0 — Config files (ALREADY DONE — no action needed):
   ✅  configs/preprocessing_params_full.yaml    (strategy=sleepfm_full, base=psg_full)
   ✅  configs/phase0_v3_full_config.yaml        (all paths → psg_full; targets → psg)
   ✅  experiments/v2_full_registry.yaml         (config + results → full variants)
-  ✅  jobs/extract_embeddings_gpu.sh            (CONFIG now overridable via env var)
+  ✅  jobs/extract_embeddings_gpu.sh            (CONFIG overridable; logs → logs_v3_expand_channel)
+  ✅  jobs/preprocess_signals_parallel.sh       (logs → logs_v3_expand_channel, auto-requeue)
+  ✅  jobs/preprocess_signals_array.sh          (logs → logs_v3_expand_channel, auto-requeue)
+
+  ⬜  TODO: Make train_context_sweep_gpu.sh and infer_subject_windows_gpu.sh use a
+           LOGS_DIR env var (currently hardcoded to logs_v3/).
+           Until then, training/inference SLURM .out/.err files go to logs_v3_full/
+           (controlled by v2_full_registry.yaml logs_dir via gen_commands.py), but
+           the internal status JSONL and persistent .log files still go to logs_v3/.
+           Track by looking at logs_v3/status/train_* and logs_v3/train_* for the
+           expand-channel runs as well — they will be mixed with the existing run logs.
 
 Step 1 — Preprocessing (9 parallel CPU jobs total, no GPU):
   ☐  parallel.sh stages  --config configs/preprocessing_params_full.yaml  (~26 h)
