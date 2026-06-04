@@ -83,26 +83,35 @@ All datasets: 7–8 channels (BAS=4, RESP=1, EKG=1, EMG=1–2).
 
 ## 5. Step-by-Step Run
 
-### Step 1 — Re-preprocess HDF5 into `psg_full/` (4 parallel CPU jobs, ~26 h each)
+### Step 1 — Re-preprocess HDF5 into `psg_full/` (parallel CPU jobs)
 
 These write to `/scratch/boshra95/psg_full/{dataset}/derived/hdf5_signals/`.
 **Existing HDF5 in `psg/` are not touched.**
 
+**Which script to use:**
+- Small/medium datasets (STAGES=1513, APPLES=1104, MrOS=3933): use `preprocess_signals_parallel.sh` (single 26 h job each).
+- SHHS (8444 subjects): split across ~6 jobs using `preprocess_signals_array.sh` (8 h per batch).
+
 ```bash
 cd /home/boshra95/NSRR-tools
+CFG=--config configs/preprocessing_params_full.yaml
 
-sbatch jobs/preprocess_signals_parallel.sh stages --config configs/preprocessing_params_full.yaml
-sbatch jobs/preprocess_signals_parallel.sh shhs   --config configs/preprocessing_params_full.yaml
-sbatch jobs/preprocess_signals_parallel.sh apples --config configs/preprocessing_params_full.yaml
-sbatch jobs/preprocess_signals_parallel.sh mros   --config configs/preprocessing_params_full.yaml
+# Small/medium datasets — one job each
+sbatch jobs/preprocess_signals_parallel.sh stages $CFG
+sbatch jobs/preprocess_signals_parallel.sh apples $CFG
+sbatch jobs/preprocess_signals_parallel.sh mros   $CFG
+
+# SHHS — split into 6 batches of ~1400 subjects (8 h each, all run in parallel)
+sbatch jobs/preprocess_signals_array.sh shhs    0  1500 $CFG
+sbatch jobs/preprocess_signals_array.sh shhs 1500  3000 $CFG
+sbatch jobs/preprocess_signals_array.sh shhs 3000  4500 $CFG
+sbatch jobs/preprocess_signals_array.sh shhs 4500  6000 $CFG
+sbatch jobs/preprocess_signals_array.sh shhs 6000  7500 $CFG
+sbatch jobs/preprocess_signals_array.sh shhs 7500  9000 $CFG
 ```
 
-Note: no `--no-skip-existing` needed — these are brand-new output directories,
-so every file is new. If you want to be explicit:
-```bash
-sbatch jobs/preprocess_signals_parallel.sh stages \
-    --config configs/preprocessing_params_full.yaml --no-skip-existing
-```
+All 9 jobs can run simultaneously. Safe to re-submit any that fail — existing
+HDF5 files are skipped by default.
 
 **Optional: test on 5 subjects first**
 ```bash
@@ -263,11 +272,16 @@ Step 0 — Config files (ALREADY DONE — no action needed):
   ✅  experiments/v2_full_registry.yaml         (config + results → full variants)
   ✅  jobs/extract_embeddings_gpu.sh            (CONFIG now overridable via env var)
 
-Step 1 — Preprocessing (4 parallel CPU jobs, ~26 h, no GPU):
-  ☐  sbatch stages --config configs/preprocessing_params_full.yaml
-  ☐  sbatch shhs   --config configs/preprocessing_params_full.yaml
-  ☐  sbatch apples --config configs/preprocessing_params_full.yaml
-  ☐  sbatch mros   --config configs/preprocessing_params_full.yaml
+Step 1 — Preprocessing (9 parallel CPU jobs total, no GPU):
+  ☐  parallel.sh stages  --config configs/preprocessing_params_full.yaml  (~26 h)
+  ☐  parallel.sh apples  --config configs/preprocessing_params_full.yaml  (~26 h)
+  ☐  parallel.sh mros    --config configs/preprocessing_params_full.yaml  (~26 h)
+  ☐  array.sh shhs 0    1500  --config configs/preprocessing_params_full.yaml  (~8 h × 6)
+  ☐  array.sh shhs 1500 3000  --config configs/preprocessing_params_full.yaml
+  ☐  array.sh shhs 3000 4500  --config configs/preprocessing_params_full.yaml
+  ☐  array.sh shhs 4500 6000  --config configs/preprocessing_params_full.yaml
+  ☐  array.sh shhs 6000 7500  --config configs/preprocessing_params_full.yaml
+  ☐  array.sh shhs 7500 9000  --config configs/preprocessing_params_full.yaml
   ☐  Verify: ~14,992 HDF5 files in psg_full/, 14–21 channels each
 
 Step 2 — Embedding Extraction (6 parallel GPU jobs, ~4 h each):
