@@ -1,0 +1,611 @@
+# ============================================================
+# V2 Experiment Registry
+# ============================================================
+# Each entry defines one (task, head) experiment group.
+# Use gen_commands.py to generate sbatch/python commands from this file.
+#
+# Fields:
+#   task        — task name (must match task_subjects/*.csv stem)
+#   task_type   — seq2label | seq2seq
+#   num_classes — number of output classes
+#   head        — lstm | transformer | mean_pool
+#   datasets    — datasets that have labels for this task
+#   contexts    — context lengths to train/infer (subset of [30s, 10m, 40m, 80m, 120m, 240m])
+#   batch_size  — training batch size (inference uses 512)
+#   lr          — learning rate (default 1e-4)
+#   run_tag     — suffix appended to experiment folder; empty = no suffix
+#   n_size      — large (N>10k) | medium (N~3-5k) | small (N<2k); used for wall-time estimation
+#   tier        — 1 (run first) | 2 (run second) | deferred
+#   notes       — free-form notes
+
+config: configs/phase0_v3_full_config.yaml
+results_dir: /scratch/boshra95/psg_full/unified/results/phase0_v3_full
+inference_dir: /scratch/boshra95/psg_full/unified/results/phase0_v3_full/inference
+logs_dir: /home/boshra95/NSRR-tools/logs_v3_full
+python_bin: /home/boshra95/sleepfm_env/bin/python
+
+# ── v2 paths (old protocol — non-overlapping windows, kept for reference) ──────
+# v2_results_dir: /scratch/boshra95/psg/unified/results/phase0_v2
+# v2_inference_dir: /scratch/boshra95/psg/unified/results/phase0_v2/inference
+# v2_logs_dir: /home/boshra95/NSRR-tools/logs_v2
+
+# ── Training protocol ────────────────────────────────────────────────────────────
+#
+# Single protocol: batch_size=32, accum_steps=1 at ALL context lengths.
+#
+# This is safe because:
+#   - dataset.min_recording_patches=2880 removes subjects shorter than 240m from all
+#     splits, ensuring all padding masks are all-False at every context length.
+#   - TransformerHead.forward() passes src_key_padding_mask=None when the mask is
+#     all-False → PyTorch selects Flash attention (O(N) memory, not O(N²) Math
+#     attention which would require ~42 GB at 240m on a 9.75 GiB MIG slice).
+#   - Confirmed in training logs: "[Attn] Flash (mask=None, O(N) memory) | N=2880".
+#
+# Paper claim: "All models were trained with batch size 32, identical across all
+# context lengths."
+#
+# ── If you ever need to reduce micro-batch due to memory (e.g. new GPU/head) ────
+# Lower the context_micro_batch values and increase effective_batch or keep it at 32.
+# gen_commands.py automatically computes accum_steps = effective_batch / micro_batch.
+# Example: to run 240m at micro_batch=8 with effective_batch=32 → accum_steps=4:
+#   "240m": 8   (accum_steps computed as 32/8 = 4)
+# The training script applies gradient accumulation correctly in both train and eval
+# phases. No other changes needed.
+#
+# The gradient_accumulation section is kept for code compatibility (gen_commands.py
+# reads it). With all context_micro_batch values at 32 and effective_batch=32,
+# accum_steps = 32/32 = 1 everywhere — functionally identical to no accumulation.
+gradient_accumulation:
+  enabled: true
+  effective_batch: 32
+  context_micro_batch:
+    "30s":  32   # accum=1
+    "10m":  32   # accum=1
+    "40m":  32   # accum=1
+    "80m":  32   # accum=1
+    "120m": 32   # accum=1
+    "240m": 32   # accum=1  (Flash attention: O(N) memory, fits on 9.75 GiB MIG slice)
+
+# ── Tier 1: Large N, clinically broad ────────────────────────────────────────
+# Run all three heads to enable head comparison.
+
+experiments:
+
+  # ── sex_binary (N=13,163 — APPLES, SHHS, STAGES) ─────────────────────────
+  sex_binary_lstm:
+    task: sex_binary
+    task_type: seq2label
+    num_classes: 2
+    head: lstm
+    datasets: [apples, shhs] # , stages
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
+    batch_size: 32
+    lr: 1.0e-4
+    run_tag: ""
+    n_size: large
+    tier: 1
+    notes: "Female=1, Male=0. MrOS excluded (all-male cohort, zero variance)."
+
+  sex_binary_transformer:
+    task: sex_binary
+    task_type: seq2label
+    num_classes: 2
+    head: transformer
+    datasets: [apples, shhs] # , stages
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
+    batch_size: 32
+    lr: 1.0e-4
+    run_tag: ""
+    n_size: large
+    tier: 1
+    notes: ""
+
+  sex_binary_mean_pool:
+    task: sex_binary
+    task_type: seq2label
+    num_classes: 2
+    head: mean_pool
+    datasets: [apples, shhs] # , stages
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
+    batch_size: 64
+    lr: 1.0e-4
+    run_tag: ""
+    n_size: large
+    tier: 1
+    notes: "Baseline (no temporal modelling)."
+
+  # ── sleep_efficiency_binary (N=13,615 — APPLES, SHHS, MrOS) ─────────────
+  sleep_efficiency_binary_lstm:
+    task: sleep_efficiency_binary
+    task_type: seq2label
+    num_classes: 2
+    head: lstm
+    datasets: [apples, shhs, mros]
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
+    batch_size: 32
+    lr: 1.0e-4
+    run_tag: ""
+    n_size: large
+    tier: 1
+    notes: "Sleep efficiency < 85% = 1. STAGES excluded (no eff. score available)."
+
+  sleep_efficiency_binary_transformer:
+    task: sleep_efficiency_binary
+    task_type: seq2label
+    num_classes: 2
+    head: transformer
+    datasets: [apples, shhs, mros]
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
+    batch_size: 32
+    lr: 1.0e-4
+    run_tag: ""
+    n_size: large
+    tier: 1
+    notes: ""
+
+  sleep_efficiency_binary_mean_pool:
+    task: sleep_efficiency_binary
+    task_type: seq2label
+    num_classes: 2
+    head: mean_pool
+    datasets: [apples, shhs, mros]
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
+    batch_size: 128
+    lr: 1.0e-4
+    run_tag: ""
+    n_size: large
+    tier: 1
+    notes: ""
+
+  # ── bmi_binary (N=15,532 — all datasets) ────────────────────────────────
+  bmi_binary_lstm:
+    task: bmi_binary
+    task_type: seq2label
+    num_classes: 2
+    head: lstm
+    datasets: [apples, shhs, mros] # , stages
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
+    batch_size: 32
+    lr: 1.0e-4
+    run_tag: ""
+    n_size: large
+    tier: 1
+    notes: "BMI >= 30 = obese (WHO definition). MrOS: visit-1 labels only."
+
+  bmi_binary_transformer:
+    task: bmi_binary
+    task_type: seq2label
+    num_classes: 2
+    head: transformer
+    datasets: [apples, shhs, mros] # , stages
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
+    batch_size: 32
+    lr: 1.0e-4
+    run_tag: ""
+    n_size: large
+    tier: 1
+    notes: ""
+
+  bmi_binary_mean_pool:
+    task: bmi_binary
+    task_type: seq2label
+    num_classes: 2
+    head: mean_pool
+    datasets: [apples, shhs, mros] # , stages
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
+    batch_size: 128
+    lr: 1.0e-4
+    run_tag: ""
+    n_size: large
+    tier: 1
+    notes: ""
+
+  # ── age_class (N=16,007 — all datasets, 3-class) ─────────────────────────
+  age_class_lstm:
+    task: age_class
+    task_type: seq2label
+    num_classes: 3
+    head: lstm
+    datasets: [apples, shhs, mros] # , stages
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
+    batch_size: 32
+    lr: 1.0e-4
+    run_tag: ""
+    n_size: large
+    tier: 1
+    notes: "3-class: <50=0, 50-64=1, >=65=2. MrOS all class 2 (65+ cohort)."
+
+  age_class_transformer:
+    task: age_class
+    task_type: seq2label
+    num_classes: 3
+    head: transformer
+    datasets: [apples, shhs, mros] # , stages
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
+    batch_size: 32
+    lr: 1.0e-4
+    run_tag: ""
+    n_size: large
+    tier: 1
+    notes: ""
+
+  age_class_mean_pool:
+    task: age_class
+    task_type: seq2label
+    num_classes: 3
+    head: mean_pool
+    datasets: [apples, shhs, mros] # , stages
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
+    batch_size: 128
+    lr: 1.0e-4
+    run_tag: ""
+    n_size: large
+    tier: 1
+    notes: ""
+
+# ── Tier 2: Smaller N or single-dataset ──────────────────────────────────────
+# Run lstm only initially; add transformer if results are promising.
+
+  # ── psqi_binary (N=3,933 — MrOS only) ────────────────────────────────────
+  psqi_binary_lstm:
+    task: psqi_binary
+    task_type: seq2label
+    num_classes: 2
+    head: lstm
+    datasets: [mros]
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
+    batch_size: 32
+    lr: 1.0e-4
+    run_tag: ""
+    n_size: medium
+    tier: 2
+    notes: "PSQI > 5 = poor sleep quality. MrOS only. N=3933 across v1+v2."
+
+  # ── depression_extreme_binary (N=1,761 — APPLES + STAGES) ────────────────
+  depression_extreme_binary_lstm:
+    task: depression_extreme_binary
+    task_type: seq2label
+    num_classes: 2
+    head: lstm
+    datasets: [apples, stages]
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]   # skip 80m: small N per split
+    batch_size: 32
+    lr: 1.0e-4
+    run_tag: ""
+    n_size: small
+    tier: 2
+    notes: "Extreme-group design: BDI<=9->0 or >=20->1 (APPLES); PHQ-9 <=4->0 or >=15->1 (STAGES). Middle group dropped."
+
+  # ── osa_binary_apples_postqc (N=1,516 — APPLES only) ─────────────────────
+  osa_binary_apples_postqc_lstm:
+    task: osa_binary_apples_postqc
+    task_type: seq2label
+    num_classes: 2
+    head: lstm
+    datasets: [apples]
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]   # skip 80m: single dataset, small N
+    batch_size: 32
+    lr: 1.0e-4
+    run_tag: ""
+    n_size: small
+    tier: 2
+    notes: "Binary OSA severity post-QC: Non-rand+Mild->0, Moderate+Severe->1. APPLES only."
+
+  # ── osa_severity_apples (N=1,516 — APPLES only, 4-class) ─────────────────
+  osa_severity_apples_lstm:
+    task: osa_severity_apples
+    task_type: seq2label
+    num_classes: 4
+    head: lstm
+    datasets: [apples]
+    contexts: [30s, 10m, 40m, 80m, 120m]
+    batch_size: 32
+    lr: 1.0e-4
+    run_tag: ""
+    n_size: small
+    tier: 2
+    notes: "4-class OSA: 0=Non-rand, 1=Mild, 2=Moderate, 3=Severe. APPLES only."
+
+# ── Deferred: Regression tasks ────────────────────────────────────────────────
+# Requires adding a regression head to train_context_sweep.py.
+# Labels are floats in master_targets.parquet (age_value, bmi_value).
+# Uncomment and implement when regression head is ready.
+
+  # age_regression_lstm:
+  #   task: age_regression
+  #   task_type: regression        # NOT YET SUPPORTED
+  #   num_classes: 1
+  #   head: lstm
+  #   datasets: [apples, shhs, mros, stages]
+  #   contexts: [30s, 10m, 40m, 80m]
+  #   batch_size: 32
+  #   lr: 1.0e-4
+  #   run_tag: ""
+  #   n_size: large
+  #   tier: deferred
+  #   notes: "Float target. MrOS: visit-1 only. SHHS: 67 censored ages (>89) excluded."
+
+  # bmi_regression_lstm:
+  #   task: bmi_regression
+  #   task_type: regression        # NOT YET SUPPORTED
+  #   num_classes: 1
+  #   head: lstm
+  #   datasets: [apples, shhs, mros, stages]
+  #   contexts: [30s, 10m, 40m, 80m]
+  #   batch_size: 32
+  #   lr: 1.0e-4
+  #   run_tag: ""
+  #   n_size: large
+  #   tier: deferred
+  #   notes: "Float target. MrOS: visit-1 only."
+
+# ════════════════════════════════════════════════════════════════════════════════
+# PHASE 0 LEGACY TASKS — re-run under v3 protocol
+#
+# All tasks below existed in phase0 (old code, non-overlapping windows, variable
+# batch protocol). They are re-run here so results land in phase0_v3/ and are
+# directly comparable to the v2-definition tasks above.
+#
+# Run order: Tier 1 (strong signal) → Tier 2 (decent signal) → Deferred (poor signal).
+# ════════════════════════════════════════════════════════════════════════════════
+
+# ── Re-run Tier 1: strong signal, large N ────────────────────────────────────
+
+  # ── apnea_binary (N=14,097 — SHHS, MrOS, APPLES, STAGES) ───────────────────
+  # Standard AHI>=15 definition. Well-balanced (~49% vs 51%). Multi-dataset.
+  # Phase0 results: AUROC improved monotonically from 0.67 (30s) to 0.73 (40m).
+  # Primary OSA task for the paper. Run all 3 heads like other Tier 1 tasks.
+  apnea_binary_lstm:
+    task: apnea_binary
+    task_type: seq2label
+    num_classes: 2
+    head: lstm
+    datasets: [apples, shhs, mros, stages]
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
+    batch_size: 32
+    lr: 1.0e-4
+    run_tag: ""
+    n_size: large
+    tier: 1
+    notes: "AHI >= 15 = moderate/severe OSA. Standard clinical threshold. ~1:1 class balance."
+
+  apnea_binary_transformer:
+    task: apnea_binary
+    task_type: seq2label
+    num_classes: 2
+    head: transformer
+    datasets: [apples, shhs, mros, stages]
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
+    batch_size: 32
+    lr: 1.0e-4
+    run_tag: ""
+    n_size: large
+    tier: 1
+    notes: ""
+
+  apnea_binary_mean_pool:
+    task: apnea_binary
+    task_type: seq2label
+    num_classes: 2
+    head: mean_pool
+    datasets: [apples, shhs, mros, stages]
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
+    batch_size: 128
+    lr: 1.0e-4
+    run_tag: ""
+    n_size: large
+    tier: 1
+    notes: "Baseline (no temporal modelling)."
+
+  # ── sleep_staging ────────────────────────────────────────────────────────────
+  # Anchor-based seq2seq: model sees a context window, predicts label of the
+  # centre epoch. task_type=seq2seq is fully supported by train_context_sweep.py.
+  # 5 classes: W=0, N1=1, N2=2, N3=3, REM=4.
+  # Primary metric for paper: Cohen's kappa + per-stage F1 (script also logs AUROC).
+  # N1 is minority (~5-8% of epochs) — expected lowest per-stage F1.
+  #
+  # Dataset history:
+  #   _with_stages  (run_tag="with_stages"): shhs+mros+stages+apples — STAGES dominates
+  #     training data (54% of items, 10% of subjects, 11x longer recordings).
+  #     Result: kappa ~0.55 at 10m — below phase0 baseline.
+  #     Results archived: sleep_staging_{lstm,transformer}_with_stages/
+  #   (no tag) PRIMARY: shhs+mros+apples only — matches phase0 protocol.
+  #     Phase0 achieved kappa=0.62 at 10m with identical arch on these 3 datasets.
+  #     Results: sleep_staging_{lstm,transformer}/
+
+  sleep_staging_lstm:
+    task: sleep_staging
+    task_type: seq2seq
+    num_classes: 5
+    head: lstm
+    datasets: [shhs, mros, apples]
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
+    batch_size: 32
+    lr: 1.0e-4
+    run_tag: ""
+    n_size: large
+    tier: 1
+    notes: "PRIMARY run — shhs+mros+apples only (no STAGES). Matches phase0 protocol. Target kappa ~0.62 at 10m."
+
+  sleep_staging_transformer:
+    task: sleep_staging
+    task_type: seq2seq
+    num_classes: 5
+    head: transformer
+    datasets: [shhs, mros, apples]
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
+    batch_size: 32
+    lr: 1.0e-4
+    run_tag: ""
+    n_size: large
+    tier: 1
+    notes: "PRIMARY run — shhs+mros+apples only (no STAGES)."
+
+  sleep_staging_lstm_with_stages:
+    task: sleep_staging
+    task_type: seq2seq
+    num_classes: 5
+    head: lstm
+    datasets: [shhs, mros, stages, apples]
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
+    batch_size: 32
+    lr: 1.0e-4
+    run_tag: "with_stages"
+    n_size: large
+    tier: 2
+    notes: "COMPARISON — includes STAGES. Kappa ~0.55 at 10m (STAGES dominates data, hurts perf). Results: sleep_staging_lstm_with_stages/"
+
+  sleep_staging_transformer_with_stages:
+    task: sleep_staging
+    task_type: seq2seq
+    num_classes: 5
+    head: transformer
+    datasets: [shhs, mros, stages, apples]
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
+    batch_size: 32
+    lr: 1.0e-4
+    run_tag: "with_stages"
+    n_size: large
+    tier: 2
+    notes: "COMPARISON — includes STAGES. Results: sleep_staging_transformer_with_stages/"
+
+  sleep_staging_mean_pool:
+    task: sleep_staging
+    task_type: seq2seq
+    num_classes: 5
+    head: mean_pool
+    datasets: [shhs, mros, apples]
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
+    batch_size: 128
+    lr: 1.0e-4
+    run_tag: ""
+    n_size: large
+    tier: 1
+    notes: "Mean-pool loses position info — may underperform on anchor-based staging. Included as baseline."
+
+# ── Re-run Tier 2: decent signal, lstm only ───────────────────────────────────
+
+  # ── cvd_binary (N=13,045 — SHHS + MrOS) ────────────────────────────────────
+  # Phase0 results: AUROC improved from 0.64 (30s) to 0.67 (120m). Minority=25%.
+  # WARNING: mixed CVD definitions across datasets:
+  #   SHHS: any_cvd (composite: CHD + stroke + heart failure + peripheral vascular)
+  #   MrOS: cvchd (coronary heart disease only — narrower definition)
+  # Decision: keep merged for now (consistent with phase0) but note the mismatch.
+  # Future: run as separate cvd_shhs_binary and cvd_mros_binary for cleaner science.
+  cvd_binary_lstm:
+    task: cvd_binary
+    task_type: seq2label
+    num_classes: 2
+    head: lstm
+    datasets: [shhs, mros]
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
+    batch_size: 32
+    lr: 1.0e-4
+    run_tag: ""
+    n_size: large
+    tier: 2
+    notes: "SHHS=any_cvd (composite), MrOS=cvchd (CHD only) — mixed definitions; see doc note. Minority=25%."
+
+  cvd_binary_transformer:
+    task: cvd_binary
+    task_type: seq2label
+    num_classes: 2
+    head: transformer
+    datasets: [shhs, mros]
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
+    batch_size: 32
+    lr: 1.0e-4
+    run_tag: ""
+    n_size: large
+    tier: 2
+    notes: "SHHS=any_cvd (composite), MrOS=cvchd (CHD only) — mixed definitions; see doc note. Minority=25%."
+
+  # ── sleepiness_binary (N=16,431 — all 4 datasets) ───────────────────────────
+  # ESS >= 11 = excessive daytime sleepiness. Largest N of all tasks.
+  # Phase0 results: borderline AUROC 0.59-0.61 across all contexts (all 5 run).
+  # v3 overlapping windows and 240m context may improve AUROC. Included as Tier 2
+  # to assess whether signal improves with the v3 protocol.
+  sleepiness_binary_lstm:
+    task: sleepiness_binary
+    task_type: seq2label
+    num_classes: 2
+    head: lstm
+    datasets: [apples, shhs, mros, stages]
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
+    batch_size: 32
+    lr: 1.0e-4
+    run_tag: ""
+    n_size: large
+    tier: 2
+    notes: "ESS >= 11 = positive. Minority=29.7%. Phase0 AUROC 0.59-0.61 — borderline. v3 may improve."
+
+  sleepiness_binary_transformer:
+    task: sleepiness_binary
+    task_type: seq2label
+    num_classes: 2
+    head: transformer
+    datasets: [apples, shhs, mros, stages]
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
+    batch_size: 32
+    lr: 1.0e-4
+    run_tag: ""
+    n_size: large
+    tier: 2
+    notes: "ESS >= 11 = positive. Minority=29.7%. Phase0 AUROC 0.59-0.61 — borderline. v3 may improve."
+
+# ── Deferred: poor phase0 results, run last if GPU budget allows ──────────────
+
+  # ── insomnia_binary (N=1,710 — STAGES only) ──────────────────────────────────
+  # ISI >= 15 = clinical insomnia. MrOS excluded (only 31 positives at this
+  # threshold — not trainable). Phase0 AUROC 0.56-0.60 — very weak signal.
+  # Included as deferred because ISI is a validated clinical instrument; results
+  # may improve with v3 protocol and more context.
+  insomnia_binary_lstm:
+    task: insomnia_binary
+    task_type: seq2label
+    num_classes: 2
+    head: lstm
+    datasets: [stages]
+    contexts: [30s, 10m, 40m, 80m, 120m]
+    batch_size: 32
+    lr: 1.0e-4
+    run_tag: ""
+    n_size: small
+    tier: deferred
+    notes: "ISI >= 15 = clinical insomnia. STAGES only (MrOS excluded: 31 positives). Phase0 AUROC 0.56-0.60."
+
+  # ── rested_morning (N=3,934 — MrOS only) ────────────────────────────────────
+  # Subjective morning restedness questionnaire item from MrOS visit 1+2.
+  # Phase0 AUROC 0.52-0.54 — near chance. Near-balanced (minority=43.3%).
+  # Very unlikely to improve. Included only for completeness.
+  rested_morning_lstm:
+    task: rested_morning
+    task_type: seq2label
+    num_classes: 2
+    head: lstm
+    datasets: [mros]
+    contexts: [30s, 10m, 40m, 80m, 120m]
+    batch_size: 32
+    lr: 1.0e-4
+    run_tag: ""
+    n_size: medium
+    tier: deferred
+    notes: "MrOS only. Subjective morning restedness. Phase0 AUROC 0.52-0.54 (near chance). Low priority."
+
+  # ── anxiety_binary (N=1,698 — STAGES only) ───────────────────────────────────
+  # GAD-7 >= 10 = moderate-severe anxiety. STAGES only (GAD-7 not collected elsewhere).
+  # Phase0 AUROC 0.56-0.58 — weak signal. Minority=20.1%.
+  # Very unlikely to improve substantially; included for completeness.
+  anxiety_binary_lstm:
+    task: anxiety_binary
+    task_type: seq2label
+    num_classes: 2
+    head: lstm
+    datasets: [stages]
+    contexts: [30s, 10m, 40m, 80m, 120m]
+    batch_size: 32
+    lr: 1.0e-4
+    run_tag: ""
+    n_size: small
+    tier: deferred
+    notes: "GAD-7 >= 10 = positive. STAGES only. Minority=20.1%. Phase0 AUROC 0.56-0.58. Low priority."
