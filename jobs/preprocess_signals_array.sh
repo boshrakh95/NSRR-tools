@@ -2,11 +2,11 @@
 #SBATCH --job-name=preprocess_batch
 #SBATCH --account=def-forouzan
 #SBATCH --time=08:00:00
-#SBATCH --cpus-per-task=8
+#SBATCH --cpus-per-task=10
 #SBATCH --mem=30000M
 #SBATCH --signal=B:USR1@120
-#SBATCH --output=logs/preprocess_batch_%x_%j.out
-#SBATCH --error=logs/preprocess_batch_%x_%j.err
+#SBATCH --output=logs_v3_expand_channel/preprocess_batch_%x_%j.out
+#SBATCH --error=logs_v3_expand_channel/preprocess_batch_%x_%j.err
 
 # Batch preprocessing: process a subject index slice of one dataset.
 # Use for large datasets (e.g. SHHS=8444) that exceed a single 26-hour job.
@@ -77,7 +77,7 @@ export DATASET START_INDEX END_INDEX CONFIG_PATH SKIP_EXISTING REPROCESS_ANNOTAT
 
 # ── Setup ─────────────────────────────────────────────────────────────────────
 cd /home/boshra95/NSRR-tools
-mkdir -p logs
+mkdir -p logs_v3_expand_channel
 
 source .venv/bin/activate
 
