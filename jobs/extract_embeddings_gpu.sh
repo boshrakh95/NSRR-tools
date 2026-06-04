@@ -5,6 +5,7 @@
 #SBATCH --gpus=nvidia_h100_80gb_hbm3_1g.10gb:1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=16000M
+#SBATCH --signal=B:USR1@120
 #SBATCH --output=/home/boshra95/NSRR-tools/logs/embeddings_%x_%j.out
 #SBATCH --error=/home/boshra95/NSRR-tools/logs/embeddings_%x_%j.err
 
@@ -30,6 +31,10 @@
 # Already-extracted .npy files are skipped automatically (safe to re-submit).
 
 set -e
+
+# Store absolute path early — needed for resubmission
+_SCRIPT_PATH="$(realpath "$0")"
+_PYTHON_PID=""
 
 cd /home/boshra95/NSRR-tools
 mkdir -p logs
@@ -60,6 +65,24 @@ echo "Start time: $(date)"
 echo "========================================================================"
 echo ""
 
+# ── Auto-resume trap (fires 120 s before wall time) ───────────────────────────
+_timeout_handler() {
+    echo ""
+    echo "[USR1] Time limit approaching — stopping Python and resubmitting ($(date))"
+    [ -n "$_PYTHON_PID" ] && kill -TERM "$_PYTHON_PID" 2>/dev/null || true
+    # Wait for Python to finish the current subject cleanly (SIGTERM handler in Python)
+    wait "$_PYTHON_PID" 2>/dev/null || true
+    _TIME_LIMIT=$(scontrol show job "$SLURM_JOB_ID" 2>/dev/null \
+        | grep -oP 'TimeLimit=\K\S+' || echo "04:00:00")
+    NEW_JOB=$(sbatch \
+        --export=ALL \
+        --time="$_TIME_LIMIT" \
+        "$_SCRIPT_PATH" 2>&1)
+    echo "$NEW_JOB"
+    exit 0
+}
+trap '_timeout_handler' USR1
+
 # ── Build command ─────────────────────────────────────────────────────────────
 CMD="python scripts/extract_sleepfm_embeddings.py --config $CONFIG --start-idx $START"
 if [ -n "$END_IDX" ]; then
@@ -68,9 +91,14 @@ fi
 
 echo "Running: $CMD"
 echo ""
-eval $CMD
 
+# Run Python in background so USR1 can interrupt 'wait' immediately
+set +e
+eval "$CMD" &
+_PYTHON_PID=$!
+wait $_PYTHON_PID
 EXIT_CODE=$?
+trap '' USR1   # disarm after Python finishes normally
 
 echo ""
 echo "========================================================================"
