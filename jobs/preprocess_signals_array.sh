@@ -1,167 +1,109 @@
 #!/bin/bash
 #SBATCH --job-name=preprocess_batch
 #SBATCH --account=def-forouzan
-#SBATCH --time=06:00:00
-#SBATCH --cpus-per-task=4
-#SBATCH --mem=16000M
+#SBATCH --time=08:00:00
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=30000M
 #SBATCH --output=logs/preprocess_batch_%x_%j.out
 #SBATCH --error=logs/preprocess_batch_%x_%j.err
 
-# Batch preprocessing for a subset of subjects
-# Useful for splitting large datasets across multiple jobs
+# Batch preprocessing: process a subject index slice of one dataset.
+# Use this when a dataset is too large for a single 26-hour job (e.g. SHHS=8444 subjects).
+# Safe to re-submit — subjects whose HDF5 already exists are skipped by default.
 #
-# Usage: sbatch jobs/preprocess_signals_array.sh <dataset> <start_index> <end_index> [options]
-#   dataset: stages | shhs | apples | mros (required)
-#   start_index: starting subject index, 0-based (optional, default: 0)
-#   end_index: ending subject index, exclusive (optional, default: all)
-#   --log-level: DEBUG | INFO | WARNING | ERROR (optional)
+# Usage:
+#   sbatch jobs/preprocess_signals_array.sh <dataset> <start> <end> [options]
 #
-# Examples:
-#   # Process first 100 subjects
-#   sbatch jobs/preprocess_signals_array.sh stages 0 100
-#   
-#   # Process subjects 100-200
-#   sbatch jobs/preprocess_signals_array.sh stages 100 200
-#   
-#   # Process all subjects starting from 500
-#   sbatch jobs/preprocess_signals_array.sh stages 500
+#   dataset:  stages | shhs | apples | mros  (required)
+#   start:    0-based inclusive start index   (required)
+#   end:      exclusive end index             (required)
+#
+# Options (all optional):
+#   --config PATH          Path to preprocessing config yaml (default: preprocessing_params.yaml)
+#   --no-skip-existing     Re-process subjects even if HDF5 already exists
+#   --reprocess-annotations  Re-extract annotations only (keeps existing HDF5)
+#   --log-level LEVEL      DEBUG | INFO | WARNING | ERROR (default: INFO)
+#   --mros-visit 1|2       MrOS only: which visit to process
+#
+# SHHS example — split 8444 subjects into 6 jobs of ~1400 each:
+#   sbatch jobs/preprocess_signals_array.sh shhs    0  1500 --config configs/preprocessing_params_full.yaml
+#   sbatch jobs/preprocess_signals_array.sh shhs 1500  3000 --config configs/preprocessing_params_full.yaml
+#   sbatch jobs/preprocess_signals_array.sh shhs 3000  4500 --config configs/preprocessing_params_full.yaml
+#   sbatch jobs/preprocess_signals_array.sh shhs 4500  6000 --config configs/preprocessing_params_full.yaml
+#   sbatch jobs/preprocess_signals_array.sh shhs 6000  7500 --config configs/preprocessing_params_full.yaml
+#   sbatch jobs/preprocess_signals_array.sh shhs 7500  9000 --config configs/preprocessing_params_full.yaml
+#
+# Smaller datasets fit in one job — use preprocess_signals_parallel.sh for those.
 
 set -e
 
-# Parse arguments
-DATASET=${1:-stages}
-START_INDEX=${2:-0}
-END_INDEX=${3:-}
-LOG_LEVEL="INFO"
+# ── Required positional arguments ─────────────────────────────────────────────
+DATASET=${1:?"Usage: sbatch $0 <dataset> <start_index> <end_index> [options]"}
+START_INDEX=${2:?"Usage: sbatch $0 <dataset> <start_index> <end_index> [options]"}
+END_INDEX=${3:?"Usage: sbatch $0 <dataset> <start_index> <end_index> [options]"}
 
-# Parse optional arguments
-shift 3 2>/dev/null || shift $#
+# ── Optional arguments ────────────────────────────────────────────────────────
+CONFIG_PATH=""
+SKIP_EXISTING="--skip-existing"
+REPROCESS_ANNOTATIONS=""
+LOG_LEVEL="INFO"
+MROS_VISIT=""
+
+shift 3
 while [[ $# -gt 0 ]]; do
     case $1 in
+        --config)
+            CONFIG_PATH="$2"; shift 2 ;;
+        --no-skip-existing)
+            SKIP_EXISTING=""; shift ;;
+        --skip-existing)
+            SKIP_EXISTING="--skip-existing"; shift ;;
+        --reprocess-annotations)
+            REPROCESS_ANNOTATIONS="--reprocess-annotations"; shift ;;
         --log-level)
-            LOG_LEVEL="$2"
-            shift 2
-            ;;
+            LOG_LEVEL="$2"; shift 2 ;;
+        --mros-visit)
+            MROS_VISIT="--mros-visit $2"; shift 2 ;;
         *)
-            echo "Unknown argument: $1"
-            exit 1
-            ;;
+            echo "Unknown argument: $1"; exit 1 ;;
     esac
 done
 
-# Setup paths
+# ── Setup ─────────────────────────────────────────────────────────────────────
 cd /home/boshra95/NSRR-tools
 mkdir -p logs
 
-# Activate virtual environment
 source .venv/bin/activate
 
 echo "========================================================================"
-echo "NSRR Signal Preprocessing - Batch Job"
+echo "NSRR Signal Preprocessing — Batch Job"
 echo "========================================================================"
 echo "Job ID:        $SLURM_JOB_ID"
 echo "Node:          $SLURM_NODELIST"
 echo "Dataset:       $DATASET"
-echo "Start index:   $START_INDEX"
-if [ -n "$END_INDEX" ]; then
-    echo "End index:     $END_INDEX"
-    N_SUBJECTS=$((END_INDEX - START_INDEX))
-    echo "Subjects:      $N_SUBJECTS"
-fi
+echo "Index range:   [$START_INDEX, $END_INDEX)   (~$((END_INDEX - START_INDEX)) subjects)"
+echo "Config:        ${CONFIG_PATH:-configs/preprocessing_params.yaml (default)}"
+echo "Skip existing: $([ -n "$SKIP_EXISTING" ] && echo 'Yes' || echo 'No')"
 echo "Log level:     $LOG_LEVEL"
 echo "Start time:    $(date)"
 echo "========================================================================"
 echo ""
 
-# Load metadata to get total subject count
-TOTAL_SUBJECTS=$(python -c "
-import pandas as pd
-from pathlib import Path
-import sys
+# ── Build command ─────────────────────────────────────────────────────────────
+CMD="python scripts/preprocess_signals.py"
+CMD="$CMD --dataset $DATASET"
+CMD="$CMD --start-index $START_INDEX"
+CMD="$CMD --end-index $END_INDEX"
+[ -n "$SKIP_EXISTING" ]           && CMD="$CMD $SKIP_EXISTING"
+[ -n "$REPROCESS_ANNOTATIONS" ]   && CMD="$CMD $REPROCESS_ANNOTATIONS"
+[ -n "$CONFIG_PATH" ]             && CMD="$CMD --config $CONFIG_PATH"
+[ -n "$MROS_VISIT" ]              && CMD="$CMD $MROS_VISIT"
+CMD="$CMD --log-level $LOG_LEVEL"
 
-metadata_path = Path('/scratch/boshra95/psg/unified/metadata/unified_metadata.parquet')
-if not metadata_path.exists():
-    metadata_path = Path('/scratch/boshra95/psg_metadata/unified_metadata.parquet')
-
-if not metadata_path.exists():
-    print('ERROR: Metadata not found', file=sys.stderr)
-    sys.exit(1)
-
-df = pd.read_parquet(metadata_path)
-ds_df = df[(df['dataset'].str.upper() == '$DATASET'.upper()) & (df['has_edf'] == True)]
-print(len(ds_df))
-")
-
-if [ -z "$END_INDEX" ]; then
-    END_INDEX=$TOTAL_SUBJECTS
-fi
-
-echo "Total subjects in dataset: $TOTAL_SUBJECTS"
-echo "Processing subjects $START_INDEX to $END_INDEX"
+echo "Running: $CMD"
 echo ""
 
-# Calculate max subjects parameter
-MAX_SUBJECTS=$END_INDEX
-
-# Build and run command
-CMD="python -c \"
-import sys
-from pathlib import Path
-sys.path.insert(0, str(Path.cwd() / 'src'))
-
-from scripts.preprocess_signals import PreprocessingPipeline
-import pandas as pd
-
-config_path = Path('configs/preprocessing_params.yaml')
-pipeline = PreprocessingPipeline(config_path=config_path)
-
-# Load metadata
-metadata_path = Path('/scratch/boshra95/psg/unified/metadata/unified_metadata.parquet')
-if not metadata_path.exists():
-    metadata_path = Path('/scratch/boshra95/psg_metadata/unified_metadata.parquet')
-
-df = pd.read_parquet(metadata_path)
-ds_df = df[(df['dataset'].str.upper() == '$DATASET'.upper()) & (df['has_edf'] == True)]
-
-# Slice by index range
-ds_df = ds_df.iloc[$START_INDEX:$END_INDEX]
-
-if len(ds_df) == 0:
-    print('No subjects in this range')
-    sys.exit(0)
-
-print(f'Processing {len(ds_df)} subjects from index $START_INDEX to $END_INDEX')
-
-# Process with custom dataframe slice
-# Note: This requires modifying the pipeline to accept a pre-filtered dataframe
-# For now, use max_subjects as a workaround
-pipeline.process_dataset(
-    dataset_name='$DATASET',
-    max_subjects=$MAX_SUBJECTS,
-    skip_existing=True
-)
-\""
-
-echo "This batch processing mode is being simplified."
-echo "Please use the main script instead:"
-echo "  sbatch jobs/preprocess_signals_parallel.sh $DATASET $MAX_SUBJECTS --log-level $LOG_LEVEL"
-echo ""
-echo "Or submit multiple jobs with different max_subjects values:"
-echo "  sbatch jobs/preprocess_signals_parallel.sh $DATASET 100  # First 100"
-echo "  # Then manually process the next batch after the first completes"
-echo ""
-echo "For true parallel processing, consider submitting multiple jobs:"
-echo "  sbatch jobs/preprocess_signals_parallel.sh stages 500"
-echo "  sbatch jobs/preprocess_signals_parallel.sh shhs 500"
-echo "========================================================================"
-
-# For now, just call the regular preprocessing for this batch
-python scripts/preprocess_signals.py \
-    --dataset "$DATASET" \
-    --max-subjects "$MAX_SUBJECTS" \
-    --skip-existing \
-    --log-level "$LOG_LEVEL"
-
+eval $CMD
 EXIT_CODE=$?
 
 echo ""
@@ -175,5 +117,4 @@ fi
 echo "========================================================================"
 
 deactivate
-
 exit $EXIT_CODE
