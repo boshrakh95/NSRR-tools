@@ -5,3 +5,5 @@
 {"ts":"2026-06-03T22:52:41-07:00","job_id":"43015362","node":"fc11005","status":"STARTED","task":"sleep_staging","head":"transformer","context":"120m","lr":"1e-4","datasets":"shhs mros apples"}
 {"ts":"2026-06-04T05:49:20-07:00","job_id":"43015362","node":"fc11005","status":"TIMEOUT_REQUEUED","task":"sleep_staging","head":"transformer","context":"120m","lr":"1e-4","datasets":"shhs mros apples"}
 {"ts":"2026-06-04T05:51:07-07:00","job_id":"43031962","node":"fc11005","status":"STARTED","task":"sleep_staging","head":"transformer","context":"120m","lr":"1e-4","datasets":"shhs mros apples"}
+{"ts":"2026-06-04T12:47:57-07:00","job_id":"43031962","node":"fc11005","status":"TIMEOUT_REQUEUED","task":"sleep_staging","head":"transformer","context":"120m","lr":"1e-4","datasets":"shhs mros apples"}
+{"ts":"2026-06-04T12:49:52-07:00","job_id":"43055727","node":"fc11004","status":"STARTED","task":"sleep_staging","head":"transformer","context":"120m","lr":"1e-4","datasets":"shhs mros apples"}
