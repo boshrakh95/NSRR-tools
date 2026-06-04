@@ -14,6 +14,7 @@ Date: February 2026
 """
 
 import argparse
+import signal
 import sys
 from pathlib import Path
 from typing import Optional
@@ -23,6 +24,19 @@ from loguru import logger
 from tqdm import tqdm
 import yaml
 import gc
+
+# ── Graceful-stop flag (set by SIGTERM handler) ───────────────────────────────
+# SLURM sends SIGTERM when the bash script calls kill -TERM on this process.
+# Setting the flag lets the current subject finish before the process exits,
+# avoiding partially-written HDF5 files that would be skipped on resubmission.
+_stop_requested = False
+
+def _handle_sigterm(signum, frame):
+    global _stop_requested
+    logger.warning("[SIGTERM] Stop requested — will exit after current subject completes.")
+    _stop_requested = True
+
+signal.signal(signal.SIGTERM, _handle_sigterm)
 
 # Try to import psutil for memory monitoring
 try:
@@ -337,12 +351,18 @@ class PreprocessingPipeline:
             
             # Explicitly free memory after each subject
             gc.collect()
-            
+
             # Log memory usage periodically
             if PSUTIL_AVAILABLE and (len(results) % 10 == 0):
                 mem_mb = get_memory_usage_mb()
                 logger.info(f"Memory usage after {len(results)} subjects: {mem_mb:.1f} MB")
-        
+
+            # Graceful stop: SIGTERM was received — exit after this subject
+            if _stop_requested:
+                logger.warning(f"[SIGTERM] Stopping after {len(results)} subjects. "
+                               f"Resubmit to continue from here (skip-existing is on).")
+                break
+
         # Save summary
         summary_df = pd.DataFrame(results)
         summary_path = log_dir / f'preprocessing_summary_{dataset_name}.csv'

@@ -39,6 +39,7 @@ USAGE
 
 import argparse
 import json
+import signal
 import sys
 import time
 from pathlib import Path
@@ -48,6 +49,16 @@ import numpy as np
 import torch
 import yaml
 from loguru import logger
+
+# ── Graceful-stop flag (set by SIGTERM handler) ───────────────────────────────
+_stop_requested = False
+
+def _handle_sigterm(signum, frame):
+    global _stop_requested
+    logger.warning("[SIGTERM] Stop requested — will exit after current subject completes.")
+    _stop_requested = True
+
+signal.signal(signal.SIGTERM, _handle_sigterm)
 
 # ── SleepFM imports ───────────────────────────────────────────────────────────
 # The sleepfm-clinical repository is not installed as a package; add to path.
@@ -374,6 +385,14 @@ def main():
         except Exception as exc:
             logger.error(f"  FAILED {dataset}/{subject_id}: {exc}")
             n_err += 1
+
+        # Graceful stop: SIGTERM was received — exit after this subject
+        if _stop_requested:
+            logger.warning(
+                f"[SIGTERM] Stopping after {n_ok + n_err} processed subjects. "
+                f"Resubmit to continue (existing .npy files will be skipped)."
+            )
+            break
 
     total = time.time() - t0
     logger.info(
