@@ -11,18 +11,19 @@
 
 # Extract SleepFM embeddings — Phase 0 Step 1
 #
-# Total subjects: ~15,000 across apples(1104) + mros(3933) + shhs(8444) + stages(1513)
+# Total subjects: ~15,000 across apples(1104) + shhs(8444) + mros(3933) + stages(1513)
 # Estimated GPU time (H100 MIG): ~1-3s/subject after warmup → ~2-3h per 2500-subject job
 #
-# RECOMMENDED: 6 parallel GPU jobs, each covering ~2500 subjects (4h limit)
-# Subject order: apples(0-1103), mros(1104-5036), shhs(5037-13480), stages(13481-14993)
+# Subject order matches phase0_v3_full_config.yaml datasets list:
+#   apples(0-1103), shhs(1104-9547), mros(9548-13480), stages(13481-14993)
 #
-#   sbatch --export=ALL,START=0,END=2500      jobs/extract_embeddings_gpu.sh
-#   sbatch --export=ALL,START=2500,END=5000   jobs/extract_embeddings_gpu.sh
-#   sbatch --export=ALL,START=5000,END=7500   jobs/extract_embeddings_gpu.sh
-#   sbatch --export=ALL,START=7500,END=10000  jobs/extract_embeddings_gpu.sh
-#   sbatch --export=ALL,START=10000,END=12500 jobs/extract_embeddings_gpu.sh
-#   sbatch --export=ALL,START=12500,END=15000 jobs/extract_embeddings_gpu.sh
+# RECOMMENDED: 6 parallel GPU jobs (add CONFIG=... for the full-channel run):
+#   sbatch --export=ALL,START=0,END=2500,CONFIG=configs/phase0_v3_full_config.yaml      jobs/extract_embeddings_gpu.sh
+#   sbatch --export=ALL,START=2500,END=5000,CONFIG=configs/phase0_v3_full_config.yaml   jobs/extract_embeddings_gpu.sh
+#   sbatch --export=ALL,START=5000,END=7500,CONFIG=configs/phase0_v3_full_config.yaml   jobs/extract_embeddings_gpu.sh
+#   sbatch --export=ALL,START=7500,END=9600,CONFIG=configs/phase0_v3_full_config.yaml   jobs/extract_embeddings_gpu.sh
+#   sbatch --export=ALL,START=9600,END=12500,CONFIG=configs/phase0_v3_full_config.yaml  jobs/extract_embeddings_gpu.sh
+#   sbatch --export=ALL,START=12500,END=15100,CONFIG=configs/phase0_v3_full_config.yaml jobs/extract_embeddings_gpu.sh
 #
 # Or single job (for testing / if GPU queue wait is long):
 #   sbatch jobs/extract_embeddings_gpu.sh

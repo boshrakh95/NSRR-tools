@@ -5,8 +5,8 @@
 #SBATCH --cpus-per-task=10
 #SBATCH --mem=30000M
 #SBATCH --signal=B:USR1@120
-#SBATCH --output=logs_v3_expand_channel/preprocess_%x_%j.out
-#SBATCH --error=logs_v3_expand_channel/preprocess_%x_%j.err
+#SBATCH --output=/home/boshra95/NSRR-tools/logs_v3_expand_channel/preprocess_%x_%j.out
+#SBATCH --error=/home/boshra95/NSRR-tools/logs_v3_expand_channel/preprocess_%x_%j.err
 
 # Preprocess NSRR EDF signals to HDF5 format — one dataset per job.
 #
