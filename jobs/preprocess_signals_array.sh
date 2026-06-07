@@ -5,8 +5,8 @@
 #SBATCH --cpus-per-task=10
 #SBATCH --mem=30000M
 #SBATCH --signal=B:USR1@120
-#SBATCH --output=logs_v3_expand_channel/preprocess_batch_%x_%j.out
-#SBATCH --error=logs_v3_expand_channel/preprocess_batch_%x_%j.err
+#SBATCH --output=/home/boshra95/NSRR-tools/logs_v3_expand_channel/preprocess_batch_%x_%j.out
+#SBATCH --error=/home/boshra95/NSRR-tools/logs_v3_expand_channel/preprocess_batch_%x_%j.err
 
 # Batch preprocessing: process a subject index slice of one dataset.
 # Use for large datasets (e.g. SHHS=8444) that exceed a single 26-hour job.

@@ -179,8 +179,8 @@ def format_lr(lr) -> str:
     return re.sub(r"e(-?)0*(\d+)", r"e\1\2", s)
 
 
-def load_registry() -> dict:
-    with open(REGISTRY_PATH) as f:
+def load_registry(path=None) -> dict:
+    with open(path or REGISTRY_PATH) as f:
         return yaml.safe_load(f)
 
 
@@ -1249,7 +1249,7 @@ def main():
                         help="Always show full history even for single-attempt jobs")
 
     args = parser.parse_args()
-    registry = load_registry()
+    registry = load_registry(args.registry)
 
     dispatch = {
         "list":                 cmd_list,
