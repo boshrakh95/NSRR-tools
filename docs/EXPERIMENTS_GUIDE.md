@@ -67,7 +67,7 @@ Two parallel experiment sets live on disk simultaneously and never overwrite eac
 | **Results root** | `/scratch/boshra95/psg/unified/results/phase0_v3/` | `/scratch/boshra95/psg_full/unified/results/phase0_v3_full/` |
 | **Inference root** | `/scratch/boshra95/psg/unified/results/phase0_v3/inference/` | `/scratch/boshra95/psg_full/unified/results/phase0_v3_full/inference/` |
 | **Training logs** | `logs_v3/` | `logs_v3_full/` |
-| **Preprocessing/embedding logs** | `logs_v3/` (historical) | `logs_v3_expand_channel/` |
+| **Preprocessing/embedding logs** | `logs_v3/` (historical) | `logs_v3_full/` |
 | **Status** | **DONE** — all steps complete | **IN PROGRESS** — preprocessing/embedding running |
 
 ---
@@ -82,7 +82,7 @@ Two parallel experiment sets live on disk simultaneously and never overwrite eac
 #### Step 0 — Preprocessing (EDF → HDF5)
 
 Outputs to `/scratch/boshra95/psg/{dataset}/derived/hdf5_signals/`.
-Logs to `logs_v3/` (historical; logs_v3_expand_channel/ was not yet in use).
+Logs to `logs_v3/` (historical; the full-channel run uses `logs_v3_full/` for all steps).
 
 ```bash
 CFG=configs/preprocessing_params.yaml
@@ -124,7 +124,7 @@ sbatch --export=ALL,START=12500,END=15100 jobs/extract_embeddings_gpu.sh
 ```
 
 Note: `jobs/extract_embeddings_gpu.sh` defaults to `CONFIG=configs/phase0_v3_config.yaml`.
-Logs go to `logs_v3_expand_channel/embeddings_*.out`.
+Logs go to `logs_v3/embeddings_*.out`.
 
 **Verify:** `find /scratch/boshra95/psg/unified/embeddings/sleepfm_5sec -name '*.npy' | wc -l`  → expected ~14,992.
 
@@ -265,14 +265,13 @@ Targets/annotations   →  /scratch/boshra95/psg/unified/targets_v2/  (SHARED �
 Seq2label results     →  /scratch/boshra95/psg_full/unified/results/phase0_v3_full/{task}_{head}/
 Inference results     →  /scratch/boshra95/psg_full/unified/results/phase0_v3_full/inference/
 Figures               →  /scratch/boshra95/psg_full/unified/results/phase0_v3_full/figures/
-Preprocessing logs    →  /home/boshra95/NSRR-tools/logs_v3_expand_channel/
-Training logs         →  /home/boshra95/NSRR-tools/logs_v3_full/
+All logs              →  /home/boshra95/NSRR-tools/logs_v3_full/
 ```
 
 #### Step 0 — Preprocessing (EDF → HDF5)
 
 Outputs to `/scratch/boshra95/psg_full/{dataset}/derived/hdf5_signals/`.
-Logs to `logs_v3_expand_channel/preprocess_*.out`.
+Logs to `logs_v3_full/preprocess_*.out`.
 Config `preprocessing_params_full.yaml` sets `strategy: "sleepfm_full"` (full channel set).
 
 ```bash
@@ -315,7 +314,7 @@ EOF
 
 Outputs to `/scratch/boshra95/psg_full/unified/embeddings/sleepfm_5sec/{dataset}/{subject}.npy`.
 Each `.npy` shape: `[T, 4, 128]` (same format as fast-channel; content richer due to more channels).
-Logs to `logs_v3_expand_channel/embeddings_*.out`.
+Logs to `logs_v3_full/embeddings_*.out`.
 
 ```bash
 # Subject global index order (from phase0_v3_full_config.yaml datasets list):

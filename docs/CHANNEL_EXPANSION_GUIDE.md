@@ -13,7 +13,7 @@ EXISTING — do NOT touch                     NEW — channel expansion run
 ─────────────────────────────────────────   ──────────────────────────────────────────
 /scratch/boshra95/psg/                      /scratch/boshra95/psg_full/
   {dataset}/derived/hdf5_signals/   (7ch)     {dataset}/derived/hdf5_signals/  (23ch)
-logs_v3/                                    logs_v3_expand_channel/  (preprocess + embed)
+logs_v3/                                    logs_v3_full/  (preprocess + embed + train)
   unified/embeddings/sleepfm_5sec/             unified/embeddings/sleepfm_5sec/
   unified/results/phase0_v3/                   unified/results/phase0_v3_full/
   unified/targets_v2/               ◄──── SHARED (read-only, not duplicated)
@@ -275,9 +275,9 @@ Step 0 — Config files (ALREADY DONE — no action needed):
   ✅  configs/phase0_v3_full_staging_config.yaml     (same paths; hidden=256/layers=2 for sleep staging)
   ✅  experiments/v2_full_registry.yaml              (default config=full; staging exps override to staging config)
   ✅  scripts/gen_commands.py                        (per-experiment config override: exp["config"] > registry["config"])
-  ✅  jobs/extract_embeddings_gpu.sh                 (CONFIG overridable; logs → logs_v3_expand_channel)
-  ✅  jobs/preprocess_signals_parallel.sh            (logs → logs_v3_expand_channel, auto-requeue)
-  ✅  jobs/preprocess_signals_array.sh               (logs → logs_v3_expand_channel, auto-requeue)
+  ✅  jobs/extract_embeddings_gpu.sh                 (CONFIG overridable; logs → logs_v3_full)
+  ✅  jobs/preprocess_signals_parallel.sh            (logs → logs_v3_full, auto-requeue)
+  ✅  jobs/preprocess_signals_array.sh               (logs → logs_v3_full, auto-requeue)
 
   ⬜  TODO: Make train_context_sweep_gpu.sh and infer_subject_windows_gpu.sh use a
            LOGS_DIR env var (currently hardcoded to logs_v3/).
