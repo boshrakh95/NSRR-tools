@@ -425,6 +425,7 @@ experiments:
     run_tag: ""
     n_size: large
     tier: 1
+    config: configs/phase0_v3_full_staging_config.yaml   # hidden=256, layers=2 — overrides registry default
     notes: "PRIMARY run — shhs+mros+apples only (no STAGES). Matches phase0 protocol. Target kappa ~0.62 at 10m."
 
   sleep_staging_transformer:
@@ -439,6 +440,7 @@ experiments:
     run_tag: ""
     n_size: large
     tier: 1
+    config: configs/phase0_v3_full_staging_config.yaml   # hidden=256, layers=2 — overrides registry default
     notes: "PRIMARY run — shhs+mros+apples only (no STAGES)."
 
   sleep_staging_lstm_with_stages:
@@ -453,6 +455,7 @@ experiments:
     run_tag: "with_stages"
     n_size: large
     tier: 2
+    config: configs/phase0_v3_full_staging_config.yaml   # hidden=256, layers=2 — overrides registry default
     notes: "COMPARISON — includes STAGES. Kappa ~0.55 at 10m (STAGES dominates data, hurts perf). Results: sleep_staging_lstm_with_stages/"
 
   sleep_staging_transformer_with_stages:
@@ -467,6 +470,7 @@ experiments:
     run_tag: "with_stages"
     n_size: large
     tier: 2
+    config: configs/phase0_v3_full_staging_config.yaml   # hidden=256, layers=2 — overrides registry default
     notes: "COMPARISON — includes STAGES. Results: sleep_staging_transformer_with_stages/"
 
   sleep_staging_mean_pool:
@@ -481,6 +485,7 @@ experiments:
     run_tag: ""
     n_size: large
     tier: 1
+    config: configs/phase0_v3_full_staging_config.yaml   # hidden=256, layers=2 — overrides registry default
     notes: "Mean-pool loses position info — may underperform on anchor-based staging. Included as baseline."
 
 # ── Re-run Tier 2: decent signal, lstm only ───────────────────────────────────
