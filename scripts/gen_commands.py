@@ -322,6 +322,7 @@ def build_train_cmd(exp: dict, registry: dict, context: str,
     if exp.get("run_tag"):
         env_vars.append(f"RUN_TAG={exp['run_tag']}")
     env_vars.append(f"CONFIG={cfg}")
+    env_vars.append(f"LOGS_DIR={logs_dir}")
     env_str = " ".join(env_vars)
 
     sbatch_opts = (
@@ -356,6 +357,7 @@ def build_infer_cmd(exp: dict, registry: dict, split: str = "test",
     if exp.get("run_tag"):
         env_vars.append(f"RUN_TAG={exp['run_tag']}")
     env_vars.append(f"CONFIG={cfg}")
+    env_vars.append(f"LOGS_DIR={logs_dir}")
     env_str = " ".join(env_vars)
 
     sbatch_opts = (
