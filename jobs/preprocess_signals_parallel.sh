@@ -5,8 +5,8 @@
 #SBATCH --cpus-per-task=10
 #SBATCH --mem=30000M
 #SBATCH --signal=B:USR1@120
-#SBATCH --output=/home/boshra95/NSRR-tools/logs_v3_expand_channel/preprocess_%x_%j.out
-#SBATCH --error=/home/boshra95/NSRR-tools/logs_v3_expand_channel/preprocess_%x_%j.err
+#SBATCH --output=/home/boshra95/NSRR-tools/logs_v3_full/preprocess_%x_%j.out
+#SBATCH --error=/home/boshra95/NSRR-tools/logs_v3_full/preprocess_%x_%j.err
 
 # Preprocess NSRR EDF signals to HDF5 format — one dataset per job.
 #
@@ -63,7 +63,7 @@ export DATASET CONFIG_PATH SKIP_EXISTING REPROCESS_ANNOTATIONS LOG_LEVEL MROS_VI
 
 # ── Setup ─────────────────────────────────────────────────────────────────────
 cd /home/boshra95/NSRR-tools
-mkdir -p logs_v3_expand_channel
+mkdir -p logs_v3_full
 
 source .venv/bin/activate
 

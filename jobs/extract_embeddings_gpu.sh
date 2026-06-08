@@ -6,8 +6,8 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=16000M
 #SBATCH --signal=B:USR1@120
-#SBATCH --output=/home/boshra95/NSRR-tools/logs_v3_expand_channel/embeddings_%x_%j.out
-#SBATCH --error=/home/boshra95/NSRR-tools/logs_v3_expand_channel/embeddings_%x_%j.err
+#SBATCH --output=/home/boshra95/NSRR-tools/logs_v3_full/embeddings_%x_%j.out
+#SBATCH --error=/home/boshra95/NSRR-tools/logs_v3_full/embeddings_%x_%j.err
 
 # Extract SleepFM embeddings — Phase 0 Step 1
 #
@@ -38,7 +38,7 @@ _SCRIPT_PATH="$(realpath "$0")"
 _PYTHON_PID=""
 
 cd /home/boshra95/NSRR-tools
-mkdir -p logs_v3_expand_channel
+mkdir -p logs_v3_full
 
 # ── Environment ───────────────────────────────────────────────────────────────
 module load python/3.11 2>/dev/null || true
