@@ -48,8 +48,9 @@ _SCRIPT_PATH="$(realpath "$0")"
 _PYTHON_PID=""
 
 cd /home/boshra95/NSRR-tools
-mkdir -p logs_v3
-mkdir -p logs_v3/status
+LOGS_DIR=${LOGS_DIR:-logs_v3}
+mkdir -p "$LOGS_DIR"
+mkdir -p "$LOGS_DIR/status"
 
 # ── Environment ───────────────────────────────────────────────────────────────
 module load python/3.11 2>/dev/null || true
@@ -88,11 +89,11 @@ NO_WANDB=${NO_WANDB:-""}
 # ── Job run tracking ──────────────────────────────────────────────────────────
 _EXP_TAG="${TASK}_${HEAD}"
 [ -n "$RUN_TAG" ] && _EXP_TAG="${_EXP_TAG}_${RUN_TAG}"
-_STATUS_FILE="logs_v3/status/train_${_EXP_TAG}_${CONTEXT:-nocontext}_lr${LR:-default}.jsonl"
+_STATUS_FILE="$LOGS_DIR/status/train_${_EXP_TAG}_${CONTEXT:-nocontext}_lr${LR:-default}.jsonl"
 
 # Persistent training log — all resubmissions append here so the full epoch
 # history is in one place regardless of how many jobs the run takes.
-_TRAIN_LOG="logs_v3/train_${_EXP_TAG}_${CONTEXT:-nocontext}_lr${LR:-default}.log"
+_TRAIN_LOG="$LOGS_DIR/train_${_EXP_TAG}_${CONTEXT:-nocontext}_lr${LR:-default}.log"
 exec > >(tee -a "$_TRAIN_LOG") 2>&1
 
 _write_status() {

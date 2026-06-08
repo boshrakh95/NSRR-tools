@@ -53,8 +53,9 @@ _SCRIPT_PATH="$(realpath "$0")"
 _PYTHON_PID=""
 
 cd /home/boshra95/NSRR-tools
-mkdir -p logs_v3
-mkdir -p logs_v3/status
+LOGS_DIR=${LOGS_DIR:-logs_v3}
+mkdir -p "$LOGS_DIR"
+mkdir -p "$LOGS_DIR/status"
 
 # ── Environment ───────────────────────────────────────────────────────────────
 module load python/3.11 2>/dev/null || true
@@ -84,10 +85,10 @@ RUN_TAG=${RUN_TAG:-""}                 # must match RUN_TAG used during training
 # ── Job run tracking ──────────────────────────────────────────────────────────
 _EXP_TAG="${TASK}_${HEAD}"
 [ -n "$RUN_TAG" ] && _EXP_TAG="${_EXP_TAG}_${RUN_TAG}"
-_STATUS_FILE="logs_v3/status/infer_${_EXP_TAG}_${SPLIT}.jsonl"
+_STATUS_FILE="$LOGS_DIR/status/infer_${_EXP_TAG}_${SPLIT}.jsonl"
 
 # Persistent inference log — all resubmissions append here.
-_INFER_LOG="logs_v3/infer_${_EXP_TAG}_${SPLIT}.log"
+_INFER_LOG="$LOGS_DIR/infer_${_EXP_TAG}_${SPLIT}.log"
 exec > >(tee -a "$_INFER_LOG") 2>&1
 
 _write_status() {
