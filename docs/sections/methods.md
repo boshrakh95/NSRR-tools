@@ -372,9 +372,41 @@ logits = Linear(128, C)(Dropout(p=0.3)(out[:, 0, :]))  # CLS output
 - **CLS token:** the class token aggregates sequence-level information; its output after the transformer is the subject representation.
 - **Sinusoidal PE:** fixed (non-trainable), max_len=4096 to accommodate 240m (2880 patches + CLS + margin).
 
+### Full-channel run: matched architectures for clean comparison
+
+The full-channel run (`phase0_v3_full_config.yaml`) uses **the same head configs as the
+fast-channel baseline**, by design:
+
+| Run | seq2label tasks | Sleep staging |
+|---|---|---|
+| Fast-channel (v3) | hidden=128, layers=1 (~658K LSTM, ~264K Transformer) | hidden=256, layers=2 (~3.16M LSTM) |
+| Full-channel (v3_full) | hidden=128, layers=1 (~658K LSTM, ~264K Transformer) | hidden=256, layers=2 (~3.16M LSTM) |
+
+The config key `model.hidden_dim` is a **shared** value: the same number drives the LSTM
+hidden-state width and the Transformer d_model.
+
+Sleep staging uses a larger head in both runs because phase0 showed kappa dropping 0.62 → 0.54
+at 10m with the 128/1 config — the 5-class seq2seq task requires substantially more capacity
+than binary seq2label tasks (see §III-E LSTMHead section above). Sleep staging uses a separate
+config file (`phase0_v3_full_staging_config.yaml`) with `hidden_dim: 256, num_layers: 2`.
+
+**Paper-ready statement:** All full-channel experiments use identical head architectures to
+their fast-channel counterparts. Any performance difference reflects the richer channel set alone.
+
+Note: the TransformerHead for sleep staging at `d_model=256, ff=1024, layers=2` has ~1.7M
+parameters — the original config comment stating "~1M" was incorrect.
+
 ### Design rationale (paper paragraph draft)
 
-> We deliberately keep all three heads small (≤ 655K parameters) to ensure that observed performance differences reflect context-length effects, not head capacity. A more powerful head at a given context length could mask the saturation point. MeanPool serves as a non-temporal baseline: if MeanPool matches the recurrent and attention heads, temporal integration is not contributing, and the performance gains attributed to longer context are explained by feature averaging alone.
+> We compare three head architectures of increasing temporal sophistication: a non-temporal
+> pooling baseline (MeanPool, ~1K parameters), a bidirectional LSTM (BiLSTM, ~658K parameters),
+> and a Transformer encoder with CLS token (~264K parameters). All receive the same
+> 512-dimensional flattened SleepFM embeddings as input (`input_dim = 4 modalities × 128 dims`).
+> For sleep staging only, we use a larger BiLSTM configuration (hidden=256, 2 layers, ~3.16M
+> parameters) and Transformer (d_model=256, ~1.7M parameters), motivated by a significant
+> capacity gap observed in phase 0 experiments (kappa: 0.62 vs 0.54 at 10m context). All
+> fast-channel and full-channel runs use identical head architectures, ensuring that any
+> performance difference reflects the channel set and not model capacity.
 
 ---
 

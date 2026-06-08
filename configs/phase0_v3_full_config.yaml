@@ -158,8 +158,8 @@ dataset:
 model:
   input_dim: 512
   head_type: "lstm"
-  hidden_dim: 256   # 128 → archived in *_old_arch128 dirs; 256 for new sleep staging
-  num_layers: 2     # 1   → archived in *_old_arch128 dirs; 2   for new sleep staging
+  hidden_dim: 128   # matches fast-channel seq2label baseline → clean channel-only comparison
+  num_layers: 1     # sleep staging uses 256/2 via phase0_v3_full_staging_config.yaml
   num_heads:  8
   dropout:    0.3
   num_classes: 2

@@ -34,8 +34,10 @@ depend on channel count and will not be duplicated.
 | File | What changed |
 |------|-------------|
 | `configs/preprocessing_params_full.yaml` | `strategy: "sleepfm_full"` + `base_output: /scratch/boshra95/psg_full` |
-| `configs/phase0_v3_full_config.yaml` | All paths point to `psg_full/`; targets/annotations still point to `psg/` |
-| `experiments/v2_full_registry.yaml` | Points to `phase0_v3_full_config.yaml` and `psg_full` results/inference dirs |
+| `configs/phase0_v3_full_config.yaml` | All paths → `psg_full/`; targets → `psg/`; **`hidden_dim=128, num_layers=1`** (seq2label, matches fast-channel baseline) |
+| `configs/phase0_v3_full_staging_config.yaml` | Same as above but **`hidden_dim=256, num_layers=2`** for sleep staging; used by sleep staging experiments via per-experiment `config:` field in the registry |
+| `experiments/v2_full_registry.yaml` | Points to `phase0_v3_full_config.yaml` as default; sleep staging entries have `config: configs/phase0_v3_full_staging_config.yaml` to override |
+| `scripts/gen_commands.py` | `build_train_cmd` and `build_infer_cmd` now check `exp.get("config")` first, falling back to `registry["config"]` — enables per-experiment config overrides |
 | `jobs/extract_embeddings_gpu.sh` | `CONFIG` is now an overridable env variable (default still `phase0_v3_config.yaml`) |
 
 ---
@@ -268,12 +270,14 @@ print(combined[['run','context_length','test_auroc']])
 
 ```
 Step 0 — Config files (ALREADY DONE — no action needed):
-  ✅  configs/preprocessing_params_full.yaml    (strategy=sleepfm_full, base=psg_full)
-  ✅  configs/phase0_v3_full_config.yaml        (all paths → psg_full; targets → psg)
-  ✅  experiments/v2_full_registry.yaml         (config + results → full variants)
-  ✅  jobs/extract_embeddings_gpu.sh            (CONFIG overridable; logs → logs_v3_expand_channel)
-  ✅  jobs/preprocess_signals_parallel.sh       (logs → logs_v3_expand_channel, auto-requeue)
-  ✅  jobs/preprocess_signals_array.sh          (logs → logs_v3_expand_channel, auto-requeue)
+  ✅  configs/preprocessing_params_full.yaml         (strategy=sleepfm_full, base=psg_full)
+  ✅  configs/phase0_v3_full_config.yaml             (all paths → psg_full; hidden=128/layers=1 for seq2label)
+  ✅  configs/phase0_v3_full_staging_config.yaml     (same paths; hidden=256/layers=2 for sleep staging)
+  ✅  experiments/v2_full_registry.yaml              (default config=full; staging exps override to staging config)
+  ✅  scripts/gen_commands.py                        (per-experiment config override: exp["config"] > registry["config"])
+  ✅  jobs/extract_embeddings_gpu.sh                 (CONFIG overridable; logs → logs_v3_expand_channel)
+  ✅  jobs/preprocess_signals_parallel.sh            (logs → logs_v3_expand_channel, auto-requeue)
+  ✅  jobs/preprocess_signals_array.sh               (logs → logs_v3_expand_channel, auto-requeue)
 
   ⬜  TODO: Make train_context_sweep_gpu.sh and infer_subject_windows_gpu.sh use a
            LOGS_DIR env var (currently hardcoded to logs_v3/).
@@ -314,3 +318,66 @@ Existing data — NEVER TOUCHED:
   ✓  /scratch/boshra95/psg/unified/results/phase0_v3/
   ✓  /scratch/boshra95/psg/unified/targets_v2/
 ```
+
+---
+
+## 8. Head Architecture and Fast→Full Comparability
+
+### Design decision: matched architectures
+
+The full-channel run uses **the same head configs as the fast-channel baseline** for each
+task type. This is deliberate: any AUROC difference fast→full is attributable solely to the
+richer channel set, not to a larger model.
+
+| Run | Config file | seq2label tasks | Sleep staging |
+|---|---|---|---|
+| Fast-channel (v3 baseline) | `phase0_v3_config.yaml` | hidden=128, layers=1 (~658K LSTM) | hidden=256, layers=2 (~3.16M LSTM) |
+| Full-channel (v3_full) | `phase0_v3_full_config.yaml` | hidden=128, layers=1 (~658K LSTM) | hidden=256, layers=2 (~3.16M LSTM) |
+
+Sleep staging uses a larger head in **both** runs because phase0 showed kappa dropping
+0.62 → 0.54 at 10m with the smaller 128/1 config; this is documented in `EXPERIMENTS_GUIDE.md`
+§ "Width vs depth rationale". The staging comparison across channel counts is still clean.
+
+### The `hidden_dim` config key
+
+A single yaml value `model.hidden_dim` controls both LSTM hidden size and Transformer d_model:
+
+```yaml
+# phase0_v3_full_config.yaml — seq2label section
+model:
+  input_dim: 512    # fixed: 4 modalities × 128 SleepFM dims
+  hidden_dim: 128   # LSTM hidden-state size AND Transformer d_model
+  num_layers: 1
+  num_heads: 8
+  dropout: 0.3
+```
+
+Sleep staging uses `configs/phase0_v3_full_staging_config.yaml` (identical to the above but
+with `hidden_dim: 256, num_layers: 2`). Each sleep staging entry in `v2_full_registry.yaml`
+has an explicit `config:` field pointing to this file; `gen_commands.py` checks
+`exp.get("config")` before the registry-level default, so no manual flag is needed — just run
+`python scripts/gen_commands.py --registry experiments/v2_full_registry.yaml train sleep_staging_lstm`
+as normal and the correct config is used automatically.
+
+### Parameter counts
+
+| Head | Config | Parameters |
+|---|---|---|
+| LSTMHead (seq2label) | hidden=128, layers=1, BiLSTM | ~658K |
+| TransformerHead (seq2label) | d_model=128, heads=8, ff=512, layers=1 | ~264K |
+| LSTMHead (sleep staging) | hidden=256, layers=2, BiLSTM | ~3.16M |
+| TransformerHead (sleep staging) | d_model=256, heads=8, ff=1024, layers=2 | ~1.7M |
+| MeanPoolHead | any | ~1K |
+
+Note: the TransformerHead for sleep staging is ~1.7M params — the config comment saying
+"~1M" is incorrect.
+
+### Paper implications
+
+The paper can state cleanly: *"All models in the full-channel experiment use identical
+architectures to their fast-channel counterparts. Any performance difference reflects the
+richer channel set alone."* No footnote or caveat is needed about head capacity differences.
+
+**Do not change `hidden_dim` or `num_layers` in `phase0_v3_full_config.yaml` after any
+full-channel runs have started** — changing them mid-run would make results incomparable
+within the full-channel set itself.

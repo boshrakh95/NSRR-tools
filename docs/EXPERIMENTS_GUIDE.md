@@ -698,6 +698,76 @@ The probe tests both train mode (backward pass) and eval mode (forward-only), si
 
 ---
 
+## Model Architecture Reference
+
+Documents the downstream head hyperparameters, their rationale, and implications for
+cross-run comparisons. Relevant for paper Methods §III-E and for any decision to change
+the config.
+
+### Input representation
+
+After SleepFM embedding extraction each subject is a `[T, 4, 128]` array (T = number of
+5-second patches, 4 modalities, 128-dim SleepFM embedding per modality). At training time
+a context window of N patches is flattened to `[N, 512]` as head input.
+
+```
+input_dim = 4 modalities × 128 SleepFM dims = 512    ← fixed, not a tunable hyperparameter
+```
+
+### The `hidden_dim` config key controls both LSTM and Transformer
+
+A single yaml value `model.hidden_dim` drives both head architectures:
+
+| Head | Role of `hidden_dim` |
+|---|---|
+| LSTMHead | LSTM hidden-state size; BiLSTM output = `2 × hidden_dim` |
+| TransformerHead | `d_model` (token representation width); `dim_feedforward = 4 × hidden_dim` |
+| MeanPoolHead | Unused — goes straight from `input_dim=512` to `Linear(512, C)` |
+
+So `hidden_dim: 128` in the seq2label config means both the LSTM hidden size and the Transformer
+d_model are 128; sleep staging uses a separate config with `hidden_dim: 256`.
+
+### Architecture configs per run
+
+Head configs are **intentionally matched** between fast-channel and full-channel so that the
+only variable in the fast→full comparison is the number of PSG channels, not model capacity:
+
+| Run | seq2label config | Sleep staging config | seq2label head | Sleep staging head |
+|---|---|---|---|---|
+| Fast-channel (v3) | `phase0_v3_config.yaml` | `phase0_v3_config.yaml` (same file, 256/2 set there) | hidden=128, layers=1 (~658K LSTM) | hidden=256, layers=2 (~3.16M LSTM) |
+| Full-channel (v3_full) | `phase0_v3_full_config.yaml` | `phase0_v3_full_staging_config.yaml` | hidden=128, layers=1 (~658K LSTM) | hidden=256, layers=2 (~3.16M LSTM) |
+
+The full-channel sleep staging experiments in `v2_full_registry.yaml` each have an explicit
+`config: configs/phase0_v3_full_staging_config.yaml` field. `gen_commands.py` checks
+`exp.get("config")` before `registry["config"]`, so the correct config is picked automatically —
+no manual `--config` flag needed.
+
+This is the correct design: any AUROC or kappa difference fast→full is attributable solely to
+richer channels. A reviewer asking "is the gain from the bigger model?" can be answered "no —
+architectures are identical in both runs."
+
+**Parameter counts:**
+
+| Head | Config | Parameters |
+|---|---|---|
+| LSTMHead (seq2label) | hidden=128, layers=1, BiLSTM | ~658K |
+| TransformerHead (seq2label) | d_model=128, heads=8, ff=512, layers=1 | ~264K |
+| LSTMHead (sleep staging) | hidden=256, layers=2, BiLSTM | ~3.16M |
+| TransformerHead (sleep staging) | d_model=256, heads=8, ff=1024, layers=2 | ~1.7M |
+| MeanPoolHead | any | ~1K |
+
+### Width vs depth rationale
+
+Hidden=128 with 1 BiLSTM layer is not underpowered for seq2label tasks:
+- The fast-channel results (e.g., sex_binary AUROC 0.741–0.757) demonstrate the head extracts
+  real signal; the full-channel run will add real channel information on top of the same head.
+- Sleep staging uses 256/2 because phase0 showed kappa dropping from 0.62 → 0.54 at 10m
+  when using 128/1; the 5-class seq2seq task needs substantially more capacity than binary tasks.
+- For seq2label, going 256/2 would add ~2.5M params over 658K with diminishing returns at
+  N=1k–16k subjects, and would confound the channel comparison.
+
+---
+
 ## Adding New Experiments
 
 ### New task or head

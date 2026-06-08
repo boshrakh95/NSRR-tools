@@ -302,7 +302,7 @@ def resolve_batch_accum(exp: dict, registry: dict, context: str,
 
 def build_train_cmd(exp: dict, registry: dict, context: str,
                     override_time: str = None, override_batch_size: int = None) -> str:
-    cfg = registry["config"]
+    cfg = exp.get("config") or registry["config"]
     logs_dir = registry.get("logs_dir", str(Path(__file__).parent.parent / "logs"))
     n_size = exp.get("n_size", "large")
     wall_time = override_time if override_time else estimate_train_time(n_size, exp["head"], context)
@@ -335,7 +335,7 @@ def build_train_cmd(exp: dict, registry: dict, context: str,
 
 def build_infer_cmd(exp: dict, registry: dict, split: str = "test",
                     override_time: str = None, override_batch_size: int = None) -> str:
-    cfg = registry["config"]
+    cfg = exp.get("config") or registry["config"]
     logs_dir = registry.get("logs_dir", str(Path(__file__).parent.parent / "logs"))
     n_size = exp.get("n_size", "large")
     contexts_trained = trained_contexts(exp, registry)
