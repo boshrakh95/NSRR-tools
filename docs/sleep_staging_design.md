@@ -409,11 +409,13 @@ Reference for running the complete sleep staging experiment from scratch on the
 
 ### Pre-conditions checklist
 
-- [ ] On branch `sleep-stage-redesign`
-- [ ] Old results archived: `sleep_staging_{lstm,transformer}_old_arch128/`
-- [ ] Old logs archived: `logs_v3/archive_old_arch128/`
+- [ ] Old results archived: `_sleep_staging_{lstm,transformer}_old_arch128/`
+- [ ] APPLES-only/val_auroc results archived: `_sleep_staging_{lstm,transformer}_apples_auroc/`
+- [ ] Old logs archived: `logs_v3/archive/`
 - [ ] Config: `seq2seq_context_mode: "centered"`, `seq2seq_padding_policy: "complete_only"`,
-      `hidden_dim: 256`, `num_layers: 2`
+      `hidden_dim: 256`, `num_layers: 2`, `early_stopping_monitor: "val_kappa"` (see §10.3)
+- [ ] Sleep staging subject CSV regenerated with visit-qualified IDs (14,960 subjects) (see §11)
+- [ ] Registry entries for sleep staging point to `configs/phase0_v3_staging_config.yaml`
 
 ---
 
@@ -667,6 +669,70 @@ If the curves overlap (expected), report in supplementary as a robustness check.
 
 ---
 
+## 10.3 Early Stopping Monitor — Decision Record (2026-06-08)
+
+### Why val_kappa, not val_auroc
+
+All seq2label tasks use `early_stopping_monitor: "val_auroc"` (threshold-free, robust to
+class imbalance). Sleep staging was also using val_auroc, which caused two problems:
+
+1. **120m never converged.** val_auroc for 5-class OvR macro is slow to plateau; the
+   APPLES-only 120m run climbed from 0.71 → 0.89 across all 40 epochs with no sign of
+   plateauing, hitting the epoch ceiling and producing an under-trained checkpoint.
+
+2. **Too many epochs at all contexts.** The 256/2 model with val_auroc ran 23–40 epochs
+   (LSTM: 23 at 30s, 31 at 10m/40m, 27 at 80m, 40 at 120m) vs 12–13 epochs in the old
+   phase0 runs. The larger model keeps slowly improving val_auroc before plateauing.
+
+### Why not val_loss or val_balacc
+
+Empirical analysis across all 5 contexts (LSTM + transformer, APPLES-only runs) showed:
+
+| Monitor | Best epoch (LSTM 30s) | Behaviour |
+|---------|----------------------|-----------|
+| val_auroc | 13 | Smooth but slow |
+| val_loss | 13 | Same best epoch as auroc; moderately noisy at long contexts |
+| val_balacc | **2** | **Dangerous** — peaks spuriously at epoch 1–2 due to class imbalance; transformer 80m peaked at epoch 1 → would stop at epoch 11 with almost untrained model |
+| val_kappa | (now available) | Directly optimises the paper metric; converges at same rate as val_loss |
+
+val_auroc and val_loss pick the **same best epoch** for staging (both track the same
+ranking signal). The distinction between them does not matter for checkpoint selection.
+val_balacc is the wrong choice for a 5-class imbalanced task with a fixed t=0.5 threshold.
+
+val_kappa is the correct choice because:
+- It directly optimises what is reported in the paper (Cohen's κ)
+- It is computed at argmax (same threshold as kappa at inference)
+- It has lower stdev than val_balacc at the same per-epoch budget
+- It converges at a similar rate to val_loss but without the high noise at long contexts
+
+### Changes made (2026-06-08)
+
+| File | Change |
+|------|--------|
+| `scripts/train_context_sweep.py` | Added `"val_kappa"` case to `compute_monitor_metric()` |
+| `configs/phase0_v3_staging_config.yaml` | **New file** — fast-channel staging config; `val_kappa`, `epochs=60` |
+| `configs/phase0_v3_full_staging_config.yaml` | Changed `early_stopping_monitor: "val_auroc"` → `"val_kappa"`; `epochs: 40` → `60` |
+| `experiments/v2_registry.yaml` | Added `config: configs/phase0_v3_staging_config.yaml` to all 5 sleep staging entries |
+
+### Why epochs=60
+
+With val_kappa as monitor and the correct 14,960-subject dataset:
+- Kappa on a large, well-balanced split will plateau faster than val_auroc on APPLES-only
+- With patience=10, if kappa peaks at epoch 35–40, training stops at 45–50 epochs
+- epochs=60 provides a comfortable ceiling without wasting GPU time
+- The old APPLES-only 120m run needed >40 epochs because the tiny val set made kappa
+  estimates noisy; with 14,960 subjects (val ~2,244) the signal will be far more stable
+
+### Results archived (old val_auroc, APPLES-only runs)
+
+| Old location | Archive location | Why stale |
+|---|---|---|
+| `results/phase0_v3/sleep_staging_lstm/` | `results/phase0_v3/_sleep_staging_lstm_apples_auroc/` | APPLES-only dataset + val_auroc monitor |
+| `results/phase0_v3/sleep_staging_transformer/` | `results/phase0_v3/_sleep_staging_transformer_apples_auroc/` | Same |
+| `results/phase0_v3/inference/sleep_staging_lstm/` | `results/phase0_v3/inference/_sleep_staging_lstm_apples_auroc/` | Inference on stale model |
+| `results/phase0_v3/inference/sleep_staging_transformer/` | `results/phase0_v3/inference/_sleep_staging_transformer_apples_auroc/` | Same |
+| `logs_v3/train_sleep_staging_*` | `logs_v3/archive/` | Logs for stale runs |
+
 ---
 
 ## 11. Current Status — 2026-06-08
@@ -699,15 +765,13 @@ all with embedding files found. Subject IDs: `200001_v1`, `AA0001_v1`, `APL0001`
 
 | Component | Status |
 |-----------|--------|
-| Training: lstm 30s/10m/40m/80m/120m | ✅ Done (APPLES-only, stale) |
-| Training: lstm 240m | ❌ Not done |
-| Training: transformer 30s/10m/40m/80m/120m | ✅ Done (APPLES-only, stale) |
-| Training: transformer 240m | ❌ Not done |
-| Inference: lstm 30s/10m/40m/80m/120m | ✅ Done (APPLES-only, stale) |
-| Inference: transformer 30s/10m/40m/80m/120m | ✅ Done (APPLES-only, stale) |
-| Analysis pipeline | ❌ Not yet run |
+| Training: lstm 30s/10m/40m/80m/120m (APPLES-only, val_auroc) | ✅ Done — archived to `_sleep_staging_lstm_apples_auroc/` |
+| Training: transformer 30s/10m/40m/80m/120m (APPLES-only, val_auroc) | ✅ Done — archived to `_sleep_staging_transformer_apples_auroc/` |
+| Inference: lstm + transformer (APPLES-only) | ✅ Done — archived to `inference/_*_apples_auroc/` |
 | subject_id bug fixed | ✅ Fixed — CSV regenerated with 14,960 subjects |
-| Multi-dataset retraining | ❌ Not yet — **next step** |
+| Early stopping monitor switched to val_kappa | ✅ Done — new config + code change |
+| Multi-dataset retraining (val_kappa, 14,960 subjects) | ❌ **Next step** — both lstm and transformer, all 6 contexts |
+| Analysis pipeline | ❌ Not yet run |
 
 ### Parquet schema (current)
 
