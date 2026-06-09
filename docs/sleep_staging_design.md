@@ -671,27 +671,27 @@ If the curves overlap (expected), report in supplementary as a robustness check.
 
 ## 11. Current Status — 2026-06-08
 
-### ⚠️ CRITICAL BUG: sleep_staging_subjects.csv subject_id format mismatch
+### ~~CRITICAL BUG~~ FIXED: sleep_staging_subjects.csv subject_id format mismatch
 
-**Problem:** `sleep_staging_subjects.csv` stores SHHS and MrOS subject IDs *without* the
-visit suffix (e.g. `200001`, `AA0001`), but embedding files are named `200001_v1.npy`,
-`AA0001_v1.npy`. The embedding existence check in `ContextWindowDataset` fails for ALL
-SHHS and MrOS subjects → they are silently dropped before the split.
+**Root cause:** `build_sleep_staging_subject_list()` in `scripts/create_task_subject_lists.py`
+stored bare subject IDs (`200001`, `AA0001`) when the master lookup required a composite fallback
+(`200001_v1`, `AA0001_v1`). Embedding files are named `200001_v1.npy` / `AA0001_v1.npy`, so the
+bare IDs caused all SHHS and MrOS subjects to fail the embedding-existence check silently.
 
-**Effect:** All three training runs (`_with_stages`, current `sleep_staging_lstm/transformer`)
-used **APPLES-only** subjects (1103 total; ~770 train, ~166 test), not the intended
-shhs+mros+apples pool (~13,475 subjects). The model generalises only to APPLES data.
+**Effect (before fix):** All previous training runs used **APPLES-only** subjects
+(1103/1104 subjects; ~770 train, ~166 test). The other datasets (SHHS 8,444; MrOS 3,927;
+STAGES 1,485) were silently excluded. This affects ALL old arch128 runs (May) and the current
+v3 `sleep_staging_lstm/transformer` runs (May–June).
 
-**Evidence:**
-- Fast-channel parquet: `datasets=['apples']`, 161 subjects, per summary.csv n_test matches.
-- Applying split manually: 13,475 after dataset filter → **1,103 after embedding filter** (all apples).
-- Other tasks (sex_binary) have `_v1`/`_v2` suffixes in CSV → embeddings found correctly.
+**Fix applied (2026-06-08):**
+- Added one line to `scripts/create_task_subject_lists.py` (line ~330):
+  `if unified_id is not None: subject_id = composite_id`
+  after the fallback composite-id lookup.
+- Regenerated `sleep_staging_subjects.csv` directly via inline Python.
+- Old CSV backed up as `sleep_staging_subjects.csv.bak_before_subjectid_fix`.
 
-**Fix needed:** Regenerate `sleep_staging_subjects.csv` with visit suffixes added to SHHS/MrOS
-subject IDs. Check the script that produced this CSV (likely `scripts/extract_targets_sleep_staging.py`
-or similar) and add `_v1` to SHHS subjects and `_v1`/`_v2` to MrOS subjects as appropriate.
-
-After fixing the CSV, retrain from scratch (all 6 contexts, both heads).
+**Verification:** 8,444 SHHS + 3,927 MrOS + 1,104 APPLES + 1,485 STAGES = **14,960 subjects**,
+all with embedding files found. Subject IDs: `200001_v1`, `AA0001_v1`, `APL0001`, `BOGN00004`.
 
 ---
 
@@ -699,15 +699,15 @@ After fixing the CSV, retrain from scratch (all 6 contexts, both heads).
 
 | Component | Status |
 |-----------|--------|
-| Training: lstm 30s/10m/40m/80m/120m | ✅ Done (APPLES-only) |
+| Training: lstm 30s/10m/40m/80m/120m | ✅ Done (APPLES-only, stale) |
 | Training: lstm 240m | ❌ Not done |
-| Training: transformer 30s/10m/40m/80m/120m | ✅ Done (APPLES-only) |
+| Training: transformer 30s/10m/40m/80m/120m | ✅ Done (APPLES-only, stale) |
 | Training: transformer 240m | ❌ Not done |
-| Inference: lstm 30s/10m/40m/80m/120m | ✅ Done (APPLES-only) |
-| Inference: transformer 30s/10m/40m/80m/120m | ✅ Done (APPLES-only) |
+| Inference: lstm 30s/10m/40m/80m/120m | ✅ Done (APPLES-only, stale) |
+| Inference: transformer 30s/10m/40m/80m/120m | ✅ Done (APPLES-only, stale) |
 | Analysis pipeline | ❌ Not yet run |
-| subject_id bug fixed | ❌ Not yet |
-| Multi-dataset retraining | ❌ Not yet |
+| subject_id bug fixed | ✅ Fixed — CSV regenerated with 14,960 subjects |
+| Multi-dataset retraining | ❌ Not yet — **next step** |
 
 ### Parquet schema (current)
 
