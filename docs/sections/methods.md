@@ -418,8 +418,11 @@ parameters — the original config comment stating "~1M" was incorrect.
 - **Learning rate:** 1e-4 for L ∈ {30s, 10m, 40m, 80m}; 5e-5 for L ∈ {120m, 240m}
   - Rationale for LR reduction at long contexts: overlapping training windows drawn from a 240-minute recording are highly correlated (they differ by only one stride-N shift); the effective gradient diversity per step is lower than at short contexts where windows can span the entire night. A halved LR compensates.
 - **LR schedule:** cosine annealing over the total number of training epochs (warm restarts disabled; single cosine cycle to epoch limit)
-- **Epoch limit:** 40 epochs maximum
-- **Early stopping:** patience = 10 epochs; monitor = validation AUROC (macro OvR for multi-class). AUROC chosen over val_loss because loss can decrease monotonically while AUROC still improves (model shifting confidence, not just cross-entropy).
+- **Epoch limit:** 40 epochs for seq2label tasks; **60 epochs for sleep staging** (120m/240m require more epochs with the larger 256/2 model to converge)
+- **Early stopping:** patience = 10 epochs. Monitor differs by task type:
+  - **Seq2label (all binary/multiclass tasks):** `val_auroc` (macro OvR). Threshold-free; robust to class imbalance; better than val_loss for imbalanced tasks (val_loss is noisy for tasks like OSA where a single poorly-calibrated batch causes large spikes).
+  - **Sleep staging (seq2seq, 5-class):** `val_kappa` (Cohen's κ at argmax threshold). Directly optimises the primary reported metric. val_auroc for 5-class OvR is slow to plateau, causing 120m to hit the epoch limit without converging; val_balanced_accuracy is dangerous for staged predictions (can peak spuriously at epoch 1–2 due to 5-class imbalance, observed in transformer 80m). val_kappa converges at the same rate as val_loss while aligning checkpoint selection with the paper metric.
+  - **[Paper note]:** "Models were trained with early stopping (patience 10 epochs) monitoring validation AUROC for classification tasks and validation Cohen's κ for sleep staging."
 
 ### Batch size and gradient accumulation
 
@@ -455,7 +458,7 @@ K=5 controls per-epoch exposure, not total data seen across training. With rando
 
 ### Checkpointing and SLURM infrastructure
 
-- **Best checkpoint:** saved whenever val_auroc improves (as `best_model.pt`)
+- **Best checkpoint:** saved whenever the monitor metric improves (as `best_model.pt`). Monitor is `val_auroc` for seq2label tasks and `val_kappa` for sleep staging.
 - **Resume checkpoint:** per-epoch `resume.pt` for crash/timeout recovery on SLURM. Deleted on successful completion.
 - **Auto-requeue:** SLURM `--requeue` flag + USR1 signal handler (120s before wall-time) enables seamless job restart with W&B run continuation.
 - **[Note for paper]:** infrastructure details go in supplementary or omitted; mention only: "models were trained on NVIDIA H100 GPUs on Compute Canada infrastructure."

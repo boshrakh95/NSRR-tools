@@ -62,7 +62,7 @@ Two parallel experiment sets live on disk simultaneously and never overwrite eac
 | **Embeddings dir** | `/scratch/boshra95/psg/unified/embeddings/sleepfm_5sec/` | `/scratch/boshra95/psg_full/unified/embeddings/sleepfm_5sec/` |
 | **Embedding config** | `configs/phase0_v3_config.yaml` | `configs/phase0_v3_full_config.yaml` |
 | **Seq2label train config** | `configs/phase0_v3_config.yaml` (hidden=128, layers=1) | `configs/phase0_v3_full_config.yaml` (hidden=128, layers=1) |
-| **Sleep staging config** | `configs/phase0_v3_config.yaml` (hidden=256, layers=2) | `configs/phase0_v3_full_staging_config.yaml` (hidden=256, layers=2) |
+| **Sleep staging config** | `configs/phase0_v3_staging_config.yaml` (hidden=256, layers=2, val_kappa) | `configs/phase0_v3_full_staging_config.yaml` (hidden=256, layers=2, val_kappa) |
 | **Registry** | `experiments/v2_registry.yaml` | `experiments/v2_full_registry.yaml` |
 | **Results root** | `/scratch/boshra95/psg/unified/results/phase0_v3/` | `/scratch/boshra95/psg_full/unified/results/phase0_v3_full/` |
 | **Inference root** | `/scratch/boshra95/psg/unified/results/phase0_v3/inference/` | `/scratch/boshra95/psg_full/unified/results/phase0_v3_full/inference/` |
@@ -174,8 +174,13 @@ python scripts/gen_commands.py train sleepiness_binary_transformer  | bash
 #### Step 3 — Training: sleep staging
 
 Sleep staging uses `task_type: seq2seq` with a **centered** context window and the 256/2
-head. Uses the same registry (`v2_registry.yaml`) and config (`phase0_v3_config.yaml`, which
-currently has `hidden_dim=256, num_layers=2`).
+head. Registry: `v2_registry.yaml`. Each sleep staging entry has an explicit
+`config: configs/phase0_v3_staging_config.yaml` (hidden=256, layers=2, **`val_kappa` monitor**,
+epochs=60). `gen_commands.py` picks `exp["config"]` before `registry["config"]` automatically.
+
+**Why val_kappa for sleep staging:** val_auroc for 5-class OvR macro is slow to plateau and
+caused 120m to hit the 40-epoch ceiling without converging. val_kappa directly optimises the
+primary reported metric. See `docs/sleep_staging_design.md §10.3` for the full analysis.
 
 Results: `/scratch/boshra95/psg/unified/results/phase0_v3/sleep_staging_{head}/context_{L}/`.
 Primary metric: Cohen's κ (logged as `val_kappa` and `test_kappa` in `metrics.json`).
@@ -604,12 +609,13 @@ results/{phase}/figures/
 
 ### Training / head configs
 
-| Config | Run | Head config | Results dir | Registry |
-|--------|-----|-------------|-------------|---------|
-| `configs/phase0_v3_config.yaml` | Fast-channel, all tasks | hidden=256/2 (current; 128/1 when seq2label ran) | `phase0_v3/` | `v2_registry.yaml` |
-| `configs/phase0_v3_full_config.yaml` | Full-channel, **seq2label** tasks | hidden=128, layers=1 | `phase0_v3_full/` | `v2_full_registry.yaml` |
-| `configs/phase0_v3_full_staging_config.yaml` | Full-channel, **sleep staging** only | hidden=256, layers=2 | `phase0_v3_full/` | `v2_full_registry.yaml` (per-exp override) |
-| `configs/phase0_v2_config.yaml` | Archived | — | `phase0_v2/` | — |
+| Config | Run | Head config | Monitor | Results dir | Registry |
+|--------|-----|-------------|---------|-------------|---------|
+| `configs/phase0_v3_config.yaml` | Fast-channel, **seq2label** tasks | hidden=128, layers=1 (seq2label ran with this) | `val_auroc` | `phase0_v3/` | `v2_registry.yaml` |
+| `configs/phase0_v3_staging_config.yaml` | Fast-channel, **sleep staging** only | hidden=256, layers=2, epochs=60 | `val_kappa` | `phase0_v3/` | `v2_registry.yaml` (per-exp override) |
+| `configs/phase0_v3_full_config.yaml` | Full-channel, **seq2label** tasks | hidden=128, layers=1 | `val_auroc` | `phase0_v3_full/` | `v2_full_registry.yaml` |
+| `configs/phase0_v3_full_staging_config.yaml` | Full-channel, **sleep staging** only | hidden=256, layers=2, epochs=60 | `val_kappa` | `phase0_v3_full/` | `v2_full_registry.yaml` (per-exp override) |
+| `configs/phase0_v2_config.yaml` | Archived | — | — | `phase0_v2/` | — |
 
 ### Preprocessing configs
 
@@ -1206,13 +1212,12 @@ only variable in the fast→full comparison is the number of PSG channels, not m
 
 | Run | seq2label config | Sleep staging config | seq2label head | Sleep staging head |
 |---|---|---|---|---|
-| Fast-channel (v3) | `phase0_v3_config.yaml` | `phase0_v3_config.yaml` (same file, 256/2 set there) | hidden=128, layers=1 (~658K LSTM) | hidden=256, layers=2 (~3.16M LSTM) |
-| Full-channel (v3_full) | `phase0_v3_full_config.yaml` | `phase0_v3_full_staging_config.yaml` | hidden=128, layers=1 (~658K LSTM) | hidden=256, layers=2 (~3.16M LSTM) |
+| Fast-channel (v3) | `phase0_v3_config.yaml` (val_auroc) | `phase0_v3_staging_config.yaml` (val_kappa, epochs=60) | hidden=128, layers=1 (~658K LSTM) | hidden=256, layers=2 (~3.16M LSTM) |
+| Full-channel (v3_full) | `phase0_v3_full_config.yaml` (val_auroc) | `phase0_v3_full_staging_config.yaml` (val_kappa, epochs=60) | hidden=128, layers=1 (~658K LSTM) | hidden=256, layers=2 (~3.16M LSTM) |
 
-The full-channel sleep staging experiments in `v2_full_registry.yaml` each have an explicit
-`config: configs/phase0_v3_full_staging_config.yaml` field. `gen_commands.py` checks
-`exp.get("config")` before `registry["config"]`, so the correct config is picked automatically —
-no manual `--config` flag needed.
+Both sleep staging configs use `val_kappa` as `early_stopping_monitor` (changed from `val_auroc`
+on 2026-06-08). Sleep staging entries in both registries have an explicit `config:` field;
+`gen_commands.py` picks `exp.get("config")` before `registry["config"]` automatically.
 
 This is the correct design: any AUROC or kappa difference fast→full is attributable solely to
 richer channels. A reviewer asking "is the gain from the bigger model?" can be answered "no —

@@ -28,7 +28,8 @@ CLASS IMBALANCE HANDLING
     Can be combined with class_weights for very severe imbalance.
 
   early_stopping_monitor (config: training.early_stopping_monitor):
-    "val_auroc"             — recommended; threshold-independent, robust to imbalance
+    "val_auroc"             — recommended for seq2label; threshold-independent, robust to imbalance
+    "val_kappa"             — recommended for seq2seq (sleep staging); directly optimises Cohen's κ
     "val_balanced_accuracy" — direct average recall across classes
     "val_macro_f1"          — useful when equal weight across classes matters
     "val_loss"              — original behaviour (lower is better)
@@ -213,6 +214,7 @@ def compute_monitor_metric(
       "val_auroc"             — higher is better
       "val_balanced_accuracy" — higher is better
       "val_macro_f1"          — higher is better
+      "val_kappa"             — higher is better; seq2seq (sleep staging) only
     """
     if monitor == "val_loss":
         return loss
@@ -223,6 +225,8 @@ def compute_monitor_metric(
         return float(balanced_accuracy_score(targets, preds))
     if monitor == "val_macro_f1":
         return float(f1_score(targets, preds, average="macro", zero_division=0))
+    if monitor == "val_kappa":
+        return float(cohen_kappa_score(targets, preds))
     if monitor == "val_auroc":
         probs = torch.softmax(torch.from_numpy(logits), dim=-1).numpy()
         try:
@@ -233,7 +237,7 @@ def compute_monitor_metric(
             return float("nan")
     raise ValueError(
         f"Unknown early_stopping_monitor: {monitor!r}. "
-        "Choose from: val_loss, val_auroc, val_balanced_accuracy, val_macro_f1"
+        "Choose from: val_loss, val_auroc, val_balanced_accuracy, val_macro_f1, val_kappa"
     )
 
 
