@@ -316,16 +316,16 @@ Do NOT report accuracy alone. N2 is ~50% of epochs so a trivial classifier gets 
 
 ## 7. Decision Checklist
 
-- [ ] Implement Option A (complete-context filtering) in ContextWindowDataset for seq2seq
-- [ ] Restore architecture: hidden_dim=256, num_layers=2 in phase0_v3_config.yaml
-- [ ] Rerun sleep_staging_lstm all 6 contexts with new design
-- [ ] Rerun sleep_staging_transformer all 6 contexts with NO_WANDB=1
-- [ ] Add `sleep_staging` to SEQ2SEQ_TASKS set in run_analysis.sh / gen_commands.py
-      (already in analyze_windows.py; check plot scripts handle 5-class correctly)
-- [ ] Write plot_per_stage_saturation.py
-- [ ] Write plot_confusion_evolution.py
-- [ ] Run run_analysis.sh on sleep_staging after inference completes
-- [ ] Run per-stage and confusion analyses
+- [x] Implement Option A (complete-context filtering) in ContextWindowDataset for seq2seq
+- [x] Restore architecture: hidden_dim=256, num_layers=2 in phase0_v3_config.yaml
+- [x] Rerun sleep_staging_lstm 30s/10m/40m/80m/120m — done (APPLES-only, see §11)
+- [x] Rerun sleep_staging_transformer 30s/10m/40m/80m/120m — done (APPLES-only, see §11)
+- [ ] **FIX BUG: sleep_staging_subjects.csv subject_id format (see §11)** ← BLOCKING
+- [ ] Rerun training after bug fix (shhs+mros+apples, all 6 contexts including 240m)
+- [ ] Run inference for 240m context (both heads) after training completes
+- [ ] Write `scripts/plot_per_stage_saturation.py`
+- [ ] Write `scripts/plot_confusion_evolution.py`
+- [ ] Run full analysis pipeline (§9 Steps 3–7) after inference is complete
 
 ---
 
@@ -471,59 +471,71 @@ Check output: `results/phase0_v3/inference/sleep_staging_{lstm,transformer}/cont
 ### Step 3 — Saturation curve (primary result)
 
 Reads directly from `summary.csv` — no analysis step needed.
+`cohen_kappa` is supported as a `--metric` (reads `test_cohen_kappa` column from summary.csv).
 
 ```bash
-python scripts/gen_commands.py saturation sleep_staging \
+python scripts/plot_saturation.py \
+  --task sleep_staging \
   --heads lstm transformer \
-  --metric auroc balanced_accuracy | bash
+  --results-dir /scratch/boshra95/psg/unified/results/phase0_v3 \
+  --metric cohen_kappa auroc balanced_accuracy \
+  --split test
 ```
 
-**Note:** `cohen_kappa` is not yet a supported `--metric` in `plot_saturation.py`.
-Until it is added, use `balanced_accuracy` as the proxy or read kappa directly from
-`summary.csv`. Adding kappa support to `plot_saturation.py` is a TODO.
+**Expected output:** `results/phase0_v3/figures/saturation/sleep_staging_*.pdf`
+One panel per metric showing both lstm and transformer saturation curves across context lengths.
+Primary figure: `cohen_kappa` plot. Secondary: `auroc` and `balanced_accuracy`.
+
+**What to look for:**
+- Kappa should increase from 30s → 10m → 40m, then flatten or slightly decline at 80m+ (under `complete_only` the long-context models have fewer training epochs)
+- Transformer and LSTM should be close; transformer may edge ahead at longer contexts
+- If kappa is flat or declining across all contexts: likely a training/data issue, not a context effect
 
 ---
 
-### Step 4 — All per-context plots
+### Step 4 — All per-context plots (standard pipeline)
 
-Run `run_analysis.sh` with `--skip-analyze` (K-sweep is not meaningful for seq2seq).
-This runs: collect, saturation, scaling-laws, calibration, window-position,
-subject-consistency, cohort-saturation, precision-recall, task-comparison.
+Run `run_analysis.sh` with `--skip-analyze` (K-sweep is meaningless for seq2seq).
+Steps 3, 12 (build-heatmap, iso-plots, subject-kstar) have no data and are silently skipped.
 
 ```bash
 source /home/boshra95/sleepfm_env/bin/activate
+cd /home/boshra95/NSRR-tools
 
 bash scripts/run_analysis.sh \
   sleep_staging_lstm sleep_staging_transformer \
   --heads lstm transformer \
-  --skip-analyze 2>&1 | tee logs_v3/analysis_sleep_staging.log
+  --skip-analyze \
+  --split test \
+  2>&1 | tee logs_v3/analysis_sleep_staging.log
 ```
 
-**Steps that will produce output:**
+**Steps and expected outputs:**
 
-| Step | Script | Output location |
-|------|--------|----------------|
-| collect | collect_results.py | `results/.../collected/` |
-| saturation | plot_saturation.py | `figures/saturation/` |
-| scaling-laws | plot_scaling_laws.py | `figures/scaling_laws/` |
-| calibration | plot_calibration.py | `figures/sleep_staging_{lstm,transformer}/` |
-| window-position | plot_window_position.py | same (position axis = epoch-in-window) |
-| subject-consistency | plot_subject_consistency.py | same |
-| cohort-saturation | plot_cohort_saturation.py | same |
-| precision-recall | plot_precision_recall.py | same |
-| task-comparison | plot_task_comparison.py | `figures/task_comparison/` |
+| Step | Script | Output location | Notes |
+|------|--------|----------------|-------|
+| 2. collect | `collect_results.py` | `results/phase0_v3/collected/` | Aggregates summary CSVs |
+| 5. saturation | `plot_saturation.py` | `figures/saturation/` | Run separately with `--metric cohen_kappa` (Step 3 above) |
+| 6. scaling-laws | `plot_scaling_laws.py` | `figures/scaling_laws/` | Log-linear fit of kappa vs context |
+| 7. calibration | `plot_calibration.py` | `figures/sleep_staging_{lstm,transformer}/` | 5-class reliability diagram |
+| 8. window-position | `plot_window_position.py` | same | Position = epoch index within context; proxy for time-of-night |
+| 9. subject-consistency | `plot_subject_consistency.py` | same | Hard subjects = low per-subject kappa |
+| 10. cohort-saturation | `plot_cohort_saturation.py` | same | Per-dataset kappa vs L (only apples until bug fixed) |
+| 11. precision-recall | `plot_precision_recall.py` | same | Per-stage (W/N1/N2/N3/REM) PR curves — critical for N1 |
+| 13. task-comparison | `plot_task_comparison.py` | `figures/task_comparison/` | Requires other tasks' parquets too |
 
-**Steps automatically skipped (no data):** build-heatmap, iso-plots, subject-kstar
-(these require K-sweep analysis which is not run for seq2seq).
+**Skipped automatically:** steps 1 (analyze), 3 (build-heatmap), 4 (iso-plots), 12 (subject-kstar).
 
 ---
 
 ### Step 5 — Common evaluation set (supplementary)
 
-Run after inference for both heads. Produces the robustness check for the paper
-supplementary (see §3b for full motivation).
+Run after inference for both heads. Defends against the reviewer comment about different
+epoch populations at different context lengths (see §3b for full motivation).
 
 ```bash
+cd /home/boshra95/NSRR-tools
+
 python scripts/analyze_common_eval_set.py \
     --config configs/phase0_v3_config.yaml \
     --task sleep_staging --head lstm --split test
@@ -533,16 +545,79 @@ python scripts/analyze_common_eval_set.py \
     --task sleep_staging --head transformer --split test
 ```
 
-Output: `results/phase0_v3/inference/sleep_staging_{lstm,transformer}/common_eval_test_summary.csv`
+**Output:** `results/phase0_v3/inference/sleep_staging_{lstm,transformer}/common_eval_test_summary.csv`
+Columns: `context_length, common_kappa, common_auroc, common_balanced_accuracy,
+          common_recall_class{0-4}, n_epochs_common, n_epochs_all, common_fraction`
+
+**Prerequisite:** 240m inference must be done first (the 240m-valid anchor set is the
+intersection used to filter all other contexts).
+
+**Then plot the common-eval saturation curve:**
+```bash
+python scripts/plot_saturation.py \
+  --task sleep_staging \
+  --heads lstm transformer \
+  --results-dir /scratch/boshra95/psg/unified/results/phase0_v3 \
+  --metric cohen_kappa \
+  --split test \
+  --collected-dir results/phase0_v3/inference/sleep_staging_lstm  # path to common_eval csv
+```
+(Adjust plotting call once the common_eval CSV format is confirmed to match what
+`plot_saturation.py` expects — may need a small wrapper script.)
 
 ---
 
-### Step 6 — Sleep-staging-specific plots (TODO after seeing results)
+### Step 6 — Sleep-staging-specific plots (scripts to write)
 
-These scripts do not yet exist and should be written once primary results are available:
+These scripts do not yet exist. Write them after the primary results are available.
 
-- `scripts/plot_per_stage_saturation.py` — F1/recall per stage (W/N1/N2/N3/REM) vs L
-- `scripts/plot_confusion_evolution.py` — 5×5 confusion matrix at each context length
+#### `scripts/plot_per_stage_saturation.py`
+
+Per-stage recall/F1 vs context length for each stage (W, N1, N2, N3, REM).
+Input: inference parquets (`test_windows.parquet` for each context).
+Output: 5-panel figure (one per stage) or one figure with 5 lines.
+
+```bash
+python scripts/plot_per_stage_saturation.py \
+  --task sleep_staging \
+  --heads lstm transformer \
+  --results-dir /scratch/boshra95/psg/unified/results/phase0_v3 \
+  --split test
+```
+
+**Expected finding:** N1 and N3 benefit most from longer context (hardest stages);
+W and REM plateau early. This is the most paper-worthy sleep-staging-specific plot.
+The `recall_class{0-4}` columns are already in summary.csv (class mapping: 0=W, 1=N1,
+2=N2, 3=N3, 4=REM) so this script only needs to read summary.csv, no parquets needed.
+
+**Class-to-stage mapping** (from label distribution in parquets):
+| class | stage | prevalence (test, 30s) |
+|-------|-------|----------------------|
+| 0 | Wake | 38427 epochs (23.9%) |
+| 1 | N1   | 23731 epochs (14.8%) |
+| 2 | N2   | 74097 epochs (46.1%) |
+| 3 | N3   |  2617 epochs ( 1.6%) |
+| 4 | REM  | 21997 epochs (13.7%) |
+
+Note: these proportions are from APPLES only. In a multi-dataset run the distribution
+will shift (SHHS/MrOS have more N2 and less N1 typically).
+
+#### `scripts/plot_confusion_evolution.py`
+
+5×5 confusion matrix heatmap at each context length, side by side.
+Input: inference parquets (`true_label`, `pred_label` columns).
+Output: one figure per head with 5 (or 6 with 240m) subplots.
+
+```bash
+python scripts/plot_confusion_evolution.py \
+  --task sleep_staging \
+  --head lstm \
+  --results-dir /scratch/boshra95/psg/unified/results/phase0_v3 \
+  --split test
+```
+
+**Expected finding:** N1/W confusion at 30s → resolved at 40m+;
+N3/N2 confusion persists even at 120m+ (short N3 episodes hard to distinguish from N2).
 
 ---
 
@@ -589,6 +664,71 @@ If the curves overlap (expected), report in supplementary as a robustness check.
 | Saturation on common eval set | `common_eval_test_summary.csv` | Supplementary |
 | Cohort saturation (SHHS/MrOS/STAGES/APPLES) | `plot_cohort_saturation.py` | Supplementary |
 | Calibration reliability diagrams | `plot_calibration.py` | Supplementary |
+
+---
+
+---
+
+## 11. Current Status — 2026-06-08
+
+### ⚠️ CRITICAL BUG: sleep_staging_subjects.csv subject_id format mismatch
+
+**Problem:** `sleep_staging_subjects.csv` stores SHHS and MrOS subject IDs *without* the
+visit suffix (e.g. `200001`, `AA0001`), but embedding files are named `200001_v1.npy`,
+`AA0001_v1.npy`. The embedding existence check in `ContextWindowDataset` fails for ALL
+SHHS and MrOS subjects → they are silently dropped before the split.
+
+**Effect:** All three training runs (`_with_stages`, current `sleep_staging_lstm/transformer`)
+used **APPLES-only** subjects (1103 total; ~770 train, ~166 test), not the intended
+shhs+mros+apples pool (~13,475 subjects). The model generalises only to APPLES data.
+
+**Evidence:**
+- Fast-channel parquet: `datasets=['apples']`, 161 subjects, per summary.csv n_test matches.
+- Applying split manually: 13,475 after dataset filter → **1,103 after embedding filter** (all apples).
+- Other tasks (sex_binary) have `_v1`/`_v2` suffixes in CSV → embeddings found correctly.
+
+**Fix needed:** Regenerate `sleep_staging_subjects.csv` with visit suffixes added to SHHS/MrOS
+subject IDs. Check the script that produced this CSV (likely `scripts/extract_targets_sleep_staging.py`
+or similar) and add `_v1` to SHHS subjects and `_v1`/`_v2` to MrOS subjects as appropriate.
+
+After fixing the CSV, retrain from scratch (all 6 contexts, both heads).
+
+---
+
+### What is done (as of 2026-06-08)
+
+| Component | Status |
+|-----------|--------|
+| Training: lstm 30s/10m/40m/80m/120m | ✅ Done (APPLES-only) |
+| Training: lstm 240m | ❌ Not done |
+| Training: transformer 30s/10m/40m/80m/120m | ✅ Done (APPLES-only) |
+| Training: transformer 240m | ❌ Not done |
+| Inference: lstm 30s/10m/40m/80m/120m | ✅ Done (APPLES-only) |
+| Inference: transformer 30s/10m/40m/80m/120m | ✅ Done (APPLES-only) |
+| Analysis pipeline | ❌ Not yet run |
+| subject_id bug fixed | ❌ Not yet |
+| Multi-dataset retraining | ❌ Not yet |
+
+### Parquet schema (current)
+
+```
+columns: subject_id, dataset, true_label, pred_label,
+         prob_class0, prob_class1, prob_class2, prob_class3, prob_class4,
+         window_idx, anchor_patch_end
+rows per context (lstm): 30s=160869, 10m=157649, 40m=147989, 80m=135109, 120m=122229
+subjects: 161 (all apples), unique per context
+```
+
+### What the APPLES-only results can still tell us
+
+The current results are valid for an APPLES-only sleep staging evaluation.
+They can be compared between fast-channel and full-channel (once full-channel is run)
+to assess whether more channels help, **within the APPLES dataset**.
+They are NOT representative of multi-dataset generalisation and should not be used as
+the primary paper results — use them as preliminary/sanity-check numbers only.
+
+Run the analysis pipeline once on the current APPLES-only results to validate that all
+scripts work end-to-end, then rerun after fixing the subject_id bug.
 
 ---
 
