@@ -325,9 +325,11 @@ def build_sleep_staging_subject_list(
 
             unified_id = master_index.get((dataset, subject_id, visit))
             if unified_id is None:
-                # Fallback: try composite subject_id (MrOS stores subject_id as AA0001_v1)
+                # Fallback: SHHS/MrOS master stores subject_id as "200001_v1" not "200001"
                 composite_id = f"{subject_id}_v{visit}"
                 unified_id = master_index.get((dataset, composite_id, visit))
+                if unified_id is not None:
+                    subject_id = composite_id  # match embedding filename (200001_v1.npy)
             if unified_id is None:
                 logger.debug(f'  [{dataset}] ({subject_id}, v{visit}) not in master — skipping')
                 skipped += 1
