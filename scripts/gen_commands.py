@@ -202,7 +202,39 @@ def infer_folder(exp: dict, registry: dict) -> Path:
     return infer_dir / f"{exp['task']}_{exp['head']}{suffix}"
 
 
-def _log_stem(exp: dict, step: str, context: str = "", split: str = "") -> str:
+_cfg_arch_cache: dict = {}
+
+
+def _cfg_arch_tag(exp: dict, registry: dict) -> str:
+    """Return a short arch+padding tag for seq2seq (sleep staging) experiments only.
+
+    Format: h{hidden_dim}l{num_layers}_{padding_short}
+    Examples: 'h256l2_conly' (complete_only), 'h128l1_allw' (allow_all).
+    Returns '' for seq2label tasks (padding policy has no effect there, and
+    hidden_dim/num_layers mean different things for LSTM vs transformer).
+    """
+    if exp.get("task_type") != "seq2seq":
+        return ""
+    cfg_path = str(exp.get("config") or registry.get("config", ""))
+    if not cfg_path:
+        return ""
+    if cfg_path not in _cfg_arch_cache:
+        try:
+            with open(cfg_path) as _f:
+                cfg = yaml.safe_load(_f)
+            hidden = cfg.get("model", {}).get("hidden_dim", "")
+            layers = cfg.get("model", {}).get("num_layers", "")
+            policy = cfg.get("dataset", {}).get("seq2seq_padding_policy", "")
+            policy_short = {"complete_only": "conly", "allow_all": "allw"}.get(policy, "")
+            arch = f"h{hidden}l{layers}" if (hidden and layers) else ""
+            _cfg_arch_cache[cfg_path] = f"{arch}_{policy_short}" if (arch and policy_short) else arch
+        except Exception:
+            _cfg_arch_cache[cfg_path] = ""
+    return _cfg_arch_cache[cfg_path]
+
+
+def _log_stem(exp: dict, step: str, context: str = "", split: str = "",
+              registry: dict = None) -> str:
     """Build a descriptive log filename stem (no extension, no %j).
 
     Training logs include context and LR (both vary per job).
@@ -210,13 +242,16 @@ def _log_stem(exp: dict, step: str, context: str = "", split: str = "") -> str:
     matching the pattern the SLURM script uses for its persistent .log file so
     that original-submission and timeout-resubmission filenames share the same
     stem prefix.
+    When registry is provided, appends an arch+padding tag from the config
+    (e.g. '_h256l2_conly') so log filenames are self-describing.
     """
     tag = exp.get("run_tag", "")
     tag_part = f"_{tag}" if tag else ""
+    arch_part = f"_{_cfg_arch_tag(exp, registry)}" if registry else ""
     ctx_part = f"_{context}" if context else ""
     split_part = f"_{split}" if split else ""
     lr_part = f"_lr{format_lr(exp['lr'])}" if step == "train" else ""
-    return f"{step}_{exp['task']}_{exp['head']}{tag_part}{ctx_part}{split_part}{lr_part}"
+    return f"{step}_{exp['task']}_{exp['head']}{tag_part}{arch_part}{ctx_part}{split_part}{lr_part}"
 
 
 # ── Status checks ─────────────────────────────────────────────────────────────
@@ -306,7 +341,7 @@ def build_train_cmd(exp: dict, registry: dict, context: str,
     logs_dir = registry.get("logs_dir", str(Path(__file__).parent.parent / "logs"))
     n_size = exp.get("n_size", "large")
     wall_time = override_time if override_time else estimate_train_time(n_size, exp["head"], context)
-    stem = _log_stem(exp, "train", context)
+    stem = _log_stem(exp, "train", context, registry=registry)
     micro_batch, accum_steps = resolve_batch_accum(exp, registry, context, override_batch_size)
 
     env_vars = [
@@ -342,7 +377,7 @@ def build_infer_cmd(exp: dict, registry: dict, split: str = "test",
     contexts_trained = trained_contexts(exp, registry)
     ctx_list = contexts_trained if contexts_trained else exp["contexts"]
     wall_time = override_time if override_time else estimate_infer_time(n_size, exp["head"], ctx_list)
-    stem = _log_stem(exp, "infer", split=split)
+    stem = _log_stem(exp, "infer", split=split, registry=registry)
 
     env_vars = [
         f"TASK={exp['task']}",

@@ -1,0 +1,2 @@
+{"ts":"2026-06-10T15:00:50-07:00","job_id":"43855750","node":"fc10610","status":"STARTED","task":"psqi_binary","head":"lstm","context":"30s","lr":"1e-4","datasets":"mros"}
+{"ts":"2026-06-10T15:05:37-07:00","job_id":"43855750","node":"fc10610","status":"SUCCESS","task":"psqi_binary","head":"lstm","context":"30s","lr":"1e-4","datasets":"mros"}

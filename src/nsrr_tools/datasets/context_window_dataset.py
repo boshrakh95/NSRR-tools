@@ -553,9 +553,17 @@ class ContextWindowDataset(Dataset):
         row = self.df.iloc[row_idx]
 
         npy_path = self.embedding_dir / row["dataset"] / f"{row['subject_id']}.npy"
-        # mmap_mode='r': OS pages in only the slices we access (~6KB per item
-        # for 30s context) instead of loading the full ~5MB file every call.
-        emb = np.load(npy_path, mmap_mode="r")   # (T, 4, 128) float16
+        path_str = str(npy_path)
+
+        # Per-worker mmap cache: reuse the open mmap when consecutive items share
+        # the same subject file. Each DataLoader worker owns its own copy of this
+        # dataset object so no locking is needed. Combined with SubjectGroupedSampler
+        # (which keeps all items from one subject consecutive), this reduces file
+        # opens from O(N_items) to O(N_subjects) per epoch.
+        if getattr(self, "_cached_path", None) != path_str:
+            self._cached_path = path_str
+            self._cached_emb  = np.load(npy_path, mmap_mode="r")  # (T, 4, 128) float16
+        emb = self._cached_emb
         T   = emb.shape[0]
 
         if self.task_type == "seq2seq":
@@ -747,3 +755,43 @@ class ContextWindowDataset(Dataset):
             f"split={self.split}, context={ctx}, "
             f"task_type={self.task_type}, n_items={len(self._index)})"
         )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SubjectGroupedSampler
+# ─────────────────────────────────────────────────────────────────────────────
+
+class SubjectGroupedSampler(torch.utils.data.Sampler):
+    """Yield item indices grouped by subject, with per-epoch subject-order shuffle.
+
+    Items that share a subject (same ``row_idx`` in the dataset's ``_index``) are
+    emitted consecutively. The ORDER of subjects is reshuffled each time
+    ``__iter__`` is called so each epoch sees subjects in a different order.
+
+    Combined with the per-worker mmap cache in ``ContextWindowDataset.__getitem__``,
+    this reduces embedding file opens from O(N_items) to O(N_subjects) per epoch.
+    For 30s staging with 9,420 subjects × 1,152 items/subject that is a ~1,600×
+    reduction — making the data-loading bottleneck negligible vs GPU compute.
+
+    Usage::
+
+        sampler = SubjectGroupedSampler(train_ds._index)
+        loader  = DataLoader(train_ds, batch_size=32, sampler=sampler,
+                             shuffle=False, persistent_workers=True, ...)
+    """
+
+    def __init__(self, index: list, generator=None):
+        from collections import defaultdict
+        groups: dict = defaultdict(list)
+        for item_idx, (row_idx, _, _) in enumerate(index):
+            groups[row_idx].append(item_idx)
+        self._groups = list(groups.values())
+        self._generator = generator
+
+    def __iter__(self):
+        perm = torch.randperm(len(self._groups), generator=self._generator)
+        for g_idx in perm.tolist():
+            yield from self._groups[g_idx]
+
+    def __len__(self) -> int:
+        return sum(len(g) for g in self._groups)
