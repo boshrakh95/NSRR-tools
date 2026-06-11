@@ -1,0 +1,4 @@
+{"ts":"2026-06-10T15:33:48-07:00","job_id":"43855796","node":"fc11004","status":"STARTED","task":"sleepiness_binary","head":"transformer","context":"240m","lr":"1e-4","datasets":"apples shhs mros stages"}
+{"ts":"2026-06-10T21:31:14-07:00","job_id":"43855796","node":"fc11004","status":"TIMEOUT_REQUEUED","task":"sleepiness_binary","head":"transformer","context":"240m","lr":"1e-4","datasets":"apples shhs mros stages"}
+{"ts":"2026-06-10T21:32:35-07:00","job_id":"43891867","node":"fc11011","status":"STARTED","task":"sleepiness_binary","head":"transformer","context":"240m","lr":"1e-4","datasets":"apples shhs mros stages"}
+{"ts":"2026-06-10T22:12:06-07:00","job_id":"43891867","node":"fc11011","status":"SUCCESS","task":"sleepiness_binary","head":"transformer","context":"240m","lr":"1e-4","datasets":"apples shhs mros stages"}

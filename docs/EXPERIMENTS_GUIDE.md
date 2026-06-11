@@ -216,16 +216,60 @@ python scripts/gen_commands.py infer sex_binary_lstm --split val | bash
 python scripts/gen_commands.py infer sleep_staging_lstm | bash
 ```
 
-#### Step 5 — Window Analysis (K-sweep metrics, local, no GPU)
+#### Step 5 — Analysis and Plotting (local, no GPU)
 
+> **Registry rule:** No `--registry` flag = fast-channel; all outputs go to `scratch/psg/…`.
+> Passing `--registry experiments/v2_full_registry.yaml` redirects to `scratch/psg_full/…` — only
+> do that in the full-channel section below.
+
+**Multi-task pipeline (recommended):** runs all 13 steps (window sweep with dense K, collect,
+heatmap, iso-plots, saturation, scaling-laws, calibration, window-position,
+subject-consistency, cohort-saturation, precision-recall, subject-kstar, task-comparison).
+
+Step 1 — Full pipeline, no bootstrap (~10–20 min, gets all plots without CI bands):
 ```bash
-# Sparse K sweep (1,5,10,20,50,all) — generates window_analysis.md and .csv
-python scripts/gen_commands.py analyze sex_binary_lstm --plot | bash
+source /home/boshra95/sleepfm_env/bin/activate
+bash scripts/run_analysis.sh \
+  age_class_lstm age_class_transformer \
+  apnea_binary_lstm apnea_binary_transformer \
+  bmi_binary_lstm bmi_binary_transformer \
+  cvd_binary_lstm cvd_binary_transformer \
+  depression_extreme_binary_lstm \
+  osa_binary_apples_postqc_lstm \
+  psqi_binary_lstm \
+  sex_binary_lstm sex_binary_transformer \
+  sleep_efficiency_binary_lstm sleep_efficiency_binary_transformer \
+  sleepiness_binary_lstm sleepiness_binary_transformer \
+  --heads lstm transformer \
+  2>&1 | tee analysis_run.log
+# No --registry → fast channel (scratch/psg/unified/results/phase0_v3/)
+```
 
-# Dense K sweep (~25 values) — needed for iso-compute heatmap
-python scripts/gen_commands.py analyze sex_binary_lstm --k-dense --bootstrap 1000 | bash
+Step 2 — Add bootstrap CIs to window-sweep plots only (~2–3 hrs, run in tmux).
+Reruns only the analyze step; all other plots (Steps 2–13) are untouched:
+```bash
+bash scripts/run_analysis.sh \
+  age_class_lstm age_class_transformer \
+  apnea_binary_lstm apnea_binary_transformer \
+  bmi_binary_lstm bmi_binary_transformer \
+  cvd_binary_lstm cvd_binary_transformer \
+  depression_extreme_binary_lstm \
+  osa_binary_apples_postqc_lstm \
+  psqi_binary_lstm \
+  sex_binary_lstm sex_binary_transformer \
+  sleep_efficiency_binary_lstm sleep_efficiency_binary_transformer \
+  sleepiness_binary_lstm sleepiness_binary_transformer \
+  --heads lstm transformer \
+  --bootstrap 1000 --analyze-only \
+  2>&1 | tee bootstrap_run.log
+```
 
-# Build heatmap DataFrame (run after dense K sweep)
+**Single experiment / a la carte:**
+```bash
+# Dense K sweep + plots
+python scripts/gen_commands.py analyze sex_binary_lstm --k-dense --plot | bash
+
+# Heatmap DataFrame (after dense K sweep)
 python scripts/gen_commands.py build-heatmap sex_binary_lstm | bash
 
 # Post-hoc threshold tuning (binary tasks only, after val inference)
@@ -235,7 +279,10 @@ python scripts/gen_commands.py threshold-tuning sex_binary_lstm | bash
 Output: `inference/{task}_{head}/window_analysis_{split}.csv`, `window_analysis.md`,
 `heatmap_df_{split}.csv`, `threshold_tuning.csv`.
 
-#### Step 6 — Plotting (local, no GPU)
+#### Step 6 — Plotting (a la carte, local, no GPU)
+
+`run_analysis.sh` Step 1 above runs all plots automatically. Use individual commands below only
+to re-run a specific plot type.
 
 ```bash
 # Iso-compute plots (7 plots per task/head/metric combination)
@@ -243,11 +290,11 @@ python scripts/gen_commands.py iso-plots sex_binary_lstm | bash
 
 # Saturation curve: AUROC vs context length, one line per head
 python scripts/gen_commands.py saturation sex_binary \
-    --heads lstm transformer mean_pool | bash
+    --heads lstm transformer | bash
 
 # Extended analyses (require collect to be run first)
-python scripts/gen_commands.py collect sex_binary_lstm sex_binary_transformer sex_binary_mean_pool
-python scripts/gen_commands.py scaling-laws sex_binary --heads lstm transformer mean_pool | bash
+python scripts/gen_commands.py collect sex_binary_lstm sex_binary_transformer | bash
+python scripts/gen_commands.py scaling-laws sex_binary --heads lstm transformer | bash
 python scripts/gen_commands.py task-comparison --head lstm | bash
 python scripts/gen_commands.py calibration sex_binary_lstm | bash
 ```
@@ -446,24 +493,72 @@ python scripts/gen_commands.py $REG infer sleep_staging_lstm | bash
 python scripts/gen_commands.py $REG infer sex_binary_lstm --split val | bash
 ```
 
-#### Step 5 — Window Analysis (local, no GPU)
+#### Step 5 — Analysis and Plotting (local, no GPU)
 
+**Multi-task pipeline (recommended):** runs all 13 steps. Always pass
+`--registry experiments/v2_full_registry.yaml` — outputs go to `scratch/psg_full/…`.
+
+Step 1 — Full pipeline, no bootstrap (~10–20 min, gets all plots without CI bands):
+```bash
+source /home/boshra95/sleepfm_env/bin/activate
+bash scripts/run_analysis.sh \
+  age_class_lstm age_class_transformer \
+  apnea_binary_lstm apnea_binary_transformer \
+  bmi_binary_lstm bmi_binary_transformer \
+  cvd_binary_lstm cvd_binary_transformer \
+  depression_extreme_binary_lstm \
+  osa_binary_apples_postqc_lstm \
+  psqi_binary_lstm \
+  sex_binary_lstm sex_binary_transformer \
+  sleep_efficiency_binary_lstm sleep_efficiency_binary_transformer \
+  sleepiness_binary_lstm sleepiness_binary_transformer \
+  --registry experiments/v2_full_registry.yaml \
+  --heads lstm transformer \
+  2>&1 | tee analysis_full_run.log
+# --registry → full channel (scratch/psg_full/unified/results/phase0_v3_full/)
+```
+
+Step 2 — Add bootstrap CIs to window-sweep plots only (~2–3 hrs, run in tmux).
+Reruns only the analyze step; all other plots (Steps 2–13) are untouched:
+```bash
+bash scripts/run_analysis.sh \
+  age_class_lstm age_class_transformer \
+  apnea_binary_lstm apnea_binary_transformer \
+  bmi_binary_lstm bmi_binary_transformer \
+  cvd_binary_lstm cvd_binary_transformer \
+  depression_extreme_binary_lstm \
+  osa_binary_apples_postqc_lstm \
+  psqi_binary_lstm \
+  sex_binary_lstm sex_binary_transformer \
+  sleep_efficiency_binary_lstm sleep_efficiency_binary_transformer \
+  sleepiness_binary_lstm sleepiness_binary_transformer \
+  --registry experiments/v2_full_registry.yaml \
+  --heads lstm transformer \
+  --bootstrap 1000 --analyze-only \
+  2>&1 | tee bootstrap_full_run.log
+```
+
+**Single experiment / a la carte:**
 ```bash
 REG="--registry experiments/v2_full_registry.yaml"
 
-# Sparse K sweep + threshold tuning (binary tasks)
-python scripts/gen_commands.py $REG analyze sex_binary_lstm --plot | bash
-python scripts/gen_commands.py $REG threshold-tuning sex_binary_lstm | bash
+# Dense K sweep + plots
+python scripts/gen_commands.py $REG analyze sex_binary_lstm --k-dense --plot | bash
 
-# Dense K sweep for iso-compute (with bootstrap CIs)
-python scripts/gen_commands.py $REG analyze sex_binary_lstm --k-dense --bootstrap 1000 | bash
+# Heatmap DataFrame (after dense K sweep)
 python scripts/gen_commands.py $REG build-heatmap sex_binary_lstm | bash
+
+# Post-hoc threshold tuning (binary tasks only, after val inference)
+python scripts/gen_commands.py $REG threshold-tuning sex_binary_lstm | bash
 ```
 
 Output: `inference/{task}_{head}/window_analysis_{split}.csv`, `heatmap_df_{split}.csv`,
 `threshold_tuning.csv`.
 
-#### Step 6 — Plotting (local, no GPU)
+#### Step 6 — Plotting (a la carte, local, no GPU)
+
+`run_analysis.sh` Step 1 above runs all plots automatically. Use individual commands below only
+to re-run a specific plot type.
 
 ```bash
 REG="--registry experiments/v2_full_registry.yaml"
@@ -473,15 +568,15 @@ python scripts/gen_commands.py $REG iso-plots sex_binary_lstm | bash
 
 # Saturation curve: AUROC vs context length, one line per head
 python scripts/gen_commands.py $REG saturation sex_binary \
-    --heads lstm transformer mean_pool | bash
+    --heads lstm transformer | bash
 
 # Sleep staging saturation (kappa vs context)
 python scripts/gen_commands.py $REG saturation sleep_staging \
-    --heads lstm transformer mean_pool | bash
+    --heads lstm transformer | bash
 
 # Extended analyses
-python scripts/gen_commands.py $REG collect sex_binary_lstm sex_binary_transformer sex_binary_mean_pool | bash
-python scripts/gen_commands.py $REG scaling-laws sex_binary --heads lstm transformer mean_pool | bash
+python scripts/gen_commands.py $REG collect sex_binary_lstm sex_binary_transformer | bash
+python scripts/gen_commands.py $REG scaling-laws sex_binary --heads lstm transformer | bash
 python scripts/gen_commands.py $REG task-comparison --head lstm | bash
 ```
 
