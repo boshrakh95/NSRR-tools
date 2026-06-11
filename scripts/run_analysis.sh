@@ -12,6 +12,8 @@
 #   --bootstrap N     Bootstrap resamples for CIs in analyze step (default: 0 = off)
 #   --split test|val  Evaluation split (default: test)
 #   --heads h1 h2...  Heads for saturation/scaling-laws (default: lstm transformer mean_pool)
+#   --registry PATH   Registry YAML (default: experiments/v2_registry.yaml)
+#                     Use experiments/v2_full_registry.yaml for full-channel (psg_full) results
 #   --dry-run         Print commands without running them
 #
 # Pipeline executed (in order):
@@ -44,6 +46,7 @@ GEN="python scripts/gen_commands.py"
 BOOTSTRAP=0
 SPLIT=test
 HEADS=()
+REGISTRY=""
 DRY_RUN=false
 SKIP_ANALYZE=false
 ANALYZE_ONLY=false
@@ -61,6 +64,8 @@ while [[ $# -gt 0 ]]; do
             SKIP_ANALYZE=true; shift ;;
         --analyze-only)
             ANALYZE_ONLY=true; shift ;;
+        --registry)
+            REGISTRY="$2"; shift 2 ;;
         --heads)
             shift
             while [[ $# -gt 0 && "${1:0:2}" != "--" ]]; do
@@ -82,6 +87,7 @@ if [[ ${#EXP_IDS[@]} -eq 0 ]]; then
 fi
 
 [[ ${#HEADS[@]} -eq 0 ]] && HEADS=(lstm transformer mean_pool)
+[[ -n "$REGISTRY" ]] && GEN="$GEN --registry $REGISTRY"
 
 # Derive unique tasks by stripping the head suffix (handles optional run_tag after head)
 declare -A _TASK_SEEN
@@ -117,7 +123,8 @@ echo "============================================================"
 echo "  Post-inference analysis pipeline"
 echo "  EXP_IDS : ${EXP_IDS[*]}"
 echo "  TASKS   : ${TASKS[*]}"
-echo "  SPLIT   : $SPLIT   BOOTSTRAP: $BOOTSTRAP   HEADS: ${HEADS[*]}"
+echo "  SPLIT   : $SPLIT   BOOTSTRAP: $BOOTSTRAP   HEADS: ${HEADS[*]}
+  REGISTRY: ${REGISTRY:-experiments/v2_registry.yaml (default)}"
 $DRY_RUN && echo "  MODE    : DRY-RUN"
 echo "============================================================"
 

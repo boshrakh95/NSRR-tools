@@ -247,7 +247,8 @@ def _log_stem(exp: dict, step: str, context: str = "", split: str = "",
     """
     tag = exp.get("run_tag", "")
     tag_part = f"_{tag}" if tag else ""
-    arch_part = f"_{_cfg_arch_tag(exp, registry)}" if registry else ""
+    arch_tag  = _cfg_arch_tag(exp, registry) if registry else ""
+    arch_part = f"_{arch_tag}" if arch_tag else ""
     ctx_part = f"_{context}" if context else ""
     split_part = f"_{split}" if split else ""
     lr_part = f"_lr{format_lr(exp['lr'])}" if step == "train" else ""

@@ -1,0 +1,2 @@
+{"ts":"2026-06-10T15:20:35-07:00","job_id":"43855781","node":"fc10712","status":"STARTED","task":"cvd_binary","head":"transformer","context":"40m","lr":"1e-4","datasets":"shhs mros"}
+{"ts":"2026-06-10T16:24:25-07:00","job_id":"43855781","node":"fc10712","status":"SUCCESS","task":"cvd_binary","head":"transformer","context":"40m","lr":"1e-4","datasets":"shhs mros"}

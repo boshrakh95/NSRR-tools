@@ -1,0 +1,2 @@
+{"ts":"2026-06-10T15:37:03-07:00","job_id":"43859683","node":"fc10915","status":"STARTED","task":"sleep_efficiency_binary","head":"lstm","contexts":"30s 10m 40m 80m 120m 240m","split":"test","datasets":"apples shhs mros"}
+{"ts":"2026-06-10T15:41:00-07:00","job_id":"43859683","node":"fc10915","status":"SUCCESS","task":"sleep_efficiency_binary","head":"lstm","contexts":"30s 10m 40m 80m 120m 240m","split":"test","datasets":"apples shhs mros"}

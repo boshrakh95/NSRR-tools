@@ -1,0 +1,4 @@
+{"ts":"2026-06-10T15:13:59-07:00","job_id":"43855646","node":"fc10901","status":"STARTED","task":"apnea_binary","head":"transformer","context":"240m","lr":"1e-4","datasets":"apples shhs mros stages"}
+{"ts":"2026-06-10T21:11:43-07:00","job_id":"43855646","node":"fc10901","status":"TIMEOUT_REQUEUED","task":"apnea_binary","head":"transformer","context":"240m","lr":"1e-4","datasets":"apples shhs mros stages"}
+{"ts":"2026-06-10T21:13:55-07:00","job_id":"43890351","node":"fc11007","status":"STARTED","task":"apnea_binary","head":"transformer","context":"240m","lr":"1e-4","datasets":"apples shhs mros stages"}
+{"ts":"2026-06-10T22:26:40-07:00","job_id":"43890351","node":"fc11007","status":"SUCCESS","task":"apnea_binary","head":"transformer","context":"240m","lr":"1e-4","datasets":"apples shhs mros stages"}
