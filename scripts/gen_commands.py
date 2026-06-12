@@ -998,6 +998,110 @@ def build_subject_kstar_cmd(exp: dict, registry: dict, split: str = "test",
     return " ".join(cmd_parts)
 
 
+# ── Paper table build functions ───────────────────────────────────────────────
+
+def _table_collected_dir(registry: dict) -> str:
+    results_dir = Path(registry["results_dir"])
+    repo_root   = Path(__file__).parent.parent / "results" / "collected"
+    return str(repo_root / results_dir.name)
+
+
+def _channel_label(registry: dict) -> str:
+    name = Path(registry["results_dir"]).name
+    if name.endswith("_full"):
+        return "full"
+    return "fast"
+
+
+def build_table1_cmd(registry: dict, tasks: list = None, heads: list = None,
+                     k_deploy: int = 5, split: str = "test") -> str:
+    python  = registry.get("python_bin", "/home/boshra95/sleepfm_env/bin/python")
+    cdir    = _table_collected_dir(registry)
+    channel = _channel_label(registry)
+    cmd = (f"{python} scripts/make_table1_peak_auroc.py"
+           f" --collected-dir {cdir} --channel {channel}"
+           f" --split {split} --k-deploy {k_deploy}")
+    if tasks:  cmd += f" --tasks {' '.join(tasks)}"
+    if heads:  cmd += f" --heads {' '.join(heads)}"
+    return cmd
+
+
+def build_table2_cmd(registry: dict, tasks: list = None, heads: list = None,
+                     split: str = "test", tolerance: float = 0.005) -> str:
+    python  = registry.get("python_bin", "/home/boshra95/sleepfm_env/bin/python")
+    cdir    = _table_collected_dir(registry)
+    channel = _channel_label(registry)
+    cmd = (f"{python} scripts/make_table2_lstar.py"
+           f" --collected-dir {cdir} --channel {channel}"
+           f" --split {split} --tolerance {tolerance}")
+    if tasks:  cmd += f" --tasks {' '.join(tasks)}"
+    if heads:  cmd += f" --heads {' '.join(heads)}"
+    return cmd
+
+
+def build_table3_cmd(exp_id: str, registry: dict,
+                     split: str = "test", k_values: list = None) -> str:
+    python  = registry.get("python_bin", "/home/boshra95/sleepfm_env/bin/python")
+    cdir    = _table_collected_dir(registry)
+    channel = _channel_label(registry)
+    cmd = (f"{python} scripts/make_table3_kgrid.py {exp_id}"
+           f" --collected-dir {cdir} --channel {channel} --split {split}")
+    if k_values:
+        cmd += f" --k-values {' '.join(str(k) for k in k_values)}"
+    return cmd
+
+
+def build_table4_cmd(registry: dict, tasks: list = None, head: str = "lstm",
+                     split: str = "test") -> str:
+    python  = registry.get("python_bin", "/home/boshra95/sleepfm_env/bin/python")
+    cdir    = _table_collected_dir(registry)
+    channel = _channel_label(registry)
+    cmd = (f"{python} scripts/make_table4_sensitivity.py"
+           f" --collected-dir {cdir} --channel {channel}"
+           f" --head {head} --split {split}")
+    if tasks:  cmd += f" --tasks {' '.join(tasks)}"
+    return cmd
+
+
+def build_table5_cmd(registry: dict, tasks: list = None, heads: list = None,
+                     k_deploy: int = 5, split: str = "test") -> str:
+    python  = registry.get("python_bin", "/home/boshra95/sleepfm_env/bin/python")
+    cdir    = _table_collected_dir(registry)
+    channel = _channel_label(registry)
+    heads   = heads or ["lstm", "transformer", "mean_pool"]
+    cmd = (f"{python} scripts/make_table5_heads.py"
+           f" --collected-dir {cdir} --channel {channel}"
+           f" --heads {' '.join(heads)} --split {split} --k-deploy {k_deploy}")
+    if tasks:  cmd += f" --tasks {' '.join(tasks)}"
+    return cmd
+
+
+def build_table9_cmd(exp_id: str, registry: dict,
+                     split: str = "test", datasets: list = None) -> str:
+    python      = registry.get("python_bin", "/home/boshra95/sleepfm_env/bin/python")
+    results_dir = Path(registry["results_dir"])
+    cdir        = _table_collected_dir(registry)
+    channel     = _channel_label(registry)
+    cmd = (f"{python} scripts/make_table9_cohort.py {exp_id}"
+           f" --results-dir {results_dir}"
+           f" --collected-dir {cdir} --channel {channel} --split {split}")
+    if datasets:  cmd += f" --datasets {' '.join(datasets)}"
+    return cmd
+
+
+def build_table10_cmd(registry: dict, tasks: list = None, heads: list = None,
+                      k_deploy: int = 5, split: str = "test") -> str:
+    python  = registry.get("python_bin", "/home/boshra95/sleepfm_env/bin/python")
+    cdir    = _table_collected_dir(registry)
+    channel = _channel_label(registry)
+    cmd = (f"{python} scripts/make_table10_ci.py"
+           f" --collected-dir {cdir} --channel {channel}"
+           f" --split {split} --k-deploy {k_deploy}")
+    if tasks:  cmd += f" --tasks {' '.join(tasks)}"
+    if heads:  cmd += f" --heads {' '.join(heads)}"
+    return cmd
+
+
 # ── Extended analysis handlers ─────────────────────────────────────────────────
 
 def cmd_collect(args, registry):
@@ -1131,6 +1235,96 @@ def cmd_subject_kstar(args, registry):
     print("# Prerequisite: inference parquets must exist")
     print()
     print(build_subject_kstar_cmd(exp, registry, split, k_max, reps, plots))
+
+
+# ── Paper table handlers ──────────────────────────────────────────────────────
+
+def cmd_table1(args, registry):
+    cdir    = _table_collected_dir(registry)
+    channel = _channel_label(registry)
+    tasks   = getattr(args, "tasks", None) or None
+    heads   = getattr(args, "heads", None)
+    k_deploy = getattr(args, "k_deploy", 5)
+    split   = getattr(args, "split", "test")
+    print(f"# Table 1 — Peak AUROC (channel: {channel})")
+    print(f"# Reads: {cdir}/analysis.csv  →  results/tables/table1_peak_auroc_{channel}.{{csv,md,tex}}")
+    print()
+    print(build_table1_cmd(registry, tasks, heads, k_deploy, split))
+
+
+def cmd_table2(args, registry):
+    cdir    = _table_collected_dir(registry)
+    channel = _channel_label(registry)
+    tasks   = getattr(args, "tasks", None) or None
+    heads   = getattr(args, "heads", None)
+    split   = getattr(args, "split", "test")
+    tol     = getattr(args, "tolerance", 0.005)
+    print(f"# Table 2 — Saturation L* (channel: {channel})")
+    print(f"# Reads: {cdir}/analysis.csv  →  results/tables/table2_lstar_{channel}.{{csv,md,tex}}")
+    print()
+    print(build_table2_cmd(registry, tasks, heads, split, tol))
+
+
+def cmd_table3(args, registry):
+    cdir    = _table_collected_dir(registry)
+    channel = _channel_label(registry)
+    k_values = getattr(args, "k_values", None)
+    split   = getattr(args, "split", "test")
+    print(f"# Table 3 — AUROC×K grid for {args.exp_id} (channel: {channel})")
+    print(f"# Reads: {cdir}/analysis.csv  →  results/tables/table3_kgrid_{args.exp_id}_{channel}.{{csv,md,tex}}")
+    print()
+    print(build_table3_cmd(args.exp_id, registry, split, k_values))
+
+
+def cmd_table4(args, registry):
+    cdir    = _table_collected_dir(registry)
+    channel = _channel_label(registry)
+    tasks   = getattr(args, "tasks", None) or None
+    head    = getattr(args, "head", "lstm")
+    split   = getattr(args, "split", "test")
+    print(f"# Table 4 — Context sensitivity ranking (head: {head}, channel: {channel})")
+    print(f"# Reads: {cdir}/analysis.csv  →  results/tables/table4_sensitivity_{channel}_{head}.{{csv,md,tex}}")
+    print()
+    print(build_table4_cmd(registry, tasks, head, split))
+
+
+def cmd_table5(args, registry):
+    cdir    = _table_collected_dir(registry)
+    channel = _channel_label(registry)
+    tasks   = getattr(args, "tasks", None) or None
+    heads   = getattr(args, "heads", None)
+    k_deploy = getattr(args, "k_deploy", 5)
+    split   = getattr(args, "split", "test")
+    print(f"# Table 5 — Head comparison at L* (channel: {channel})")
+    print(f"# Reads: {cdir}/analysis.csv  →  results/tables/table5_heads_{channel}.{{csv,md,tex}}")
+    print()
+    print(build_table5_cmd(registry, tasks, heads, k_deploy, split))
+
+
+def cmd_table9(args, registry):
+    cdir    = _table_collected_dir(registry)
+    channel = _channel_label(registry)
+    datasets = getattr(args, "datasets", None)
+    split   = getattr(args, "split", "test")
+    print(f"# Table 9 — Cohort breakdown for {args.exp_id} (channel: {channel})")
+    print(f"# Reads: inference parquets from {registry['results_dir']}")
+    print(f"# Output → results/tables/table9_cohort_{args.exp_id}_{channel}.{{csv,md,tex}}")
+    print()
+    print(build_table9_cmd(args.exp_id, registry, split, datasets))
+
+
+def cmd_table10(args, registry):
+    cdir    = _table_collected_dir(registry)
+    channel = _channel_label(registry)
+    tasks   = getattr(args, "tasks", None) or None
+    heads   = getattr(args, "heads", None)
+    k_deploy = getattr(args, "k_deploy", 5)
+    split   = getattr(args, "split", "test")
+    print(f"# Table 10 — Bootstrap CI summary (channel: {channel})")
+    print(f"# Reads: {cdir}/analysis.csv (requires CI columns — run 'analyze --bootstrap N' first)")
+    print(f"# Output → results/tables/table10_ci_{channel}.{{csv,md,tex}}")
+    print()
+    print(build_table10_cmd(registry, tasks, heads, k_deploy, split))
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
@@ -1277,6 +1471,54 @@ def main():
                       help="Random draws per (subject, k) (default: 20)")
     p_ks.add_argument("--plots", nargs="+", default=["9A", "9B"])
 
+    # ── Paper table subcommands ────────────────────────────────────────────────
+
+    p_t1 = sub.add_parser("table-1",
+                           help="Print make_table1_peak_auroc.py command (peak AUROC per task)")
+    p_t1.add_argument("--tasks",    nargs="+", default=None)
+    p_t1.add_argument("--heads",    nargs="+", default=None)
+    p_t1.add_argument("--k-deploy", type=int,  default=5, dest="k_deploy")
+    p_t1.add_argument("--split",    default="test")
+
+    p_t2 = sub.add_parser("table-2",
+                           help="Print make_table2_lstar.py command (saturation L* per task)")
+    p_t2.add_argument("--tasks",     nargs="+", default=None)
+    p_t2.add_argument("--heads",     nargs="+", default=None)
+    p_t2.add_argument("--tolerance", type=float, default=0.005)
+    p_t2.add_argument("--split",     default="test")
+
+    p_t3 = sub.add_parser("table-3",
+                           help="Print make_table3_kgrid.py command (AUROC×K grid for one exp)")
+    p_t3.add_argument("exp_id", help="Experiment ID, e.g. sex_binary_lstm")
+    p_t3.add_argument("--k-values", nargs="+", default=None, dest="k_values")
+    p_t3.add_argument("--split",    default="test")
+
+    p_t4 = sub.add_parser("table-4",
+                           help="Print make_table4_sensitivity.py command (cross-task sensitivity)")
+    p_t4.add_argument("--tasks", nargs="+", default=None)
+    p_t4.add_argument("--head",  default="lstm")
+    p_t4.add_argument("--split", default="test")
+
+    p_t5 = sub.add_parser("table-5",
+                           help="Print make_table5_heads.py command (head comparison at L*)")
+    p_t5.add_argument("--tasks",    nargs="+", default=None)
+    p_t5.add_argument("--heads",    nargs="+", default=None)
+    p_t5.add_argument("--k-deploy", type=int,  default=5, dest="k_deploy")
+    p_t5.add_argument("--split",    default="test")
+
+    p_t9 = sub.add_parser("table-9",
+                           help="Print make_table9_cohort.py command (cohort AUROC breakdown)")
+    p_t9.add_argument("exp_id", help="Experiment ID, e.g. sex_binary_lstm")
+    p_t9.add_argument("--datasets", nargs="+", default=None)
+    p_t9.add_argument("--split",    default="test")
+
+    p_t10 = sub.add_parser("table-10",
+                            help="Print make_table10_ci.py command (bootstrap CI summary)")
+    p_t10.add_argument("--tasks",    nargs="+", default=None)
+    p_t10.add_argument("--heads",    nargs="+", default=None)
+    p_t10.add_argument("--k-deploy", type=int,  default=5, dest="k_deploy")
+    p_t10.add_argument("--split",    default="test")
+
     p_tt = sub.add_parser("threshold-tuning",
                           help="Print apply_threshold_tuning.py command for a binary experiment")
     p_tt.add_argument("exp_id", help="Experiment ID, e.g. bmi_binary_lstm")
@@ -1313,6 +1555,13 @@ def main():
         "precision-recall":     cmd_precision_recall,
         "subject-kstar":        cmd_subject_kstar,
         "threshold-tuning":     cmd_threshold_tuning,
+        "table-1":              cmd_table1,
+        "table-2":              cmd_table2,
+        "table-3":              cmd_table3,
+        "table-4":              cmd_table4,
+        "table-5":              cmd_table5,
+        "table-9":              cmd_table9,
+        "table-10":             cmd_table10,
         "status":               cmd_status,
         "runs":                 cmd_runs,
     }

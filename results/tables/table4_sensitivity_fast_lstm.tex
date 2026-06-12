@@ -1,0 +1,14 @@
+\begin{table}[ht]
+\centering
+\caption{Cross-task context sensitivity (head: lstm, channel: fast). Sensitivity = AUROC(best\_L, K=all) − AUROC(30s, K=all). Tasks sorted by sensitivity descending. Difficulty = 1 − AUROC@30s (room for improvement from baseline).}
+\label{tab:sensitivity_fast_lstm}
+\begin{tabular}{lrrrrrr}
+\toprule
+Task & AUROC@30s & AUROC@best_L & Best_L & L* & Sensitivity (Δ) & Difficulty \\
+\midrule
+Sleep apnea (AHI≥15) & 0.758 & 0.832 & 120m & 120m & +0.074 & 0.242 \\
+Sex & 0.825 & 0.872 & 120m & 80m & +0.047 & 0.175 \\
+BMI (obese) & 0.760 & 0.767 & 80m & 10m & +0.006 & 0.240 \\
+\bottomrule
+\end{tabular}
+\end{table}

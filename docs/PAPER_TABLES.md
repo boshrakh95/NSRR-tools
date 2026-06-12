@@ -281,3 +281,218 @@ Reviewers at medical AI venues expect CI on AUROC estimates. With 200–500 test
 - **Protocol caveat for Table 7:** Always include a footnote: "Our results use a frozen SleepFM backbone and lightweight task head. Comparison models fine-tune the full pre-trained encoder. Direct AUROC comparison is approximate."
 - **Channel note for Tables 1–5:** State whether results are fast-channel (7 channels) or full-channel (~23 channels). Fast-channel results are the primary reported numbers; full-channel results are reported as an extension.
 - **N_test consistency:** The same test subjects must be used across all context lengths per task. Document any N differences due to the `complete_only` window policy in staging.
+
+---
+
+## How to Generate Tables
+
+### Prerequisites
+
+All table scripts (except Table 9) read from the collected `analysis.csv`. Run these before generating tables:
+
+```bash
+# Step 1: window analysis with dense K and bootstrap CIs (if not done)
+bash scripts/run_analysis.sh sex_binary_lstm bmi_binary_lstm ... --bootstrap 1000
+
+# Step 2: collect results into analysis.csv
+python scripts/gen_commands.py collect sex_binary_lstm bmi_binary_lstm ... | bash
+```
+
+Table 9 additionally reads parquet files from scratch — no extra setup needed beyond running inference.
+
+### Individual table scripts
+
+Each script writes `results/tables/<stem>.{csv,md,tex}` and prints the table to stdout.
+
+**Table 1 — Peak AUROC:**
+```bash
+# Fast channel, all tasks
+python scripts/make_table1_peak_auroc.py
+
+# Specific tasks only
+python scripts/make_table1_peak_auroc.py --tasks sex_binary bmi_binary apnea_binary
+
+# Full channel
+python scripts/make_table1_peak_auroc.py \
+    --collected-dir results/collected/phase0_v3_full --channel full
+
+# With LaTeX output
+python scripts/make_table1_peak_auroc.py --latex
+```
+
+**Table 2 — Saturation L\*:**
+```bash
+python scripts/make_table2_lstar.py
+python scripts/make_table2_lstar.py --tolerance 0.01   # looser L* criterion
+python scripts/make_table2_lstar.py --tasks sex_binary apnea_binary --latex
+```
+
+**Table 3 — AUROC×K grid (one experiment at a time):**
+```bash
+python scripts/make_table3_kgrid.py sex_binary_lstm
+python scripts/make_table3_kgrid.py sex_binary_lstm --k-values 1 5 10 20 all
+python scripts/make_table3_kgrid.py bmi_binary_transformer --latex
+```
+
+**Table 4 — Cross-task sensitivity:**
+```bash
+python scripts/make_table4_sensitivity.py
+python scripts/make_table4_sensitivity.py --head lstm
+python scripts/make_table4_sensitivity.py --tasks sex_binary bmi_binary apnea_binary --latex
+```
+
+**Table 5 — Head comparison at L\*:**
+```bash
+python scripts/make_table5_heads.py
+python scripts/make_table5_heads.py --heads lstm transformer   # skip mean_pool if not run
+python scripts/make_table5_heads.py --tasks sex_binary apnea_binary --latex
+```
+
+**Table 9 — Cohort breakdown (one experiment at a time):**
+```bash
+python scripts/make_table9_cohort.py sex_binary_lstm
+python scripts/make_table9_cohort.py sex_binary_lstm --context 40m   # force a specific context
+python scripts/make_table9_cohort.py bmi_binary_lstm --datasets apples shhs mros
+# For full channel (parquets on psg_full):
+python scripts/make_table9_cohort.py sex_binary_lstm \
+    --results-dir /scratch/boshra95/psg_full/unified/results/phase0_v3_full \
+    --collected-dir results/collected/phase0_v3_full --channel full
+```
+
+**Table 10 — Bootstrap CI summary:**
+```bash
+python scripts/make_table10_ci.py
+python scripts/make_table10_ci.py --tasks sex_binary bmi_binary apnea_binary
+python scripts/make_table10_ci.py --latex
+# Note: if CI columns are absent, AUROC is shown without CI — run analyze --bootstrap 1000 first
+```
+
+### Via gen_commands.py
+
+All table scripts are wired into `gen_commands.py` and auto-derive paths from the registry:
+
+```bash
+# Print the command (then pipe to bash, or copy-paste)
+python scripts/gen_commands.py table-1
+python scripts/gen_commands.py table-2
+python scripts/gen_commands.py table-3 sex_binary_lstm
+python scripts/gen_commands.py table-4
+python scripts/gen_commands.py table-5
+python scripts/gen_commands.py table-9 sex_binary_lstm
+python scripts/gen_commands.py table-10
+
+# Full channel (auto-routes to phase0_v3_full collected dir)
+python scripts/gen_commands.py --registry experiments/v2_full_registry.yaml table-1
+
+# With task subset
+python scripts/gen_commands.py table-1 --tasks sex_binary bmi_binary apnea_binary
+
+# Execute directly
+python scripts/gen_commands.py table-1 | bash
+```
+
+---
+
+## gen_tables.sh — All Tables in One Script
+
+`scripts/gen_tables.sh` runs all available table scripts sequentially. It mirrors the structure of `run_analysis.sh`.
+
+### Single experiment (Tables 3 and 9 use the exp_id; Tables 1,2,4,5,10 use all tasks):
+```bash
+bash scripts/gen_tables.sh sex_binary_lstm
+```
+
+### Multiple experiments, restrict multi-task tables to specific tasks:
+```bash
+bash scripts/gen_tables.sh sex_binary_lstm sex_binary_transformer bmi_binary_lstm \
+    --tasks sex_binary bmi_binary
+```
+
+### Select which tables to generate:
+```bash
+# Only K grid and cohort tables
+bash scripts/gen_tables.sh sex_binary_lstm bmi_binary_lstm --tables 3 9
+
+# Only multi-task tables (no exp-specific ones)
+bash scripts/gen_tables.sh --tables 1 2 4 5 10
+```
+
+### Full channel:
+```bash
+bash scripts/gen_tables.sh sex_binary_lstm bmi_binary_lstm \
+    --registry experiments/v2_full_registry.yaml
+```
+
+### Dry run (print commands without executing):
+```bash
+bash scripts/gen_tables.sh sex_binary_lstm bmi_binary_lstm apnea_binary_lstm --dry-run
+```
+
+---
+
+## Loop Recipe — Run Tables for Multiple Tasks
+
+To generate per-experiment tables (3 and 9) for every task, loop over tasks and call gen_tables.sh with the lstm experiment per task:
+
+```bash
+TASKS=(sex_binary bmi_binary apnea_binary age_class sleep_efficiency_binary
+       cvd_binary sleepiness_binary depression_extreme_binary
+       osa_binary_apples_postqc psqi_binary)
+
+for TASK in "${TASKS[@]}"; do
+    echo "=== $TASK ==="
+    bash scripts/gen_tables.sh "${TASK}_lstm" \
+        --tasks "$TASK" \
+        --tables 3 9
+done
+```
+
+To regenerate all multi-task tables once and then loop for per-task tables:
+
+```bash
+# Step 1: multi-task tables (run once, uses all tasks)
+bash scripts/gen_tables.sh --tables 1 2 4 5 10
+
+# Step 2: per-task tables (loop over each experiment)
+for EXP in sex_binary_lstm sex_binary_transformer bmi_binary_lstm bmi_binary_transformer \
+           apnea_binary_lstm apnea_binary_transformer age_class_lstm age_class_transformer \
+           sleep_efficiency_binary_lstm sleep_efficiency_binary_transformer \
+           cvd_binary_lstm sleepiness_binary_lstm depression_extreme_binary_lstm \
+           osa_binary_apples_postqc_lstm psqi_binary_lstm; do
+    bash scripts/gen_tables.sh "$EXP" --tables 3 9
+done
+```
+
+To generate all tables for both fast and full channels:
+
+```bash
+for REGISTRY in experiments/v2_registry.yaml experiments/v2_full_registry.yaml; do
+    bash scripts/gen_tables.sh sex_binary_lstm bmi_binary_lstm apnea_binary_lstm \
+        --registry "$REGISTRY" \
+        --tables 1 2 4 5 10
+done
+```
+
+---
+
+## Output Files
+
+All table scripts write to `results/tables/` (committed to the repo):
+
+```
+results/tables/
+  table1_peak_auroc_fast.csv     ← machine-readable
+  table1_peak_auroc_fast.md      ← GitHub-renderable markdown
+  table1_peak_auroc_fast.tex     ← LaTeX (booktabs)
+  table1_peak_auroc_full.csv     ← full-channel version
+  ...
+  table2_lstar_fast.{csv,md,tex}
+  table3_kgrid_sex_binary_lstm_fast.{csv,md,tex}
+  table3_kgrid_bmi_binary_lstm_fast.{csv,md,tex}
+  table4_sensitivity_fast_lstm.{csv,md,tex}
+  table5_heads_fast.{csv,md,tex}
+  table9_cohort_sex_binary_lstm_fast.{csv,md,tex}
+  table10_ci_fast.{csv,md,tex}
+```
+
+**Quick view in VSCode:** Open any `.md` file and press `Ctrl+Shift+V` (or `Cmd+Shift+V` on Mac) to preview the rendered table.
