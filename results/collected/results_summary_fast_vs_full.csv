@@ -1,0 +1,18 @@
+task,head,task,head,fast_n,fast_auroc_k5,fast_ctx_k5,fast_auroc_kall,fast_ctx_kall,full_n,full_auroc_k5,full_ctx_k5,full_auroc_kall,full_ctx_kall
+Sex,lstm,Sex,lstm,1430,0.8725,120m,0.8725,120m,1430,0.8943,40m,0.9056,40m
+Sex,transformer,Sex,transformer,1430,0.9052,120m,0.9103,240m,1430,0.929,120m,0.9292,120m
+Age group,lstm,Age group,lstm,1859,0.8931,120m,0.8933,120m,1859,0.9006,80m,0.9013,80m
+Age group,transformer,Age group,transformer,1859,0.9016,120m,0.905,240m,1859,0.9084,120m,0.9111,240m
+BMI (obese),lstm,BMI (obese),lstm,1856,0.7625,80m,0.7666,80m,1856,0.801,80m,0.8024,240m
+BMI (obese),transformer,BMI (obese),transformer,1856,0.7674,80m,0.7769,240m,1856,0.8121,120m,0.8156,240m
+Sleep apnea (AHI≥15),lstm,Sleep apnea (AHI≥15),lstm,2054,0.8309,120m,0.8318,120m,2054,0.8738,120m,0.8742,120m
+Sleep apnea (AHI≥15),transformer,Sleep apnea (AHI≥15),transformer,2054,0.8561,120m,0.8569,120m,2054,0.8997,120m,0.9009,240m
+Sleep efficiency,lstm,Sleep efficiency,lstm,2023,0.7879,240m,0.7879,240m,2020,0.8096,240m,0.8096,240m
+Sleep efficiency,transformer,Sleep efficiency,transformer,2023,0.8314,240m,0.8314,240m,2020,0.8253,240m,0.8253,240m
+CVD history,lstm,CVD history,lstm,1742,0.6869,240m,0.6883,10m,1742,0.6927,10m,0.6997,10m
+CVD history,transformer,CVD history,transformer,1742,0.6896,120m,0.6895,120m,1742,0.7019,80m,0.7029,80m
+Daytime sleepiness,lstm,Daytime sleepiness,lstm,2174,0.6214,80m,0.6283,30s,2173,0.616,80m,0.6164,80m
+Daytime sleepiness,transformer,Daytime sleepiness,transformer,2174,0.6264,40m,0.6268,40m,2173,0.6209,80m,0.6231,10m
+Depression (extreme),lstm,Depression (extreme),lstm,229,0.7764,10m,0.7699,10m,229,0.755,30s,0.7524,120m
+OSA (APPLES),lstm,OSA (APPLES),lstm,161,0.8231,10m,0.8336,40m,161,0.7518,80m,0.7721,30s
+Sleep quality (PSQI),lstm,Sleep quality (PSQI),lstm,590,0.5473,30s,0.5525,30s,590,0.5351,80m,0.5231,80m
