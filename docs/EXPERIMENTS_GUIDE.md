@@ -264,6 +264,12 @@ bash scripts/run_analysis.sh \
   2>&1 | tee bootstrap_run.log
 ```
 
+Step 3 — After Step 2, re-collect so `results/collected/phase0_v3/analysis.csv` picks up the
+new bootstrap CI columns (collect uses key-dedup by default, so `--force` is required):
+```bash
+python scripts/collect_results_v2.py --force
+```
+
 **Single experiment / a la carte:**
 ```bash
 # Dense K sweep + plots
@@ -278,6 +284,7 @@ python scripts/gen_commands.py threshold-tuning sex_binary_lstm | bash
 
 Output: `inference/{task}_{head}/window_analysis_{split}.csv`, `window_analysis.md`,
 `heatmap_df_{split}.csv`, `threshold_tuning.csv`.
+Collected CSVs: `results/collected/phase0_v3/analysis.csv` and `training.csv` (in git repo).
 
 #### Step 6 — Plotting (a la carte, local, no GPU)
 
@@ -538,6 +545,14 @@ bash scripts/run_analysis.sh \
   2>&1 | tee bootstrap_full_run.log
 ```
 
+Step 3 — After Step 2, re-collect so `results/collected/phase0_v3_full/analysis.csv` picks up
+the new bootstrap CI columns (`--force` bypasses key-dedup):
+```bash
+python scripts/collect_results_v2.py \
+  --results-dir /scratch/boshra95/psg_full/unified/results/phase0_v3_full \
+  --force
+```
+
 **Single experiment / a la carte:**
 ```bash
 REG="--registry experiments/v2_full_registry.yaml"
@@ -554,6 +569,7 @@ python scripts/gen_commands.py $REG threshold-tuning sex_binary_lstm | bash
 
 Output: `inference/{task}_{head}/window_analysis_{split}.csv`, `heatmap_df_{split}.csv`,
 `threshold_tuning.csv`.
+Collected CSVs: `results/collected/phase0_v3_full/analysis.csv` and `training.csv` (in git repo).
 
 #### Step 6 — Plotting (a la carte, local, no GPU)
 
@@ -584,23 +600,38 @@ Output: `/scratch/boshra95/psg_full/unified/results/phase0_v3_full/figures/`.
 
 #### Comparing fast-channel vs full-channel results
 
-```python
-import pandas as pd
+**Quick comparison table for all seq2label tasks (paper-ready):**
 
-# Load summary CSVs directly
-fast = pd.read_csv('/scratch/boshra95/psg/unified/results/phase0_v3/sex_binary_lstm/summary.csv')
-full = pd.read_csv('/scratch/boshra95/psg_full/unified/results/phase0_v3_full/sex_binary_lstm/summary.csv')
-fast['run'] = 'fast_7ch'; full['run'] = 'full_23ch'
-pd.concat([fast, full])[['run', 'context_length', 'test_auroc']].sort_values(['context_length','run'])
+`scripts/summarize_results.py` reads `window_analysis_test.csv` directly from both inference
+directories and produces a best-AUROC-per-task comparison table. It never depends on collect
+having been run — always reflects the latest `analyze` outputs.
+
+```bash
+source /home/boshra95/sleepfm_env/bin/activate
+
+# Console table (k=5 primary, k=all ceiling)
+python scripts/summarize_results.py --compare
+
+# Save to CSV
+python scripts/summarize_results.py --compare --out results_summary_fast_vs_full.csv
+
+# LaTeX table
+python scripts/summarize_results.py --compare --latex
+
+# Fast-channel only (no comparison)
+python scripts/summarize_results.py
 ```
 
-Or via gen_commands.py:
+Columns: task display name, head, N subjects, fast AUROC @ k=5 (best context),
+full AUROC @ k=5 (best context), Δ. Also prints k=all (ceiling) table below.
+
+**Saturation plots (per head, per channel, via gen_commands.py):**
 ```bash
-# Fast-channel saturation
-python scripts/gen_commands.py saturation sex_binary --heads lstm transformer mean_pool | bash
-# Full-channel saturation
+# Fast-channel
+python scripts/gen_commands.py saturation sex_binary --heads lstm transformer | bash
+# Full-channel
 python scripts/gen_commands.py --registry experiments/v2_full_registry.yaml \
-    saturation sex_binary --heads lstm transformer mean_pool | bash
+    saturation sex_binary --heads lstm transformer | bash
 ```
 
 ---
