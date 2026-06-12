@@ -211,18 +211,27 @@ done
 
 > `bmi_binary_transformer` is already analyzed — skip or re-run to refresh with any new collect.
 
-### Step 2 — Collect all results into a single CSV
+### Step 2 — Collect all results into CSVs
 
-Reads per-context `metrics.json` from all experiments and produces `collected/analysis.csv`
-and `collected/training.csv`. This is the input for all downstream plots.
+Reads per-context `metrics.json` and `window_analysis_{split}.csv` from all experiments and
+produces `results/collected/{channel}/analysis.csv` and `training.csv`. These are the inputs
+for all downstream plots.
 
 ```bash
-# Delete collected_old/ first if you want a clean slate, then:
-python3 scripts/gen_commands.py collect
+# Fast-channel → results/collected/phase0_v3/
+python3 scripts/collect_results_v2.py --force
+
+# Full-channel → results/collected/phase0_v3_full/
+python3 scripts/collect_results_v2.py \
+  --results-dir /scratch/boshra95/psg_full/unified/results/phase0_v3_full \
+  --force
 ```
 
-> `collected_old/` is the archived stale version from before the reruns — safe to delete
-> once the new `collected/` is generated and verified.
+Use `--force` any time you've re-run `analyze` (e.g. after adding bootstrap CIs) so the
+updated values overwrite the stale keys in the CSV.
+
+> `collected_old/` is an archived stale version from before earlier reruns — safe to delete
+> once the channel-specific directories are generated and verified.
 
 ### Step 3 — Iso-compute plots (context-length saturation)
 
@@ -245,11 +254,19 @@ python3 scripts/gen_commands.py precision-recall         # PR curves (imbalanced
 python3 scripts/gen_commands.py subject-kstar            # min windows to correct prediction
 ```
 
-### Step 5 — Post-hoc threshold tuning (imbalanced tasks only)
+### Step 5 — Post-hoc threshold tuning (imbalanced tasks only) ✅ COMPLETED 2026-05-30
 
-See `docs/POSTHOC_THRESHOLD_TUNING.md`. Requires saving `val_windows.parquet` during inference
-(not yet implemented). Priority: `bmi_binary` (+0.015 confirmed), `osa_binary_apples_postqc`
-(est. +0.06–0.09). Apply after all other analysis is complete.
+Val inference and threshold tuning run for all 14 binary experiments.
+Results in `inference/{exp_id}/threshold_tuning.csv`.
+
+**Use tuned BA for paper:** `osa_binary_apples_postqc_lstm` (best +0.22!),
+`depression_extreme_binary_lstm` (+0.065 at 80m — surprise), `bmi_binary_transformer` (+0.013 avg),
+`bmi_binary_lstm` (+0.006 avg), `sex_binary_lstm` (+0.009 avg), `sleepiness_binary_*` (+0.006 avg).
+
+**Keep t=0.5:** `cvd_binary_*` (tuning hurts — val set too small), `apnea_binary_*`,
+`sleep_efficiency_binary_*`, `sex_binary_transformer` (all near zero or negative).
+
+See `docs/POSTHOC_THRESHOLD_TUNING.md` for full numbers, surprises, and final paper wording.
 
 ---
 

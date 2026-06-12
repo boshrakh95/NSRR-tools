@@ -1,0 +1,2 @@
+{"ts":"2026-06-10T15:20:35-07:00","job_id":"43855785","node":"fc10706","status":"STARTED","task":"sleepiness_binary","head":"lstm","context":"30s","lr":"1e-4","datasets":"apples shhs mros stages"}
+{"ts":"2026-06-10T15:41:54-07:00","job_id":"43855785","node":"fc10706","status":"SUCCESS","task":"sleepiness_binary","head":"lstm","context":"30s","lr":"1e-4","datasets":"apples shhs mros stages"}

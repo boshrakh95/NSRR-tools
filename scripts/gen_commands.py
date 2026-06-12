@@ -108,7 +108,6 @@ import json
 import re
 import socket
 import sys
-from collections import defaultdict
 from pathlib import Path
 
 import yaml
@@ -180,8 +179,8 @@ def format_lr(lr) -> str:
     return re.sub(r"e(-?)0*(\d+)", r"e\1\2", s)
 
 
-def load_registry() -> dict:
-    with open(REGISTRY_PATH) as f:
+def load_registry(path=None) -> dict:
+    with open(path or REGISTRY_PATH) as f:
         return yaml.safe_load(f)
 
 
@@ -203,7 +202,39 @@ def infer_folder(exp: dict, registry: dict) -> Path:
     return infer_dir / f"{exp['task']}_{exp['head']}{suffix}"
 
 
-def _log_stem(exp: dict, step: str, context: str = "", split: str = "") -> str:
+_cfg_arch_cache: dict = {}
+
+
+def _cfg_arch_tag(exp: dict, registry: dict) -> str:
+    """Return a short arch+padding tag for seq2seq (sleep staging) experiments only.
+
+    Format: h{hidden_dim}l{num_layers}_{padding_short}
+    Examples: 'h256l2_conly' (complete_only), 'h128l1_allw' (allow_all).
+    Returns '' for seq2label tasks (padding policy has no effect there, and
+    hidden_dim/num_layers mean different things for LSTM vs transformer).
+    """
+    if exp.get("task_type") != "seq2seq":
+        return ""
+    cfg_path = str(exp.get("config") or registry.get("config", ""))
+    if not cfg_path:
+        return ""
+    if cfg_path not in _cfg_arch_cache:
+        try:
+            with open(cfg_path) as _f:
+                cfg = yaml.safe_load(_f)
+            hidden = cfg.get("model", {}).get("hidden_dim", "")
+            layers = cfg.get("model", {}).get("num_layers", "")
+            policy = cfg.get("dataset", {}).get("seq2seq_padding_policy", "")
+            policy_short = {"complete_only": "conly", "allow_all": "allw"}.get(policy, "")
+            arch = f"h{hidden}l{layers}" if (hidden and layers) else ""
+            _cfg_arch_cache[cfg_path] = f"{arch}_{policy_short}" if (arch and policy_short) else arch
+        except Exception:
+            _cfg_arch_cache[cfg_path] = ""
+    return _cfg_arch_cache[cfg_path]
+
+
+def _log_stem(exp: dict, step: str, context: str = "", split: str = "",
+              registry: dict = None) -> str:
     """Build a descriptive log filename stem (no extension, no %j).
 
     Training logs include context and LR (both vary per job).
@@ -211,13 +242,17 @@ def _log_stem(exp: dict, step: str, context: str = "", split: str = "") -> str:
     matching the pattern the SLURM script uses for its persistent .log file so
     that original-submission and timeout-resubmission filenames share the same
     stem prefix.
+    When registry is provided, appends an arch+padding tag from the config
+    (e.g. '_h256l2_conly') so log filenames are self-describing.
     """
     tag = exp.get("run_tag", "")
     tag_part = f"_{tag}" if tag else ""
+    arch_tag  = _cfg_arch_tag(exp, registry) if registry else ""
+    arch_part = f"_{arch_tag}" if arch_tag else ""
     ctx_part = f"_{context}" if context else ""
     split_part = f"_{split}" if split else ""
     lr_part = f"_lr{format_lr(exp['lr'])}" if step == "train" else ""
-    return f"{step}_{exp['task']}_{exp['head']}{tag_part}{ctx_part}{split_part}{lr_part}"
+    return f"{step}_{exp['task']}_{exp['head']}{tag_part}{arch_part}{ctx_part}{split_part}{lr_part}"
 
 
 # ── Status checks ─────────────────────────────────────────────────────────────
@@ -303,11 +338,11 @@ def resolve_batch_accum(exp: dict, registry: dict, context: str,
 
 def build_train_cmd(exp: dict, registry: dict, context: str,
                     override_time: str = None, override_batch_size: int = None) -> str:
-    cfg = registry["config"]
+    cfg = exp.get("config") or registry["config"]
     logs_dir = registry.get("logs_dir", str(Path(__file__).parent.parent / "logs"))
     n_size = exp.get("n_size", "large")
     wall_time = override_time if override_time else estimate_train_time(n_size, exp["head"], context)
-    stem = _log_stem(exp, "train", context)
+    stem = _log_stem(exp, "train", context, registry=registry)
     micro_batch, accum_steps = resolve_batch_accum(exp, registry, context, override_batch_size)
 
     env_vars = [
@@ -323,6 +358,7 @@ def build_train_cmd(exp: dict, registry: dict, context: str,
     if exp.get("run_tag"):
         env_vars.append(f"RUN_TAG={exp['run_tag']}")
     env_vars.append(f"CONFIG={cfg}")
+    env_vars.append(f"LOGS_DIR={logs_dir}")
     env_str = " ".join(env_vars)
 
     sbatch_opts = (
@@ -336,13 +372,13 @@ def build_train_cmd(exp: dict, registry: dict, context: str,
 
 def build_infer_cmd(exp: dict, registry: dict, split: str = "test",
                     override_time: str = None, override_batch_size: int = None) -> str:
-    cfg = registry["config"]
+    cfg = exp.get("config") or registry["config"]
     logs_dir = registry.get("logs_dir", str(Path(__file__).parent.parent / "logs"))
     n_size = exp.get("n_size", "large")
     contexts_trained = trained_contexts(exp, registry)
     ctx_list = contexts_trained if contexts_trained else exp["contexts"]
     wall_time = override_time if override_time else estimate_infer_time(n_size, exp["head"], ctx_list)
-    stem = _log_stem(exp, "infer", split=split)
+    stem = _log_stem(exp, "infer", split=split, registry=registry)
 
     env_vars = [
         f"TASK={exp['task']}",
@@ -357,6 +393,7 @@ def build_infer_cmd(exp: dict, registry: dict, split: str = "test",
     if exp.get("run_tag"):
         env_vars.append(f"RUN_TAG={exp['run_tag']}")
     env_vars.append(f"CONFIG={cfg}")
+    env_vars.append(f"LOGS_DIR={logs_dir}")
     env_str = " ".join(env_vars)
 
     sbatch_opts = (
@@ -464,7 +501,6 @@ def build_saturation_cmd(task: str, heads: list, registry: dict,
 def build_probe_batch_cmd(exp: dict, registry: dict,
                           starting_batch_size: int = 256) -> str:
     """Generate the sbatch command to run find_batch_size.py for a memory-bounded exp."""
-    python   = registry.get("python_bin", "/home/boshra95/sleepfm_env/bin/python")
     cfg      = registry["config"]
     logs_dir = registry.get("logs_dir", str(Path(__file__).parent.parent / "logs"))
     out_dir  = exp_folder(exp, registry)
@@ -656,6 +692,45 @@ def cmd_saturation(args, registry):
     print(cmd)
 
 
+def cmd_threshold_tuning(args, registry):
+    """Print the apply_threshold_tuning.py command for a binary experiment."""
+    experiments = registry["experiments"]
+    if args.exp_id not in experiments:
+        print(f"ERROR: experiment '{args.exp_id}' not found.", file=sys.stderr)
+        sys.exit(1)
+    exp = experiments[args.exp_id]
+    if exp.get("num_classes", 2) != 2:
+        print(f"# NOTE: {args.exp_id} has {exp.get('num_classes')} classes — "
+              "threshold tuning only applies to binary tasks.", file=sys.stderr)
+        sys.exit(1)
+
+    python  = registry.get("python_bin", "/home/boshra95/sleepfm_env/bin/python")
+    cfg     = registry["config"]
+    tag     = exp.get("run_tag", "")
+    inf_dir = Path(registry["inference_dir"]) / (
+        f"{exp['task']}_{exp['head']}" + (f"_{tag}" if tag else "")
+    )
+    val_missing = [
+        ctx for ctx in trained_contexts(exp, registry)
+        if not (inf_dir / f"context_{ctx}" / "val_windows.parquet").exists()
+    ]
+
+    print(f"# Threshold tuning for: {args.exp_id}")
+    if val_missing:
+        print(f"# ⚠ val parquets missing for: {val_missing}")
+        print(f"#   Run val inference first (see gen_commands.py infer {args.exp_id} --split val)")
+    print()
+    cmd_parts = [
+        f"{python} scripts/apply_threshold_tuning.py",
+        f"--config {cfg}",
+        f"--task {exp['task']}",
+        f"--head {exp['head']}",
+    ]
+    if tag:
+        cmd_parts.append(f"--run-tag {tag}")
+    print(" ".join(cmd_parts))
+
+
 def cmd_status(args, registry):
     experiments = registry["experiments"]
     target_id = getattr(args, "exp_id", None)
@@ -746,10 +821,15 @@ def build_collect_cmd(exp_ids: list, registry: dict,
     python = registry.get("python_bin", "/home/boshra95/sleepfm_env/bin/python")
     results_dir = Path(registry["results_dir"])
     cdir = collected_dir or str(results_dir / "collected")
+    # repo-out is channel-specific so fast (phase0_v3) and full (phase0_v3_full)
+    # never overwrite each other in the git-tracked results/ directory.
+    repo_root = Path(__file__).parent.parent / "results" / "collected"
+    repo_out  = str(repo_root / results_dir.name)
     cmd_parts = [
         f"{python} scripts/collect_results_v2.py",
         f"--results-dir {results_dir}",
         f"--out-dir {cdir}",
+        f"--repo-out {repo_out}",
     ]
     if exp_ids:
         cmd_parts.append(f"--exp-ids {' '.join(exp_ids)}")
@@ -918,6 +998,118 @@ def build_subject_kstar_cmd(exp: dict, registry: dict, split: str = "test",
     return " ".join(cmd_parts)
 
 
+# ── Paper table build functions ───────────────────────────────────────────────
+
+def _table_collected_dir(registry: dict) -> str:
+    results_dir = Path(registry["results_dir"])
+    repo_root   = Path(__file__).parent.parent / "results" / "collected"
+    return str(repo_root / results_dir.name)
+
+
+def _channel_label(registry: dict) -> str:
+    name = Path(registry["results_dir"]).name
+    if name.endswith("_full"):
+        return "full"
+    return "fast"
+
+
+def build_table1_cmd(registry: dict, tasks: list = None, heads: list = None,
+                     k_deploy: int = 5, split: str = "test") -> str:
+    python      = registry.get("python_bin", "/home/boshra95/sleepfm_env/bin/python")
+    cdir        = _table_collected_dir(registry)
+    channel     = _channel_label(registry)
+    results_dir = Path(registry["results_dir"])
+    cmd = (f"{python} scripts/make_table1_peak_auroc.py"
+           f" --collected-dir {cdir} --channel {channel}"
+           f" --results-dir {results_dir} --split {split} --k-deploy {k_deploy}")
+    if tasks:  cmd += f" --tasks {' '.join(tasks)}"
+    if heads:  cmd += f" --heads {' '.join(heads)}"
+    return cmd
+
+
+def build_table2_cmd(registry: dict, tasks: list = None, heads: list = None,
+                     split: str = "test", tolerance: float = 0.005) -> str:
+    python      = registry.get("python_bin", "/home/boshra95/sleepfm_env/bin/python")
+    cdir        = _table_collected_dir(registry)
+    channel     = _channel_label(registry)
+    results_dir = Path(registry["results_dir"])
+    cmd = (f"{python} scripts/make_table2_lstar.py"
+           f" --collected-dir {cdir} --channel {channel}"
+           f" --results-dir {results_dir} --split {split} --tolerance {tolerance}")
+    if tasks:  cmd += f" --tasks {' '.join(tasks)}"
+    if heads:  cmd += f" --heads {' '.join(heads)}"
+    return cmd
+
+
+def build_table3_cmd(exp_id: str, registry: dict,
+                     split: str = "test", k_values: list = None) -> str:
+    python      = registry.get("python_bin", "/home/boshra95/sleepfm_env/bin/python")
+    cdir        = _table_collected_dir(registry)
+    channel     = _channel_label(registry)
+    results_dir = Path(registry["results_dir"])
+    cmd = (f"{python} scripts/make_table3_kgrid.py {exp_id}"
+           f" --collected-dir {cdir} --channel {channel}"
+           f" --results-dir {results_dir} --split {split}")
+    if k_values:
+        cmd += f" --k-values {' '.join(str(k) for k in k_values)}"
+    return cmd
+
+
+def build_table4_cmd(registry: dict, tasks: list = None, head: str = "lstm",
+                     split: str = "test") -> str:
+    python      = registry.get("python_bin", "/home/boshra95/sleepfm_env/bin/python")
+    cdir        = _table_collected_dir(registry)
+    channel     = _channel_label(registry)
+    results_dir = Path(registry["results_dir"])
+    cmd = (f"{python} scripts/make_table4_sensitivity.py"
+           f" --collected-dir {cdir} --channel {channel}"
+           f" --results-dir {results_dir} --head {head} --split {split}")
+    if tasks:  cmd += f" --tasks {' '.join(tasks)}"
+    return cmd
+
+
+def build_table5_cmd(registry: dict, tasks: list = None, heads: list = None,
+                     k_deploy: int = 5, split: str = "test") -> str:
+    python      = registry.get("python_bin", "/home/boshra95/sleepfm_env/bin/python")
+    cdir        = _table_collected_dir(registry)
+    channel     = _channel_label(registry)
+    results_dir = Path(registry["results_dir"])
+    heads       = heads or ["lstm", "transformer", "mean_pool"]
+    cmd = (f"{python} scripts/make_table5_heads.py"
+           f" --collected-dir {cdir} --channel {channel}"
+           f" --results-dir {results_dir} --heads {' '.join(heads)}"
+           f" --split {split} --k-deploy {k_deploy}")
+    if tasks:  cmd += f" --tasks {' '.join(tasks)}"
+    return cmd
+
+
+def build_table9_cmd(exp_id: str, registry: dict,
+                     split: str = "test", datasets: list = None) -> str:
+    python      = registry.get("python_bin", "/home/boshra95/sleepfm_env/bin/python")
+    results_dir = Path(registry["results_dir"])
+    cdir        = _table_collected_dir(registry)
+    channel     = _channel_label(registry)
+    cmd = (f"{python} scripts/make_table9_cohort.py {exp_id}"
+           f" --results-dir {results_dir}"
+           f" --collected-dir {cdir} --channel {channel} --split {split}")
+    if datasets:  cmd += f" --datasets {' '.join(datasets)}"
+    return cmd
+
+
+def build_table10_cmd(registry: dict, tasks: list = None, heads: list = None,
+                      k_deploy: int = 5, split: str = "test") -> str:
+    python      = registry.get("python_bin", "/home/boshra95/sleepfm_env/bin/python")
+    cdir        = _table_collected_dir(registry)
+    channel     = _channel_label(registry)
+    results_dir = Path(registry["results_dir"])
+    cmd = (f"{python} scripts/make_table10_ci.py"
+           f" --collected-dir {cdir} --channel {channel}"
+           f" --results-dir {results_dir} --split {split} --k-deploy {k_deploy}")
+    if tasks:  cmd += f" --tasks {' '.join(tasks)}"
+    if heads:  cmd += f" --heads {' '.join(heads)}"
+    return cmd
+
+
 # ── Extended analysis handlers ─────────────────────────────────────────────────
 
 def cmd_collect(args, registry):
@@ -1051,6 +1243,96 @@ def cmd_subject_kstar(args, registry):
     print("# Prerequisite: inference parquets must exist")
     print()
     print(build_subject_kstar_cmd(exp, registry, split, k_max, reps, plots))
+
+
+# ── Paper table handlers ──────────────────────────────────────────────────────
+
+def cmd_table1(args, registry):
+    cdir    = _table_collected_dir(registry)
+    channel = _channel_label(registry)
+    tasks   = getattr(args, "tasks", None) or None
+    heads   = getattr(args, "heads", None)
+    k_deploy = getattr(args, "k_deploy", 5)
+    split   = getattr(args, "split", "test")
+    print(f"# Table 1 — Peak AUROC (channel: {channel})")
+    print(f"# Reads: {cdir}/analysis.csv  →  results/tables/table1_peak_auroc_{channel}.{{csv,md,tex}}")
+    print()
+    print(build_table1_cmd(registry, tasks, heads, k_deploy, split))
+
+
+def cmd_table2(args, registry):
+    cdir    = _table_collected_dir(registry)
+    channel = _channel_label(registry)
+    tasks   = getattr(args, "tasks", None) or None
+    heads   = getattr(args, "heads", None)
+    split   = getattr(args, "split", "test")
+    tol     = getattr(args, "tolerance", 0.005)
+    print(f"# Table 2 — Saturation L* (channel: {channel})")
+    print(f"# Reads: {cdir}/analysis.csv  →  results/tables/table2_lstar_{channel}.{{csv,md,tex}}")
+    print()
+    print(build_table2_cmd(registry, tasks, heads, split, tol))
+
+
+def cmd_table3(args, registry):
+    cdir    = _table_collected_dir(registry)
+    channel = _channel_label(registry)
+    k_values = getattr(args, "k_values", None)
+    split   = getattr(args, "split", "test")
+    print(f"# Table 3 — AUROC×K grid for {args.exp_id} (channel: {channel})")
+    print(f"# Reads: {cdir}/analysis.csv  →  results/tables/table3_kgrid_{args.exp_id}_{channel}.{{csv,md,tex}}")
+    print()
+    print(build_table3_cmd(args.exp_id, registry, split, k_values))
+
+
+def cmd_table4(args, registry):
+    cdir    = _table_collected_dir(registry)
+    channel = _channel_label(registry)
+    tasks   = getattr(args, "tasks", None) or None
+    head    = getattr(args, "head", "lstm")
+    split   = getattr(args, "split", "test")
+    print(f"# Table 4 — Context sensitivity ranking (head: {head}, channel: {channel})")
+    print(f"# Reads: {cdir}/analysis.csv  →  results/tables/table4_sensitivity_{channel}_{head}.{{csv,md,tex}}")
+    print()
+    print(build_table4_cmd(registry, tasks, head, split))
+
+
+def cmd_table5(args, registry):
+    cdir    = _table_collected_dir(registry)
+    channel = _channel_label(registry)
+    tasks   = getattr(args, "tasks", None) or None
+    heads   = getattr(args, "heads", None)
+    k_deploy = getattr(args, "k_deploy", 5)
+    split   = getattr(args, "split", "test")
+    print(f"# Table 5 — Head comparison at L* (channel: {channel})")
+    print(f"# Reads: {cdir}/analysis.csv  →  results/tables/table5_heads_{channel}.{{csv,md,tex}}")
+    print()
+    print(build_table5_cmd(registry, tasks, heads, k_deploy, split))
+
+
+def cmd_table9(args, registry):
+    cdir    = _table_collected_dir(registry)
+    channel = _channel_label(registry)
+    datasets = getattr(args, "datasets", None)
+    split   = getattr(args, "split", "test")
+    print(f"# Table 9 — Cohort breakdown for {args.exp_id} (channel: {channel})")
+    print(f"# Reads: inference parquets from {registry['results_dir']}")
+    print(f"# Output → results/tables/table9_cohort_{args.exp_id}_{channel}.{{csv,md,tex}}")
+    print()
+    print(build_table9_cmd(args.exp_id, registry, split, datasets))
+
+
+def cmd_table10(args, registry):
+    cdir    = _table_collected_dir(registry)
+    channel = _channel_label(registry)
+    tasks   = getattr(args, "tasks", None) or None
+    heads   = getattr(args, "heads", None)
+    k_deploy = getattr(args, "k_deploy", 5)
+    split   = getattr(args, "split", "test")
+    print(f"# Table 10 — Bootstrap CI summary (channel: {channel})")
+    print(f"# Reads: {cdir}/analysis.csv (requires CI columns — run 'analyze --bootstrap N' first)")
+    print(f"# Output → results/tables/table10_ci_{channel}.{{csv,md,tex}}")
+    print()
+    print(build_table10_cmd(registry, tasks, heads, k_deploy, split))
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
@@ -1197,6 +1479,58 @@ def main():
                       help="Random draws per (subject, k) (default: 20)")
     p_ks.add_argument("--plots", nargs="+", default=["9A", "9B"])
 
+    # ── Paper table subcommands ────────────────────────────────────────────────
+
+    p_t1 = sub.add_parser("table-1",
+                           help="Print make_table1_peak_auroc.py command (peak AUROC per task)")
+    p_t1.add_argument("--tasks",    nargs="+", default=None)
+    p_t1.add_argument("--heads",    nargs="+", default=None)
+    p_t1.add_argument("--k-deploy", type=int,  default=5, dest="k_deploy")
+    p_t1.add_argument("--split",    default="test")
+
+    p_t2 = sub.add_parser("table-2",
+                           help="Print make_table2_lstar.py command (saturation L* per task)")
+    p_t2.add_argument("--tasks",     nargs="+", default=None)
+    p_t2.add_argument("--heads",     nargs="+", default=None)
+    p_t2.add_argument("--tolerance", type=float, default=0.005)
+    p_t2.add_argument("--split",     default="test")
+
+    p_t3 = sub.add_parser("table-3",
+                           help="Print make_table3_kgrid.py command (AUROC×K grid for one exp)")
+    p_t3.add_argument("exp_id", help="Experiment ID, e.g. sex_binary_lstm")
+    p_t3.add_argument("--k-values", nargs="+", default=None, dest="k_values")
+    p_t3.add_argument("--split",    default="test")
+
+    p_t4 = sub.add_parser("table-4",
+                           help="Print make_table4_sensitivity.py command (cross-task sensitivity)")
+    p_t4.add_argument("--tasks", nargs="+", default=None)
+    p_t4.add_argument("--head",  default="lstm")
+    p_t4.add_argument("--split", default="test")
+
+    p_t5 = sub.add_parser("table-5",
+                           help="Print make_table5_heads.py command (head comparison at L*)")
+    p_t5.add_argument("--tasks",    nargs="+", default=None)
+    p_t5.add_argument("--heads",    nargs="+", default=None)
+    p_t5.add_argument("--k-deploy", type=int,  default=5, dest="k_deploy")
+    p_t5.add_argument("--split",    default="test")
+
+    p_t9 = sub.add_parser("table-9",
+                           help="Print make_table9_cohort.py command (cohort AUROC breakdown)")
+    p_t9.add_argument("exp_id", help="Experiment ID, e.g. sex_binary_lstm")
+    p_t9.add_argument("--datasets", nargs="+", default=None)
+    p_t9.add_argument("--split",    default="test")
+
+    p_t10 = sub.add_parser("table-10",
+                            help="Print make_table10_ci.py command (bootstrap CI summary)")
+    p_t10.add_argument("--tasks",    nargs="+", default=None)
+    p_t10.add_argument("--heads",    nargs="+", default=None)
+    p_t10.add_argument("--k-deploy", type=int,  default=5, dest="k_deploy")
+    p_t10.add_argument("--split",    default="test")
+
+    p_tt = sub.add_parser("threshold-tuning",
+                          help="Print apply_threshold_tuning.py command for a binary experiment")
+    p_tt.add_argument("exp_id", help="Experiment ID, e.g. bmi_binary_lstm")
+
     p_status = sub.add_parser("status", help="Show file-level status for experiment(s)")
     p_status.add_argument("exp_id", nargs="?", default=None,
                           help="Specific experiment ID (default: all)")
@@ -1208,7 +1542,7 @@ def main():
                         help="Always show full history even for single-attempt jobs")
 
     args = parser.parse_args()
-    registry = load_registry()
+    registry = load_registry(args.registry)
 
     dispatch = {
         "list":                 cmd_list,
@@ -1228,6 +1562,14 @@ def main():
         "cohort-saturation":    cmd_cohort_saturation,
         "precision-recall":     cmd_precision_recall,
         "subject-kstar":        cmd_subject_kstar,
+        "threshold-tuning":     cmd_threshold_tuning,
+        "table-1":              cmd_table1,
+        "table-2":              cmd_table2,
+        "table-3":              cmd_table3,
+        "table-4":              cmd_table4,
+        "table-5":              cmd_table5,
+        "table-9":              cmd_table9,
+        "table-10":             cmd_table10,
         "status":               cmd_status,
         "runs":                 cmd_runs,
     }

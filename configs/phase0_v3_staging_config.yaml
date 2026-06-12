@@ -1,0 +1,168 @@
+# ============================================================
+# Phase 0 — V3 Config — SLEEP STAGING ONLY (fast-channel)
+# ============================================================
+# Identical to phase0_v3_config.yaml except:
+#   early_stopping_monitor: "val_kappa"  (was "val_auroc")
+#   epochs: 60                           (was 40 — 120m/240m need more epochs)
+#
+# Why a separate file: seq2label tasks use val_auroc (threshold-free, correct
+# for imbalanced binary/multiclass). Sleep staging (5-class seq2seq) should
+# checkpoint on val_kappa, which is the primary reported metric (Cohen's κ) and
+# converges at the same rate as val_loss while directly optimising what matters.
+# Using val_auroc for staging was causing 120m to hit the epoch ceiling without
+# converging because OvR macro AUROC is slow to plateau on a 5-class task.
+#
+# Evidence: empirical analysis (2026-06-08) showed val_auroc and val_loss peak
+# at the same epoch for LSTM staging, but val_balacc is dangerously noisy
+# (transformer 80m peaked at epoch 1) and val_auroc ran 120m for 40 epochs
+# without convergence. val_kappa is the direct optimisation target.
+#
+# Referenced by v2_registry.yaml sleep_staging_* experiments via per-experiment
+# `config:` field. gen_commands.py picks exp["config"] before registry["config"].
+#
+# Seq2label tasks (sex_binary, bmi_binary, etc.) continue to use
+# phase0_v3_config.yaml with val_auroc — DO NOT change those.
+
+# ── Embedding Extraction ─────────────────────────────────────────────────────
+embedding:
+  checkpoint_dir: "/home/boshra95/sleepfm-clinical/sleepfm/checkpoints/model_base"
+  output_dir: "/scratch/boshra95/psg/unified/embeddings/sleepfm_5sec"
+  chunk_batch_size: 16
+  datasets:
+    - apples
+    - shhs
+    - mros
+    - stages
+
+# ── HDF5 Signal Data ─────────────────────────────────────────────────────────
+data:
+  hdf5_dir: "/scratch/boshra95/psg"
+  sampling_freq: 128
+  chunk_seconds: 300
+  patch_size: 640
+  patches_per_chunk: 60
+  max_channels:
+    BAS: 10
+    RESP: 7
+    EKG: 2
+    EMG: 4
+  channel_priority:
+    BAS:
+      - C3-M2
+      - C4-M1
+      - LOC
+      - ROC
+      - O1-M2
+      - O2-M1
+      - F3-M2
+      - F4-M1
+      - A1
+      - A2
+    RESP:
+      - Airflow
+      - Thor
+      - ABD
+      - SpO2
+      - HR
+      - Snore
+      - RespRate
+    EKG:
+      - EKG
+      - ECG-L
+      - ECG-R
+    EMG:
+      - CHIN
+      - LLEG
+      - RLEG
+      - EMG
+
+# ── Context-Window Dataset ───────────────────────────────────────────────────
+dataset:
+  embedding_dir: "/scratch/boshra95/psg/unified/embeddings/sleepfm_5sec"
+
+  label_source: "/scratch/boshra95/psg/unified/targets_v2/master_targets.parquet"
+  task_subject_dir: "/scratch/boshra95/psg/unified/targets_v2/task_subjects"
+
+  sleep_stage_dir: "/scratch/boshra95/psg"
+
+  context_lengths:
+    - "30s"
+    - "10m"
+    - "40m"
+    - "80m"
+    - "120m"
+    - "240m"
+
+  task: "sleep_staging"
+  task_type: "seq2seq"
+
+  datasets:
+    - apples
+    - shhs
+    - mros
+    - stages
+
+  train_split: 0.70
+  val_split:   0.15
+  test_split:  0.15
+  split_seed:  42
+
+  windows_per_subject: 5
+
+  # ── seq2seq window design ────────────────────────────────────────────────────
+  seq2seq_context_mode: "centered"
+  seq2seq_padding_policy: "complete_only"
+  seq2seq_max_padding_fraction: 0.5
+
+  min_past_denom:       8
+  max_min_past_patches: 240
+
+  min_recording_patches: 2880
+
+# ── Sequence Head Model ──────────────────────────────────────────────────────
+# hidden_dim=256, num_layers=2  →  3.16M params (LSTM bidir) / ~1.7M (Transformer)
+# Rationale: phase0 showed kappa 0.62 → 0.54 at 10m when using 128/1; the 5-class
+# seq2seq task requires substantially more capacity than binary seq2label tasks.
+model:
+  input_dim: 512
+  head_type: "lstm"
+  hidden_dim: 256
+  num_layers: 2
+  num_heads:  8
+  dropout:    0.3
+  num_classes: 5    # W=0, N1=1, N2=2, N3=3, REM=4
+
+# ── Training ─────────────────────────────────────────────────────────────────
+training:
+  epochs: 60        # increased from 40; with patience=10, allows convergence at 120m/240m
+  lr: 1.0e-4
+  weight_decay: 1.0e-3
+  optimizer: "adamw"
+  scheduler: "cosine"
+  early_stopping_patience: 10
+  device: "cuda"
+  mixed_precision: false
+  class_weights: "auto"
+  early_stopping_monitor: "val_kappa"   # ← changed from "val_auroc"; see header comment
+  weighted_sampler: false
+
+  windows_strategy: "fixed"
+  token_budget_minutes: 240
+  k_max: 50
+
+  context_lr_overrides:
+    "120m": 5.0e-5
+    "240m": 5.0e-5
+
+  overfit_epochs: 0
+
+  save_snapshots: true
+  snapshot_interval: 5
+
+# ── Analysis ─────────────────────────────────────────────────────────────────
+analysis:
+  bootstrap_samples: 0
+
+# ── Logging & Output ─────────────────────────────────────────────────────────
+logging:
+  results_dir: "/scratch/boshra95/psg/unified/results/phase0_v3"

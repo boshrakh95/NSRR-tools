@@ -14,6 +14,7 @@ Date: February 2026
 """
 
 import argparse
+import signal
 import sys
 from pathlib import Path
 from typing import Optional
@@ -23,6 +24,19 @@ from loguru import logger
 from tqdm import tqdm
 import yaml
 import gc
+
+# ── Graceful-stop flag (set by SIGTERM handler) ───────────────────────────────
+# SLURM sends SIGTERM when the bash script calls kill -TERM on this process.
+# Setting the flag lets the current subject finish before the process exits,
+# avoiding partially-written HDF5 files that would be skipped on resubmission.
+_stop_requested = False
+
+def _handle_sigterm(signum, frame):
+    global _stop_requested
+    logger.warning("[SIGTERM] Stop requested — will exit after current subject completes.")
+    _stop_requested = True
+
+signal.signal(signal.SIGTERM, _handle_sigterm)
 
 # Try to import psutil for memory monitoring
 try:
@@ -92,15 +106,21 @@ class PreprocessingPipeline:
         dataset_name: str,
         max_subjects: Optional[int] = None,
         skip_existing: bool = True,
-        reprocess_annotations: bool = False
+        reprocess_annotations: bool = False,
+        start_index: Optional[int] = None,
+        end_index: Optional[int] = None,
     ):
         """Process all subjects in a dataset.
-        
+
         Args:
             dataset_name: Dataset name (stages, shhs, apples, mros)
-            max_subjects: Maximum number of subjects to process (for testing)
+            max_subjects: Maximum number of subjects to process (for testing).
+                          Mutually exclusive with start_index/end_index.
             skip_existing: Skip subjects with existing output files
             reprocess_annotations: Reprocess annotations even if they exist (keeps HDF5)
+            start_index: 0-based inclusive start of the subject slice.
+            end_index: Exclusive end of the subject slice (like Python range).
+                       If None, processes to the end of the dataset.
         """
         logger.info(f"\n{'='*80}")
         logger.info(f"Processing dataset: {dataset_name.upper()}")
@@ -150,8 +170,14 @@ class PreprocessingPipeline:
         dataset_df = dataset_df[dataset_df['has_edf'] == True].copy()
         logger.info(f"  {len(dataset_df)} subjects have EDF files")
         
-        # Limit number if specified
-        if max_subjects:
+        # Slice by index range (for batched/parallel job submission)
+        if start_index is not None or end_index is not None:
+            s = start_index or 0
+            e = end_index if end_index is not None else len(dataset_df)
+            e = min(e, len(dataset_df))
+            dataset_df = dataset_df.iloc[s:e].copy()
+            logger.info(f"  Index slice [{s}:{e}] → {len(dataset_df)} subjects")
+        elif max_subjects:
             dataset_df = dataset_df.head(max_subjects)
             logger.info(f"  Processing first {max_subjects} subjects")
         
@@ -325,12 +351,18 @@ class PreprocessingPipeline:
             
             # Explicitly free memory after each subject
             gc.collect()
-            
+
             # Log memory usage periodically
             if PSUTIL_AVAILABLE and (len(results) % 10 == 0):
                 mem_mb = get_memory_usage_mb()
                 logger.info(f"Memory usage after {len(results)} subjects: {mem_mb:.1f} MB")
-        
+
+            # Graceful stop: SIGTERM was received — exit after this subject
+            if _stop_requested:
+                logger.warning(f"[SIGTERM] Stopping after {len(results)} subjects. "
+                               f"Resubmit to continue from here (skip-existing is on).")
+                break
+
         # Save summary
         summary_df = pd.DataFrame(results)
         summary_path = log_dir / f'preprocessing_summary_{dataset_name}.csv'
@@ -448,6 +480,25 @@ def main():
              'If omitted, processes all visits found in unified_metadata.'
     )
 
+    parser.add_argument(
+        '--start-index',
+        type=int,
+        default=None,
+        dest='start_index',
+        help='0-based inclusive start index into the sorted subject list. '
+             'Use with --end-index to process a slice of subjects across '
+             'multiple jobs. Mutually exclusive with --max-subjects.'
+    )
+
+    parser.add_argument(
+        '--end-index',
+        type=int,
+        default=None,
+        dest='end_index',
+        help='Exclusive end index into the sorted subject list (like Python range). '
+             'If omitted, processes from --start-index to end of dataset.'
+    )
+
     args = parser.parse_args()
     
     # Configure logging
@@ -461,6 +512,9 @@ def main():
     # Initialize pipeline
     pipeline = PreprocessingPipeline(config_path=args.config, mros_visit=args.mros_visit)
     
+    if args.start_index is not None and args.max_subjects is not None:
+        parser.error("--start-index/--end-index and --max-subjects are mutually exclusive.")
+
     # Process datasets
     if args.dataset == 'all':
         for dataset in ['stages', 'shhs', 'apples', 'mros']:
@@ -468,14 +522,18 @@ def main():
                 dataset_name=dataset,
                 max_subjects=args.max_subjects,
                 skip_existing=args.skip_existing,
-                reprocess_annotations=args.reprocess_annotations
+                reprocess_annotations=args.reprocess_annotations,
+                start_index=args.start_index,
+                end_index=args.end_index,
             )
     else:
         pipeline.process_dataset(
             dataset_name=args.dataset,
             max_subjects=args.max_subjects,
             skip_existing=args.skip_existing,
-            reprocess_annotations=args.reprocess_annotations
+            reprocess_annotations=args.reprocess_annotations,
+            start_index=args.start_index,
+            end_index=args.end_index,
         )
 
 

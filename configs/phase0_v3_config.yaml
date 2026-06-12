@@ -96,6 +96,39 @@ dataset:
   split_seed:  42
 
   windows_per_subject: 5
+
+  # ── seq2seq window design (sleep staging only) ───────────────────────────────
+  # These three params are only meaningful for seq2seq tasks (task_type: seq2seq).
+  # They have no effect on seq2label tasks.
+  #
+  # seq2seq_context_mode:
+  #   "causal"   — window = [anchor_end - N : anchor_end]  (past-only context)
+  #                Used in: sleep_staging_lstm_old_arch128,
+  #                         sleep_staging_transformer_old_arch128
+  #                Model: hidden_dim=128, num_layers=1 (see model section below)
+  #   "centered" — window = [(N-6)//2 before anchor] + [6 anchor patches] + [(N-6)//2 after]
+  #                Symmetric context; exploits both past and future signal.
+  #                Used in: sleep_staging_lstm, sleep_staging_transformer (new runs)
+  #                Model: hidden_dim=256, num_layers=2 (see model section below)
+  seq2seq_context_mode: "centered"
+
+  # seq2seq_padding_policy: controls which anchors are included in the index.
+  #   "allow_all"    — all anchors included; for causal mode the legacy min_past
+  #                    filter still applies (controlled by min_past_denom /
+  #                    max_min_past_patches below).
+  #                    Used in: sleep_staging_*_old_arch128 results.
+  #   "max_fraction" — only anchors where padding/N <= seq2seq_max_padding_fraction.
+  #   "complete_only"— only anchors where padding == 0 (full context on both sides
+  #                    for centered; full past for causal). No Flash-attention
+  #                    penalty — every batch is padding-free.
+  #                    Used in: new sleep_staging runs.
+  seq2seq_padding_policy: "complete_only"
+
+  # seq2seq_max_padding_fraction: fraction threshold for the "max_fraction" policy.
+  # Ignored when policy is "allow_all" or "complete_only".
+  seq2seq_max_padding_fraction: 0.5
+
+  # Legacy min_past params — only used when seq2seq_padding_policy: "allow_all".
   min_past_denom:       8
   max_min_past_patches: 240
 
@@ -108,11 +141,25 @@ dataset:
   min_recording_patches: 2880
 
 # ── Sequence Head Model ──────────────────────────────────────────────────────
+# ┌─ Model size history ────────────────────────────────────────────────────────┐
+# │ hidden_dim=128, num_layers=1  →  658K params (LSTM bidir) / 264K (Transformer)
+# │   Used for: ALL binary/multiclass seq2label tasks (bmi, sex, apnea, cvd, …)
+# │             AND the archived sleep staging runs:
+# │               sleep_staging_lstm_old_arch128
+# │               sleep_staging_transformer_old_arch128
+# │
+# │ hidden_dim=256, num_layers=2  →  3.16M params (LSTM bidir) / ~1M (Transformer)
+# │   Used for: sleep staging NEW runs (sleep_staging_lstm, sleep_staging_transformer)
+# │             on the sleep-stage-redesign branch.
+# │   Rationale: V1 sleep staging used this size and achieved substantially higher
+# │              kappa (0.62 vs 0.56 at 10m). The 5-class seq2seq task needs more
+# │              model capacity than binary seq2label tasks.
+# └────────────────────────────────────────────────────────────────────────────┘
 model:
   input_dim: 512
   head_type: "lstm"
-  hidden_dim: 128
-  num_layers: 1
+  hidden_dim: 256   # 128 → archived in *_old_arch128 dirs; 256 for new sleep staging
+  num_layers: 2     # 1   → archived in *_old_arch128 dirs; 2   for new sleep staging
   num_heads:  8
   dropout:    0.3
   num_classes: 2

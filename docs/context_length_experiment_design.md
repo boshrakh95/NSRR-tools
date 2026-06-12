@@ -177,6 +177,24 @@ For sleep staging, subject-level aggregation doesn’t apply (each 30-second epo
 
 The mean_pool head loses position information and is expected to underperform on the anchor task; its saturation curve is included as a no-temporal-context baseline.
 
+**Window design for sleep staging (implemented on sleep-stage-redesign branch):**
+
+Context is **centred** on the anchor epoch (not causal/past-only), using only anchors where
+the full window fits within the recording (`complete_only` policy, zero padding). This
+enables Flash attention at all context lengths and ensures the comparison is clean: each
+model is evaluated under its full promised context. The first/last `(N-6)/2` patches of
+every recording are excluded from training and evaluation (e.g., first/last ~2 hours at
+240m context). Architecture: 2-layer bidirectional LSTM, hidden_dim=256 (3.16M params),
+matching the V1 setup that produced substantially higher kappa than the old arch128 runs.
+
+**Test-set composition confound (applies to both `complete_only` and `max_fraction`):**
+Different context lengths evaluate on different epoch subsets. Short contexts include
+sleep-onset N1 epochs (hard); long contexts exclude them. Bias direction: short contexts
+slightly deflated → effect of long context understated. Post-hoc fix: evaluate all models
+on the common set (240m-valid anchors only) using `scripts/analyze_common_eval_set.py`.
+Primary results use per-context sets; supplementary results use the common set.
+See `docs/sleep_staging_design.md §3b` for full details.
+
 ---
 
 ## 7. Outputs and Figures for the Paper
@@ -238,7 +256,7 @@ See `docs/ANALYSIS_IDEAS.md` for the scientific motivation, expected outputs, an
 `scripts/collect_results_v2.py` reads the raw per-run output files from scratch and writes flat CSVs and parquets:
 
 - **Reads:** `{task}_{head}/context_{L}/training_curves.csv`, `metrics.json` (for training); `inference/{task}_{head}/window_analysis_{split}.csv` (for analysis); `inference/{task}_{head}/context_{L}/{split}_windows.parquet` (for per-window predictions)
-- **Writes:** `results/collected/training.csv`, `results/collected/analysis.csv` (repo + scratch); `collected/predictions/*.parquet` (scratch only)
+- **Writes:** `results/collected/phase0_v3/training.csv`, `results/collected/phase0_v3/analysis.csv` (fast-channel, repo + scratch); `results/collected/phase0_v3_full/` for full-channel; `collected/predictions/*.parquet` (scratch only). Pass `--force` to re-collect after re-running analyze.
 
 These flat files replace the need to read individual per-run CSVs and JSONs when making plots and tables. See `docs/RESULTS_COLLECTION.md` for full column schemas and usage examples.
 

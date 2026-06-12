@@ -116,6 +116,19 @@ def get_subject_ids(ds: ContextWindowDataset) -> list:
     return ids
 
 
+def get_anchor_patch_ends(ds: ContextWindowDataset) -> np.ndarray:
+    """Return anchor_patch_end for every index entry (seq2seq only).
+
+    For seq2seq, aux_int in _index is anchor_patch_end (the patch index
+    immediately after the last patch of the anchor epoch).  Stored in
+    the parquet so post-hoc analyses can identify the common evaluation
+    set across context lengths (e.g. filter to 240m-valid anchors).
+
+    Returns int32 array aligned to ds._index.
+    """
+    return np.array([aux for _, aux, _ in ds._index], dtype=np.int32)
+
+
 def run_inference(model: torch.nn.Module, loader: DataLoader,
                   device: torch.device, num_classes: int):
     """Return (logits_np, targets_np) over the full loader."""
@@ -247,6 +260,13 @@ def main():
             print(f"  Dataset items: {len(ds):,}  (subjects: {len(ds.df):,})")
 
             subject_ids = get_subject_ids(ds)
+            # For seq2seq tasks, record anchor position so post-hoc analyses
+            # can compute the common evaluation set across context lengths.
+            anchor_ends = (
+                get_anchor_patch_ends(ds)
+                if args.task_type == "seq2seq"
+                else None
+            )
 
             # ── Auto-scale batch size with context length ──────────────────────
             # Training used batch=32 at 240m (N=2880 patches). Inference has no
@@ -283,10 +303,40 @@ def main():
             cfg["model"]["num_classes"] = num_classes
             cfg["model"]["head_type"]   = args.head_type
 
+            # Auto-detect model architecture from checkpoint weights.
+            # This lets inference work correctly even when the config has been
+            # updated (e.g. hidden_dim changed for sleep staging) without
+            # requiring manual config edits per task.
+            ckpt_state = torch.load(ckpt_path, map_location="cpu")
+
+            if args.head_type == "lstm" and "lstm.weight_ih_l0" in ckpt_state:
+                # weight_ih_l0: [4*hidden, input_dim]  (bidirectional — same size)
+                ckpt_hidden = ckpt_state["lstm.weight_ih_l0"].shape[0] // 4
+                ckpt_layers = sum(
+                    1 for k in ckpt_state
+                    if k.startswith("lstm.weight_ih_l") and not k.endswith("_reverse")
+                )
+                cfg["model"]["hidden_dim"] = ckpt_hidden
+                cfg["model"]["num_layers"] = ckpt_layers
+            elif args.head_type == "transformer":
+                # in_proj_weight: [3*d_model, d_model]
+                for k, v in ckpt_state.items():
+                    if "self_attn.in_proj_weight" in k:
+                        cfg["model"]["hidden_dim"] = v.shape[1]
+                        break
+                layer_idxs = {
+                    int(k.split(".")[2]) for k in ckpt_state
+                    if k.startswith("transformer.layers.")
+                    and len(k.split(".")) > 2 and k.split(".")[2].isdigit()
+                }
+                if layer_idxs:
+                    cfg["model"]["num_layers"] = max(layer_idxs) + 1
+            elif args.head_type == "mean_pool" and "fc.weight" in ckpt_state:
+                cfg["model"]["hidden_dim"] = ckpt_state["fc.weight"].shape[1]
+
             # For transformer heads, match max_seq_len to what the checkpoint
             # was trained with (pos_enc is a registered buffer saved in state
             # dict; shape mismatch causes load failure if the default changed).
-            ckpt_state = torch.load(ckpt_path, map_location="cpu")
             if "pos_enc" in ckpt_state:
                 # pos_enc shape: [1, max_seq_len+1, hidden_dim]
                 cfg["model"]["max_seq_len"] = ckpt_state["pos_enc"].shape[1] - 1
@@ -321,6 +371,12 @@ def main():
                 window_idx[i] = seen.get(key, 0)
                 seen[key] = seen.get(key, 0) + 1
             rows["window_idx"] = window_idx
+            # seq2seq only: anchor position within the recording.
+            # Used by analyze_common_eval_set.py to restrict all context lengths
+            # to the same anchor set (those valid at the longest context) so
+            # that the kappa comparison is not confounded by test-set composition.
+            if anchor_ends is not None:
+                rows["anchor_patch_end"] = anchor_ends
 
             df_out = pd.DataFrame(rows)
             df_out.to_parquet(out_parquet, index=False)

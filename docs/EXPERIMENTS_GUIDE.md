@@ -11,22 +11,27 @@ This document is the definitive reference for running training, inference, and a
 ## Table of Contents
 
 1. [Overview](#overview)
-2. [Pipeline Steps](#pipeline-steps)
-3. [Config Files](#config-files)
-4. [Experiment Registry and Command Generator](#experiment-registry-and-command-generator)
-5. [Submitting Jobs](#submitting-jobs)
-6. [Checkpoint Resume and Auto-Requeue](#checkpoint-resume-and-auto-requeue)
-7. [Job Run History and Tracking](#job-run-history-and-tracking)
-8. [V2 Experiment Plan](#v2-experiment-plan)
-9. [Results Directory Structure](#results-directory-structure)
-10. [Expected Runtimes](#expected-runtimes)
-11. [Configurable Training K Strategy](#configurable-training-k-strategy)
-12. [K Windows: Training vs Val vs Inference](#k-windows-training-vs-val-vs-inference)
-13. [Batch Size Protocol](#batch-size-protocol)
-14. [Adding New Experiments](#adding-new-experiments)
-15. [Regression Tasks (Deferred)](#regression-tasks-deferred)
-16. [Notes on Specific Tasks](#notes-on-specific-tasks)
-17. [Results Collection](#results-collection)
+2. [**End-to-End Run Playbooks**](#end-to-end-run-playbooks) ← start here
+   - [Run identity quick-reference](#run-identity-quick-reference)
+   - [Fast-channel run (v3 baseline)](#fast-channel-run-v3-baseline)
+   - [Full-channel run (channel expansion)](#full-channel-run-channel-expansion)
+3. [Pipeline Steps](#pipeline-steps)
+4. [Config Files](#config-files)
+5. [Experiment Registry and Command Generator](#experiment-registry-and-command-generator)
+6. [Submitting Jobs](#submitting-jobs)
+7. [Checkpoint Resume and Auto-Requeue](#checkpoint-resume-and-auto-requeue)
+8. [Job Run History and Tracking](#job-run-history-and-tracking)
+9. [Experiment Plan](#experiment-plan)
+10. [Results Directory Structure](#results-directory-structure)
+11. [Expected Runtimes](#expected-runtimes)
+12. [Configurable Training K Strategy](#configurable-training-k-strategy)
+13. [K Windows: Training vs Val vs Inference](#k-windows-training-vs-val-vs-inference)
+14. [Batch Size Protocol](#batch-size-protocol)
+15. [Model Architecture Reference](#model-architecture-reference)
+16. [Adding New Experiments](#adding-new-experiments)
+17. [Regression Tasks (Deferred)](#regression-tasks-deferred)
+18. [Notes on Specific Tasks](#notes-on-specific-tasks)
+19. [Results Collection](#results-collection)
 
 ---
 
@@ -40,6 +45,594 @@ The pipeline takes frozen SleepFM embeddings and trains lightweight sequence hea
 3. **Analyze** — sweep K=1,5,10,20,50,all windows per subject, compute metrics, write markdown tables and optional plots
 4. **Iso-compute analysis** — dense K sweep (`--k-dense`, ~25 values), build heatmap DataFrame, produce 7 iso-compute plots: heatmap, metric-vs-k, metric-vs-total-context, Pareto front, min-cost frontier, marginal gain, double-tradeoff
 5. **Saturation curve** — AUROC/balanced_accuracy vs context length per head; the primary "Figure 1" for the paper
+
+---
+
+## End-to-End Run Playbooks
+
+Two parallel experiment sets live on disk simultaneously and never overwrite each other.
+
+### Run identity quick-reference
+
+| | Fast-channel (v3 baseline) | Full-channel (channel expansion) |
+|---|---|---|
+| **Channels/subject** | 7–8 (BAS=3, RESP=1, EKG=1, EMG=1–2) | Up to 23 (BAS≤10, RESP≤7, EKG≤2, EMG≤4) |
+| **Preprocessing config** | `configs/preprocessing_params.yaml` | `configs/preprocessing_params_full.yaml` |
+| **HDF5 root** | `/scratch/boshra95/psg/` | `/scratch/boshra95/psg_full/` |
+| **Embeddings dir** | `/scratch/boshra95/psg/unified/embeddings/sleepfm_5sec/` | `/scratch/boshra95/psg_full/unified/embeddings/sleepfm_5sec/` |
+| **Embedding config** | `configs/phase0_v3_config.yaml` | `configs/phase0_v3_full_config.yaml` |
+| **Seq2label train config** | `configs/phase0_v3_config.yaml` (hidden=128, layers=1) | `configs/phase0_v3_full_config.yaml` (hidden=128, layers=1) |
+| **Sleep staging config** | `configs/phase0_v3_staging_config.yaml` (hidden=256, layers=2, val_kappa) | `configs/phase0_v3_full_staging_config.yaml` (hidden=256, layers=2, val_kappa) |
+| **Registry** | `experiments/v2_registry.yaml` | `experiments/v2_full_registry.yaml` |
+| **Results root** | `/scratch/boshra95/psg/unified/results/phase0_v3/` | `/scratch/boshra95/psg_full/unified/results/phase0_v3_full/` |
+| **Inference root** | `/scratch/boshra95/psg/unified/results/phase0_v3/inference/` | `/scratch/boshra95/psg_full/unified/results/phase0_v3_full/inference/` |
+| **Training logs** | `logs_v3/` | `logs_v3_full/` |
+| **Preprocessing/embedding logs** | `logs_v3/` (historical) | `logs_v3_full/` |
+| **Status** | **DONE** — all steps complete | **IN PROGRESS** — preprocessing/embedding running |
+
+---
+
+### Fast-channel run (v3 baseline)
+
+> All steps for the fast-channel run are **already complete**. This section documents
+> the commands that were used, for reproducibility and reference.
+
+**Working directory for all commands:** `cd /home/boshra95/NSRR-tools`
+
+#### Step 0 — Preprocessing (EDF → HDF5)
+
+Outputs to `/scratch/boshra95/psg/{dataset}/derived/hdf5_signals/`.
+Logs to `logs_v3/` (historical; the full-channel run uses `logs_v3_full/` for all steps).
+
+```bash
+CFG=configs/preprocessing_params.yaml
+
+# Small/medium datasets (one job each, ~26h wall time)
+DATASET=stages CONFIG_PATH=$CFG sbatch jobs/preprocess_signals_parallel.sh
+DATASET=apples CONFIG_PATH=$CFG sbatch jobs/preprocess_signals_parallel.sh
+DATASET=mros   CONFIG_PATH=$CFG sbatch jobs/preprocess_signals_parallel.sh
+
+# SHHS (8444 subjects — split into 6 parallel array jobs, 8h each)
+sbatch jobs/preprocess_signals_array.sh shhs    0  1500 --config $CFG
+sbatch jobs/preprocess_signals_array.sh shhs 1500  3000 --config $CFG
+sbatch jobs/preprocess_signals_array.sh shhs 3000  4500 --config $CFG
+sbatch jobs/preprocess_signals_array.sh shhs 4500  6000 --config $CFG
+sbatch jobs/preprocess_signals_array.sh shhs 6000  7500 --config $CFG
+sbatch jobs/preprocess_signals_array.sh shhs 7500  9000 --config $CFG
+```
+
+**Output:** `.h5` files per subject, 7–8 channels, 128 Hz.
+**Verify:** `ls /scratch/boshra95/psg/shhs/derived/hdf5_signals/ | wc -l`  → expected ~8444.
+
+#### Step 1 — Embedding Extraction (HDF5 → .npy)
+
+Outputs to `/scratch/boshra95/psg/unified/embeddings/sleepfm_5sec/{dataset}/{subject}.npy`.
+Each `.npy` has shape `[T, 4, 128]`.
+
+```bash
+# 4 parallel GPU jobs covering all ~15,000 subjects
+# Subject global index order (from phase0_v3_config.yaml datasets list):
+#   apples(0–1103), shhs(1104–9547), mros(9548–13480), stages(13481–14993)
+
+sbatch --export=ALL,START=0,END=2500    jobs/extract_embeddings_gpu.sh
+sbatch --export=ALL,START=2500,END=5000 jobs/extract_embeddings_gpu.sh
+sbatch --export=ALL,START=5000,END=7500 jobs/extract_embeddings_gpu.sh
+sbatch --export=ALL,START=7500,END=9600 jobs/extract_embeddings_gpu.sh
+# (mros+stages submitted after their preprocessing completed)
+sbatch --export=ALL,START=9600,END=12500  jobs/extract_embeddings_gpu.sh
+sbatch --export=ALL,START=12500,END=15100 jobs/extract_embeddings_gpu.sh
+```
+
+Note: `jobs/extract_embeddings_gpu.sh` defaults to `CONFIG=configs/phase0_v3_config.yaml`.
+Logs go to `logs_v3/embeddings_*.out`.
+
+**Verify:** `find /scratch/boshra95/psg/unified/embeddings/sleepfm_5sec -name '*.npy' | wc -l`  → expected ~14,992.
+
+#### Step 2 — Training: seq2label tasks
+
+Registry: `experiments/v2_registry.yaml` (no `--registry` flag needed — it's the default).
+Config: `configs/phase0_v3_config.yaml` (hidden=128, layers=1, i.e., ~658K LSTM params).
+Results: `/scratch/boshra95/psg/unified/results/phase0_v3/{task}_{head}/context_{L}/`.
+Logs: `logs_v3/train_{task}_{head}_{context}_lr{lr}_{jobid}.out`.
+
+```bash
+# Tier 1 — all three heads (run all contexts in parallel per experiment)
+python scripts/gen_commands.py train sex_binary_lstm              | bash
+python scripts/gen_commands.py train sex_binary_transformer       | bash
+python scripts/gen_commands.py train sex_binary_mean_pool         | bash
+
+python scripts/gen_commands.py train sleep_efficiency_binary_lstm        | bash
+python scripts/gen_commands.py train sleep_efficiency_binary_transformer | bash
+python scripts/gen_commands.py train sleep_efficiency_binary_mean_pool   | bash
+
+python scripts/gen_commands.py train bmi_binary_lstm        | bash
+python scripts/gen_commands.py train bmi_binary_transformer | bash
+python scripts/gen_commands.py train bmi_binary_mean_pool   | bash
+
+python scripts/gen_commands.py train age_class_lstm         | bash
+python scripts/gen_commands.py train age_class_transformer  | bash
+python scripts/gen_commands.py train age_class_mean_pool    | bash
+
+python scripts/gen_commands.py train apnea_binary_lstm        | bash
+python scripts/gen_commands.py train apnea_binary_transformer | bash
+python scripts/gen_commands.py train apnea_binary_mean_pool   | bash
+
+# Tier 2 — lstm only
+python scripts/gen_commands.py train psqi_binary_lstm               | bash
+python scripts/gen_commands.py train depression_extreme_binary_lstm | bash
+python scripts/gen_commands.py train osa_binary_apples_postqc_lstm  | bash
+python scripts/gen_commands.py train osa_severity_apples_lstm       | bash
+python scripts/gen_commands.py train cvd_binary_lstm                | bash
+python scripts/gen_commands.py train cvd_binary_transformer         | bash
+python scripts/gen_commands.py train sleepiness_binary_lstm         | bash
+python scripts/gen_commands.py train sleepiness_binary_transformer  | bash
+```
+
+**Check status:** `python scripts/gen_commands.py status`
+**Check job history:** `python scripts/gen_commands.py runs sex_binary_lstm`
+
+#### Step 3 — Training: sleep staging
+
+Sleep staging uses `task_type: seq2seq` with a **centered** context window and the 256/2
+head. Registry: `v2_registry.yaml`. Each sleep staging entry has an explicit
+`config: configs/phase0_v3_staging_config.yaml` (hidden=256, layers=2, **`val_kappa` monitor**,
+epochs=60). `gen_commands.py` picks `exp["config"]` before `registry["config"]` automatically.
+
+**Why val_kappa for sleep staging:** val_auroc for 5-class OvR macro is slow to plateau and
+caused 120m to hit the 40-epoch ceiling without converging. val_kappa directly optimises the
+primary reported metric. See `docs/sleep_staging_design.md §10.3` for the full analysis.
+
+Results: `/scratch/boshra95/psg/unified/results/phase0_v3/sleep_staging_{head}/context_{L}/`.
+Primary metric: Cohen's κ (logged as `val_kappa` and `test_kappa` in `metrics.json`).
+
+```bash
+# Primary run: shhs + mros + apples (no STAGES — STAGES dominates data and hurts kappa)
+python scripts/gen_commands.py train sleep_staging_lstm        | bash
+python scripts/gen_commands.py train sleep_staging_transformer | bash
+python scripts/gen_commands.py train sleep_staging_mean_pool   | bash
+
+# Comparison run: includes STAGES (for ablation only)
+python scripts/gen_commands.py train sleep_staging_lstm_with_stages        | bash
+python scripts/gen_commands.py train sleep_staging_transformer_with_stages | bash
+```
+
+#### Step 4 — Inference (all trained contexts → per-window parquets)
+
+One GPU job per experiment auto-discovers all trained contexts and skips any already inferred.
+
+Results: `/scratch/boshra95/psg/unified/results/phase0_v3/inference/{task}_{head}/context_{L}/test_windows.parquet`.
+
+```bash
+# Run after training is complete for each experiment
+python scripts/gen_commands.py infer sex_binary_lstm | bash
+python scripts/gen_commands.py infer sex_binary_transformer | bash
+python scripts/gen_commands.py infer sex_binary_mean_pool | bash
+# ... repeat for each experiment
+
+# For val split (needed for threshold tuning):
+python scripts/gen_commands.py infer sex_binary_lstm --split val | bash
+
+# Sleep staging inference (same command):
+python scripts/gen_commands.py infer sleep_staging_lstm | bash
+```
+
+#### Step 5 — Analysis and Plotting (local, no GPU)
+
+> **Registry rule:** No `--registry` flag = fast-channel; all outputs go to `scratch/psg/…`.
+> Passing `--registry experiments/v2_full_registry.yaml` redirects to `scratch/psg_full/…` — only
+> do that in the full-channel section below.
+
+**Multi-task pipeline (recommended):** runs all 13 steps (window sweep with dense K, collect,
+heatmap, iso-plots, saturation, scaling-laws, calibration, window-position,
+subject-consistency, cohort-saturation, precision-recall, subject-kstar, task-comparison).
+
+Step 1 — Full pipeline, no bootstrap (~10–20 min, gets all plots without CI bands):
+```bash
+source /home/boshra95/sleepfm_env/bin/activate
+bash scripts/run_analysis.sh \
+  age_class_lstm age_class_transformer \
+  apnea_binary_lstm apnea_binary_transformer \
+  bmi_binary_lstm bmi_binary_transformer \
+  cvd_binary_lstm cvd_binary_transformer \
+  depression_extreme_binary_lstm \
+  osa_binary_apples_postqc_lstm \
+  psqi_binary_lstm \
+  sex_binary_lstm sex_binary_transformer \
+  sleep_efficiency_binary_lstm sleep_efficiency_binary_transformer \
+  sleepiness_binary_lstm sleepiness_binary_transformer \
+  --heads lstm transformer \
+  2>&1 | tee analysis_run.log
+# No --registry → fast channel (scratch/psg/unified/results/phase0_v3/)
+```
+
+Step 2 — Add bootstrap CIs to window-sweep plots only (~2–3 hrs, run in tmux).
+Reruns only the analyze step; all other plots (Steps 2–13) are untouched:
+```bash
+bash scripts/run_analysis.sh \
+  age_class_lstm age_class_transformer \
+  apnea_binary_lstm apnea_binary_transformer \
+  bmi_binary_lstm bmi_binary_transformer \
+  cvd_binary_lstm cvd_binary_transformer \
+  depression_extreme_binary_lstm \
+  osa_binary_apples_postqc_lstm \
+  psqi_binary_lstm \
+  sex_binary_lstm sex_binary_transformer \
+  sleep_efficiency_binary_lstm sleep_efficiency_binary_transformer \
+  sleepiness_binary_lstm sleepiness_binary_transformer \
+  --heads lstm transformer \
+  --bootstrap 1000 --analyze-only \
+  2>&1 | tee bootstrap_run.log
+```
+
+Step 3 — After Step 2, re-collect so `results/collected/phase0_v3/analysis.csv` picks up the
+new bootstrap CI columns (collect uses key-dedup by default, so `--force` is required):
+```bash
+python scripts/collect_results_v2.py --force
+```
+
+**Single experiment / a la carte:**
+```bash
+# Dense K sweep + plots
+python scripts/gen_commands.py analyze sex_binary_lstm --k-dense --plot | bash
+
+# Heatmap DataFrame (after dense K sweep)
+python scripts/gen_commands.py build-heatmap sex_binary_lstm | bash
+
+# Post-hoc threshold tuning (binary tasks only, after val inference)
+python scripts/gen_commands.py threshold-tuning sex_binary_lstm | bash
+```
+
+Output: `inference/{task}_{head}/window_analysis_{split}.csv`, `window_analysis.md`,
+`heatmap_df_{split}.csv`, `threshold_tuning.csv`.
+Collected CSVs: `results/collected/phase0_v3/analysis.csv` and `training.csv` (in git repo).
+
+#### Step 6 — Plotting (a la carte, local, no GPU)
+
+`run_analysis.sh` Step 1 above runs all plots automatically. Use individual commands below only
+to re-run a specific plot type.
+
+```bash
+# Iso-compute plots (7 plots per task/head/metric combination)
+python scripts/gen_commands.py iso-plots sex_binary_lstm | bash
+
+# Saturation curve: AUROC vs context length, one line per head
+python scripts/gen_commands.py saturation sex_binary \
+    --heads lstm transformer | bash
+
+# Extended analyses (require collect to be run first)
+python scripts/gen_commands.py collect sex_binary_lstm sex_binary_transformer | bash
+python scripts/gen_commands.py scaling-laws sex_binary --heads lstm transformer | bash
+python scripts/gen_commands.py task-comparison --head lstm | bash
+python scripts/gen_commands.py calibration sex_binary_lstm | bash
+```
+
+Output: `/scratch/boshra95/psg/unified/results/phase0_v3/figures/`.
+
+---
+
+### Full-channel run (channel expansion)
+
+All commands use `--registry experiments/v2_full_registry.yaml`.
+Working directory: `cd /home/boshra95/NSRR-tools`
+
+#### Path summary
+
+```
+Preprocessing output  →  /scratch/boshra95/psg_full/{dataset}/derived/hdf5_signals/
+Embeddings            →  /scratch/boshra95/psg_full/unified/embeddings/sleepfm_5sec/{dataset}/
+Targets/annotations   →  /scratch/boshra95/psg/unified/targets_v2/  (SHARED — do not duplicate)
+Seq2label results     →  /scratch/boshra95/psg_full/unified/results/phase0_v3_full/{task}_{head}/
+Inference results     →  /scratch/boshra95/psg_full/unified/results/phase0_v3_full/inference/
+Figures               →  /scratch/boshra95/psg_full/unified/results/phase0_v3_full/figures/
+All logs              →  /home/boshra95/NSRR-tools/logs_v3_full/
+```
+
+#### Step 0 — Preprocessing (EDF → HDF5)
+
+Outputs to `/scratch/boshra95/psg_full/{dataset}/derived/hdf5_signals/`.
+Logs to `logs_v3_full/preprocess_*.out`.
+Config `preprocessing_params_full.yaml` sets `strategy: "sleepfm_full"` (full channel set).
+
+```bash
+CFG=configs/preprocessing_params_full.yaml
+
+# Small/medium datasets (one job each, up to 26h)
+DATASET=stages CONFIG_PATH=$CFG sbatch jobs/preprocess_signals_parallel.sh
+DATASET=apples CONFIG_PATH=$CFG sbatch jobs/preprocess_signals_parallel.sh
+DATASET=mros   CONFIG_PATH=$CFG sbatch jobs/preprocess_signals_parallel.sh
+
+# SHHS (8444 subjects — 6 parallel array jobs, 8h each)
+sbatch jobs/preprocess_signals_array.sh shhs    0  1500 --config $CFG
+sbatch jobs/preprocess_signals_array.sh shhs 1500  3000 --config $CFG
+sbatch jobs/preprocess_signals_array.sh shhs 3000  4500 --config $CFG
+sbatch jobs/preprocess_signals_array.sh shhs 4500  6000 --config $CFG
+sbatch jobs/preprocess_signals_array.sh shhs 6000  7500 --config $CFG
+sbatch jobs/preprocess_signals_array.sh shhs 7500  9000 --config $CFG
+```
+
+**All 9 jobs can run simultaneously.** Safe to re-submit any that fail — existing HDF5 files are
+skipped (`--skip-existing` is the default).
+
+**Verify when done:**
+```bash
+for ds in stages shhs apples mros; do
+    n=$(ls /scratch/boshra95/psg_full/${ds}/derived/hdf5_signals/*.h5 2>/dev/null | wc -l)
+    echo "$ds: $n (expected: stages≈1513  shhs≈8444  apples≈1104  mros≈3933)"
+done
+
+# Spot-check channel count (should be 14–21 per subject)
+python3 - <<'EOF'
+import h5py, glob
+for f in sorted(glob.glob('/scratch/boshra95/psg_full/stages/derived/hdf5_signals/*.h5'))[:3]:
+    with h5py.File(f) as h:
+        print(f.split('/')[-1], '->', sorted(h.keys()))
+EOF
+```
+
+#### Step 1 — Embedding Extraction (HDF5 → .npy)
+
+Outputs to `/scratch/boshra95/psg_full/unified/embeddings/sleepfm_5sec/{dataset}/{subject}.npy`.
+Each `.npy` shape: `[T, 4, 128]` (same format as fast-channel; content richer due to more channels).
+Logs to `logs_v3_full/embeddings_*.out`.
+
+```bash
+# Subject global index order (from phase0_v3_full_config.yaml datasets list):
+#   apples(0–1103), shhs(1104–9547), mros(9548–13480), stages(13481–14993)
+#
+# 6 parallel GPU jobs (~4h each on H100 MIG)
+# Submit first 4 immediately (apples + shhs complete);
+# submit last 2 after mros and stages preprocessing finishes.
+
+NEW_CFG=configs/phase0_v3_full_config.yaml
+
+sbatch --export=ALL,CONFIG=$NEW_CFG,START=0,END=2500       jobs/extract_embeddings_gpu.sh
+sbatch --export=ALL,CONFIG=$NEW_CFG,START=2500,END=5000    jobs/extract_embeddings_gpu.sh
+sbatch --export=ALL,CONFIG=$NEW_CFG,START=5000,END=7500    jobs/extract_embeddings_gpu.sh
+sbatch --export=ALL,CONFIG=$NEW_CFG,START=7500,END=9600    jobs/extract_embeddings_gpu.sh
+# Submit below AFTER mros (9548–13480) and stages (13481–14993) preprocessing is done:
+sbatch --export=ALL,CONFIG=$NEW_CFG,START=9600,END=12500   jobs/extract_embeddings_gpu.sh
+sbatch --export=ALL,CONFIG=$NEW_CFG,START=12500,END=15100  jobs/extract_embeddings_gpu.sh
+```
+
+`--skip-existing` is enabled by default — safe to resubmit any range.
+
+**Verify when done:**
+```bash
+find /scratch/boshra95/psg_full/unified/embeddings/sleepfm_5sec -name '*.npy' | wc -l
+# Expected: ~14,992
+
+python3 -c "
+import numpy as np
+a = np.load('/scratch/boshra95/psg_full/unified/embeddings/sleepfm_5sec/stages/STNF00032.npy', mmap_mode='r')
+print('shape:', a.shape)   # [T, 4, 128] — T varies by recording length
+"
+```
+
+#### Step 2 — Training: seq2label tasks
+
+Config: `configs/phase0_v3_full_config.yaml` (hidden=128, layers=1 — matches fast-channel baseline).
+Registry: `experiments/v2_full_registry.yaml`.
+Results: `/scratch/boshra95/psg_full/unified/results/phase0_v3_full/{task}_{head}/context_{L}/`.
+Logs: `logs_v3_full/train_{task}_{head}_{context}_lr{lr}_{jobid}.out`.
+
+```bash
+REG="--registry experiments/v2_full_registry.yaml"
+
+# Tier 1 — all three heads
+python scripts/gen_commands.py $REG train sex_binary_lstm              | bash
+python scripts/gen_commands.py $REG train sex_binary_transformer       | bash
+python scripts/gen_commands.py $REG train sex_binary_mean_pool         | bash
+
+python scripts/gen_commands.py $REG train sleep_efficiency_binary_lstm        | bash
+python scripts/gen_commands.py $REG train sleep_efficiency_binary_transformer | bash
+python scripts/gen_commands.py $REG train sleep_efficiency_binary_mean_pool   | bash
+
+python scripts/gen_commands.py $REG train bmi_binary_lstm        | bash
+python scripts/gen_commands.py $REG train bmi_binary_transformer | bash
+python scripts/gen_commands.py $REG train bmi_binary_mean_pool   | bash
+
+python scripts/gen_commands.py $REG train age_class_lstm         | bash
+python scripts/gen_commands.py $REG train age_class_transformer  | bash
+python scripts/gen_commands.py $REG train age_class_mean_pool    | bash
+
+python scripts/gen_commands.py $REG train apnea_binary_lstm        | bash
+python scripts/gen_commands.py $REG train apnea_binary_transformer | bash
+python scripts/gen_commands.py $REG train apnea_binary_mean_pool   | bash
+
+# Tier 2 — lstm only
+python scripts/gen_commands.py $REG train psqi_binary_lstm               | bash
+python scripts/gen_commands.py $REG train depression_extreme_binary_lstm | bash
+python scripts/gen_commands.py $REG train osa_binary_apples_postqc_lstm  | bash
+python scripts/gen_commands.py $REG train osa_severity_apples_lstm       | bash
+python scripts/gen_commands.py $REG train cvd_binary_lstm                | bash
+python scripts/gen_commands.py $REG train cvd_binary_transformer         | bash
+python scripts/gen_commands.py $REG train sleepiness_binary_lstm         | bash
+python scripts/gen_commands.py $REG train sleepiness_binary_transformer  | bash
+```
+
+**Check status:** `python scripts/gen_commands.py $REG status`
+
+#### Step 3 — Training: sleep staging
+
+Sleep staging automatically uses `configs/phase0_v3_full_staging_config.yaml` (hidden=256,
+layers=2, num_classes=5) because each sleep staging entry in `v2_full_registry.yaml` has an
+explicit `config:` field. `gen_commands.py` picks `exp["config"]` before `registry["config"]`
+— no special flag needed.
+
+Results: `/scratch/boshra95/psg_full/unified/results/phase0_v3_full/sleep_staging_{head}/context_{L}/`.
+Primary metric: Cohen's κ (field `test_kappa` in `metrics.json`).
+
+```bash
+REG="--registry experiments/v2_full_registry.yaml"
+
+# Primary run: shhs + mros + apples (no STAGES)
+python scripts/gen_commands.py $REG train sleep_staging_lstm        | bash
+python scripts/gen_commands.py $REG train sleep_staging_transformer | bash
+python scripts/gen_commands.py $REG train sleep_staging_mean_pool   | bash
+
+# Comparison run: includes STAGES (for ablation — expected lower kappa)
+python scripts/gen_commands.py $REG train sleep_staging_lstm_with_stages        | bash
+python scripts/gen_commands.py $REG train sleep_staging_transformer_with_stages | bash
+```
+
+**Verify the correct config is being used** by inspecting the generated command:
+```bash
+python scripts/gen_commands.py $REG train sleep_staging_lstm --context 10m
+# Should show: CONFIG=configs/phase0_v3_full_staging_config.yaml
+```
+
+#### Step 4 — Inference
+
+Results: `/scratch/boshra95/psg_full/unified/results/phase0_v3_full/inference/{task}_{head}/context_{L}/test_windows.parquet`.
+
+```bash
+REG="--registry experiments/v2_full_registry.yaml"
+
+python scripts/gen_commands.py $REG infer sex_binary_lstm        | bash
+python scripts/gen_commands.py $REG infer sex_binary_transformer | bash
+python scripts/gen_commands.py $REG infer sex_binary_mean_pool   | bash
+# ... repeat for each experiment
+
+# Sleep staging inference (same command — context auto-discovered)
+python scripts/gen_commands.py $REG infer sleep_staging_lstm | bash
+
+# Val split for threshold tuning
+python scripts/gen_commands.py $REG infer sex_binary_lstm --split val | bash
+```
+
+#### Step 5 — Analysis and Plotting (local, no GPU)
+
+**Multi-task pipeline (recommended):** runs all 13 steps. Always pass
+`--registry experiments/v2_full_registry.yaml` — outputs go to `scratch/psg_full/…`.
+
+Step 1 — Full pipeline, no bootstrap (~10–20 min, gets all plots without CI bands):
+```bash
+source /home/boshra95/sleepfm_env/bin/activate
+bash scripts/run_analysis.sh \
+  age_class_lstm age_class_transformer \
+  apnea_binary_lstm apnea_binary_transformer \
+  bmi_binary_lstm bmi_binary_transformer \
+  cvd_binary_lstm cvd_binary_transformer \
+  depression_extreme_binary_lstm \
+  osa_binary_apples_postqc_lstm \
+  psqi_binary_lstm \
+  sex_binary_lstm sex_binary_transformer \
+  sleep_efficiency_binary_lstm sleep_efficiency_binary_transformer \
+  sleepiness_binary_lstm sleepiness_binary_transformer \
+  --registry experiments/v2_full_registry.yaml \
+  --heads lstm transformer \
+  2>&1 | tee analysis_full_run.log
+# --registry → full channel (scratch/psg_full/unified/results/phase0_v3_full/)
+```
+
+Step 2 — Add bootstrap CIs to window-sweep plots only (~2–3 hrs, run in tmux).
+Reruns only the analyze step; all other plots (Steps 2–13) are untouched:
+```bash
+bash scripts/run_analysis.sh \
+  age_class_lstm age_class_transformer \
+  apnea_binary_lstm apnea_binary_transformer \
+  bmi_binary_lstm bmi_binary_transformer \
+  cvd_binary_lstm cvd_binary_transformer \
+  depression_extreme_binary_lstm \
+  osa_binary_apples_postqc_lstm \
+  psqi_binary_lstm \
+  sex_binary_lstm sex_binary_transformer \
+  sleep_efficiency_binary_lstm sleep_efficiency_binary_transformer \
+  sleepiness_binary_lstm sleepiness_binary_transformer \
+  --registry experiments/v2_full_registry.yaml \
+  --heads lstm transformer \
+  --bootstrap 1000 --analyze-only \
+  2>&1 | tee bootstrap_full_run.log
+```
+
+Step 3 — After Step 2, re-collect so `results/collected/phase0_v3_full/analysis.csv` picks up
+the new bootstrap CI columns (`--force` bypasses key-dedup):
+```bash
+python scripts/collect_results_v2.py \
+  --results-dir /scratch/boshra95/psg_full/unified/results/phase0_v3_full \
+  --force
+```
+
+**Single experiment / a la carte:**
+```bash
+REG="--registry experiments/v2_full_registry.yaml"
+
+# Dense K sweep + plots
+python scripts/gen_commands.py $REG analyze sex_binary_lstm --k-dense --plot | bash
+
+# Heatmap DataFrame (after dense K sweep)
+python scripts/gen_commands.py $REG build-heatmap sex_binary_lstm | bash
+
+# Post-hoc threshold tuning (binary tasks only, after val inference)
+python scripts/gen_commands.py $REG threshold-tuning sex_binary_lstm | bash
+```
+
+Output: `inference/{task}_{head}/window_analysis_{split}.csv`, `heatmap_df_{split}.csv`,
+`threshold_tuning.csv`.
+Collected CSVs: `results/collected/phase0_v3_full/analysis.csv` and `training.csv` (in git repo).
+
+#### Step 6 — Plotting (a la carte, local, no GPU)
+
+`run_analysis.sh` Step 1 above runs all plots automatically. Use individual commands below only
+to re-run a specific plot type.
+
+```bash
+REG="--registry experiments/v2_full_registry.yaml"
+
+# Iso-compute plots
+python scripts/gen_commands.py $REG iso-plots sex_binary_lstm | bash
+
+# Saturation curve: AUROC vs context length, one line per head
+python scripts/gen_commands.py $REG saturation sex_binary \
+    --heads lstm transformer | bash
+
+# Sleep staging saturation (kappa vs context)
+python scripts/gen_commands.py $REG saturation sleep_staging \
+    --heads lstm transformer | bash
+
+# Extended analyses
+python scripts/gen_commands.py $REG collect sex_binary_lstm sex_binary_transformer | bash
+python scripts/gen_commands.py $REG scaling-laws sex_binary --heads lstm transformer | bash
+python scripts/gen_commands.py $REG task-comparison --head lstm | bash
+```
+
+Output: `/scratch/boshra95/psg_full/unified/results/phase0_v3_full/figures/`.
+
+#### Comparing fast-channel vs full-channel results
+
+**Quick comparison table for all seq2label tasks (paper-ready):**
+
+`scripts/summarize_results.py` reads `window_analysis_test.csv` directly from both inference
+directories and produces a best-AUROC-per-task comparison table. It never depends on collect
+having been run — always reflects the latest `analyze` outputs.
+
+```bash
+source /home/boshra95/sleepfm_env/bin/activate
+
+# Console table (k=5 primary, k=all ceiling)
+python scripts/summarize_results.py --compare
+
+# Save to CSV
+python scripts/summarize_results.py --compare --out results_summary_fast_vs_full.csv
+
+# LaTeX table
+python scripts/summarize_results.py --compare --latex
+
+# Fast-channel only (no comparison)
+python scripts/summarize_results.py
+```
+
+Columns: task display name, head, N subjects, fast AUROC @ k=5 (best context),
+full AUROC @ k=5 (best context), Δ. Also prints k=all (ceiling) table below.
+
+**Saturation plots (per head, per channel, via gen_commands.py):**
+```bash
+# Fast-channel
+python scripts/gen_commands.py saturation sex_binary --heads lstm transformer | bash
+# Full-channel
+python scripts/gen_commands.py --registry experiments/v2_full_registry.yaml \
+    saturation sex_binary --heads lstm transformer | bash
+```
 
 ---
 
@@ -140,11 +733,22 @@ results/{phase}/figures/
 
 ## Config Files
 
-| Config | Target Dir | Results Dir | Use for |
-|--------|-----------|------------|---------|
-| `configs/phase0_v3_config.yaml` | `targets_v2/` | `results/phase0_v3` | **V3 tasks (current)** |
-| `configs/phase0_v2_config.yaml` | `targets_v2/` | `results/phase0_v2` | V2 tasks (archived) |
-| `configs/phase0_config.yaml` | `targets/` | `results/phase0` | Original v1 tasks |
+### Training / head configs
+
+| Config | Run | Head config | Monitor | Results dir | Registry |
+|--------|-----|-------------|---------|-------------|---------|
+| `configs/phase0_v3_config.yaml` | Fast-channel, **seq2label** tasks | hidden=128, layers=1 (seq2label ran with this) | `val_auroc` | `phase0_v3/` | `v2_registry.yaml` |
+| `configs/phase0_v3_staging_config.yaml` | Fast-channel, **sleep staging** only | hidden=256, layers=2, epochs=60 | `val_kappa` | `phase0_v3/` | `v2_registry.yaml` (per-exp override) |
+| `configs/phase0_v3_full_config.yaml` | Full-channel, **seq2label** tasks | hidden=128, layers=1 | `val_auroc` | `phase0_v3_full/` | `v2_full_registry.yaml` |
+| `configs/phase0_v3_full_staging_config.yaml` | Full-channel, **sleep staging** only | hidden=256, layers=2, epochs=60 | `val_kappa` | `phase0_v3_full/` | `v2_full_registry.yaml` (per-exp override) |
+| `configs/phase0_v2_config.yaml` | Archived | — | — | `phase0_v2/` | — |
+
+### Preprocessing configs
+
+| Config | Channels | Output root | Strategy |
+|--------|----------|-------------|---------|
+| `configs/preprocessing_params.yaml` | 7–8 (fast-channel baseline) | `/scratch/boshra95/psg/` | `sleepfm` (minimal) |
+| `configs/preprocessing_params_full.yaml` | Up to 23 (channel expansion) | `/scratch/boshra95/psg_full/` | `sleepfm_full` |
 
 ---
 
@@ -698,6 +1302,75 @@ The probe tests both train mode (backward pass) and eval mode (forward-only), si
 
 ---
 
+## Model Architecture Reference
+
+Documents the downstream head hyperparameters, their rationale, and implications for
+cross-run comparisons. Relevant for paper Methods §III-E and for any decision to change
+the config.
+
+### Input representation
+
+After SleepFM embedding extraction each subject is a `[T, 4, 128]` array (T = number of
+5-second patches, 4 modalities, 128-dim SleepFM embedding per modality). At training time
+a context window of N patches is flattened to `[N, 512]` as head input.
+
+```
+input_dim = 4 modalities × 128 SleepFM dims = 512    ← fixed, not a tunable hyperparameter
+```
+
+### The `hidden_dim` config key controls both LSTM and Transformer
+
+A single yaml value `model.hidden_dim` drives both head architectures:
+
+| Head | Role of `hidden_dim` |
+|---|---|
+| LSTMHead | LSTM hidden-state size; BiLSTM output = `2 × hidden_dim` |
+| TransformerHead | `d_model` (token representation width); `dim_feedforward = 4 × hidden_dim` |
+| MeanPoolHead | Unused — goes straight from `input_dim=512` to `Linear(512, C)` |
+
+So `hidden_dim: 128` in the seq2label config means both the LSTM hidden size and the Transformer
+d_model are 128; sleep staging uses a separate config with `hidden_dim: 256`.
+
+### Architecture configs per run
+
+Head configs are **intentionally matched** between fast-channel and full-channel so that the
+only variable in the fast→full comparison is the number of PSG channels, not model capacity:
+
+| Run | seq2label config | Sleep staging config | seq2label head | Sleep staging head |
+|---|---|---|---|---|
+| Fast-channel (v3) | `phase0_v3_config.yaml` (val_auroc) | `phase0_v3_staging_config.yaml` (val_kappa, epochs=60) | hidden=128, layers=1 (~658K LSTM) | hidden=256, layers=2 (~3.16M LSTM) |
+| Full-channel (v3_full) | `phase0_v3_full_config.yaml` (val_auroc) | `phase0_v3_full_staging_config.yaml` (val_kappa, epochs=60) | hidden=128, layers=1 (~658K LSTM) | hidden=256, layers=2 (~3.16M LSTM) |
+
+Both sleep staging configs use `val_kappa` as `early_stopping_monitor` (changed from `val_auroc`
+on 2026-06-08). Sleep staging entries in both registries have an explicit `config:` field;
+`gen_commands.py` picks `exp.get("config")` before `registry["config"]` automatically.
+
+This is the correct design: any AUROC or kappa difference fast→full is attributable solely to
+richer channels. A reviewer asking "is the gain from the bigger model?" can be answered "no —
+architectures are identical in both runs."
+
+**Parameter counts:**
+
+| Head | Config | Parameters |
+|---|---|---|
+| LSTMHead (seq2label) | hidden=128, layers=1, BiLSTM | ~658K |
+| TransformerHead (seq2label) | d_model=128, heads=8, ff=512, layers=1 | ~264K |
+| LSTMHead (sleep staging) | hidden=256, layers=2, BiLSTM | ~3.16M |
+| TransformerHead (sleep staging) | d_model=256, heads=8, ff=1024, layers=2 | ~1.7M |
+| MeanPoolHead | any | ~1K |
+
+### Width vs depth rationale
+
+Hidden=128 with 1 BiLSTM layer is not underpowered for seq2label tasks:
+- The fast-channel results (e.g., sex_binary AUROC 0.741–0.757) demonstrate the head extracts
+  real signal; the full-channel run will add real channel information on top of the same head.
+- Sleep staging uses 256/2 because phase0 showed kappa dropping from 0.62 → 0.54 at 10m
+  when using 128/1; the 5-class seq2seq task needs substantially more capacity than binary tasks.
+- For seq2label, going 256/2 would add ~2.5M params over 658K with diminishing returns at
+  N=1k–16k subjects, and would confound the channel comparison.
+
+---
+
 ## Adding New Experiments
 
 ### New task or head
@@ -1081,3 +1754,164 @@ python scripts/gen_commands.py saturation sex_binary \
 ```
 
 CI bands are drawn as shaded regions (alpha=0.15) around each line when `mean_prob_auroc_ci_lo/hi` columns are present in `analysis.csv`. The y-axis label notes "shading = 95% bootstrap CI".
+
+---
+
+## seq2seq Window Design (Sleep Staging)
+
+Sleep staging uses `task_type: seq2seq`. The context window and anchor filtering logic
+differs from seq2label and is controlled by three config params under `dataset:`.
+
+### seq2seq_context_mode
+
+**`"causal"` (original):** Window covers the N patches immediately before (and including)
+the anchor epoch. Past-only; no future signal.
+
+**`"centered"` (recommended for sleep staging):** Window is symmetric around the anchor
+epoch: `[(N-6)//2 past patches] + [6 anchor patches] + [(N-6)//2 future patches]`.
+Uses both past and future context. Better absolute performance; standard in the sleep
+staging literature.
+
+At 30s (N=6): centered == causal (no room for extra context — window IS the anchor epoch).
+
+### seq2seq_padding_policy
+
+Controls which anchor epochs are included in the dataset index:
+
+| Policy | Included anchors | Padding |
+|--------|-----------------|---------|
+| `"allow_all"` | All epochs; causal mode applies legacy `min_past` filter | Possible |
+| `"max_fraction"` | Epochs where `padding/N <= seq2seq_max_padding_fraction` | Bounded |
+| `"complete_only"` | Only epochs where full context fits within recording | None |
+
+`"complete_only"` eliminates all padding → Flash attention fires at all context lengths
+→ 2–5× faster training. Anchors excluded are those within `(N-6)//2` patches of the
+recording boundary (centered) or within the first N patches (causal).
+
+### Results history and config used
+
+| Results directory | context_mode | padding_policy | hidden_dim | num_layers |
+|---|---|---|---|---|
+| `sleep_staging_lstm_old_arch128` | `causal` | `allow_all` | 128 | 1 |
+| `sleep_staging_transformer_old_arch128` | `causal` | `allow_all` | 128 | 1 |
+| `sleep_staging_lstm` | `centered` | `complete_only` | 256 | 2 |
+| `sleep_staging_transformer` | `centered` | `complete_only` | 256 | 2 |
+
+The old `_old_arch128` results used the default config values (causal, allow_all, hidden=128).
+New results use the sleep-stage-redesign branch config (centered, complete_only, hidden=256).
+
+### Paper Methods wording
+
+> "For sleep staging we adopt a symmetric context window of length L centred on each anchor
+> epoch, comprising ⌊(L−30s)/2⌋ seconds of past signal, the 30-second anchor epoch, and
+> ⌊(L−30s)/2⌋ seconds of future signal. We include only anchor epochs for which the full
+> context window lies within the recording, ensuring no zero-padding is introduced and
+> enabling Flash attention throughout. At context length L, this excludes the first and
+> last ⌊L/2⌋ − 15 seconds of each recording. At 30s the window reduces to the anchor epoch
+> alone; at 240m approximately the central 4 hours of each recording are evaluated."
+
+---
+
+## Post-hoc Decision Threshold Tuning (binary tasks only)
+
+For class-imbalanced binary tasks the default t=0.5 threshold under-predicts the minority
+class. This section describes the post-hoc threshold tuning step that should be run after
+inference is complete for all seq2label binary tasks.
+
+**Does not require retraining.** AUROC is unchanged. Only balanced accuracy and per-class
+recall change. See `docs/POSTHOC_THRESHOLD_TUNING.md` for full background and task table.
+
+### Which tasks need it (v3 results — COMPLETED 2026-05-30)
+
+Val inference and tuning have been run for all binary tasks. Results in
+`inference/{exp_id}/threshold_tuning.csv`. See `docs/POSTHOC_THRESHOLD_TUNING.md`
+for the full per-context numbers and surprises. Summary:
+
+**Use tuned BA in paper (positive gain):**
+
+| Task | Best gain | Note |
+|---|---|---|
+| `osa_binary_apples_postqc_lstm` | **+0.22 at 10m** | MUST use — t=0.5 predicts class 1 for ~98% of subjects |
+| `depression_extreme_binary_lstm` | **+0.065 at 80m** | Surprise — balanced at short ctx, biased at long ctx |
+| `bmi_binary_transformer` | +0.027 avg +0.013 | Consistently positive across contexts |
+| `bmi_binary_lstm` | +0.013 avg +0.006 | Smaller than predicted (val-based threshold more conservative) |
+| `sex_binary_lstm` | +0.020 avg +0.009 | Small but real |
+| `sleepiness_binary_lstm` | avg +0.006 | Small; include for consistency |
+| `sleepiness_binary_transformer` | avg +0.006 | Small; include for consistency |
+
+**Keep t=0.5 (tuning zero or negative):**
+
+| Task | Reason |
+|---|---|
+| `cvd_binary_lstm` | Tuning HURTS (avg −0.005) — val too small to reliably generalise |
+| `cvd_binary_transformer` | Near zero or negative |
+| `sex_binary_transformer` | Near zero |
+| `apnea_binary_lstm/transformer` | Near zero |
+| `sleep_efficiency_binary_*` | Near zero, some negative |
+
+**Skip (not binary):** `age_class` (3-class), `sleep_staging` (5-class seq2seq), `psqi_binary_lstm` (AUROC=0.525, near chance).
+
+### Step 1 — Run val inference
+
+Val parquets do not exist yet (inference was only run on test). Re-run inference with
+`--split val` for each binary experiment — reuses trained model, no GPU needed:
+
+```bash
+python scripts/gen_commands.py infer <exp_id> --split val | bash
+```
+
+For all binary seq2label experiments at once (adjust list as needed):
+```bash
+for exp in bmi_binary_lstm bmi_binary_transformer \
+           sleep_efficiency_binary_lstm sleep_efficiency_binary_transformer \
+           sex_binary_lstm sex_binary_transformer \
+           depression_extreme_binary_lstm \
+           osa_binary_apples_postqc_lstm \
+           apnea_binary_lstm apnea_binary_transformer \
+           cvd_binary_lstm cvd_binary_transformer \
+           sleepiness_binary_lstm sleepiness_binary_transformer; do
+  python scripts/gen_commands.py infer $exp --split val | bash
+done
+```
+
+### Step 2 — Run threshold tuning
+
+```bash
+source /home/boshra95/sleepfm_env/bin/activate
+
+for exp in bmi_binary_lstm bmi_binary_transformer \
+           sleep_efficiency_binary_lstm sleep_efficiency_binary_transformer \
+           sex_binary_lstm sex_binary_transformer \
+           depression_extreme_binary_lstm \
+           osa_binary_apples_postqc_lstm \
+           apnea_binary_lstm apnea_binary_transformer \
+           cvd_binary_lstm cvd_binary_transformer \
+           sleepiness_binary_lstm sleepiness_binary_transformer; do
+  python scripts/gen_commands.py threshold-tuning $exp | bash
+done
+```
+
+Or for a single experiment with check output:
+```bash
+python scripts/gen_commands.py threshold-tuning bmi_binary_lstm
+# Shows command + warns if val parquet is missing
+python scripts/gen_commands.py threshold-tuning bmi_binary_lstm | bash
+```
+
+### Output
+
+Each experiment gets a new file (existing results untouched):
+
+```
+results/phase0_v3/inference/{exp_id}/threshold_tuning.csv
+```
+
+Contains both `orig_*` (t=0.5) and `tuned_*` (t_opt) metrics side by side.
+`auroc` is included and is identical in both — threshold-free.
+
+### Paper reporting
+
+Use tuned metrics as primary for balanced accuracy and recall in paper tables.
+Keep original t=0.5 results available in `threshold_tuning.csv` for supplementary.
+Include a single footnote: *"Balanced accuracy at t∗ selected on validation set
+(Youden's Index); AUROC is unaffected."*

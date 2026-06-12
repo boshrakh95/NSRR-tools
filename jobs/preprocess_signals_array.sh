@@ -1,168 +1,137 @@
 #!/bin/bash
 #SBATCH --job-name=preprocess_batch
 #SBATCH --account=def-forouzan
-#SBATCH --time=06:00:00
-#SBATCH --cpus-per-task=4
-#SBATCH --mem=16000M
-#SBATCH --output=logs/preprocess_batch_%x_%j.out
-#SBATCH --error=logs/preprocess_batch_%x_%j.err
+#SBATCH --time=08:00:00
+#SBATCH --cpus-per-task=10
+#SBATCH --mem=30000M
+#SBATCH --signal=B:USR1@120
+#SBATCH --output=/home/boshra95/NSRR-tools/logs_v3_full/preprocess_batch_%x_%j.out
+#SBATCH --error=/home/boshra95/NSRR-tools/logs_v3_full/preprocess_batch_%x_%j.err
 
-# Batch preprocessing for a subset of subjects
-# Useful for splitting large datasets across multiple jobs
+# Batch preprocessing: process a subject index slice of one dataset.
+# Use for large datasets (e.g. SHHS=8444) that exceed a single 26-hour job.
 #
-# Usage: sbatch jobs/preprocess_signals_array.sh <dataset> <start_index> <end_index> [options]
-#   dataset: stages | shhs | apples | mros (required)
-#   start_index: starting subject index, 0-based (optional, default: 0)
-#   end_index: ending subject index, exclusive (optional, default: all)
-#   --log-level: DEBUG | INFO | WARNING | ERROR (optional)
+# Auto-resume on timeout (same mechanism as train_context_sweep_gpu.sh):
+#   --signal=B:USR1@120 fires USR1 to bash 120 s before wall time.
+#   Python finishes the current subject (SIGTERM handler), then exits.
+#   This script resubmits itself with --export=ALL so DATASET, START_INDEX,
+#   END_INDEX, CONFIG_PATH, etc. are all forwarded to the new job.
+#   The new job skips already-written HDF5 files and continues.
+#   Works on Alliance Canada — no --requeue needed.
 #
-# Examples:
-#   # Process first 100 subjects
-#   sbatch jobs/preprocess_signals_array.sh stages 0 100
-#   
-#   # Process subjects 100-200
-#   sbatch jobs/preprocess_signals_array.sh stages 100 200
-#   
-#   # Process all subjects starting from 500
-#   sbatch jobs/preprocess_signals_array.sh stages 500
+# Usage — preferred (env vars, safe for auto-resubmission):
+#   DATASET=shhs START_INDEX=0 END_INDEX=1500 \
+#       CONFIG_PATH=configs/preprocessing_params_full.yaml \
+#       sbatch jobs/preprocess_signals_array.sh
+#
+# Usage — positional-arg style (also supported):
+#   sbatch jobs/preprocess_signals_array.sh <dataset> <start> <end> [options]
+#   sbatch jobs/preprocess_signals_array.sh shhs 0 1500 --config configs/preprocessing_params_full.yaml
+#   sbatch jobs/preprocess_signals_array.sh shhs 1500 3000 --config configs/preprocessing_params_full.yaml
+#
+# SHHS example — split 8444 subjects across 6 parallel jobs of ~1400 each:
+#   CFG=--config configs/preprocessing_params_full.yaml
+#   sbatch jobs/preprocess_signals_array.sh shhs    0  1500 $CFG
+#   sbatch jobs/preprocess_signals_array.sh shhs 1500  3000 $CFG
+#   sbatch jobs/preprocess_signals_array.sh shhs 3000  4500 $CFG
+#   sbatch jobs/preprocess_signals_array.sh shhs 4500  6000 $CFG
+#   sbatch jobs/preprocess_signals_array.sh shhs 6000  7500 $CFG
+#   sbatch jobs/preprocess_signals_array.sh shhs 7500  9000 $CFG
 
 set -e
 
-# Parse arguments
-DATASET=${1:-stages}
-START_INDEX=${2:-0}
-END_INDEX=${3:-}
-LOG_LEVEL="INFO"
+_SCRIPT_PATH="$(realpath "$0")"
+_PYTHON_PID=""
 
-# Parse optional arguments
-shift 3 2>/dev/null || shift $#
+# ── Parameters — env var takes precedence, then positional arg, then default ──
+DATASET=${DATASET:-${1:?"Usage: sbatch $0 <dataset> <start_index> <end_index> [options]"}}
+START_INDEX=${START_INDEX:-${2:?"Usage: sbatch $0 <dataset> <start_index> <end_index> [options]"}}
+END_INDEX=${END_INDEX:-${3:?"Usage: sbatch $0 <dataset> <start_index> <end_index> [options]"}}
+CONFIG_PATH=${CONFIG_PATH:-""}
+SKIP_EXISTING=${SKIP_EXISTING:-"--skip-existing"}
+REPROCESS_ANNOTATIONS=${REPROCESS_ANNOTATIONS:-""}
+LOG_LEVEL=${LOG_LEVEL:-"INFO"}
+MROS_VISIT=${MROS_VISIT:-""}
+
+# Parse remaining positional options (if called in legacy style)
+# Shift past dataset/start/end only when they came from positional args
+_nshift=0
+[ "${1:-}" = "$DATASET" ]     && _nshift=$((_nshift+1))
+[ "${2:-}" = "$START_INDEX" ] && _nshift=$((_nshift+1))
+[ "${3:-}" = "$END_INDEX" ]   && _nshift=$((_nshift+1))
+for _ in $(seq 1 $_nshift 2>/dev/null); do shift 2>/dev/null || true; done
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --log-level)
-            LOG_LEVEL="$2"
-            shift 2
-            ;;
-        *)
-            echo "Unknown argument: $1"
-            exit 1
-            ;;
+        --config)                CONFIG_PATH="$2"; shift 2 ;;
+        --no-skip-existing)      SKIP_EXISTING=""; shift ;;
+        --skip-existing)         SKIP_EXISTING="--skip-existing"; shift ;;
+        --reprocess-annotations) REPROCESS_ANNOTATIONS="--reprocess-annotations"; shift ;;
+        --log-level)             LOG_LEVEL="$2"; shift 2 ;;
+        --mros-visit)            MROS_VISIT="$2"; shift 2 ;;
+        *) echo "Unknown argument: $1"; exit 1 ;;
     esac
 done
 
-# Setup paths
-cd /home/boshra95/NSRR-tools
-mkdir -p logs
+# Export all params so --export=ALL forwards them on auto-resubmission
+export DATASET START_INDEX END_INDEX CONFIG_PATH SKIP_EXISTING REPROCESS_ANNOTATIONS LOG_LEVEL MROS_VISIT
 
-# Activate virtual environment
+# ── Setup ─────────────────────────────────────────────────────────────────────
+cd /home/boshra95/NSRR-tools
+mkdir -p logs_v3_full
+
 source .venv/bin/activate
 
+# ── Auto-resume trap (fires 120 s before wall time) ───────────────────────────
+_timeout_handler() {
+    echo ""
+    echo "[USR1] Time limit approaching — stopping Python and resubmitting ($(date))"
+    [ -n "$_PYTHON_PID" ] && kill -TERM "$_PYTHON_PID" 2>/dev/null || true
+    # Wait for Python to finish the current subject cleanly (SIGTERM handler in Python)
+    wait "$_PYTHON_PID" 2>/dev/null || true
+    _TIME_LIMIT=$(scontrol show job "$SLURM_JOB_ID" 2>/dev/null \
+        | grep -oP 'TimeLimit=\K\S+' || echo "08:00:00")
+    NEW_JOB=$(sbatch \
+        --export=ALL \
+        --time="$_TIME_LIMIT" \
+        "$_SCRIPT_PATH" 2>&1)
+    echo "$NEW_JOB"
+    exit 0
+}
+trap '_timeout_handler' USR1
+
 echo "========================================================================"
-echo "NSRR Signal Preprocessing - Batch Job"
+echo "NSRR Signal Preprocessing — Batch Job"
 echo "========================================================================"
 echo "Job ID:        $SLURM_JOB_ID"
 echo "Node:          $SLURM_NODELIST"
 echo "Dataset:       $DATASET"
-echo "Start index:   $START_INDEX"
-if [ -n "$END_INDEX" ]; then
-    echo "End index:     $END_INDEX"
-    N_SUBJECTS=$((END_INDEX - START_INDEX))
-    echo "Subjects:      $N_SUBJECTS"
-fi
-echo "Log level:     $LOG_LEVEL"
+echo "Index range:   [$START_INDEX, $END_INDEX)   (~$((END_INDEX - START_INDEX)) subjects)"
+echo "Config:        ${CONFIG_PATH:-configs/preprocessing_params.yaml (default)}"
+echo "Skip existing: $([ -n "$SKIP_EXISTING" ] && echo 'Yes' || echo 'No')"
+[ -n "$MROS_VISIT" ] && echo "MrOS visit:    $MROS_VISIT"
 echo "Start time:    $(date)"
 echo "========================================================================"
 echo ""
 
-# Load metadata to get total subject count
-TOTAL_SUBJECTS=$(python -c "
-import pandas as pd
-from pathlib import Path
-import sys
+# ── Build command ─────────────────────────────────────────────────────────────
+CMD="python scripts/preprocess_signals.py --dataset $DATASET"
+CMD="$CMD --start-index $START_INDEX --end-index $END_INDEX"
+[ -n "$SKIP_EXISTING" ]         && CMD="$CMD $SKIP_EXISTING"
+[ -n "$REPROCESS_ANNOTATIONS" ] && CMD="$CMD $REPROCESS_ANNOTATIONS"
+[ -n "$CONFIG_PATH" ]           && CMD="$CMD --config $CONFIG_PATH"
+[ -n "$MROS_VISIT" ]            && CMD="$CMD --mros-visit $MROS_VISIT"
+CMD="$CMD --log-level $LOG_LEVEL"
 
-metadata_path = Path('/scratch/boshra95/psg/unified/metadata/unified_metadata.parquet')
-if not metadata_path.exists():
-    metadata_path = Path('/scratch/boshra95/psg_metadata/unified_metadata.parquet')
-
-if not metadata_path.exists():
-    print('ERROR: Metadata not found', file=sys.stderr)
-    sys.exit(1)
-
-df = pd.read_parquet(metadata_path)
-ds_df = df[(df['dataset'].str.upper() == '$DATASET'.upper()) & (df['has_edf'] == True)]
-print(len(ds_df))
-")
-
-if [ -z "$END_INDEX" ]; then
-    END_INDEX=$TOTAL_SUBJECTS
-fi
-
-echo "Total subjects in dataset: $TOTAL_SUBJECTS"
-echo "Processing subjects $START_INDEX to $END_INDEX"
+echo "Running: $CMD"
 echo ""
 
-# Calculate max subjects parameter
-MAX_SUBJECTS=$END_INDEX
-
-# Build and run command
-CMD="python -c \"
-import sys
-from pathlib import Path
-sys.path.insert(0, str(Path.cwd() / 'src'))
-
-from scripts.preprocess_signals import PreprocessingPipeline
-import pandas as pd
-
-config_path = Path('configs/preprocessing_params.yaml')
-pipeline = PreprocessingPipeline(config_path=config_path)
-
-# Load metadata
-metadata_path = Path('/scratch/boshra95/psg/unified/metadata/unified_metadata.parquet')
-if not metadata_path.exists():
-    metadata_path = Path('/scratch/boshra95/psg_metadata/unified_metadata.parquet')
-
-df = pd.read_parquet(metadata_path)
-ds_df = df[(df['dataset'].str.upper() == '$DATASET'.upper()) & (df['has_edf'] == True)]
-
-# Slice by index range
-ds_df = ds_df.iloc[$START_INDEX:$END_INDEX]
-
-if len(ds_df) == 0:
-    print('No subjects in this range')
-    sys.exit(0)
-
-print(f'Processing {len(ds_df)} subjects from index $START_INDEX to $END_INDEX')
-
-# Process with custom dataframe slice
-# Note: This requires modifying the pipeline to accept a pre-filtered dataframe
-# For now, use max_subjects as a workaround
-pipeline.process_dataset(
-    dataset_name='$DATASET',
-    max_subjects=$MAX_SUBJECTS,
-    skip_existing=True
-)
-\""
-
-echo "This batch processing mode is being simplified."
-echo "Please use the main script instead:"
-echo "  sbatch jobs/preprocess_signals_parallel.sh $DATASET $MAX_SUBJECTS --log-level $LOG_LEVEL"
-echo ""
-echo "Or submit multiple jobs with different max_subjects values:"
-echo "  sbatch jobs/preprocess_signals_parallel.sh $DATASET 100  # First 100"
-echo "  # Then manually process the next batch after the first completes"
-echo ""
-echo "For true parallel processing, consider submitting multiple jobs:"
-echo "  sbatch jobs/preprocess_signals_parallel.sh stages 500"
-echo "  sbatch jobs/preprocess_signals_parallel.sh shhs 500"
-echo "========================================================================"
-
-# For now, just call the regular preprocessing for this batch
-python scripts/preprocess_signals.py \
-    --dataset "$DATASET" \
-    --max-subjects "$MAX_SUBJECTS" \
-    --skip-existing \
-    --log-level "$LOG_LEVEL"
-
+# Run Python in background so USR1 can interrupt 'wait' immediately
+set +e
+eval "$CMD" &
+_PYTHON_PID=$!
+wait $_PYTHON_PID
 EXIT_CODE=$?
+trap '' USR1   # disarm after Python finishes normally
 
 echo ""
 echo "========================================================================"
@@ -175,5 +144,4 @@ fi
 echo "========================================================================"
 
 deactivate
-
 exit $EXIT_CODE

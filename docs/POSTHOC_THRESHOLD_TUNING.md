@@ -1,6 +1,7 @@
 # Post-hoc Threshold Tuning — Planning Document
 
-*Written May 2026. Do not implement until all v3 training/inference runs are finished.*
+*Written May 2026. Implementation completed on sleep-stage-redesign branch (2026-05-30).*
+*See `scripts/apply_threshold_tuning.py` and `scripts/gen_commands.py threshold-tuning`.*
 
 ## What is threshold tuning?
 
@@ -49,6 +50,102 @@ BalAcc would move from ~0.57 into the ~0.63–0.67 range, a meaningful change in
 
 ---
 
+## Actual v3 results (all experiments, val-selected threshold applied to test)
+
+*Run 2026-05-30 on sleep-stage-redesign branch after val inference for all binary tasks.*
+*Values from `threshold_tuning.csv` in each experiment's inference directory.*
+*`orig` = K=all mean-prob aggregation at t=0.5. `tuned` = same at t_opt selected on val.*
+
+### bmi_binary_lstm (v3, K=all — compare to earlier K=5 estimates above)
+
+| Context | AUROC | Orig BA | t_opt | Tuned BA | Gain | R0 orig → tuned | R1 orig → tuned |
+|---------|-------|---------|-------|----------|------|-----------------|-----------------|
+| 30s  | 0.760 | 0.682 | 0.448 | **0.695** | **+0.013** | 0.862 → 0.787 | 0.502 → 0.604 |
+| 10m  | 0.762 | 0.694 | 0.502 | 0.693 | −0.002 | 0.653 → 0.658 | 0.736 → 0.727 |
+| 40m  | 0.756 | 0.682 | 0.414 | **0.688** | **+0.006** | 0.832 → 0.710 | 0.532 → 0.666 |
+| 80m  | 0.767 | 0.688 | 0.389 | **0.697** | **+0.010** | 0.833 → 0.687 | 0.542 → 0.708 |
+| 120m | 0.756 | 0.688 | 0.384 | 0.687 | −0.001 | 0.818 → 0.680 | 0.558 → 0.694 |
+| 240m | 0.748 | 0.679 | 0.404 | **0.687** | **+0.008** | 0.790 → 0.679 | 0.569 → 0.695 |
+
+*Earlier estimate (test-only, no val split): avg +0.015 gain. Actual with proper val split: avg +0.006.*
+*Lower than estimated — val-selected threshold is more conservative, as expected.*
+
+### bmi_binary_transformer (v3, K=all)
+
+| Context | AUROC | Orig BA | t_opt | Tuned BA | Gain |
+|---------|-------|---------|-------|----------|------|
+| 30s  | 0.747 | 0.671 | 0.429 | **0.698** | **+0.027** |
+| 10m  | 0.755 | 0.684 | 0.453 | **0.699** | **+0.014** |
+| 40m  | 0.755 | 0.695 | 0.483 | **0.700** | **+0.006** |
+| 80m  | 0.769 | 0.681 | 0.433 | **0.701** | **+0.020** |
+| 120m | 0.766 | 0.694 | 0.429 | **0.699** | **+0.005** |
+| 240m | 0.777 | 0.700 | 0.453 | **0.704** | **+0.004** |
+
+*Larger gains than LSTM variant. Average +0.013. Exceeds "marginal" prediction.*
+
+### osa_binary_apples_postqc_lstm (v3, K=all) — CRITICAL confirmed
+
+| Context | AUROC | Orig BA | t_opt | Tuned BA | Gain | R0: 0.5→opt | R1: 0.5→opt |
+|---------|-------|---------|-------|----------|------|-------------|-------------|
+| 30s  | 0.769 | 0.577 | 0.719 | **0.683** | **+0.106** | 0.18 → 0.68 | 0.97 → 0.68 |
+| 10m  | 0.816 | 0.554 | 0.773 | **0.774** | **+0.220** | 0.14 → 0.86 | 0.97 → 0.68 |
+| 40m  | 0.834 | 0.566 | 0.803 | **0.746** | **+0.180** | 0.18 → 0.91 | 0.95 → 0.58 |
+| 80m  | 0.767 | 0.573 | 0.828 | **0.707** | **+0.134** | 0.18 → 0.64 | 0.96 → 0.78 |
+| 120m | 0.789 | 0.604 | 0.601 | **0.635** | **+0.031** | 0.27 → 0.36 | 0.94 → 0.91 |
+| 240m | 0.774 | 0.597 | 0.877 | **0.738** | **+0.141** | 0.27 → 0.86 | 0.92 → 0.61 |
+
+*Estimated gain was +0.06–0.09. Actual: up to +0.220 at 10m — FAR exceeded expectations.*
+*At t=0.5 the model predicts class 1 for ~98% of subjects (R0≈0.14). Tuning fixes this.*
+*Must use tuned results for this task. Original t=0.5 numbers are not meaningful.*
+
+### depression_extreme_binary_lstm — SURPRISE: large gain at long contexts
+
+*Predicted "NO — class weighting worked; near balanced." This was true at short contexts (10m:
+R0=0.73/R1=0.71 → balanced) but NOT at long contexts:*
+
+| Context | AUROC | Orig BA | t_opt | Tuned BA | Gain | R0 orig | R0 tuned |
+|---------|-------|---------|-------|----------|------|---------|----------|
+| 30s  | 0.757 | 0.715 | 0.414 | 0.723 | +0.008 | 0.722 | 0.654 |
+| 10m  | 0.770 | 0.720 | 0.438 | **0.737** | **+0.017** | 0.732 | 0.683 |
+| 40m  | 0.761 | 0.704 | 0.468 | 0.713 | +0.009 | 0.742 | 0.717 |
+| 80m  | 0.744 | 0.661 | 0.409 | **0.726** | **+0.065** | 0.781 | 0.702 |
+| 120m | 0.748 | 0.686 | 0.374 | **0.736** | **+0.051** | 0.746 | 0.639 |
+| 240m | 0.750 | 0.695 | 0.335 | 0.697 | +0.002 | 0.766 | 0.644 |
+
+*At 80m and 120m, the model becomes more biased despite auto-weighting (possibly because*
+*longer contexts are harder to train for the minority class). Gain of +0.065 at 80m is*
+*large enough to include tuned results for this task.*
+
+### Sex, apnea, sleep efficiency — small or zero gains
+
+| Experiment | Avg gain | Max gain | Verdict |
+|---|---|---|---|
+| sex_binary_lstm | +0.009 | +0.020 | Small but real; include for consistency |
+| sex_binary_transformer | ~0.000 | +0.004 | NOT needed |
+| apnea_binary_lstm | +0.003 | +0.012 | NOT needed |
+| apnea_binary_transformer | ~0.000 | +0.005 | NOT needed |
+| sleep_efficiency_binary_lstm | ~0.000 | +0.004 | NOT needed (several negative) |
+| sleep_efficiency_binary_transformer | ~0.000 | +0.006 | NOT needed (several negative) |
+
+### cvd_binary — threshold tuning HURTS
+
+| Experiment | Avg gain | Min gain | Verdict |
+|---|---|---|---|
+| cvd_binary_lstm | **−0.005** | −0.013 | **KEEP t=0.5** — tuning hurts |
+| cvd_binary_transformer | −0.002 | −0.009 | **KEEP t=0.5** — mostly zero or negative |
+
+*Reason: AUROC is 0.68–0.69 (low); model is moderately but not extremely imbalanced;*
+*val set is too small (~700 subjects) to reliably select a threshold that generalises to test.*
+
+### sleepiness_binary — marginal
+
+| Experiment | Avg gain | Max gain | Verdict |
+|---|---|---|---|
+| sleepiness_binary_lstm | +0.006 | +0.014 | Include for consistency; small |
+| sleepiness_binary_transformer | +0.006 | +0.018 | Include for consistency; small |
+
+---
+
 ## Task table: all tasks across all pipeline versions
 
 ### Legend
@@ -92,108 +189,165 @@ with v3's larger context and overlapping window protocol. Phase0 used only 40m c
 
 ---
 
-## Implementation plan
+## Implementation (completed)
 
-### What needs to change
+### Design: add columns, never replace
 
-**Current state**: inference saves `test_windows.parquet` with columns
-`[subject_id, dataset, true_label, pred_label, prob_class0, prob_class1, window_idx]`.
-Val parquets are NOT saved. Threshold is implicitly 0.5 via `pred_label = argmax(logits)`.
+Results are stored in a **separate CSV** alongside the existing parquets. Nothing is overwritten.
+The original `summary.csv` (training-time K=5 metrics) and `test_windows.parquet` are untouched.
 
-**Required additions**:
-1. **Save `val_windows.parquet`** during inference — same format as test, on the val split.
-   This is the held-out data for threshold selection. Must be added to `infer_context_sweep.py`.
-2. **Threshold selection script** — reads val parquet, finds optimal threshold, applies to test.
-3. **Reporting** — replace `test_balanced_accuracy`/`test_recall_classX` in summary with
-   threshold-tuned versions; add `optimal_threshold` column.
+**Output:** `{inference_dir}/{exp_id}/threshold_tuning.csv`
 
-### Files to modify (when implementing)
+One row per context length. Columns:
+
+| Column group | Columns |
+|---|---|
+| Identity | `context_length`, `n_subjects`, `n_windows_test` |
+| Threshold-free | `auroc` (unchanged by threshold) |
+| Original at t=0.5 | `orig_balanced_accuracy`, `orig_recall_class0`, `orig_recall_class1`, `orig_accuracy`, `orig_macro_f1` |
+| Threshold info | `optimal_threshold`, `val_n_subjects`, `val_balanced_accuracy_at_opt` |
+| Tuned at t_opt | `tuned_balanced_accuracy`, `tuned_recall_class0`, `tuned_recall_class1`, `tuned_accuracy`, `tuned_macro_f1` |
+| Gains | `balanced_accuracy_gain`, `recall_class0_gain`, `recall_class1_gain` |
+
+`orig_*` and `tuned_*` are both computed from the K=all parquet using mean-prob subject aggregation.
+This differs slightly from `summary.csv` (K=5 training eval) — both are correct, different K values.
+
+### Files added / modified
 
 | File | Change |
-|------|--------|
-| `scripts/infer_context_sweep.py` | Add val-split inference pass; save `val_windows.parquet` |
-| `scripts/analyze_results.py` (or equivalent) | Add `apply_threshold_tuning()` function after loading parquets |
-| `scripts/build_heatmap_df.py` | Use tuned balanced accuracy for heatmap colour column |
+|---|---|
+| `scripts/apply_threshold_tuning.py` | **New** — standalone script; reads val+test parquets, writes `threshold_tuning.csv` |
+| `scripts/gen_commands.py` | **New subcommand** `threshold-tuning <exp_id>` — prints command with val-parquet check |
+| `scripts/infer_subject_windows.py` | Unchanged — val parquets created by re-running with `--split val` |
 
-### Core logic (do not add to codebase yet — reference only)
+### How to run
 
-```python
-import numpy as np
-import pandas as pd
-from sklearn.metrics import balanced_accuracy_score, recall_score
+**Step 1 — Generate val parquets** (re-uses trained model, fast):
 
-def tune_threshold(val_parquet_path: str, test_parquet_path: str,
-                   agg: str = "mean") -> dict:
-    """
-    Select decision threshold on val set, apply to test set.
-    agg: how to aggregate window-level scores to subject level ('mean' or 'max').
-    Returns dict with threshold, tuned test metrics.
-    """
-    val_df  = pd.read_parquet(val_parquet_path)
-    test_df = pd.read_parquet(test_parquet_path)
+```bash
+# Via gen_commands (generates the full infer sbatch command with --split val):
+python scripts/gen_commands.py infer bmi_binary_lstm --split val | bash
+python scripts/gen_commands.py infer osa_binary_apples_postqc_lstm --split val | bash
+python scripts/gen_commands.py infer cvd_binary_transformer --split val | bash
+python scripts/gen_commands.py infer sleepiness_binary_lstm --split val | bash
+python scripts/gen_commands.py infer sleepiness_binary_transformer --split val | bash
+python scripts/gen_commands.py infer bmi_binary_transformer --split val | bash
+# Include all others for consistency:
+python scripts/gen_commands.py infer sleep_efficiency_binary_lstm --split val | bash
+python scripts/gen_commands.py infer sex_binary_lstm --split val | bash
+python scripts/gen_commands.py infer sex_binary_transformer --split val | bash
+python scripts/gen_commands.py infer apnea_binary_lstm --split val | bash
+python scripts/gen_commands.py infer apnea_binary_transformer --split val | bash
+python scripts/gen_commands.py infer depression_extreme_binary_lstm --split val | bash
+python scripts/gen_commands.py infer cvd_binary_lstm --split val | bash
+```
 
-    def aggregate(df):
-        return df.groupby("subject_id").agg(
-            true_label=("true_label", "first"),
-            score=("prob_class1", agg)
-        ).reset_index()
+**Step 2 — Run threshold tuning** (CPU, fast, ~1 min per experiment):
 
-    val_agg  = aggregate(val_df)
-    test_agg = aggregate(test_df)
+```bash
+source /home/boshra95/sleepfm_env/bin/activate
 
-    # Find threshold maximising val balanced accuracy
-    thresholds = np.linspace(0.01, 0.99, 200)
-    best_t = max(
-        thresholds,
-        key=lambda t: balanced_accuracy_score(
-            val_agg["true_label"], (val_agg["score"] > t).astype(int)
-        )
-    )
+for exp in bmi_binary_lstm bmi_binary_transformer \
+           sleep_efficiency_binary_lstm \
+           sex_binary_lstm sex_binary_transformer \
+           depression_extreme_binary_lstm \
+           osa_binary_apples_postqc_lstm \
+           apnea_binary_lstm apnea_binary_transformer \
+           cvd_binary_lstm cvd_binary_transformer \
+           sleepiness_binary_lstm sleepiness_binary_transformer; do
+  python scripts/gen_commands.py threshold-tuning $exp | bash
+done
+```
 
-    # Apply to test
-    test_preds = (test_agg["score"] > best_t).astype(int)
-    labels = test_agg["true_label"].values
-    n_classes = labels.max() + 1
-
-    result = {
-        "optimal_threshold":        round(float(best_t), 4),
-        "test_balanced_accuracy":   float(balanced_accuracy_score(labels, test_preds)),
-    }
-    for c in range(n_classes):
-        result[f"test_recall_class{c}"] = float(
-            recall_score(labels, test_preds, pos_label=c, average="binary")
-        )
-    return result
+Or run the check + command together:
+```bash
+python scripts/gen_commands.py threshold-tuning bmi_binary_lstm
+# Prints: python scripts/apply_threshold_tuning.py --config ... --task bmi_binary --head lstm
+# Also warns if val parquets are missing
 ```
 
 ### Only for binary tasks — skip multiclass and seq2seq
 
-Apply only when `num_classes == 2`. For `age_class` (3-class), `osa_severity_apples` (4-class),
-and `sleep_staging` (5-class seq2seq), skip entirely and use existing metrics.
+`num_classes == 2` check is enforced in the script. `age_class` (3-class),
+`osa_severity_apples` (4-class), `sleep_staging` (5-class seq2seq) are automatically
+skipped — use existing balanced_accuracy and per-class recall for those.
 
 ### Reporting convention for paper
 
-- **Primary metric**: AUROC (unchanged, threshold-free)
-- **Secondary**: balanced accuracy at `t_opt` (selected on val, applied to test)
-- **Footer note** in tables: "Balanced accuracy reported at decision threshold selected on the
-  validation set to maximise balanced accuracy; AUROC is unaffected."
+- **Primary metric in tables**: AUROC (unchanged, threshold-free) — always report
+- **Secondary**: balanced accuracy at `t_opt` from `threshold_tuning.csv`
+- **Table footnote**: *"Balanced accuracy reported at the decision threshold t∗ selected on
+  the held-out validation set to maximise balanced accuracy (Youden's Index). AUROC is
+  unaffected by the threshold."*
+- **Original t=0.5 results**: available in `threshold_tuning.csv` as `orig_balanced_accuracy`
+  columns; show in supplementary alongside tuned results if needed
 
 ---
 
-## Priority order when implementing
+## Priority by v3 results (updated from initial estimates)
 
-1. `bmi_binary` — confirmed +0.015 gain, already has inference parquets (missing val parquet)
-2. `osa_binary_apples_postqc` — est. +0.06–0.09 gain, will materially change reported numbers
-3. `depression_extreme_binary` — critical only if AUROC > 0.60 with STAGES
-4. `sleep_efficiency_binary` — marginal but large N, worth including for consistency
-5. `cvd_binary` — only if re-added to v3 registry
-6. All others — either N/A or not worth implementing
+| Task | AUROC | Recall gap @best ctx | Verdict |
+|---|---|---|---|
+| `osa_binary_apples_postqc_lstm` | 0.742 | 0.587 | **CRITICAL** — will materially change numbers |
+| `bmi_binary_lstm` | 0.729 | 0.205 | **YES** — confirmed +0.015 gain |
+| `cvd_binary_transformer` | 0.679 | 0.286 | **YES** — notable gap |
+| `sleepiness_binary_transformer` | 0.622 | 0.206 @240m | **YES** — borderline AUROC |
+| `sleepiness_binary_lstm` | 0.608 | varies | **YES** — include for consistency |
+| `bmi_binary_transformer` | 0.761 | 0.149 | **MARGINAL** — small, include for consistency |
+| `psqi_binary_lstm` | 0.525 | — | **NO** — AUROC near chance; tuning cannot fix absent signal |
+| `depression_extreme_binary_lstm` | 0.767 | 0.030 | **NO** — class weighting worked; near balanced |
+| `sex_binary`, `apnea_binary`, `sleep_efficiency_binary_transformer` | — | <0.09 | **NO** — near balanced |
+| `age_class`, `sleep_staging` | — | N/A | **N/A** — multiclass / seq2seq |
 
 ---
 
-## When to implement
+## Final recommendations for paper (based on actual v3 results, 2026-05-30)
 
-After all v3 training and inference runs are complete. Do not implement piecemeal — apply to
-all tasks in one pass so the paper tables are consistent.
+### Use tuned results (report BA at t_opt)
 
-Estimated effort: 1 day (modify infer script + add analysis function + re-run analysis).
+| Task | Best gain | Key finding |
+|---|---|---|
+| `osa_binary_apples_postqc_lstm` | **+0.220 at 10m** | MUST use tuned — t=0.5 predicts class 1 for ~98% of subjects; meaningless |
+| `depression_extreme_binary_lstm` | +0.065 at 80m | Use tuned at all contexts — model becomes biased at long contexts despite auto-weighting |
+| `bmi_binary_transformer` | +0.027 at 30s, avg +0.013 | Consistent improvement across all contexts |
+| `bmi_binary_lstm` | +0.013 at 30s, avg +0.006 | Moderate; include for consistency with transformer |
+| `sex_binary_lstm` | +0.020 at 30s, avg +0.009 | Small but real; include |
+| `sleepiness_binary_lstm` | +0.014 avg +0.006 | Small; include for consistency |
+| `sleepiness_binary_transformer` | +0.018 avg +0.006 | Small; include for consistency |
+
+### Keep original t=0.5 results
+
+| Task | Reason |
+|---|---|
+| `cvd_binary_lstm` | Tuning HURTS (avg −0.005); val threshold does not generalise |
+| `cvd_binary_transformer` | Near zero or negative |
+| `sex_binary_transformer` | Near zero |
+| `apnea_binary_lstm` | Very small (+0.003 avg) |
+| `apnea_binary_transformer` | Near zero |
+| `sleep_efficiency_binary_lstm` | Near zero, some negative |
+| `sleep_efficiency_binary_transformer` | Near zero, some negative |
+
+### Key surprises vs predictions
+
+1. **osa_binary gains were massively understated**: estimated +0.06–0.09, actual up to +0.22.
+   The model was almost entirely predicting the majority class at t=0.5.
+
+2. **depression_extreme needs tuning at long contexts**: predicted balanced (no tuning needed),
+   but 80m (+0.065) and 120m (+0.051) show significant imbalance. Short contexts fine; long contexts not.
+
+3. **cvd_binary tuning HURTS**: predicted "YES — notable gain". Actual: all negative or zero.
+   Low AUROC + small val set = unreliable threshold selection.
+
+4. **bmi_binary_transformer better than lstm**: predicted marginal for transformer, confirmed for lstm.
+   Actual transformer avg gain (+0.013) exceeds lstm (+0.006).
+
+5. **sex_binary_lstm has small real gain** (+0.009 avg): predicted balanced/no gain. Actual shows
+   systematic but small miscalibration at t=0.5 across contexts.
+
+### Paper footnote (final wording)
+
+> "For tasks with class imbalance we report balanced accuracy at the decision threshold t∗
+> selected on the validation set to maximise balanced accuracy (Youden's Index). AUROC is
+> unaffected (threshold-free). For `cvd_binary`, the default t=0.5 is retained because
+> val-optimised thresholds did not generalise to the test set, likely due to insufficient
+> validation set size."

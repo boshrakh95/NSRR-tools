@@ -397,16 +397,53 @@ experiments:
     tier: 1
     notes: "Baseline (no temporal modelling)."
 
-  # ── sleep_staging (N=14,960 — SHHS, MrOS, STAGES, APPLES) ──────────────────
+  # ── sleep_staging ────────────────────────────────────────────────────────────
   # Anchor-based seq2seq: model sees a context window, predicts label of the
   # centre epoch. task_type=seq2seq is fully supported by train_context_sweep.py.
   # 5 classes: W=0, N1=1, N2=2, N3=3, REM=4.
-  # Phase0 results: excellent — AUROC=0.93-0.94, Cohen's kappa=0.58-0.63 at 10-40m.
   # Primary metric for paper: Cohen's kappa + per-stage F1 (script also logs AUROC).
   # N1 is minority (~5-8% of epochs) — expected lowest per-stage F1.
-  # All 3 heads included per design decision. Note: mean_pool averages over the
-  # context window and loses position info — may underperform on anchor task.
+  #
+  # Dataset history:
+  #   _with_stages  (run_tag="with_stages"): shhs+mros+stages+apples — STAGES dominates
+  #     training data (54% of items, 10% of subjects, 11x longer recordings).
+  #     Result: kappa ~0.55 at 10m — below phase0 baseline.
+  #     Results archived: sleep_staging_{lstm,transformer}_with_stages/
+  #   (no tag) PRIMARY: shhs+mros+apples only — matches phase0 protocol.
+  #     Phase0 achieved kappa=0.62 at 10m with identical arch on these 3 datasets.
+  #     Results: sleep_staging_{lstm,transformer}/
+
   sleep_staging_lstm:
+    task: sleep_staging
+    task_type: seq2seq
+    num_classes: 5
+    head: lstm
+    datasets: [shhs, mros, apples]
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
+    batch_size: 32
+    lr: 1.0e-4
+    run_tag: ""
+    n_size: large
+    tier: 1
+    config: configs/phase0_v3_staging_config.yaml   # hidden=256, layers=2, val_kappa monitor, epochs=60
+    notes: "PRIMARY run — shhs+mros+apples only (no STAGES). Matches phase0 protocol. Target kappa ~0.62 at 10m."
+
+  sleep_staging_transformer:
+    task: sleep_staging
+    task_type: seq2seq
+    num_classes: 5
+    head: transformer
+    datasets: [shhs, mros, apples]
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
+    batch_size: 32
+    lr: 1.0e-4
+    run_tag: ""
+    n_size: large
+    tier: 1
+    config: configs/phase0_v3_staging_config.yaml   # hidden=256, layers=2, val_kappa monitor, epochs=60
+    notes: "PRIMARY run — shhs+mros+apples only (no STAGES)."
+
+  sleep_staging_lstm_with_stages:
     task: sleep_staging
     task_type: seq2seq
     num_classes: 5
@@ -415,12 +452,13 @@ experiments:
     contexts: [30s, 10m, 40m, 80m, 120m, 240m]
     batch_size: 32
     lr: 1.0e-4
-    run_tag: ""
+    run_tag: "with_stages"
     n_size: large
-    tier: 1
-    notes: "Anchor-based seq2seq. 5-class: W=0, N1=1, N2=2, N3=3, REM=4. Primary metric: Cohen's kappa."
+    tier: 2
+    config: configs/phase0_v3_staging_config.yaml   # hidden=256, layers=2, val_kappa monitor, epochs=60
+    notes: "COMPARISON — includes STAGES. Kappa ~0.55 at 10m (STAGES dominates data, hurts perf). Results: sleep_staging_lstm_with_stages/"
 
-  sleep_staging_transformer:
+  sleep_staging_transformer_with_stages:
     task: sleep_staging
     task_type: seq2seq
     num_classes: 5
@@ -429,23 +467,25 @@ experiments:
     contexts: [30s, 10m, 40m, 80m, 120m, 240m]
     batch_size: 32
     lr: 1.0e-4
-    run_tag: ""
+    run_tag: "with_stages"
     n_size: large
-    tier: 1
-    notes: ""
+    tier: 2
+    config: configs/phase0_v3_staging_config.yaml   # hidden=256, layers=2, val_kappa monitor, epochs=60
+    notes: "COMPARISON — includes STAGES. Results: sleep_staging_transformer_with_stages/"
 
   sleep_staging_mean_pool:
     task: sleep_staging
     task_type: seq2seq
     num_classes: 5
     head: mean_pool
-    datasets: [shhs, mros, stages, apples]
+    datasets: [shhs, mros, apples]
     contexts: [30s, 10m, 40m, 80m, 120m, 240m]
     batch_size: 128
     lr: 1.0e-4
     run_tag: ""
     n_size: large
     tier: 1
+    config: configs/phase0_v3_staging_config.yaml   # hidden=256, layers=2, val_kappa monitor, epochs=60
     notes: "Mean-pool loses position info — may underperform on anchor-based staging. Included as baseline."
 
 # ── Re-run Tier 2: decent signal, lstm only ───────────────────────────────────

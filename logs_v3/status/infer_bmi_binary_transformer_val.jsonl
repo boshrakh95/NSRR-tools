@@ -1,0 +1,2 @@
+{"ts":"2026-05-30T18:38:06-07:00","job_id":"42400984","node":"fc11004","status":"STARTED","task":"bmi_binary","head":"transformer","contexts":"30s 10m 40m 80m 120m 240m","split":"val","datasets":"apples shhs mros"}
+{"ts":"2026-05-30T18:59:21-07:00","job_id":"42400984","node":"fc11004","status":"SUCCESS","task":"bmi_binary","head":"transformer","contexts":"30s 10m 40m 80m 120m 240m","split":"val","datasets":"apples shhs mros"}

@@ -28,7 +28,8 @@ CLASS IMBALANCE HANDLING
     Can be combined with class_weights for very severe imbalance.
 
   early_stopping_monitor (config: training.early_stopping_monitor):
-    "val_auroc"             — recommended; threshold-independent, robust to imbalance
+    "val_auroc"             — recommended for seq2label; threshold-independent, robust to imbalance
+    "val_kappa"             — recommended for seq2seq (sleep staging); directly optimises Cohen's κ
     "val_balanced_accuracy" — direct average recall across classes
     "val_macro_f1"          — useful when equal weight across classes matters
     "val_loss"              — original behaviour (lower is better)
@@ -106,6 +107,7 @@ _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT / "src"))
 from nsrr_tools.datasets.context_window_dataset import (
     ContextWindowDataset,
+    SubjectGroupedSampler,
     parse_context_length,
     FULL_NIGHT_SENTINEL,
 )
@@ -213,6 +215,7 @@ def compute_monitor_metric(
       "val_auroc"             — higher is better
       "val_balanced_accuracy" — higher is better
       "val_macro_f1"          — higher is better
+      "val_kappa"             — higher is better; seq2seq (sleep staging) only
     """
     if monitor == "val_loss":
         return loss
@@ -223,6 +226,8 @@ def compute_monitor_metric(
         return float(balanced_accuracy_score(targets, preds))
     if monitor == "val_macro_f1":
         return float(f1_score(targets, preds, average="macro", zero_division=0))
+    if monitor == "val_kappa":
+        return float(cohen_kappa_score(targets, preds))
     if monitor == "val_auroc":
         probs = torch.softmax(torch.from_numpy(logits), dim=-1).numpy()
         try:
@@ -233,7 +238,7 @@ def compute_monitor_metric(
             return float("nan")
     raise ValueError(
         f"Unknown early_stopping_monitor: {monitor!r}. "
-        "Choose from: val_loss, val_auroc, val_balanced_accuracy, val_macro_f1"
+        "Choose from: val_loss, val_auroc, val_balanced_accuracy, val_macro_f1, val_kappa"
     )
 
 
@@ -478,36 +483,51 @@ def train_one_context(
     collate     = ContextWindowDataset.collate_fn if is_full_night else None
     num_workers = min(4, max(1, len(train_ds) // 64))
 
-    use_sampler = (
+    # seq2seq (sleep staging) uses SubjectGroupedSampler so that all items for
+    # one subject are emitted consecutively. Combined with the per-worker mmap
+    # cache in __getitem__, this cuts embedding file opens from O(N_items) to
+    # O(N_subjects) per epoch (~1600× reduction for 30s with 3 datasets).
+    # persistent_workers=True keeps the per-worker mmap cache alive across epochs.
+    use_grouped = task_type == "seq2seq" and not is_full_night
+    use_weighted_sampler = (
         t_cfg.get("weighted_sampler", False)
         and w_auto is not None
-        and not is_full_night   # full_night has 1 window/subject; resampling adds no value
+        and not is_full_night
     )
-    if use_sampler:
+
+    if use_weighted_sampler:
         sample_weights = torch.tensor(w_auto[train_labels], dtype=torch.float32)
         sampler        = WeightedRandomSampler(sample_weights, len(sample_weights), replacement=True)
         train_loader   = DataLoader(
             train_ds, batch_size=train_batch_size, shuffle=False, sampler=sampler,
             num_workers=num_workers, pin_memory=(device.type == "cuda"),
-            collate_fn=collate,
+            collate_fn=collate, persistent_workers=(num_workers > 0),
         )
         print(f"  WeightedRandomSampler: enabled")
+    elif use_grouped:
+        sampler      = SubjectGroupedSampler(train_ds._index)
+        train_loader = DataLoader(
+            train_ds, batch_size=train_batch_size, shuffle=False, sampler=sampler,
+            num_workers=num_workers, pin_memory=(device.type == "cuda"),
+            collate_fn=collate, persistent_workers=(num_workers > 0),
+        )
+        print(f"  SubjectGroupedSampler: enabled (seq2seq — reduces file opens O(items)→O(subjects))")
     else:
         train_loader = DataLoader(
             train_ds, batch_size=train_batch_size, shuffle=True,
             num_workers=num_workers, pin_memory=(device.type == "cuda"),
-            collate_fn=collate,
+            collate_fn=collate, persistent_workers=(num_workers > 0),
         )
 
     val_loader = DataLoader(
         val_ds, batch_size=eval_batch_size, shuffle=False,
         num_workers=num_workers, pin_memory=(device.type == "cuda"),
-        collate_fn=collate,
+        collate_fn=collate, persistent_workers=(num_workers > 0),
     )
     test_loader = DataLoader(
         test_ds, batch_size=eval_batch_size, shuffle=False,
         num_workers=num_workers, pin_memory=(device.type == "cuda"),
-        collate_fn=collate,
+        collate_fn=collate, persistent_workers=(num_workers > 0),
     )
 
     # ── Model ──────────────────────────────────────────────────────────────
