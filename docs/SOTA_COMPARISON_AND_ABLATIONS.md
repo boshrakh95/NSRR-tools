@@ -317,6 +317,7 @@ The `zero_modalities` field lists which groups are zeroed (the complement is wha
 - sleep_efficiency_binary: full > bas_only ≈ no_bas > cardio (EEG sleep staging features crucial; but RESP also important since sleep efficiency correlates with apnea)
 - age_class: full ≈ no_bas (physiological aging present in all modalities; removing one modality loses less)
 - bmi_binary: full ≈ all conditions (BMI encodes into all modalities; saturates fast → channel differences may be small)
+Implement and compare the results with these expectations
 
 ---
 
