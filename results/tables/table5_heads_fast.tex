@@ -1,0 +1,12 @@
+\begin{table}[ht]
+\centering
+\caption{Head architecture comparison at task-specific saturation context L* (channel: fast). L* is derived from the lstm head (within 0.005 of max AUROC). Temporal\_adv = AUROC(lstm) − AUROC(mean\_pool) at K=all.}
+\label{tab:heads_fast}
+\begin{tabular}{lrrrrr}
+\toprule
+Task & L* & lstm@K=5 & lstm@K=all & transformer@K=5 & transformer@K=all \\
+\midrule
+Sex & 80m & 0.866 & 0.868 & 0.893 & 0.897 \\
+\bottomrule
+\end{tabular}
+\end{table}

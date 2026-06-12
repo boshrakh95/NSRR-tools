@@ -1,0 +1,13 @@
+\begin{table}[ht]
+\centering
+\caption{AUROC with 95\%% bootstrap confidence intervals at saturation context L* (channel: fast). K=5: deployment scenario. K=all: full-night ceiling. CI computed by subject-level bootstrap resampling (N=1000).}
+\label{tab:ci_fast}
+\begin{tabular}{lrrrrr}
+\toprule
+Task & Head & N_test & L* & AUROC@K=5 [95% CI] & AUROC@K=all [95% CI] \\
+\midrule
+Sex & lstm & 1433 & 80m & 0.866 & 0.868 \\
+Sex & transformer & 1433 & 240m & — & 0.910 [0.894–0.925] \\
+\bottomrule
+\end{tabular}
+\end{table}

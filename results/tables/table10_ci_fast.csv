@@ -1,0 +1,3 @@
+Task,Head,N_test,L*,AUROC@K=5 [95% CI],AUROC@K=all [95% CI]
+Sex,lstm,1433,80m,0.866,0.868
+Sex,transformer,1433,240m,—,0.910 [0.894–0.925]
