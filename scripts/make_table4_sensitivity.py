@@ -84,6 +84,8 @@ def main():
     parser.add_argument("--tasks", nargs="+", default=None)
     parser.add_argument("--split", default="test")
     parser.add_argument("--out", type=Path, default=_DEFAULT_OUT)
+    parser.add_argument("--results-dir", type=Path, default=None, dest="results_dir",
+                        help="Scratch results directory; also saves to <results-dir>/tables/")
     parser.add_argument("--latex", action="store_true")
     args = parser.parse_args()
 
@@ -104,8 +106,9 @@ def main():
     if args.latex:
         print("\n" + tex)
 
+    scratch = Path(args.results_dir) / "tables" if args.results_dir else None
     save_outputs(table, args.out, f"table4_sensitivity_{args.channel}_{args.head}",
-                 latex_str=tex)
+                 latex_str=tex, scratch_dir=scratch)
 
 
 if __name__ == "__main__":

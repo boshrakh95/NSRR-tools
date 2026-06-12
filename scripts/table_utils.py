@@ -122,21 +122,26 @@ def df_to_markdown(df: pd.DataFrame) -> str:
 
 
 def save_outputs(df: pd.DataFrame, out_dir: Path, stem: str,
-                 latex_str: str | None = None, verbose: bool = True):
-    """Save CSV and markdown; optionally save LaTeX to separate file."""
-    out_dir.mkdir(parents=True, exist_ok=True)
-    csv_path = out_dir / f"{stem}.csv"
-    md_path  = out_dir / f"{stem}.md"
-    df.to_csv(csv_path, index=False)
-    md_path.write_text(df_to_markdown(df))
-    if verbose:
-        print(f"  saved CSV  → {csv_path}")
-        print(f"  saved MD   → {md_path}")
-    if latex_str:
-        tex_path = out_dir / f"{stem}.tex"
-        tex_path.write_text(latex_str)
+                 latex_str: str | None = None, verbose: bool = True,
+                 scratch_dir: Path | None = None):
+    """Save CSV, markdown, and LaTeX to out_dir (repo). If scratch_dir is given,
+    also save CSV, markdown, and LaTeX there (mirroring the repo copy)."""
+    for dest, label in [(Path(out_dir), ""), (Path(scratch_dir), " (scratch)") if scratch_dir else (None, None)]:
+        if dest is None:
+            continue
+        dest.mkdir(parents=True, exist_ok=True)
+        csv_path = dest / f"{stem}.csv"
+        md_path  = dest / f"{stem}.md"
+        df.to_csv(csv_path, index=False)
+        md_path.write_text(df_to_markdown(df))
         if verbose:
-            print(f"  saved LaTeX→ {tex_path}")
+            print(f"  saved CSV  → {csv_path}{label}")
+            print(f"  saved MD   → {md_path}{label}")
+        if latex_str:
+            tex_path = dest / f"{stem}.tex"
+            tex_path.write_text(latex_str)
+            if verbose:
+                print(f"  saved LaTeX→ {tex_path}{label}")
 
 
 def latex_table(df: pd.DataFrame, caption: str, label: str,

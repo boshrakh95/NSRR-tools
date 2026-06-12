@@ -158,6 +158,9 @@ def main():
                         help="Evaluation split (default: test)")
     parser.add_argument("--out", default="",
                         help="Save summary to this CSV path")
+    parser.add_argument("--results-dir", default="", dest="results_dir",
+                        help="Scratch results directory; if given saves CSV+MD to "
+                             "<results-dir>/tables/summary_<channel>.{csv,md}")
     parser.add_argument("--latex", action="store_true",
                         help="Print LaTeX table instead of plain text")
     args = parser.parse_args()
@@ -181,11 +184,20 @@ def main():
             print(f"\n--- k=all ceiling ---\n")
             print_table(df, channels, k="all")
 
+    save_cols = ["task", "head"] + [c for c in df.columns if c not in ("task_id",)]
+
     if args.out:
-        # Flatten to one row per task+head
-        save_cols = ["task", "head"] + [c for c in df.columns if c not in ("task_id",)]
         df[save_cols].to_csv(args.out, index=False)
         print(f"\nSaved to {args.out}")
+
+    if args.results_dir:
+        import os
+        channel_label = "compare" if args.compare else "fast"
+        tables_dir = os.path.join(args.results_dir, "tables")
+        os.makedirs(tables_dir, exist_ok=True)
+        csv_path = os.path.join(tables_dir, f"summary_{channel_label}.csv")
+        df[save_cols].to_csv(csv_path, index=False)
+        print(f"Saved to {csv_path} (scratch)")
 
 
 if __name__ == "__main__":

@@ -1015,12 +1015,13 @@ def _channel_label(registry: dict) -> str:
 
 def build_table1_cmd(registry: dict, tasks: list = None, heads: list = None,
                      k_deploy: int = 5, split: str = "test") -> str:
-    python  = registry.get("python_bin", "/home/boshra95/sleepfm_env/bin/python")
-    cdir    = _table_collected_dir(registry)
-    channel = _channel_label(registry)
+    python      = registry.get("python_bin", "/home/boshra95/sleepfm_env/bin/python")
+    cdir        = _table_collected_dir(registry)
+    channel     = _channel_label(registry)
+    results_dir = Path(registry["results_dir"])
     cmd = (f"{python} scripts/make_table1_peak_auroc.py"
            f" --collected-dir {cdir} --channel {channel}"
-           f" --split {split} --k-deploy {k_deploy}")
+           f" --results-dir {results_dir} --split {split} --k-deploy {k_deploy}")
     if tasks:  cmd += f" --tasks {' '.join(tasks)}"
     if heads:  cmd += f" --heads {' '.join(heads)}"
     return cmd
@@ -1028,12 +1029,13 @@ def build_table1_cmd(registry: dict, tasks: list = None, heads: list = None,
 
 def build_table2_cmd(registry: dict, tasks: list = None, heads: list = None,
                      split: str = "test", tolerance: float = 0.005) -> str:
-    python  = registry.get("python_bin", "/home/boshra95/sleepfm_env/bin/python")
-    cdir    = _table_collected_dir(registry)
-    channel = _channel_label(registry)
+    python      = registry.get("python_bin", "/home/boshra95/sleepfm_env/bin/python")
+    cdir        = _table_collected_dir(registry)
+    channel     = _channel_label(registry)
+    results_dir = Path(registry["results_dir"])
     cmd = (f"{python} scripts/make_table2_lstar.py"
            f" --collected-dir {cdir} --channel {channel}"
-           f" --split {split} --tolerance {tolerance}")
+           f" --results-dir {results_dir} --split {split} --tolerance {tolerance}")
     if tasks:  cmd += f" --tasks {' '.join(tasks)}"
     if heads:  cmd += f" --heads {' '.join(heads)}"
     return cmd
@@ -1041,11 +1043,13 @@ def build_table2_cmd(registry: dict, tasks: list = None, heads: list = None,
 
 def build_table3_cmd(exp_id: str, registry: dict,
                      split: str = "test", k_values: list = None) -> str:
-    python  = registry.get("python_bin", "/home/boshra95/sleepfm_env/bin/python")
-    cdir    = _table_collected_dir(registry)
-    channel = _channel_label(registry)
+    python      = registry.get("python_bin", "/home/boshra95/sleepfm_env/bin/python")
+    cdir        = _table_collected_dir(registry)
+    channel     = _channel_label(registry)
+    results_dir = Path(registry["results_dir"])
     cmd = (f"{python} scripts/make_table3_kgrid.py {exp_id}"
-           f" --collected-dir {cdir} --channel {channel} --split {split}")
+           f" --collected-dir {cdir} --channel {channel}"
+           f" --results-dir {results_dir} --split {split}")
     if k_values:
         cmd += f" --k-values {' '.join(str(k) for k in k_values)}"
     return cmd
@@ -1053,25 +1057,28 @@ def build_table3_cmd(exp_id: str, registry: dict,
 
 def build_table4_cmd(registry: dict, tasks: list = None, head: str = "lstm",
                      split: str = "test") -> str:
-    python  = registry.get("python_bin", "/home/boshra95/sleepfm_env/bin/python")
-    cdir    = _table_collected_dir(registry)
-    channel = _channel_label(registry)
+    python      = registry.get("python_bin", "/home/boshra95/sleepfm_env/bin/python")
+    cdir        = _table_collected_dir(registry)
+    channel     = _channel_label(registry)
+    results_dir = Path(registry["results_dir"])
     cmd = (f"{python} scripts/make_table4_sensitivity.py"
            f" --collected-dir {cdir} --channel {channel}"
-           f" --head {head} --split {split}")
+           f" --results-dir {results_dir} --head {head} --split {split}")
     if tasks:  cmd += f" --tasks {' '.join(tasks)}"
     return cmd
 
 
 def build_table5_cmd(registry: dict, tasks: list = None, heads: list = None,
                      k_deploy: int = 5, split: str = "test") -> str:
-    python  = registry.get("python_bin", "/home/boshra95/sleepfm_env/bin/python")
-    cdir    = _table_collected_dir(registry)
-    channel = _channel_label(registry)
-    heads   = heads or ["lstm", "transformer", "mean_pool"]
+    python      = registry.get("python_bin", "/home/boshra95/sleepfm_env/bin/python")
+    cdir        = _table_collected_dir(registry)
+    channel     = _channel_label(registry)
+    results_dir = Path(registry["results_dir"])
+    heads       = heads or ["lstm", "transformer", "mean_pool"]
     cmd = (f"{python} scripts/make_table5_heads.py"
            f" --collected-dir {cdir} --channel {channel}"
-           f" --heads {' '.join(heads)} --split {split} --k-deploy {k_deploy}")
+           f" --results-dir {results_dir} --heads {' '.join(heads)}"
+           f" --split {split} --k-deploy {k_deploy}")
     if tasks:  cmd += f" --tasks {' '.join(tasks)}"
     return cmd
 
@@ -1091,12 +1098,13 @@ def build_table9_cmd(exp_id: str, registry: dict,
 
 def build_table10_cmd(registry: dict, tasks: list = None, heads: list = None,
                       k_deploy: int = 5, split: str = "test") -> str:
-    python  = registry.get("python_bin", "/home/boshra95/sleepfm_env/bin/python")
-    cdir    = _table_collected_dir(registry)
-    channel = _channel_label(registry)
+    python      = registry.get("python_bin", "/home/boshra95/sleepfm_env/bin/python")
+    cdir        = _table_collected_dir(registry)
+    channel     = _channel_label(registry)
+    results_dir = Path(registry["results_dir"])
     cmd = (f"{python} scripts/make_table10_ci.py"
            f" --collected-dir {cdir} --channel {channel}"
-           f" --split {split} --k-deploy {k_deploy}")
+           f" --results-dir {results_dir} --split {split} --k-deploy {k_deploy}")
     if tasks:  cmd += f" --tasks {' '.join(tasks)}"
     if heads:  cmd += f" --heads {' '.join(heads)}"
     return cmd

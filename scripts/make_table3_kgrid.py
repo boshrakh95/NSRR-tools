@@ -73,6 +73,8 @@ def main():
                         help="K values to show as columns (default: 1 5 10 20 50 all)")
     parser.add_argument("--split", default="test")
     parser.add_argument("--out", type=Path, default=_DEFAULT_OUT)
+    parser.add_argument("--results-dir", type=Path, default=None, dest="results_dir",
+                        help="Scratch results directory; also saves to <results-dir>/tables/")
     parser.add_argument("--latex", action="store_true")
     args = parser.parse_args()
 
@@ -104,7 +106,8 @@ def main():
         print("\n" + tex)
 
     stem = f"table3_kgrid_{args.exp_id}_{args.channel}"
-    save_outputs(table, args.out, stem, latex_str=tex)
+    scratch = Path(args.results_dir) / "tables" if args.results_dir else None
+    save_outputs(table, args.out, stem, latex_str=tex, scratch_dir=scratch)
 
 
 if __name__ == "__main__":
