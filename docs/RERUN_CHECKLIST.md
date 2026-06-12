@@ -211,18 +211,27 @@ done
 
 > `bmi_binary_transformer` is already analyzed — skip or re-run to refresh with any new collect.
 
-### Step 2 — Collect all results into a single CSV
+### Step 2 — Collect all results into CSVs
 
-Reads per-context `metrics.json` from all experiments and produces `collected/analysis.csv`
-and `collected/training.csv`. This is the input for all downstream plots.
+Reads per-context `metrics.json` and `window_analysis_{split}.csv` from all experiments and
+produces `results/collected/{channel}/analysis.csv` and `training.csv`. These are the inputs
+for all downstream plots.
 
 ```bash
-# Delete collected_old/ first if you want a clean slate, then:
-python3 scripts/gen_commands.py collect
+# Fast-channel → results/collected/phase0_v3/
+python3 scripts/collect_results_v2.py --force
+
+# Full-channel → results/collected/phase0_v3_full/
+python3 scripts/collect_results_v2.py \
+  --results-dir /scratch/boshra95/psg_full/unified/results/phase0_v3_full \
+  --force
 ```
 
-> `collected_old/` is the archived stale version from before the reruns — safe to delete
-> once the new `collected/` is generated and verified.
+Use `--force` any time you've re-run `analyze` (e.g. after adding bootstrap CIs) so the
+updated values overwrite the stale keys in the CSV.
+
+> `collected_old/` is an archived stale version from before earlier reruns — safe to delete
+> once the channel-specific directories are generated and verified.
 
 ### Step 3 — Iso-compute plots (context-length saturation)
 

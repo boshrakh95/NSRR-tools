@@ -256,7 +256,7 @@ See `docs/ANALYSIS_IDEAS.md` for the scientific motivation, expected outputs, an
 `scripts/collect_results_v2.py` reads the raw per-run output files from scratch and writes flat CSVs and parquets:
 
 - **Reads:** `{task}_{head}/context_{L}/training_curves.csv`, `metrics.json` (for training); `inference/{task}_{head}/window_analysis_{split}.csv` (for analysis); `inference/{task}_{head}/context_{L}/{split}_windows.parquet` (for per-window predictions)
-- **Writes:** `results/collected/training.csv`, `results/collected/analysis.csv` (repo + scratch); `collected/predictions/*.parquet` (scratch only)
+- **Writes:** `results/collected/phase0_v3/training.csv`, `results/collected/phase0_v3/analysis.csv` (fast-channel, repo + scratch); `results/collected/phase0_v3_full/` for full-channel; `collected/predictions/*.parquet` (scratch only). Pass `--force` to re-collect after re-running analyze.
 
 These flat files replace the need to read individual per-run CSVs and JSONs when making plots and tables. See `docs/RESULTS_COLLECTION.md` for full column schemas and usage examples.
 

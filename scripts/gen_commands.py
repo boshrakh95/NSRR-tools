@@ -821,10 +821,15 @@ def build_collect_cmd(exp_ids: list, registry: dict,
     python = registry.get("python_bin", "/home/boshra95/sleepfm_env/bin/python")
     results_dir = Path(registry["results_dir"])
     cdir = collected_dir or str(results_dir / "collected")
+    # repo-out is channel-specific so fast (phase0_v3) and full (phase0_v3_full)
+    # never overwrite each other in the git-tracked results/ directory.
+    repo_root = Path(__file__).parent.parent / "results" / "collected"
+    repo_out  = str(repo_root / results_dir.name)
     cmd_parts = [
         f"{python} scripts/collect_results_v2.py",
         f"--results-dir {results_dir}",
         f"--out-dir {cdir}",
+        f"--repo-out {repo_out}",
     ]
     if exp_ids:
         cmd_parts.append(f"--exp-ids {' '.join(exp_ids)}")

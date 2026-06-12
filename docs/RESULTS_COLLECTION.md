@@ -37,7 +37,15 @@ This document covers `scripts/collect_results_v2.py`: what it collects, where ou
 | `analysis.csv` | One row per (task, head, context, K, split) | Repo **and** scratch |
 | `predictions/{task}_{head}_{ctx}_{split}.parquet` | One row per (task, head, context, split, subject, window) | Scratch only |
 
-**Append-safe:** the script computes a set of already-present key tuples before scanning and skips any row whose key already exists. It is safe to rerun at any time and from either cluster — it only adds new rows, never overwrites existing ones.
+**Append-safe by default:** the script computes a set of already-present key tuples before scanning and skips any row whose key already exists. It is safe to rerun at any time and from either cluster — it only adds new rows.
+
+**Re-collect after re-running analyze:** if you re-run `analyze` (e.g. to add bootstrap CIs), the key-dedup logic would skip the updated rows because the keys already exist. Pass `--force` to bypass dedup and regenerate all rows from the current on-disk files:
+
+```bash
+python scripts/collect_results_v2.py --results-dir ... --force
+```
+
+**Channel separation:** fast-channel and full-channel results share the same `(task, head, context, k, split)` key structure, so they must go to separate repo directories. The script now defaults the repo output to `results/collected/<results-dir-name>/` (e.g. `phase0_v3` or `phase0_v3_full`) to keep them apart. Pass `--repo-out <path>` to override.
 
 **Multi-class safe:** all probability columns are padded to `prob_class0` … `prob_class4` with `NaN` for unused classes, so binary, 3-class, and 4-class tasks all share one parquet schema.
 
@@ -45,19 +53,53 @@ This document covers `scripts/collect_results_v2.py`: what it collects, where ou
 
 ## How to run it
 
+**Via `run_analysis.sh` (recommended — runs automatically as Step 2):**
+
 ```bash
-cd /home/boshra95/NSRR-tools
-python scripts/collect_results_v2.py                               # uses phase0_v3 by default
-python scripts/collect_results_v2.py --results-dir /scratch/boshra95/psg/unified/results/phase0_v3
-python scripts/collect_results_v2.py --exp-ids sex_binary_lstm sex_binary_transformer  # filter to specific experiments
+# Fast-channel — no --registry needed
+bash scripts/run_analysis.sh age_class_lstm sex_binary_lstm ... --heads lstm transformer
+
+# Full-channel — must pass --registry so collect writes to phase0_v3_full/
+bash scripts/run_analysis.sh age_class_lstm sex_binary_lstm ... \
+  --registry experiments/v2_full_registry.yaml --heads lstm transformer
 ```
 
-The script defaults to `phase0_v3`. Run it from either cluster whenever new training or inference results are available. It is also accessible via `gen_commands.py collect` which prints the full command with correct paths.
+**Manually (to collect without running the rest of the pipeline):**
+
+```bash
+cd /home/boshra95/NSRR-tools
+
+# Fast-channel (phase0_v3) → repo: results/collected/phase0_v3/
+python scripts/collect_results_v2.py
+
+# Full-channel (phase0_v3_full) → repo: results/collected/phase0_v3_full/
+python scripts/collect_results_v2.py \
+  --results-dir /scratch/boshra95/psg_full/unified/results/phase0_v3_full
+
+# Filter to specific experiments only
+python scripts/collect_results_v2.py --exp-ids sex_binary_lstm sex_binary_transformer
+
+# Re-collect from scratch after re-running analyze (e.g. after adding bootstrap CIs)
+python scripts/collect_results_v2.py --force
+python scripts/collect_results_v2.py \
+  --results-dir /scratch/boshra95/psg_full/unified/results/phase0_v3_full --force
+```
+
+**Via `gen_commands.py` (single-experiment, prints the command):**
+```bash
+python scripts/gen_commands.py collect sex_binary_lstm sex_binary_transformer | bash
+python scripts/gen_commands.py --registry experiments/v2_full_registry.yaml \
+  collect sex_binary_lstm sex_binary_transformer | bash
+```
+
+The `--repo-out` path is derived automatically from the results dir name
+(`results/collected/phase0_v3` or `results/collected/phase0_v3_full`).
+Override with `--repo-out <path>` if needed.
 
 Example output:
 ```
 Scanning:    /scratch/boshra95/psg/unified/results/phase0_v3
-Repo out:    /home/boshra95/NSRR-tools/results/collected
+Repo out:    /home/boshra95/NSRR-tools/results/collected/phase0_v3
 Scratch out: /scratch/boshra95/psg/unified/results/phase0_v3/collected
 
 Collecting training results...
@@ -86,7 +128,9 @@ git push
 
 # On the other cluster, pull before running the collector:
 git pull
-python scripts/collect_results_v2.py   # adds only whatever is new on this cluster
+python scripts/collect_results_v2.py        # fast-channel: adds only what's new
+python scripts/collect_results_v2.py \
+  --results-dir /scratch/boshra95/psg_full/unified/results/phase0_v3_full  # full-channel
 git add results/collected/
 git commit -m "collect results — $(hostname): $(date +%Y-%m-%d)"
 git push
@@ -121,19 +165,37 @@ The collector requires `training_curves.csv` to be present for a context to be i
 
 ## Output paths (what it writes)
 
+Fast-channel and full-channel results write to **separate** repo subdirectories, derived
+automatically from the results dir name. This prevents channels from overwriting each other.
+
 ```
-/home/boshra95/NSRR-tools/results/collected/    ← in git repo
+/home/boshra95/NSRR-tools/results/collected/
+    phase0_v3/              ← fast-channel (7ch), in git repo
+        training.csv
+        analysis.csv
+    phase0_v3_full/         ← full-channel (~23ch), in git repo
+        training.csv
+        analysis.csv
+
+/scratch/boshra95/psg/unified/results/phase0_v3/collected/        ← fast scratch copy
     training.csv
     analysis.csv
+    predictions/
+        {task}_{head}_{context}_{split}.parquet
 
-/scratch/boshra95/psg/unified/results/phase0_v3/collected/    ← scratch copy
+/scratch/boshra95/psg_full/unified/results/phase0_v3_full/collected/  ← full scratch copy
     training.csv
     analysis.csv
     predictions/
         {task}_{head}_{context}_{split}.parquet
 ```
 
-Both `training.csv` and `analysis.csv` are written to the repo **and** to scratch. The repo copy is the one that gets synced across clusters via git. The scratch copy is a convenience for scripts running on that cluster that don't want to reference the repo path.
+Both `training.csv` and `analysis.csv` are written to the repo **and** to scratch. The repo copy
+is synced across clusters via git. The scratch copy is a convenience for local scripts.
+
+> **Old `results/collected/` root files:** If you have stale `results/collected/analysis.csv`
+> or `results/collected/training.csv` from before this change, they are superseded by the
+> channel-specific subdirectories and can be deleted.
 
 ---
 
@@ -244,14 +306,33 @@ pred = pd.read_parquet(
 
 ## How to use the files for analysis
 
+> **Channel path:** replace `COLLECTED` with the right subdirectory for your run:
+> ```python
+> COLLECTED = "results/collected/phase0_v3"       # fast-channel (7ch)
+> COLLECTED = "results/collected/phase0_v3_full"  # full-channel (~23ch)
+> ```
+
 ### Paper performance tables
+
+**Fast shortcut — `summarize_results.py`:** for seq2label tasks, `scripts/summarize_results.py`
+reads `window_analysis_test.csv` directly from both inference directories (no collect dependency)
+and prints a formatted comparison table with best AUROC per task at k=5 and k=all:
+
+```bash
+python scripts/summarize_results.py --compare                          # console table
+python scripts/summarize_results.py --compare --out results_summary.csv  # save to CSV
+python scripts/summarize_results.py --compare --latex                  # LaTeX table
+```
+
+**From `training.csv` (training-time metrics, all context lengths):**
 
 Filter `training.csv` to best-epoch rows for the test split:
 
 ```python
 import pandas as pd
 
-train = pd.read_csv("results/collected/training.csv")
+COLLECTED = "results/collected/phase0_v3"   # or phase0_v3_full
+train = pd.read_csv(f"{COLLECTED}/training.csv")
 best = train[train["is_best_epoch"]]
 
 # Table: test AUROC by task, head, context_length
@@ -274,7 +355,7 @@ Use all rows (not filtered by `is_best_epoch`) to plot loss or accuracy over epo
 ```python
 import matplotlib.pyplot as plt
 
-train = pd.read_csv("results/collected/training.csv")
+train = pd.read_csv(f"{COLLECTED}/training.csv")
 run = train[(train.task == "sex_binary") & (train.head == "lstm") & (train.context_length == "10m")]
 
 plt.plot(run["epoch"], run["val_auroc"], label="val_auroc")
@@ -292,7 +373,7 @@ AUROC vs context length per head (answers H1: does performance saturate?). Use `
 ```python
 import pandas as pd, matplotlib.pyplot as plt
 
-analysis = pd.read_csv("results/collected/analysis.csv")
+analysis = pd.read_csv(f"{COLLECTED}/analysis.csv")
 ctx_order = {"30s": 0.5, "10m": 10, "40m": 40, "80m": 80, "120m": 120, "240m": 240}
 
 sat = analysis[(analysis.task == "sex_binary") & (analysis.k == "all") & (analysis.split == "test")]
@@ -335,7 +416,7 @@ python scripts/gen_commands.py iso-plots sex_binary_lstm | bash
 Or read `analysis.csv` directly for a custom heatmap:
 
 ```python
-analysis = pd.read_csv("results/collected/analysis.csv")
+analysis = pd.read_csv(f"{COLLECTED}/analysis.csv")
 hm = analysis[
     (analysis.task == "sex_binary") &
     (analysis.head == "lstm") &
@@ -356,7 +437,7 @@ sns.heatmap(pivot, annot=False, cmap="viridis")
 Each row of the heatmap as a line: AUROC vs K for a fixed context length. Answers H3 (aggregation saturation).
 
 ```python
-analysis = pd.read_csv("results/collected/analysis.csv")
+analysis = pd.read_csv(f"{COLLECTED}/analysis.csv")
 row = analysis[
     (analysis.task == "sex_binary") & (analysis.head == "lstm") &
     (analysis.context_length == "10m") & (analysis.split == "test")
@@ -387,7 +468,7 @@ python scripts/gen_commands.py iso-plots sex_binary_lstm | bash
 The `total_compute_min` column in `analysis.csv` is the iso-compute axis (`context_length_min × k`). To manually extract iso-compute diagonals:
 
 ```python
-analysis = pd.read_csv("results/collected/analysis.csv")
+analysis = pd.read_csv(f"{COLLECTED}/analysis.csv")
 # All (task, head, context, K) combinations where total signal ≈ 80 min
 iso80 = analysis[
     (analysis.task == "sex_binary") & (analysis.head == "lstm") &
@@ -419,11 +500,10 @@ The predictions parquets let you recompute any aggregation or metric not covered
 import pandas as pd, numpy as np
 from sklearn.metrics import roc_auc_score
 
-# Load one parquet
-df = pd.read_parquet(
-    "/scratch/boshra95/psg/unified/results/phase0_v3/collected/predictions/"
-    "sex_binary_lstm_10m_test.parquet"
-)
+# Load one parquet (fast-channel)
+PRED_DIR = "/scratch/boshra95/psg/unified/results/phase0_v3/collected/predictions"
+# For full-channel: PRED_DIR = "/scratch/boshra95/psg_full/unified/results/phase0_v3_full/collected/predictions"
+df = pd.read_parquet(f"{PRED_DIR}/sex_binary_lstm_10m_test.parquet")
 
 # Custom aggregation: mean prob over first K windows per subject
 K = 5

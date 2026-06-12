@@ -60,16 +60,17 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-# ── Default paths (overridden by CLI --results-dir / --out-dir) ───────────────
+# ── Default paths (overridden by CLI --results-dir / --out-dir / --repo-out) ──
 
 _DEFAULT_RESULTS = Path("/scratch/boshra95/psg/unified/results/phase0_v3")
-_REPO_OUT_DEFAULT = Path(__file__).parent.parent / "results" / "collected"
+_REPO_COLLECTED  = Path(__file__).parent.parent / "results" / "collected"
 
 # These module-level names are set by main() after arg parsing.
 RESULTS_DIR: Path
 INFERENCE_DIR: Path
 SCRATCH_OUT: Path
 REPO_OUT: Path
+FORCE: bool
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -122,7 +123,7 @@ def ctx_sort_key(df: pd.DataFrame) -> pd.Series:
 def collect_training(results_dir: Path, out_paths: list[Path],
                      exp_ids: set[str] | None = None) -> int:
     existing = load_csv(out_paths[0]) if out_paths[0].exists() else load_csv(out_paths[1])
-    done = done_keys(existing, TRAIN_KEY)
+    done = set() if FORCE else done_keys(existing, TRAIN_KEY)
     new_rows: list[dict] = []
 
     for exp_dir in sorted(results_dir.iterdir()):
@@ -236,7 +237,7 @@ def collect_training(results_dir: Path, out_paths: list[Path],
 def collect_analysis(inference_dir: Path, out_paths: list[Path],
                      exp_ids: set[str] | None = None) -> int:
     existing = load_csv(out_paths[0]) if out_paths[0].exists() else load_csv(out_paths[1])
-    done = done_keys(existing, ANALYSIS_KEY)
+    done = set() if FORCE else done_keys(existing, ANALYSIS_KEY)
     new_rows: list[dict] = []
 
     for exp_dir in sorted(inference_dir.iterdir()):
@@ -360,7 +361,7 @@ def collect_predictions(inference_dir: Path, scratch_out: Path,
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main() -> None:
-    global RESULTS_DIR, INFERENCE_DIR, SCRATCH_OUT, REPO_OUT
+    global RESULTS_DIR, INFERENCE_DIR, SCRATCH_OUT, REPO_OUT, FORCE
 
     parser = argparse.ArgumentParser(
         description="Collect phase0 training, analysis, and prediction results into flat files."
@@ -373,8 +374,24 @@ def main() -> None:
         "--out-dir", type=Path, default=None,
         help=(
             "Scratch output directory for collected/ files. "
-            "Defaults to <results-dir>/collected. "
-            "Repo output always goes to results/collected/ in the git repo."
+            "Defaults to <results-dir>/collected."
+        ),
+    )
+    parser.add_argument(
+        "--repo-out", type=Path, default=None,
+        help=(
+            "Repo output directory for training.csv and analysis.csv. "
+            "Defaults to results/collected/<results-dir-name>/ so that "
+            "fast-channel (phase0_v3) and full-channel (phase0_v3_full) "
+            "never overwrite each other."
+        ),
+    )
+    parser.add_argument(
+        "--force", action="store_true",
+        help=(
+            "Re-collect all rows even if the key already exists. "
+            "Use after re-running analyze (e.g. with --bootstrap) to pick up "
+            "updated CI columns and AUROC values."
         ),
     )
     parser.add_argument(
@@ -406,7 +423,9 @@ def main() -> None:
     RESULTS_DIR   = args.results_dir
     INFERENCE_DIR = RESULTS_DIR / "inference"
     SCRATCH_OUT   = args.out_dir if args.out_dir else RESULTS_DIR / "collected"
-    REPO_OUT      = _REPO_OUT_DEFAULT
+    # Default repo-out: results/collected/<results-dir-name>/ so channels stay separate.
+    REPO_OUT      = args.repo_out if args.repo_out else _REPO_COLLECTED / RESULTS_DIR.name
+    FORCE         = args.force
 
     exp_ids = set(args.exp_ids) if args.exp_ids else None
 
