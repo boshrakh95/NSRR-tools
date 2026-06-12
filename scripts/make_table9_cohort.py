@@ -129,7 +129,9 @@ def main():
     if args.latex:
         print("\n" + tex)
 
-    save_outputs(table, args.out, f"table9_cohort_{args.exp_id}_{args.channel}", latex_str=tex)
+    scratch = args.results_dir / "tables" if args.results_dir else None
+    save_outputs(table, args.out, f"table9_cohort_{args.exp_id}_{args.channel}",
+                 latex_str=tex, scratch_dir=scratch)
 
 
 if __name__ == "__main__":

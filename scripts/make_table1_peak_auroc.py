@@ -73,6 +73,8 @@ def main():
     parser.add_argument("--split", default="test")
     parser.add_argument("--out", type=Path, default=_DEFAULT_OUT,
                         help="Output directory (default: results/tables/)")
+    parser.add_argument("--results-dir", type=Path, default=None, dest="results_dir",
+                        help="Scratch results directory; if given also saves to <results-dir>/tables/")
     parser.add_argument("--latex", action="store_true", help="Print LaTeX table to stdout")
     args = parser.parse_args()
 
@@ -97,7 +99,8 @@ def main():
         print("\n" + tex)
 
     stem = f"table1_peak_auroc_{args.channel}"
-    save_outputs(table, args.out, stem, latex_str=tex)
+    scratch = Path(args.results_dir) / "tables" if args.results_dir else None
+    save_outputs(table, args.out, stem, latex_str=tex, scratch_dir=scratch)
 
 
 if __name__ == "__main__":
