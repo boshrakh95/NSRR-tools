@@ -344,28 +344,29 @@ Implement and compare the results with these expectations
 
 ---
 
-#### B. More channels per modality group (preprocessing rerun required)
-**What:** The current config uses a limited number of channels per SleepFM modality group:
-- BAS (EEG + EOG): priority list = C3-M2, C4-M1, LOC, ROC, O1-M2, O2-M1, F3-M2, F4-M1, A1, A2 (up to 10)
-- RESP: Airflow, Thor, ABD, SpO2, HR, Snore, RespRate (up to 7)
-- EKG: priority = [EKG] only (max 2 slots)
-- EMG: priority = [EMG] only (max 4 slots)
+#### B. More channels per modality group — ✅ THIS IS THE v3_full RUN (already in progress)
 
-Currently EKG uses only 1 channel (EKG) and EMG uses only 1 channel (EMG chin lead), with the remaining slots empty. Adding ECG-L, ECG-R for EKG and CHIN, LLEG, RLEG for EMG would use the max_channels budget.
+> **This experiment is not new work.** It is the full-channel run (`phase0_v3_full`) that was
+> implemented and is currently running. Nothing here needs to be scheduled or coded.
+> See `docs/EXPERIMENTS_GUIDE.md` → **"Full-channel run (channel expansion)"** for the
+> step-by-step playbook, current status, and all commands.
 
-**What it answers:** Does adding more channels within each group improve performance? What is the marginal gain from more EEG leads?
+**What v3_full does (= what this section originally described as future work):**
 
-**Implementation:**
-1. Update `channel_priority` in `configs/phase0_v3_config.yaml` (add channels)
-2. Re-run `scripts/extract_nsrr_channels.py` for all 4 cohorts (cluster jobs)
-3. Re-run SleepFM embedding extraction for all subjects (expensive — multi-day cluster job)
-4. Then re-run training and inference as normal
+| Originally planned | v3_full implementation |
+|---|---|
+| Expand EKG from 1 channel to ECG-L, ECG-R (use 2-slot budget) | `preprocessing_params_full.yaml` — EKG≤2, priority: [EKG, ECG-L, ECG-R] |
+| Expand EMG from 1 channel to CHIN, LLEG, RLEG (use 4-slot budget) | `preprocessing_params_full.yaml` — EMG≤4, priority: [CHIN, LLEG, RLEG, EMG] |
+| Use full BAS priority list (up to 10 channels) | `preprocessing_params_full.yaml` — BAS≤10, all EEG + EOG leads |
+| Re-run preprocessing + embedding extraction | Done in v3_full Step 0–1 (IN PROGRESS) |
+| Re-run training on all Tier 1 tasks | Done in v3_full Step 2–3 |
 
-**Tasks to run:** All Tier 1 tasks at representative context lengths.
+**What it answers:** Fast-channel (v3) vs full-channel (v3_full) AUROC comparison shows the
+marginal gain from using more PSG channels per modality group. This is Table 5 (or equivalent)
+in the paper — the primary fast→full comparison.
 
-**Effort:** 1–2 weeks (dominated by embedding re-extraction). **Plan for after all main runs are complete.**
-
-**Paper contribution:** Shows sensitivity to channel configuration. Justifies our current channel choices (or motivates future work with richer channels).
+**Status:** IN PROGRESS — preprocessing and embedding extraction running on cluster.
+**No new code or jobs needed here.**
 
 ---
 
