@@ -261,43 +261,41 @@ Run all ablation conditions at a **single fixed context per task** equal to the 
 
 ##### A.5 Registry structure
 
-Add ablation experiments to `experiments/v2_registry.yaml` (or a separate `v2_ablation_registry.yaml`) using `run_tag` to namespace results:
+Ablation experiments live in a **separate registry** `experiments/v2_ablation_registry.yaml` with a separate config (`configs/phase0_v3_abl_config.yaml`) that points to a dedicated results directory (`phase0_v3_abl/`) and log directory (`logs_v3_abl/`). This guarantees zero overlap with v3 or v3_full results. ✅ **Implemented.**
 
 ```yaml
-# Example — one entry per task × condition × context
+# Excerpt from experiments/v2_ablation_registry.yaml
+config: configs/phase0_v3_abl_config.yaml
+results_dir: /scratch/boshra95/psg/unified/results/phase0_v3_abl
+logs_dir: /home/boshra95/NSRR-tools/logs_v3_abl
+
 sex_binary_lstm_abl_no_bas:
   task: sex_binary
   task_type: seq2label
+  num_classes: 2
   head: lstm
   datasets: [apples, shhs]
-  contexts: [120m]
+  contexts: ["120m"]
+  lr: 5.0e-5       # context_lr_override matches v3 for 120m
   run_tag: "abl_no_bas"          # results go to sex_binary_lstm_abl_no_bas/context_120m/
-  zero_modalities: [BAS]         # new field — read by train_context_sweep.py
-  tier: 3
+  zero_modalities: [BAS]         # gen_commands.py → ZERO_MODALITIES="BAS" env var
+  tier: 1
 
 sex_binary_lstm_abl_cardio:
-  task: sex_binary
-  task_type: seq2label
-  head: lstm
-  datasets: [apples, shhs]
-  contexts: [120m]
+  ...
   run_tag: "abl_cardio"
   zero_modalities: [BAS, EMG]
-  tier: 3
+  tier: 1
 
 sex_binary_lstm_abl_bas_only:
-  task: sex_binary
-  task_type: seq2label
-  head: lstm
-  datasets: [apples, shhs]
-  contexts: [120m]
+  ...
   run_tag: "abl_bas_only"
   zero_modalities: [RESP, EKG, EMG]
-  tier: 3
-# ... (repeat for each task)
+  tier: 1
+# ... 15 entries total (5 tasks × 3 conditions)
 ```
 
-The `zero_modalities` field lists which groups are zeroed (the complement is what the head sees). `run_tag` ensures outputs go to a separate directory from the baseline.
+The `zero_modalities` field lists which groups are zeroed (the complement is what the head sees). `run_tag` ensures outputs go to a separate subfolder from the baseline. All 15 entries are in the registry; use `REG="--registry experiments/v2_ablation_registry.yaml"` with all gen_commands.py calls.
 
 ---
 
@@ -321,31 +319,28 @@ Implement and compare the results with these expectations
 
 ---
 
-##### A.7 Implementation requirements (next prompt)
+##### A.7 Implementation status
 
-The following code changes are needed (to be implemented in the next session):
+1. ✅ **`src/nsrr_tools/datasets/context_window_dataset.py`** — `zero_modality_indices` parameter added.  
+   Zeroing is applied to the `(N, 4, 128)` float32 copy before reshaping to `(N, 512)`, so the `.npy` memory-map is never written:
+   ```python
+   w = window.astype(np.float32)      # (N, 4, 128) — always a new copy (float16→float32)
+   for mi in self._zero_modality_indices:   # modality index: 0=BAS, 1=RESP, 2=EKG, 3=EMG
+       w[:, mi, :] = 0.0
+   x = w.reshape(N, FLAT_DIM)         # (N, 512) fed to head
+   ```
+   Applied identically at training time (all three window methods) and inference time.
 
-1. **`scripts/train_context_sweep.py`** and/or **`sleepfm_env` dataset loader:**
-   - Add `--zero-modalities BAS RESP EKG EMG` CLI flag
-   - In the data loading loop, after loading the 512-dim embedding from HDF5, zero the specified slices:
-     ```python
-     MODALITY_SLICES = {"BAS": slice(0,128), "RESP": slice(128,256),
-                        "EKG": slice(256,384), "EMG": slice(384,512)}
-     for m in zero_modalities:
-         embedding[:, MODALITY_SLICES[m]] = 0.0
-     ```
-   - Apply zeroing consistently at both training and inference
+2. ✅ **`scripts/train_context_sweep.py`** — `--zero-modalities BAS RESP EKG EMG` flag added.  
+   `scripts/infer_subject_windows.py` — same flag, same zeroing.  
+   `jobs/train_context_sweep_gpu.sh` and `jobs/infer_subject_windows_gpu.sh` — `ZERO_MODALITIES` env var forwarded to both.
 
-2. **`experiments/v2_registry.yaml` (or new `v2_ablation_registry.yaml`):**
-   - Add 15 ablation entries (5 tasks × 3 conditions) with `run_tag` and `zero_modalities`
+3. ✅ **`scripts/gen_commands.py`** — reads `zero_modalities` from registry entry, emits `ZERO_MODALITIES="BAS"` etc. in the generated sbatch command.
 
-3. **`scripts/gen_commands.py`:**
-   - Read `zero_modalities` from registry entry
-   - Pass `--zero-modalities {groups}` to train and infer commands when present
+4. ✅ **`experiments/v2_ablation_registry.yaml`** — 15 entries (5 tasks × 3 conditions).  
+   ✅ **`configs/phase0_v3_abl_config.yaml`** — separate config pointing to `phase0_v3_abl/` results dir.
 
-4. **`scripts/make_table6_modality.py`:**
-   - New script to generate Table 6 from collected ablation results
-   - Groups results by condition, displays as a task × condition matrix
+5. ⏳ **`scripts/make_table6_modality.py`** — not yet written. After ablation results are collected, this script will read `results/collected/phase0_v3_abl/analysis.csv` and output Table 6 in task × condition format. Until it exists, extract results manually from the `window_analysis_test.csv` files (see `docs/EXPERIMENTS_GUIDE.md` §Modality ablation — Step 5).
 
 ---
 

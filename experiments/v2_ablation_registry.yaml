@@ -212,7 +212,7 @@ experiments:
   age_class_lstm_abl_no_bas:
     task: age_class
     task_type: seq2label
-    num_classes: 4
+    num_classes: 3
     head: lstm
     datasets: [apples, shhs, mros]
     contexts: ["120m"]
@@ -227,7 +227,7 @@ experiments:
   age_class_lstm_abl_cardio:
     task: age_class
     task_type: seq2label
-    num_classes: 4
+    num_classes: 3
     head: lstm
     datasets: [apples, shhs, mros]
     contexts: ["120m"]
@@ -242,7 +242,7 @@ experiments:
   age_class_lstm_abl_bas_only:
     task: age_class
     task_type: seq2label
-    num_classes: 4
+    num_classes: 3
     head: lstm
     datasets: [apples, shhs, mros]
     contexts: ["120m"]
