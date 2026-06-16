@@ -15,6 +15,7 @@ This document is the definitive reference for running training, inference, and a
    - [Run identity quick-reference](#run-identity-quick-reference)
    - [Fast-channel run (v3 baseline)](#fast-channel-run-v3-baseline)
    - [Full-channel run (channel expansion)](#full-channel-run-channel-expansion)
+   - [Modality ablation run (channel importance)](#modality-ablation-run-channel-importance)
 3. [Pipeline Steps](#pipeline-steps)
 4. [Config Files](#config-files)
 5. [Experiment Registry and Command Generator](#experiment-registry-and-command-generator)
@@ -54,21 +55,21 @@ Two parallel experiment sets live on disk simultaneously and never overwrite eac
 
 ### Run identity quick-reference
 
-| | Fast-channel (v3 baseline) | Full-channel (channel expansion) |
-|---|---|---|
-| **Channels/subject** | 7–8 (BAS=3, RESP=1, EKG=1, EMG=1–2) | Up to 23 (BAS≤10, RESP≤7, EKG≤2, EMG≤4) |
-| **Preprocessing config** | `configs/preprocessing_params.yaml` | `configs/preprocessing_params_full.yaml` |
-| **HDF5 root** | `/scratch/boshra95/psg/` | `/scratch/boshra95/psg_full/` |
-| **Embeddings dir** | `/scratch/boshra95/psg/unified/embeddings/sleepfm_5sec/` | `/scratch/boshra95/psg_full/unified/embeddings/sleepfm_5sec/` |
-| **Embedding config** | `configs/phase0_v3_config.yaml` | `configs/phase0_v3_full_config.yaml` |
-| **Seq2label train config** | `configs/phase0_v3_config.yaml` (hidden=128, layers=1) | `configs/phase0_v3_full_config.yaml` (hidden=128, layers=1) |
-| **Sleep staging config** | `configs/phase0_v3_staging_config.yaml` (hidden=256, layers=2, val_kappa) | `configs/phase0_v3_full_staging_config.yaml` (hidden=256, layers=2, val_kappa) |
-| **Registry** | `experiments/v2_registry.yaml` | `experiments/v2_full_registry.yaml` |
-| **Results root** | `/scratch/boshra95/psg/unified/results/phase0_v3/` | `/scratch/boshra95/psg_full/unified/results/phase0_v3_full/` |
-| **Inference root** | `/scratch/boshra95/psg/unified/results/phase0_v3/inference/` | `/scratch/boshra95/psg_full/unified/results/phase0_v3_full/inference/` |
-| **Training logs** | `logs_v3/` | `logs_v3_full/` |
-| **Preprocessing/embedding logs** | `logs_v3/` (historical) | `logs_v3_full/` |
-| **Status** | **DONE** — all steps complete | **IN PROGRESS** — preprocessing/embedding running |
+| | Fast-channel (v3 baseline) | Full-channel (channel expansion) | Modality ablation |
+|---|---|---|---|
+| **Channels/subject** | 7–8 (BAS=3, RESP=1, EKG=1, EMG=1–2) | Up to 23 (BAS≤10, RESP≤7, EKG≤2, EMG≤4) | Same as fast-channel; selected groups zeroed in embedding |
+| **Preprocessing config** | `configs/preprocessing_params.yaml` | `configs/preprocessing_params_full.yaml` | **None — reuses fast-channel embeddings** |
+| **HDF5 root** | `/scratch/boshra95/psg/` | `/scratch/boshra95/psg_full/` | **Reused** `/scratch/boshra95/psg/` |
+| **Embeddings dir** | `/scratch/boshra95/psg/unified/embeddings/sleepfm_5sec/` | `/scratch/boshra95/psg_full/unified/embeddings/sleepfm_5sec/` | **Reused** `/scratch/boshra95/psg/unified/embeddings/sleepfm_5sec/` |
+| **Embedding config** | `configs/phase0_v3_config.yaml` | `configs/phase0_v3_full_config.yaml` | `configs/phase0_v3_abl_config.yaml` |
+| **Train config** | `configs/phase0_v3_config.yaml` (hidden=128, layers=1) | `configs/phase0_v3_full_config.yaml` | `configs/phase0_v3_abl_config.yaml` (hidden=128, layers=1) |
+| **Sleep staging config** | `configs/phase0_v3_staging_config.yaml` (hidden=256, layers=2, val_kappa) | `configs/phase0_v3_full_staging_config.yaml` | N/A — no sleep staging in ablation |
+| **Registry** | `experiments/v2_registry.yaml` | `experiments/v2_full_registry.yaml` | `experiments/v2_ablation_registry.yaml` |
+| **Results root** | `/scratch/boshra95/psg/unified/results/phase0_v3/` | `/scratch/boshra95/psg_full/unified/results/phase0_v3_full/` | `/scratch/boshra95/psg/unified/results/phase0_v3_abl/` |
+| **Inference root** | `/scratch/boshra95/psg/unified/results/phase0_v3/inference/` | `/scratch/boshra95/psg_full/unified/results/phase0_v3_full/inference/` | `/scratch/boshra95/psg/unified/results/phase0_v3_abl/inference/` |
+| **Training logs** | `logs_v3/` | `logs_v3_full/` | `logs_v3_abl/` |
+| **Preprocessing/embedding logs** | `logs_v3/` (historical) | `logs_v3_full/` | **Not applicable** |
+| **Status** | **DONE** — all steps complete | **IN PROGRESS** — preprocessing/embedding running | **PENDING** — ready to train |
 
 ---
 
@@ -633,6 +634,285 @@ python scripts/gen_commands.py saturation sex_binary --heads lstm transformer | 
 python scripts/gen_commands.py --registry experiments/v2_full_registry.yaml \
     saturation sex_binary --heads lstm transformer | bash
 ```
+
+---
+
+### Modality ablation run (channel importance)
+
+**Goal:** Measure how much each SleepFM modality group contributes to each clinical task by
+retraining the head with one or more groups permanently zeroed. The head never sees the absent
+modality during training — this measures **peak capability** of each channel subset, not
+robustness of the baseline model (see §4G of `SOTA_COMPARISON_AND_ABLATIONS.md` for the
+inference-only robustness variant).
+
+**Key properties:**
+- **No new preprocessing or embedding extraction.** Reuses the fast-channel `.npy` files
+  exactly. The zeroing happens in `ContextWindowDataset.__getitem__()` via `zero_modality_indices`,
+  applied to the float32 copy before the model sees it — the `.npy` files on disk are never touched.
+- **Completely separate outputs.** Results go to `phase0_v3_abl/`, logs to `logs_v3_abl/`.
+  There is zero overlap with `phase0_v3/` or `phase0_v3_full/`.
+- **Status starts at pending.** Because the registry points to an empty directory, all 15
+  experiments report "pending" from the start.
+
+#### Why these three ablation conditions?
+
+| Condition (`run_tag`) | Groups zeroed | Groups active | Active embedding ranges | Answers |
+|---|---|---|---|---|
+| `abl_no_bas` | BAS (EEG+EOG) | RESP+EKG+EMG | [128:512] | Can we drop the neural sensor entirely? |
+| `abl_cardio` | BAS+EMG | RESP+EKG | [128:256], [256:384] | SleepFounder comparison: cardio-only performance |
+| `abl_bas_only` | RESP+EKG+EMG | BAS only | [0:128] | How much do brain signals alone explain? |
+
+The baseline (all channels active) is the existing `phase0_v3` result for each task at the
+matched context length — no additional "full" training run is needed.
+
+**SleepFM embedding layout (512 dim = 4 × 128):**
+```
+[  0:128]  BAS  — EEG leads + EOG (brain activity)
+[128:256]  RESP — Airflow, Thor, ABD, SpO2, HR, Snore, RespRate
+[256:384]  EKG  — cardiac
+[384:512]  EMG  — chin + leg muscles
+```
+
+#### Tasks and context choices
+
+| Task | Context | Reason |
+|---|---|---|
+| `sex_binary` | 120m | Well-powered (N≈13k), L*=120m; all groups expected to contribute |
+| `apnea_binary` | 120m | L*=120m; RESP expected dominant (OSA is a respiratory disorder) |
+| `sleep_efficiency_binary` | 120m | Highest context benefit; BAS expected crucial (SE encodes staging) |
+| `age_class` | 120m | Large N, physiological aging visible in all modalities |
+| `bmi_binary` | 40m | L*=10m; 40m avoids sparse-window issues at 120m, uses default LR=1e-4 |
+
+15 experiments total: 5 tasks × 3 conditions.
+
+#### Path summary
+
+```
+Config          →  configs/phase0_v3_abl_config.yaml
+Registry        →  experiments/v2_ablation_registry.yaml
+Embeddings      →  /scratch/boshra95/psg/unified/embeddings/sleepfm_5sec/  (SHARED, read-only)
+Targets         →  /scratch/boshra95/psg/unified/targets_v2/               (SHARED, read-only)
+Training results→  /scratch/boshra95/psg/unified/results/phase0_v3_abl/{task}_{head}_{tag}/context_{L}/
+Inference       →  /scratch/boshra95/psg/unified/results/phase0_v3_abl/inference/{task}_{head}_{tag}/
+All logs        →  /home/boshra95/NSRR-tools/logs_v3_abl/
+```
+
+Working directory for all commands: `cd /home/boshra95/NSRR-tools`
+
+```bash
+REG="--registry experiments/v2_ablation_registry.yaml"
+```
+
+#### Step 0 — No preprocessing or embedding extraction
+
+> The modality ablation **reuses the existing fast-channel embeddings** unchanged.
+> Steps 0 and 1 of the other playbooks (EDF→HDF5, HDF5→.npy) do not need to be repeated.
+> Start directly at training (Step 1 below).
+
+Verify the embeddings are available before submitting training jobs:
+```bash
+find /scratch/boshra95/psg/unified/embeddings/sleepfm_5sec -name '*.npy' | wc -l
+# Expected: ~14,992
+```
+
+#### Step 1 — Training (15 jobs: 5 tasks × 3 conditions)
+
+Config: `configs/phase0_v3_abl_config.yaml` (hidden=128, layers=1 — LSTM head only).
+Results: `/scratch/boshra95/psg/unified/results/phase0_v3_abl/{task}_lstm_{tag}/context_{L}/`.
+Logs: `logs_v3_abl/train_{task}_lstm_{tag}_{context}_lr{lr}_{jobid}.out`.
+
+The `zero_modalities` field in the registry is read by `gen_commands.py` and forwarded as the
+`ZERO_MODALITIES` env var to the SLURM job, which passes `--zero-modalities BAS` etc. to
+`train_context_sweep.py`. No manual editing of env vars is needed.
+
+```bash
+REG="--registry experiments/v2_ablation_registry.yaml"
+
+# ── Condition 1: no BAS (RESP+EKG+EMG active) ────────────────────────────────
+python scripts/gen_commands.py $REG train sex_binary_lstm_abl_no_bas              | bash
+python scripts/gen_commands.py $REG train apnea_binary_lstm_abl_no_bas            | bash
+python scripts/gen_commands.py $REG train sleep_efficiency_binary_lstm_abl_no_bas | bash
+python scripts/gen_commands.py $REG train age_class_lstm_abl_no_bas               | bash
+python scripts/gen_commands.py $REG train bmi_binary_lstm_abl_no_bas              | bash
+
+# ── Condition 2: cardio only (BAS+EMG zeroed, RESP+EKG active) ───────────────
+python scripts/gen_commands.py $REG train sex_binary_lstm_abl_cardio              | bash
+python scripts/gen_commands.py $REG train apnea_binary_lstm_abl_cardio            | bash
+python scripts/gen_commands.py $REG train sleep_efficiency_binary_lstm_abl_cardio | bash
+python scripts/gen_commands.py $REG train age_class_lstm_abl_cardio               | bash
+python scripts/gen_commands.py $REG train bmi_binary_lstm_abl_cardio              | bash
+
+# ── Condition 3: BAS only (RESP+EKG+EMG zeroed) ──────────────────────────────
+python scripts/gen_commands.py $REG train sex_binary_lstm_abl_bas_only              | bash
+python scripts/gen_commands.py $REG train apnea_binary_lstm_abl_bas_only            | bash
+python scripts/gen_commands.py $REG train sleep_efficiency_binary_lstm_abl_bas_only | bash
+python scripts/gen_commands.py $REG train age_class_lstm_abl_bas_only               | bash
+python scripts/gen_commands.py $REG train bmi_binary_lstm_abl_bas_only              | bash
+```
+
+All 15 jobs can be submitted simultaneously — they are independent.
+
+**Check status:**
+```bash
+python scripts/gen_commands.py $REG status
+python scripts/gen_commands.py $REG list
+```
+
+**Verify a generated command before submitting** (should show `ZERO_MODALITIES="BAS"`):
+```bash
+python scripts/gen_commands.py $REG train sex_binary_lstm_abl_no_bas
+```
+
+Expected output includes:
+```
+TASK=sex_binary TASK_TYPE=seq2label HEAD=lstm CONTEXT=120m \
+  DATASETS="apples shhs" BATCH_SIZE=32 ACCUM_STEPS=1 LR=5e-5 \
+  RUN_TAG="abl_no_bas" ZERO_MODALITIES="BAS" \
+  CONFIG=configs/phase0_v3_abl_config.yaml \
+  sbatch --requeue --time=06:00:00 ...
+```
+
+**Expected wall times** (H100 MIG, LSTM, n_size=large):
+- 120m context: ~6h (same as v3 120m, K=5 fixed, same N subjects)
+- 40m context (bmi_binary): ~3h
+
+#### Step 2 — Inference
+
+One GPU job per experiment. Auto-discovers the trained context and skips any already-inferred.
+Results: `.../phase0_v3_abl/inference/{task}_lstm_{tag}/context_{L}/test_windows.parquet`.
+
+```bash
+REG="--registry experiments/v2_ablation_registry.yaml"
+
+# All three conditions, all five tasks (run after each condition's training finishes)
+for exp in \
+  sex_binary_lstm_abl_no_bas              \
+  apnea_binary_lstm_abl_no_bas            \
+  sleep_efficiency_binary_lstm_abl_no_bas \
+  age_class_lstm_abl_no_bas               \
+  bmi_binary_lstm_abl_no_bas              \
+  sex_binary_lstm_abl_cardio              \
+  apnea_binary_lstm_abl_cardio            \
+  sleep_efficiency_binary_lstm_abl_cardio \
+  age_class_lstm_abl_cardio               \
+  bmi_binary_lstm_abl_cardio              \
+  sex_binary_lstm_abl_bas_only              \
+  apnea_binary_lstm_abl_bas_only            \
+  sleep_efficiency_binary_lstm_abl_bas_only \
+  age_class_lstm_abl_bas_only               \
+  bmi_binary_lstm_abl_bas_only; do
+    python scripts/gen_commands.py $REG infer $exp | bash
+done
+```
+
+**Important:** the inference job reads `RUN_TAG` and `ZERO_MODALITIES` from the generated command,
+ensuring it applies the same zeroing as training. A checkpoint trained with `abl_no_bas` will
+be inferred with `ZERO_MODALITIES="BAS"` automatically — no manual matching is required.
+
+#### Step 3 — Analysis (window sweep, no GPU)
+
+Runs locally. Computes K-sweep AUROC at K=1, 5, 10, 20, 50, all. Writes
+`window_analysis_test.csv` and `window_analysis.md` per experiment.
+
+```bash
+REG="--registry experiments/v2_ablation_registry.yaml"
+source /home/boshra95/sleepfm_env/bin/activate
+
+for exp in \
+  sex_binary_lstm_abl_no_bas              \
+  apnea_binary_lstm_abl_no_bas            \
+  sleep_efficiency_binary_lstm_abl_no_bas \
+  age_class_lstm_abl_no_bas               \
+  bmi_binary_lstm_abl_no_bas              \
+  sex_binary_lstm_abl_cardio              \
+  apnea_binary_lstm_abl_cardio            \
+  sleep_efficiency_binary_lstm_abl_cardio \
+  age_class_lstm_abl_cardio               \
+  bmi_binary_lstm_abl_cardio              \
+  sex_binary_lstm_abl_bas_only              \
+  apnea_binary_lstm_abl_bas_only            \
+  sleep_efficiency_binary_lstm_abl_bas_only \
+  age_class_lstm_abl_bas_only               \
+  bmi_binary_lstm_abl_bas_only; do
+    python scripts/gen_commands.py $REG analyze $exp | bash
+done
+```
+
+Output per experiment:
+```
+.../phase0_v3_abl/inference/{task}_lstm_{tag}/
+  window_analysis_test.csv
+  window_analysis.md
+```
+
+#### Step 4 — Collect results
+
+```bash
+REG="--registry experiments/v2_ablation_registry.yaml"
+
+python scripts/gen_commands.py $REG collect | bash
+```
+
+Outputs to:
+```
+/scratch/boshra95/psg/unified/results/phase0_v3_abl/collected/analysis.csv
+/scratch/boshra95/psg/unified/results/phase0_v3_abl/collected/training.csv
+```
+
+These CSVs are committed to the repo (same as v3 collect) and appear under
+`results/collected/phase0_v3_abl/` in the working tree.
+
+#### Step 5 — Table 6 generation
+
+> **Note:** `scripts/make_table6_modality.py` is not yet written. It will read the
+> collected `analysis.csv` (filtered to `phase0_v3_abl`) and produce Table 6 in
+> `SOTA_COMPARISON_AND_ABLATIONS.md §4A.6` format. Until that script exists, extract
+> the relevant rows manually from the collected CSV or from `window_analysis.md` files.
+
+**Manual extraction (interim — until make_table6_modality.py exists):**
+```bash
+source /home/boshra95/sleepfm_env/bin/activate
+
+# Print k=all AUROC from each experiment's analysis markdown
+for exp in \
+  sex_binary_lstm_abl_no_bas sex_binary_lstm_abl_cardio sex_binary_lstm_abl_bas_only \
+  apnea_binary_lstm_abl_no_bas apnea_binary_lstm_abl_cardio apnea_binary_lstm_abl_bas_only \
+  sleep_efficiency_binary_lstm_abl_no_bas sleep_efficiency_binary_lstm_abl_cardio sleep_efficiency_binary_lstm_abl_bas_only \
+  age_class_lstm_abl_no_bas age_class_lstm_abl_cardio age_class_lstm_abl_bas_only \
+  bmi_binary_lstm_abl_no_bas bmi_binary_lstm_abl_cardio bmi_binary_lstm_abl_bas_only; do
+    echo "=== $exp ==="
+    grep "all " /scratch/boshra95/psg/unified/results/phase0_v3_abl/inference/${exp}/window_analysis_test.csv 2>/dev/null || echo "(not ready)"
+done
+```
+
+**Compare to v3 baseline** (fast-channel results at matched context):
+```bash
+# sex_binary baseline at 120m (v3 fast-channel)
+grep "120m" /scratch/boshra95/psg/unified/results/phase0_v3/inference/sex_binary_lstm/window_analysis_test.csv
+
+# bmi_binary baseline at 40m (v3 fast-channel)
+grep "40m" /scratch/boshra95/psg/unified/results/phase0_v3/inference/bmi_binary_lstm/window_analysis_test.csv
+```
+
+The baseline AUROC for each task (from v3 fast-channel, all modalities active) is the
+reference point for computing the drop/gain from ablation.
+
+#### Interpreting the results
+
+| Pattern | Interpretation |
+|---|---|
+| `abl_no_bas` ≈ full AUROC | Task is independent of EEG/EOG; wrist-worn or contactless PSG may suffice |
+| `abl_no_bas` large drop | Brain signals are uniquely informative; EEG/EOG cannot be dropped |
+| `abl_cardio` ≈ `abl_no_bas` | EMG adds little; RESP+EKG drives the cardiorespiratory information |
+| `abl_cardio` > SleepFounder AUROC | Full PSG superiority is not purely from extra cardiorespiratory channels |
+| `abl_bas_only` ≈ full AUROC | Task is primarily encoded in EEG (e.g., sleep efficiency) |
+| `abl_bas_only` near chance | No task information survives without RESP+EKG (e.g., apnea) |
+
+For `apnea_binary`: we expect `abl_no_bas` ≈ full and `abl_bas_only` near chance (OSA is a
+respiratory disorder). For `sleep_efficiency_binary`: we expect `abl_bas_only` > `abl_cardio`
+(sleep staging features are in EEG, and SE = TST/TIB is determined by staging). For
+`sex_binary`: all three ablation AUROCs remain above 0.65 (sex is encoded in all physiological
+channels), but `abl_bas_only` may show the largest drop.
 
 ---
 

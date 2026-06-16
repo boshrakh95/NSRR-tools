@@ -587,6 +587,120 @@ This allows direct attribution of AUROC differences to context length.
 
 ---
 
+## III-I. Modality Group Ablation
+
+### Motivation and design principle
+
+The SleepFM encoder compresses up to 23 PSG channels into four 128-dim modality embeddings
+(BAS, RESP, EKG, EMG) that are concatenated into a 512-dim vector. In the main context-length
+experiment, the head always sees all four groups. Ablation removes one or more groups at
+training time to determine how much of the performance on each task is attributable to each
+channel group independently.
+
+**Training-time ablation (primary):** The selected modality groups are zeroed in the embedding
+before the head sees any data — at both training and inference time. This forces the head to
+learn without the absent group and measures the **peak capability** of that channel subset.
+Because the head is retrained from scratch, it fully adapts to the available channels rather
+than partially ignoring them.
+
+This is distinct from inference-time ablation (Experiment G), where the pre-trained
+full-channel head is evaluated on embeddings with groups zeroed only at inference.
+Inference-time ablation measures **robustness** to missing channels at deployment;
+training-time ablation measures **informational sufficiency**.
+
+### Implementation
+
+The zeroing is applied in `ContextWindowDataset.__getitem__()` via the `zero_modality_indices`
+parameter. After the float16 `.npy` array is cast to float32 (which always creates a new
+writable copy), the selected modality slices are set to zero before the context window is
+flattened to `(N, 512)` and fed to the head:
+
+```python
+w = window.astype(np.float32)     # (N, 4, 128) — writable copy; .npy mmap untouched
+for mi in zero_modality_indices:  # e.g. [0] for BAS, [0, 3] for cardio
+    w[:, mi, :] = 0.0
+x = w.reshape(N, FLAT_DIM)
+```
+
+The zeroing is identical at training and inference time. No new preprocessing or embedding
+extraction is required — the same fast-channel `.npy` files are reused unchanged.
+
+**SleepFM embedding layout (512 dim = 4 × 128):**
+```
+[  0:128]  BAS  — EEG leads + EOG (brain activity)
+[128:256]  RESP — Airflow, Thor, ABD, SpO2, HR, Snore, RespRate
+[256:384]  EKG  — cardiac
+[384:512]  EMG  — chin + leg muscles
+```
+
+### Ablation conditions
+
+Three conditions are chosen to answer complementary questions:
+
+| Condition | Groups zeroed | Groups active | Scientific question |
+|---|---|---|---|
+| No BAS | BAS [0:128] | RESP+EKG+EMG [128:512] | Can the task be solved without any EEG/EOG? (minimal-sensor setting) |
+| Cardio only | BAS+EMG [0:128, 384:512] | RESP+EKG [128:384] | Direct comparison to SleepFounder (RESP+EKG model) |
+| BAS only | RESP+EKG+EMG [128:512] | BAS [0:128] | How much do brain signals alone explain? |
+
+The baseline (all four groups active) comes from the corresponding fast-channel (`phase0_v3`)
+experiment at the same context length — no additional training is required for the reference.
+
+### Task and context selection
+
+Ablation is run on five tasks selected to cover the most informative and well-powered
+experiments from the main context-length sweep (tasks with N_test < 200 or baseline AUROC
+< 0.60 are excluded as uninformative for modality attribution):
+
+| Task | Context | v3 AUROC | Rationale |
+|---|---|---|---|
+| `sex_binary` | 120m | 0.872 | High AUROC; all modalities expected to contribute |
+| `apnea_binary` | 120m | 0.832 | Primary clinical task; RESP expected dominant (OSA is respiratory) |
+| `sleep_efficiency_binary` | 120m | 0.780 | Highest context benefit; BAS expected crucial (SE is determined by staging) |
+| `age_class` | 120m | 0.893 | Large N; aging expressed across all modalities |
+| `bmi_binary` | 40m | 0.767 | Saturates at L*=10m; 40m avoids sparse-window regime; uses LR=1e-4 |
+
+Context 120m matches L* for four tasks. For `bmi_binary`, 40m is used because 120m would
+give K_infer ≈ 3–4 windows/subject (too sparse for stable AUROC estimates).
+
+### Experimental scope and isolation
+
+15 experiments total (5 tasks × 3 conditions), LSTM head only. Results are written to a
+completely separate directory (`phase0_v3_abl/`) and log directory (`logs_v3_abl/`), defined
+in a dedicated registry (`experiments/v2_ablation_registry.yaml`) and config
+(`configs/phase0_v3_abl_config.yaml`). This guarantees zero overlap with `phase0_v3/` or
+`phase0_v3_full/`.
+
+### Expected findings (pre-registration)
+
+- **`apnea_binary`, no BAS:** Drop < 0.02. RESP carries the OSA signal; EEG is uninformative.
+- **`apnea_binary`, BAS only:** Drop > 0.15. EEG alone cannot detect apnea (near chance).
+- **`apnea_binary`, cardio only:** Should approach SleepFounder (0.917 on their OSA task).
+  If our cardio-only AUROC exceeds SleepFounder, the gap is attributable to RESP richness
+  (7-channel vs. their single airflow/SpO2 proxy), not to additional modalities.
+- **`sleep_efficiency_binary`, BAS only:** Small drop (< 0.05). Sleep efficiency is determined
+  by sleep stage, which is encoded primarily in EEG alpha/spindle/slow-wave patterns.
+- **`sex_binary`, no BAS:** Moderate drop (0.02–0.08). Sex differences in EEG are documented
+  but RESP and EKG also carry sex-related information (respiration rate, HRV).
+
+### Paper Methods wording (draft)
+
+> "To quantify the contribution of each PSG modality group, we repeated the LSTM training with
+> one or more SleepFM modality groups set to zero in the embedding at both training and
+> inference time. Three conditions were evaluated across five high-AUROC tasks (sex,
+> apnea, sleep efficiency, age, BMI): (i) no brain signals (BAS zeroed; RESP+EKG+EMG active),
+> (ii) cardiorespiratory only (BAS+EMG zeroed; RESP+EKG active — matching the SleepFounder
+> sensor set), and (iii) brain signals only (RESP+EKG+EMG zeroed; BAS active). The baseline
+> for each task is the corresponding full-channel LSTM result at the same context length.
+> This training-time ablation measures peak capability of each channel subset, not robustness
+> to channel dropout (see §III-J for the inference-time robustness analysis)."
+
+**[QUESTION 14]** Is SleepFounder's sensor set described precisely as RESP+EKG in their paper,
+or does it include something closer to our EKG only? Confirm before the `abl_cardio` comparison
+is stated in the paper.
+
+---
+
 ## Open questions summary
 
 | # | Question | Blocking what? |
