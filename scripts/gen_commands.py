@@ -357,6 +357,9 @@ def build_train_cmd(exp: dict, registry: dict, context: str,
     ]
     if exp.get("run_tag"):
         env_vars.append(f"RUN_TAG={exp['run_tag']}")
+    zero_mods = exp.get("zero_modalities")
+    if zero_mods:
+        env_vars.append(f"ZERO_MODALITIES=\"{' '.join(zero_mods)}\"")
     env_vars.append(f"CONFIG={cfg}")
     env_vars.append(f"LOGS_DIR={logs_dir}")
     env_str = " ".join(env_vars)
@@ -392,6 +395,9 @@ def build_infer_cmd(exp: dict, registry: dict, split: str = "test",
         env_vars.append(f"BATCH_SIZE={override_batch_size}")
     if exp.get("run_tag"):
         env_vars.append(f"RUN_TAG={exp['run_tag']}")
+    zero_mods = exp.get("zero_modalities")
+    if zero_mods:
+        env_vars.append(f"ZERO_MODALITIES=\"{' '.join(zero_mods)}\"")
     env_vars.append(f"CONFIG={cfg}")
     env_vars.append(f"LOGS_DIR={logs_dir}")
     env_str = " ".join(env_vars)

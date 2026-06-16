@@ -1,0 +1,303 @@
+# ============================================================
+# V2 Ablation Registry — Modality Group Ablation (Experiment A)
+# ============================================================
+# Implements §4A of SOTA_COMPARISON_AND_ABLATIONS.md.
+#
+# Design:
+#   Each experiment trains a fresh LSTM head with one or more modality groups
+#   ZEROED in the 512-dim SleepFM embedding at both train and inference time.
+#   The head never sees the absent modality → measures PEAK CAPABILITY of each
+#   channel subset, not robustness (see §G for inference-only robustness).
+#
+#   SleepFM embedding layout (512 = 4 × 128 dim):
+#     BAS   [0:128]   — EEG leads + EOG (brain activity signals)
+#     RESP  [128:256] — Airflow, Thor, ABD, SpO2, HR, Snore, RespRate
+#     EKG   [256:384] — cardiac signal
+#     EMG   [384:512] — chin / leg EMG
+#
+# Ablation conditions (essential 3 for Table 6):
+#   abl_no_bas   — zero BAS  → head sees RESP+EKG+EMG only (no EEG/EOG)
+#   abl_cardio   — zero BAS+EMG → head sees RESP+EKG only (SleepFounder comparison)
+#   abl_bas_only — zero RESP+EKG+EMG → head sees BAS only (brain signals only)
+#
+# Task/context choices (per SOTA_COMPARISON_AND_ABLATIONS.md §A.2-A.3):
+#   sex_binary             → 120m  (well-powered, all modalities expected to contribute)
+#   apnea_binary           → 120m  (L*=120m, primary clinical task, RESP expected dominant)
+#   sleep_efficiency_binary → 120m  (highest context benefit, BAS expected crucial)
+#   age_class              → 120m  (large N, physiological aging in all modalities)
+#   bmi_binary             → 40m   (saturates fast, 40m avoids sparse-window issues)
+#
+# Backward compatibility: this registry is a SEPARATE file from v2_registry.yaml.
+# It uses a separate config (phase0_v3_abl_config.yaml) pointing to a separate
+# results_dir (phase0_v3_abl) and separate logs_dir (logs_v3_abl).
+# Running these jobs CANNOT overwrite any v3 or v3_full results.
+#
+# Usage:
+#   python scripts/gen_commands.py --registry experiments/v2_ablation_registry.yaml list
+#   python scripts/gen_commands.py --registry experiments/v2_ablation_registry.yaml train sex_binary_lstm_abl_no_bas
+#   python scripts/gen_commands.py --registry experiments/v2_ablation_registry.yaml infer sex_binary_lstm_abl_no_bas
+#   python scripts/gen_commands.py --registry experiments/v2_ablation_registry.yaml analyze sex_binary_lstm_abl_no_bas
+#   python scripts/gen_commands.py --registry experiments/v2_ablation_registry.yaml collect
+
+config: configs/phase0_v3_abl_config.yaml
+results_dir: /scratch/boshra95/psg/unified/results/phase0_v3_abl
+inference_dir: /scratch/boshra95/psg/unified/results/phase0_v3_abl/inference
+logs_dir: /home/boshra95/NSRR-tools/logs_v3_abl
+python_bin: /home/boshra95/sleepfm_env/bin/python
+
+gradient_accumulation:
+  enabled: true
+  effective_batch: 32
+  context_micro_batch:
+    "30s":  32
+    "10m":  32
+    "40m":  32
+    "80m":  32
+    "120m": 32
+    "240m": 32
+
+# ── Ablation experiments ──────────────────────────────────────────────────────
+#
+# Naming convention: {task}_{head}_{run_tag}
+# run_tag encodes the ablation condition so outputs land in a unique subfolder:
+#   sex_binary_lstm_abl_no_bas/context_120m/best_model.pt
+#   sex_binary_lstm_abl_cardio/context_120m/best_model.pt
+#   sex_binary_lstm_abl_bas_only/context_120m/best_model.pt
+#
+# zero_modalities: list of modality names to zero in the embedding.
+#   gen_commands.py reads this and passes ZERO_MODALITIES env var to the job.
+#   The job passes --zero-modalities to train_context_sweep.py.
+
+experiments:
+
+  # ── sex_binary — 120m ────────────────────────────────────────────────────────
+  sex_binary_lstm_abl_no_bas:
+    task: sex_binary
+    task_type: seq2label
+    num_classes: 2
+    head: lstm
+    datasets: [apples, shhs]
+    contexts: ["120m"]
+    batch_size: 32
+    lr: 5.0e-5   # same as v3 context_lr_override for 120m
+    run_tag: "abl_no_bas"
+    zero_modalities: [BAS]
+    n_size: large
+    tier: 1
+    notes: "No EEG/EOG — zero-burden PSG. Head sees RESP+EKG+EMG only."
+
+  sex_binary_lstm_abl_cardio:
+    task: sex_binary
+    task_type: seq2label
+    num_classes: 2
+    head: lstm
+    datasets: [apples, shhs]
+    contexts: ["120m"]
+    batch_size: 32
+    lr: 5.0e-5
+    run_tag: "abl_cardio"
+    zero_modalities: [BAS, EMG]
+    n_size: large
+    tier: 1
+    notes: "Cardiorespiratory only (RESP+EKG). Direct SleepFounder comparison."
+
+  sex_binary_lstm_abl_bas_only:
+    task: sex_binary
+    task_type: seq2label
+    num_classes: 2
+    head: lstm
+    datasets: [apples, shhs]
+    contexts: ["120m"]
+    batch_size: 32
+    lr: 5.0e-5
+    run_tag: "abl_bas_only"
+    zero_modalities: [RESP, EKG, EMG]
+    n_size: large
+    tier: 1
+    notes: "Brain signals only (BAS). EEG+EOG alone predicting sex."
+
+  # ── apnea_binary — 120m ──────────────────────────────────────────────────────
+  apnea_binary_lstm_abl_no_bas:
+    task: apnea_binary
+    task_type: seq2label
+    num_classes: 2
+    head: lstm
+    datasets: [apples, shhs, mros]
+    contexts: ["120m"]
+    batch_size: 32
+    lr: 5.0e-5
+    run_tag: "abl_no_bas"
+    zero_modalities: [BAS]
+    n_size: large
+    tier: 1
+    notes: "No EEG/EOG. Expect near-full performance — OSA is a respiratory disorder."
+
+  apnea_binary_lstm_abl_cardio:
+    task: apnea_binary
+    task_type: seq2label
+    num_classes: 2
+    head: lstm
+    datasets: [apples, shhs, mros]
+    contexts: ["120m"]
+    batch_size: 32
+    lr: 5.0e-5
+    run_tag: "abl_cardio"
+    zero_modalities: [BAS, EMG]
+    n_size: large
+    tier: 1
+    notes: "Cardiorespiratory only. Key comparison: SleepFounder achieves 0.917 OSA AUROC with cardio."
+
+  apnea_binary_lstm_abl_bas_only:
+    task: apnea_binary
+    task_type: seq2label
+    num_classes: 2
+    head: lstm
+    datasets: [apples, shhs, mros]
+    contexts: ["120m"]
+    batch_size: 32
+    lr: 5.0e-5
+    run_tag: "abl_bas_only"
+    zero_modalities: [RESP, EKG, EMG]
+    n_size: large
+    tier: 1
+    notes: "Brain signals only. Expect large AUROC drop — EEG alone cannot detect apnea."
+
+  # ── sleep_efficiency_binary — 120m ───────────────────────────────────────────
+  sleep_efficiency_binary_lstm_abl_no_bas:
+    task: sleep_efficiency_binary
+    task_type: seq2label
+    num_classes: 2
+    head: lstm
+    datasets: [apples, shhs, mros]
+    contexts: ["120m"]
+    batch_size: 32
+    lr: 5.0e-5
+    run_tag: "abl_no_bas"
+    zero_modalities: [BAS]
+    n_size: large
+    tier: 1
+    notes: "No EEG/EOG. Sleep efficiency encodes staging patterns — expect meaningful drop."
+
+  sleep_efficiency_binary_lstm_abl_cardio:
+    task: sleep_efficiency_binary
+    task_type: seq2label
+    num_classes: 2
+    head: lstm
+    datasets: [apples, shhs, mros]
+    contexts: ["120m"]
+    batch_size: 32
+    lr: 5.0e-5
+    run_tag: "abl_cardio"
+    zero_modalities: [BAS, EMG]
+    n_size: large
+    tier: 1
+    notes: "Cardiorespiratory only. Sleep efficiency correlates with apnea — RESP may still help."
+
+  sleep_efficiency_binary_lstm_abl_bas_only:
+    task: sleep_efficiency_binary
+    task_type: seq2label
+    num_classes: 2
+    head: lstm
+    datasets: [apples, shhs, mros]
+    contexts: ["120m"]
+    batch_size: 32
+    lr: 5.0e-5
+    run_tag: "abl_bas_only"
+    zero_modalities: [RESP, EKG, EMG]
+    n_size: large
+    tier: 1
+    notes: "Brain signals only. EEG sleep staging features should carry strong signal."
+
+  # ── age_class — 120m ─────────────────────────────────────────────────────────
+  age_class_lstm_abl_no_bas:
+    task: age_class
+    task_type: seq2label
+    num_classes: 4
+    head: lstm
+    datasets: [apples, shhs, mros]
+    contexts: ["120m"]
+    batch_size: 32
+    lr: 5.0e-5
+    run_tag: "abl_no_bas"
+    zero_modalities: [BAS]
+    n_size: large
+    tier: 1
+    notes: "No EEG/EOG. Physiological aging should still be captured via RESP+EKG."
+
+  age_class_lstm_abl_cardio:
+    task: age_class
+    task_type: seq2label
+    num_classes: 4
+    head: lstm
+    datasets: [apples, shhs, mros]
+    contexts: ["120m"]
+    batch_size: 32
+    lr: 5.0e-5
+    run_tag: "abl_cardio"
+    zero_modalities: [BAS, EMG]
+    n_size: large
+    tier: 1
+    notes: "Cardiorespiratory only. Cardiac aging signatures should be strong."
+
+  age_class_lstm_abl_bas_only:
+    task: age_class
+    task_type: seq2label
+    num_classes: 4
+    head: lstm
+    datasets: [apples, shhs, mros]
+    contexts: ["120m"]
+    batch_size: 32
+    lr: 5.0e-5
+    run_tag: "abl_bas_only"
+    zero_modalities: [RESP, EKG, EMG]
+    n_size: large
+    tier: 1
+    notes: "Brain signals only. EEG slowing with age is well documented — may retain significant AUROC."
+
+  # ── bmi_binary — 40m ─────────────────────────────────────────────────────────
+  # Context = 40m (not 120m): bmi_binary saturates at L*=10m; 40m provides
+  # enough windows per subject while avoiding the sparse-window regime at 120m.
+  bmi_binary_lstm_abl_no_bas:
+    task: bmi_binary
+    task_type: seq2label
+    num_classes: 2
+    head: lstm
+    datasets: [apples, shhs, mros]
+    contexts: ["40m"]
+    batch_size: 32
+    lr: 1.0e-4   # 40m uses default LR (no context_lr_override in v3 config for 40m)
+    run_tag: "abl_no_bas"
+    zero_modalities: [BAS]
+    n_size: large
+    tier: 1
+    notes: "No EEG/EOG. BMI saturates fast — channel differences may be small."
+
+  bmi_binary_lstm_abl_cardio:
+    task: bmi_binary
+    task_type: seq2label
+    num_classes: 2
+    head: lstm
+    datasets: [apples, shhs, mros]
+    contexts: ["40m"]
+    batch_size: 32
+    lr: 1.0e-4
+    run_tag: "abl_cardio"
+    zero_modalities: [BAS, EMG]
+    n_size: large
+    tier: 1
+    notes: "Cardiorespiratory only. Metabolic status may be encoded in breathing and heart rate."
+
+  bmi_binary_lstm_abl_bas_only:
+    task: bmi_binary
+    task_type: seq2label
+    num_classes: 2
+    head: lstm
+    datasets: [apples, shhs, mros]
+    contexts: ["40m"]
+    batch_size: 32
+    lr: 1.0e-4
+    run_tag: "abl_bas_only"
+    zero_modalities: [RESP, EKG, EMG]
+    n_size: large
+    tier: 1
+    notes: "Brain signals only. If AUROC is similar to full → BMI info is in EEG patterns."

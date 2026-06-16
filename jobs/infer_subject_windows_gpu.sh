@@ -81,6 +81,7 @@ DATASETS=${DATASETS:-""}
 NO_ALL_WINDOWS=${NO_ALL_WINDOWS:-""}   # set to 1 to use K=5 (training eval mode)
 BATCH_SIZE=${BATCH_SIZE:-512}
 RUN_TAG=${RUN_TAG:-""}                 # must match RUN_TAG used during training
+ZERO_MODALITIES=${ZERO_MODALITIES:-""}  # must match ZERO_MODALITIES used during training
 
 # ── Job run tracking ──────────────────────────────────────────────────────────
 _EXP_TAG="${TASK}_${HEAD}"
@@ -145,6 +146,7 @@ echo "Contexts:    ${CONTEXTS:-'(auto-discover)'}"
 echo "Split:       ${SPLIT}"
 echo "Datasets:    ${DATASETS:-'(all)'}"
 echo "All windows: $([ -n "$NO_ALL_WINDOWS" ] && echo 'no (K=5)' || echo 'yes')"
+echo "Zero mods:   ${ZERO_MODALITIES:-(none)}"
 echo "Start:       $(date)"
 echo "========================================================================"
 echo ""
@@ -157,8 +159,9 @@ CMD="python scripts/infer_subject_windows.py --config $CONFIG"
 [ -n "$CONTEXTS"       ] && CMD="$CMD --context $CONTEXTS"
 [ -n "$SPLIT"          ] && CMD="$CMD --split $SPLIT"
 [ -n "$DATASETS"       ] && CMD="$CMD --datasets $DATASETS"
-[ -n "$NO_ALL_WINDOWS" ] && CMD="$CMD --no-all-windows"
-[ -n "$RUN_TAG"        ] && CMD="$CMD --run-tag $RUN_TAG"
+[ -n "$NO_ALL_WINDOWS"   ] && CMD="$CMD --no-all-windows"
+[ -n "$RUN_TAG"          ] && CMD="$CMD --run-tag $RUN_TAG"
+[ -n "$ZERO_MODALITIES"  ] && CMD="$CMD --zero-modalities $ZERO_MODALITIES"
 CMD="$CMD --batch-size $BATCH_SIZE"
 
 echo "Running: $CMD"

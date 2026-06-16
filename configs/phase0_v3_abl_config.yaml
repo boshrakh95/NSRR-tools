@@ -1,0 +1,151 @@
+# ============================================================
+# Phase 0 — V3 Ablation Config — Modality Group Ablation
+# ============================================================
+# Identical to phase0_v3_config.yaml except:
+#   results_dir → phase0_v3_abl  (separate scratch dir, never overwrites v3)
+#
+# Used by: experiments/v2_ablation_registry.yaml
+# Each ablation experiment additionally passes --zero-modalities via the
+# ZERO_MODALITIES env var, which is read from the registry's zero_modalities
+# field and forwarded by gen_commands.py → train_context_sweep_gpu.sh.
+
+# ── Embedding Extraction ─────────────────────────────────────────────────────
+embedding:
+  checkpoint_dir: "/home/boshra95/sleepfm-clinical/sleepfm/checkpoints/model_base"
+  output_dir: "/scratch/boshra95/psg/unified/embeddings/sleepfm_5sec"
+  chunk_batch_size: 16
+  datasets:
+    - apples
+    - shhs
+    - mros
+    - stages
+
+# ── HDF5 Signal Data ─────────────────────────────────────────────────────────
+data:
+  hdf5_dir: "/scratch/boshra95/psg"
+  sampling_freq: 128
+  chunk_seconds: 300
+  patch_size: 640
+  patches_per_chunk: 60
+  max_channels:
+    BAS: 10
+    RESP: 7
+    EKG: 2
+    EMG: 4
+  channel_priority:
+    BAS:
+      - C3-M2
+      - C4-M1
+      - LOC
+      - ROC
+      - O1-M2
+      - O2-M1
+      - F3-M2
+      - F4-M1
+      - A1
+      - A2
+    RESP:
+      - Airflow
+      - Thor
+      - ABD
+      - SpO2
+      - HR
+      - Snore
+      - RespRate
+    EKG:
+      - EKG
+      - ECG-L
+      - ECG-R
+    EMG:
+      - CHIN
+      - LLEG
+      - RLEG
+      - EMG
+
+# ── Context-Window Dataset ───────────────────────────────────────────────────
+dataset:
+  embedding_dir: "/scratch/boshra95/psg/unified/embeddings/sleepfm_5sec"
+
+  label_source: "/scratch/boshra95/psg/unified/targets_v2/master_targets.parquet"
+  task_subject_dir: "/scratch/boshra95/psg/unified/targets_v2/task_subjects"
+
+  sleep_stage_dir: "/scratch/boshra95/psg"
+
+  context_lengths:
+    - "30s"
+    - "10m"
+    - "40m"
+    - "80m"
+    - "120m"
+    - "240m"
+
+  task: "sex_binary"
+  task_type: "seq2label"
+
+  datasets:
+    - apples
+    - shhs
+    - mros
+    - stages
+
+  train_split: 0.70
+  val_split:   0.15
+  test_split:  0.15
+  split_seed:  42
+
+  windows_per_subject: 5
+
+  seq2seq_context_mode: "centered"
+  seq2seq_padding_policy: "complete_only"
+  seq2seq_max_padding_fraction: 0.5
+
+  min_past_denom:       8
+  max_min_past_patches: 240
+
+  # Same cohort consistency filter as v3 — same subject pool for all context lengths.
+  min_recording_patches: 2880
+
+# ── Sequence Head Model ──────────────────────────────────────────────────────
+model:
+  input_dim: 512
+  head_type: "lstm"
+  hidden_dim: 256
+  num_layers: 2
+  num_heads:  8
+  dropout:    0.3
+  num_classes: 2
+
+# ── Training ─────────────────────────────────────────────────────────────────
+training:
+  epochs: 40
+  lr: 1.0e-4
+  weight_decay: 1.0e-3
+  optimizer: "adamw"
+  scheduler: "cosine"
+  early_stopping_patience: 10
+  device: "cuda"
+  mixed_precision: false
+  class_weights: "auto"
+  early_stopping_monitor: "val_auroc"
+  weighted_sampler: false
+
+  windows_strategy: "fixed"
+  token_budget_minutes: 240
+  k_max: 50
+
+  context_lr_overrides:
+    "120m": 5.0e-5
+    "240m": 5.0e-5
+
+  overfit_epochs: 0
+
+  save_snapshots: true
+  snapshot_interval: 5
+
+# ── Analysis ─────────────────────────────────────────────────────────────────
+analysis:
+  bootstrap_samples: 0
+
+# ── Logging & Output ─────────────────────────────────────────────────────────
+logging:
+  results_dir: "/scratch/boshra95/psg/unified/results/phase0_v3_abl"

@@ -65,6 +65,10 @@ from nsrr_tools.datasets.context_window_dataset import (
 )
 from nsrr_tools.models.sequence_head import build_head
 
+# Maps modality name → index in the (T, 4, 128) SleepFM embedding:
+#   BAS=0  RESP=1  EKG=2  EMG=3
+_MODALITY_INDICES = {"BAS": 0, "RESP": 1, "EKG": 2, "EMG": 3}
+
 def _handle_sigterm(signum, frame):
     print("\n[SIGTERM] Timeout — exiting cleanly so bash can log TIMEOUT_REQUEUED", flush=True)
     sys.exit(0)
@@ -86,7 +90,8 @@ def _classify_failure(exc: BaseException) -> str:
 
 def build_dataset(cfg: dict, split: str, context_length: str,
                   task: str, task_type: str,
-                  datasets_filter: list, all_windows: bool) -> ContextWindowDataset:
+                  datasets_filter: list, all_windows: bool,
+                  zero_modality_indices: list = None) -> ContextWindowDataset:
     """Build a ContextWindowDataset, optionally overriding K_max to use all windows."""
     if all_windows:
         # Temporarily override windows_per_subject to a very large number so
@@ -103,6 +108,7 @@ def build_dataset(cfg: dict, split: str, context_length: str,
             task=task,
             task_type=task_type,
             datasets=datasets_filter,
+            zero_modality_indices=zero_modality_indices,
         )
     return ds
 
@@ -180,6 +186,10 @@ def main():
                         help="Override output directory")
     parser.add_argument("--run-tag",    default="", dest="run_tag",
                         help="Must match the --run-tag used during training (default: no suffix).")
+    parser.add_argument("--zero-modalities", nargs="*", default=None, dest="zero_modalities",
+                        metavar="MODALITY",
+                        help="Zero-out these modality groups (BAS RESP EKG EMG). "
+                             "Must match the --zero-modalities used during training.")
     args = parser.parse_args()
 
     with open(args.config) as f:
@@ -190,6 +200,18 @@ def main():
     )
 
     all_windows = not args.no_all_windows
+
+    # Parse --zero-modalities (must match what was used during training)
+    zero_modality_indices = None
+    if args.zero_modalities:
+        bad = [m for m in args.zero_modalities if m not in _MODALITY_INDICES]
+        if bad:
+            parser.error(
+                f"Unknown modalities: {bad}. Valid choices: {list(_MODALITY_INDICES)}"
+            )
+        zero_modality_indices = [_MODALITY_INDICES[m] for m in args.zero_modalities]
+        print(f"Modality zeroing: {args.zero_modalities} → indices {zero_modality_indices}")
+
     results_dir = Path(cfg["logging"]["results_dir"])
     exp_id      = f"{args.task}_{args.head_type}" + (f"_{args.run_tag}" if args.run_tag else "")
 
@@ -256,6 +278,7 @@ def main():
                 task_type=args.task_type,
                 datasets_filter=args.datasets,
                 all_windows=all_windows,
+                zero_modality_indices=zero_modality_indices,
             )
             print(f"  Dataset items: {len(ds):,}  (subjects: {len(ds.df):,})")
 

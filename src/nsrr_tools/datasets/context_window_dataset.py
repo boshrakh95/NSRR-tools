@@ -247,6 +247,7 @@ class ContextWindowDataset(Dataset):
         seed: int = 42,
         limit: Optional[int] = None,
         max_items: Optional[int] = None,
+        zero_modality_indices: Optional[List[int]] = None,
     ):
         assert split in ("train", "val", "test"), f"Unknown split: {split!r}"
 
@@ -295,6 +296,11 @@ class ContextWindowDataset(Dataset):
 
         # K_max for seq2label
         self._K_max = ds_cfg.get("windows_per_subject", 5)
+
+        # Modality zeroing (channel ablation experiments)
+        # Indices 0-3 correspond to BAS, RESP, EKG, EMG in the (T, 4, 128) embedding.
+        # None = no zeroing (normal operation, backward-compatible default).
+        self._zero_modality_indices: Optional[List[int]] = zero_modality_indices or []
 
         # ── Shape cache (avoids per-subject .npy header reads on slow FS) ──
         self._shape_cache = _build_shape_cache(self.embedding_dir)
@@ -595,6 +601,17 @@ class ContextWindowDataset(Dataset):
         else:
             return self._get_centered_window(emb, T, anchor_patch_end)
 
+    def _apply_modality_zeroing(self, w: np.ndarray) -> np.ndarray:
+        """Zero out specified modality slices in a (N, 4, 128) float32 array.
+
+        w must already be a writable float32 copy — never called on a mmap view.
+        Modality indices: 0=BAS, 1=RESP, 2=EKG, 3=EMG.
+        No-op when _zero_modality_indices is empty (normal operation).
+        """
+        for mi in self._zero_modality_indices:
+            w[:, mi, :] = 0.0
+        return w
+
     def _get_causal_window(
         self, emb: np.ndarray, T: int, anchor_patch_end: int
     ) -> Tuple[np.ndarray, np.ndarray]:
@@ -616,7 +633,9 @@ class ContextWindowDataset(Dataset):
             ], axis=0)
             mask = np.array([True] * pad_len + [False] * real_len, dtype=bool)
 
-        x = window.astype(np.float32).reshape(N, FLAT_DIM)
+        w = window.astype(np.float32)      # (N, 4, 128) — always a copy, safe to mutate
+        self._apply_modality_zeroing(w)
+        x = w.reshape(N, FLAT_DIM)
         return x, mask
 
     def _get_centered_window(
@@ -657,7 +676,9 @@ class ContextWindowDataset(Dataset):
             window = np.concatenate(pieces_w, axis=0)
             mask   = np.concatenate(pieces_m)
 
-        x = window.astype(np.float32).reshape(N, FLAT_DIM)
+        w = window.astype(np.float32)      # (N, 4, 128) — always a copy, safe to mutate
+        self._apply_modality_zeroing(w)
+        x = w.reshape(N, FLAT_DIM)
         return x, mask
 
     def _get_seq2label_window(
@@ -689,7 +710,9 @@ class ContextWindowDataset(Dataset):
             ], axis=0)
             mask = np.array([False] * real_len + [True] * pad_len, dtype=bool)
 
-        x = window.astype(np.float32).reshape(N, FLAT_DIM)
+        w = window.astype(np.float32)      # (N, 4, 128) — always a copy, safe to mutate
+        self._apply_modality_zeroing(w)
+        x = w.reshape(N, FLAT_DIM)
         return x, mask
 
     # ── full_night collate ─────────────────────────────────────────────────

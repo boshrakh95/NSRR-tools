@@ -111,6 +111,10 @@ from nsrr_tools.datasets.context_window_dataset import (
     parse_context_length,
     FULL_NIGHT_SENTINEL,
 )
+
+# Maps modality name → index in the (T, 4, 128) SleepFM embedding:
+#   BAS=0  RESP=1  EKG=2  EMG=3
+_MODALITY_INDICES = {"BAS": 0, "RESP": 1, "EKG": 2, "EMG": 3}
 from nsrr_tools.models.sequence_head import build_head
 
 # ── optional sklearn metrics ───────────────────────────────────────────────
@@ -336,6 +340,7 @@ def train_one_context(
     accum_steps:     int  = 1,
     exp_id:          str  = None,
     cli_lr_set:      bool = False,
+    zero_modality_indices: list = None,
 ):
     train_batch_size     = batch_size
     effective_batch_size = batch_size * accum_steps
@@ -414,6 +419,7 @@ def train_one_context(
                 datasets=datasets_filter,
                 limit=limit,
                 max_items=max_items,
+                zero_modality_indices=zero_modality_indices,
             )
 
     train_ds = make_ds("train")
@@ -847,6 +853,7 @@ def train_one_context(
         "save_snapshots":          _save_snapshots,
         "snapshot_interval":       _snapshot_interval if _save_snapshots else None,
         "overfit_epochs_configured": _overfit_epochs,
+        "zero_modality_indices": zero_modality_indices or [],
         # ──────────────────────────────────────────────────────────────────────
         "train":             train_metrics,
         "val":               val_metrics,
@@ -939,6 +946,12 @@ def main():
     parser.add_argument("--run-tag",       default="", dest="run_tag",
                         help="Suffix appended to experiment folder name, e.g. 'lr1e4'. "
                              "Allows multiple runs without overwriting. Default: no suffix.")
+    parser.add_argument("--zero-modalities", nargs="*", default=None, dest="zero_modalities",
+                        metavar="MODALITY",
+                        help="Zero-out these modality groups (BAS RESP EKG EMG). "
+                             "E.g. --zero-modalities BAS RESP zeros the brain/EOG and "
+                             "respiratory slices, leaving only EKG and EMG active. "
+                             "Omit for normal (no zeroing) operation.")
     args = parser.parse_args()
 
     with open(args.config) as f:
@@ -957,6 +970,17 @@ def main():
         cfg["training"]["lr"] = args.lr
 
     context_lengths = args.context or cfg["dataset"]["context_lengths"]
+
+    # Parse --zero-modalities (e.g. ["BAS", "RESP"] → [0, 1])
+    zero_modality_indices = None
+    if args.zero_modalities:
+        bad = [m for m in args.zero_modalities if m not in _MODALITY_INDICES]
+        if bad:
+            parser.error(
+                f"Unknown modalities: {bad}. Valid choices: {list(_MODALITY_INDICES)}"
+            )
+        zero_modality_indices = [_MODALITY_INDICES[m] for m in args.zero_modalities]
+        print(f"Modality zeroing: {args.zero_modalities} → indices {zero_modality_indices}")
 
     use_wandb = HAS_WANDB and not args.no_wandb
     if use_wandb:
@@ -1011,6 +1035,7 @@ def main():
                 accum_steps=accum_steps,
                 exp_id=exp_id,
                 cli_lr_set=_cli_lr_set,
+                zero_modality_indices=zero_modality_indices,
             )
             if metrics is not None:
                 append_to_summary(summary_path, metrics)
