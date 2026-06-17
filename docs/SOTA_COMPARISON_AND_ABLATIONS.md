@@ -301,21 +301,37 @@ The `zero_modalities` field lists which groups are zeroed (the complement is wha
 
 ##### A.6 What Table 6 will show
 
-| Task | Context | full AUROC | no_bas AUROC | cardio AUROC | bas_only AUROC |
-|------|---------|------------|--------------|--------------|----------------|
-| Sleep apnea (AHI≥15) | 120m | 0.832 | ? | ? | ? |
-| Sex | 120m | 0.872 | ? | ? | ? |
-| Sleep efficiency | 120m | 0.780 | ? | ? | ? |
-| Age group | 120m | 0.893 | ? | ? | ? |
-| BMI (obese) | 40m | 0.767 | ? | ? | ? |
-
-**Expected pattern:**
+**Pre-registered expected pattern (written before any ablation training):**
 - apnea_binary: full > cardio ≈ no_bas >> bas_only (RESP carries the OSA signal; EEG alone can't detect apnea)
 - sex_binary: full > bas_only ≈ no_bas > cardio (EEG/EOG and RESP both encode sex; EKG alone loses some signal)
 - sleep_efficiency_binary: full > bas_only ≈ no_bas > cardio (EEG sleep staging features crucial; but RESP also important since sleep efficiency correlates with apnea)
 - age_class: full ≈ no_bas (physiological aging present in all modalities; removing one modality loses less)
 - bmi_binary: full ≈ all conditions (BMI encodes into all modalities; saturates fast → channel differences may be small)
-Implement and compare the results with these expectations
+
+---
+
+##### A.6.1 Actual results (2026-06-17)
+
+All 15 training/inference/analysis jobs complete. AUROC at K=all (full-night ceiling), test split, LSTM head. Generated via `python scripts/make_table6_modality.py` (see `results/tables/table6_modality.{csv,md,tex}`).
+
+| Task | Context | N_test | Full | No BAS | Δ(No BAS) | Cardio only | Δ(Cardio) | BAS only | Δ(BAS only) |
+|------|---------|--------|------|--------|-----------|-------------|-----------|----------|--------------|
+| Sex | 120m | 1430 | 0.872 | 0.799 | -0.073 | 0.796 | -0.076 | 0.777 | -0.096 |
+| Sleep apnea (AHI≥15) | 120m | 2054 | 0.832 | 0.782 | -0.050 | 0.770 | -0.062 | 0.723 | -0.109 |
+| Sleep efficiency | 120m | 2023 | 0.780 | 0.682 | -0.099 | 0.670 | -0.110 | 0.786 | +0.005 |
+| Age group | 120m | 1859 | 0.893 | 0.835 | -0.059 | 0.821 | -0.072 | 0.860 | -0.034 |
+| BMI (obese) | 40m | 1856 | 0.756 | 0.728 | -0.028 | 0.663 | -0.093 | 0.741 | -0.015 |
+
+**Interpretation:**
+
+- **Sleep efficiency confirms the hypothesis most cleanly — and more strongly than predicted.** BAS-only essentially *matches* full (+0.005), while no_bas and cardio both drop by ~0.10. Sleep efficiency is determined by sleep stage, and EEG alone carries that signal almost completely; RESP/EKG/EMG contribute almost nothing on their own.
+- **Apnea is directionally as predicted but EEG retains more signal than expected.** Full > no_bas ≈ cardio (0.782 vs 0.770, as hypothesized) > bas_only (0.723). The bas_only drop is real but far from "near chance" — EEG-only AUROC of 0.723 suggests sleep-stage/arousal correlates of apnea leak through brain signals even without direct respiratory sensing.
+- **Sex prediction does *not* match the pre-registered hypothesis.** We expected `bas_only ≈ no_bas`; instead `no_bas ≈ cardio` (0.799 vs 0.796) and bas_only is the *worst* condition (0.777, largest drop of all). RESP+EKG+EMG together carry more sex-discriminative signal than EEG/EOG alone — the opposite of what was predicted.
+- **Age class shows a real (not negligible) BAS contribution.** The predicted `full ≈ no_bas` does not hold — there's a moderate -0.059 drop, meaning EEG/EOG meaningfully helps age prediction beyond what RESP+EKG+EMG provide alone.
+- **BMI is the most channel-robust task as predicted, with one exception.** no_bas (-0.028) and bas_only (-0.015) are both small drops as expected, but cardio shows a larger-than-predicted drop (-0.093) — losing BAS *and* EMG together costs more than either loss alone would suggest, hinting at a small interaction effect rather than purely additive channel contributions.
+- **Cross-task pattern: cardio is consistently ≤ no_bas.** In every task except sleep efficiency (where both are similarly bad), zeroing BAS+EMG (cardio) underperforms zeroing BAS alone (no_bas) by 0.003–0.065 AUROC. EMG (chin/leg muscle) carries a small but consistently real contribution on top of RESP+EKG, even though no condition isolates EMG's effect alone.
+- **SleepFounder comparison (cardio condition vs. their cardiorespiratory-only model):** our cardio-only apnea AUROC (0.770) is well below SleepFounder's reported OSA AUROC (0.917). This gap is expected and should **not** be read as "our cardio signal is worse" — SleepFounder fine-tunes a model pre-trained on 800K+ hours specifically on cardiorespiratory signals, while we train only a lightweight LSTM head on a frozen, general-purpose SleepFM backbone restricted to its RESP+EKG slice. The comparison is informative about evaluation protocol, not about the cardiorespiratory channels' intrinsic information content.
+- **Headline finding:** no single ablated condition recovers full performance for any task except sleep efficiency's bas_only (which ties it). All four SleepFM modality groups contribute non-trivially to most clinical tasks — there is no "free" channel to drop across the board, though the *which* group matters most is strongly task-dependent (BAS for sleep efficiency/age, RESP+EKG for apnea, all groups jointly for sex/BMI).
 
 ---
 
