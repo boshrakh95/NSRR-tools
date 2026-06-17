@@ -415,6 +415,45 @@ EKG-dominant.
 
 ---
 
+##### A.6.2 Paper inclusion guidance — what goes where
+
+**Main paper Results (Table 6 + 1–2 paragraphs):**
+- The full 5×5 table itself — this is the core ablation result.
+- **Headline finding**: the most-necessary single modality is task-dependent — BAS for sleep
+  efficiency/age/BMI, RESP for apnea, **EKG for sex** (genuinely novel, not predicted). Lead
+  with this.
+- **Apnea `no_resp`**: the cleanest, most citation-worthy result — directly validates the
+  OSF-style respiratory-necessity claim (RESP-removed conditions drop ~2× more on average than
+  RESP-retained ones). Strongest tie-in to related work (§A.1).
+- **Sleep efficiency**: three converging lines of evidence (no_bas worst, no_resp/no_ekg small,
+  bas_only ties full) — the cleanest, lowest-risk result; good for building reader confidence in
+  the method before presenting the more surprising results.
+- **Sex `no_ekg`**: report as a genuine surprise with appropriate hedging (cardiac/HRV sex
+  differences are documented physiology — cite a mechanism if available, otherwise flag as
+  "unexpected, warrants follow-up").
+
+**Supplementary:**
+- Full per-condition delta/N_test/context breakdown (main text should show the headline table
+  plus one summary table of "most-necessary group per task"; full numeric detail to
+  supplementary).
+- The pre-registered-vs-actual hypothesis comparison (§A.6, the long bullet list) — shows rigor
+  but is too much detail for main text.
+- SleepFounder protocol-mismatch caveat — informative but a footnote, not body text.
+- BMI's `cardio` interaction effect — interesting but speculative (no single group explains it
+  alone); present as an exploratory note, not a strong claim, since it does not fit the rest of
+  the additive "modality importance" story cleanly.
+
+**Throw away / do not claim as findings (noise-level, |Δ| < 0.02, no multi-seed variance
+estimate exists for these single-run ablation conditions):**
+- BMI `no_resp` (+0.003) and `no_ekg` (+0.002), and sleep efficiency `bas_only` (+0.005) — report
+  as "no detectable effect," not as the condition "matching or exceeding full."
+- Apnea `no_ekg` (-0.024) — borderline/noise; consistent with (but not separate evidence for)
+  EKG being unimportant for apnea, do not present as its own finding.
+- Apply the |Δ| thresholds from §A.6.1 consistently (< 0.02 noise, 0.02–0.05 borderline,
+  > 0.05 likely real) when drafting paper text so small deltas are not over-claimed.
+
+---
+
 ##### A.7 Implementation status
 
 1. ✅ **`src/nsrr_tools/datasets/context_window_dataset.py`** — `zero_modality_indices` parameter added.  
