@@ -651,8 +651,9 @@ inference-only robustness variant).
   applied to the float32 copy before the model sees it — the `.npy` files on disk are never touched.
 - **Completely separate outputs.** Results go to `phase0_v3_abl/`, logs to `logs_v3_abl/`.
   There is zero overlap with `phase0_v3/` or `phase0_v3_full/`.
-- **Status starts at pending.** Because the registry points to an empty directory, all 25
-  experiments report "pending" from the start.
+- **Status:** ✅ all 25 experiments complete as of 2026-06-17 (status starts at "pending" for any
+  new registry entries you add later, since the registry points to a dedicated, otherwise-empty
+  results directory).
 
 #### Why these five ablation conditions?
 
@@ -695,8 +696,8 @@ the full rationale.
 | `age_class` | 120m | Large N, physiological aging visible in all modalities |
 | `bmi_binary` | 40m | L*=10m; 40m avoids sparse-window issues at 120m, uses default LR=1e-4 |
 
-25 experiments total: 5 tasks × 5 conditions (15 already complete: no_bas, cardio, bas_only;
-10 pending as of 2026-06-17: no_resp, no_ekg).
+25 experiments total: 5 tasks × 5 conditions. ✅ All complete as of 2026-06-17. Results in
+`SOTA_COMPARISON_AND_ABLATIONS.md` §A.6.1 and `results/tables/table6_modality.{csv,md,tex}`.
 
 #### Path summary
 
@@ -728,7 +729,7 @@ find /scratch/boshra95/psg/unified/embeddings/sleepfm_5sec -name '*.npy' | wc -l
 # Expected: ~14,992
 ```
 
-#### Step 1 — Training (25 jobs: 5 tasks × 5 conditions; 10 new as of 2026-06-17)
+#### Step 1 — Training (25 jobs: 5 tasks × 5 conditions) ✅ all complete
 
 Config: `configs/phase0_v3_abl_config.yaml` (hidden=128, layers=1 — LSTM head only).
 Results: `/scratch/boshra95/psg/unified/results/phase0_v3_abl/{task}_lstm_{tag}/context_{L}/`.
@@ -741,35 +742,35 @@ The `zero_modalities` field in the registry is read by `gen_commands.py` and for
 ```bash
 REG="--registry experiments/v2_ablation_registry.yaml"
 
-# ── Condition 1: no BAS (RESP+EKG+EMG active) — already complete ────────────
+# ── Condition 1: no BAS (RESP+EKG+EMG active) ────────────────────────────────
 python scripts/gen_commands.py $REG train sex_binary_lstm_abl_no_bas              | bash
 python scripts/gen_commands.py $REG train apnea_binary_lstm_abl_no_bas            | bash
 python scripts/gen_commands.py $REG train sleep_efficiency_binary_lstm_abl_no_bas | bash
 python scripts/gen_commands.py $REG train age_class_lstm_abl_no_bas               | bash
 python scripts/gen_commands.py $REG train bmi_binary_lstm_abl_no_bas              | bash
 
-# ── Condition 2: no RESP (BAS+EKG+EMG active) — NEW, run this ───────────────
+# ── Condition 2: no RESP (BAS+EKG+EMG active) ────────────────────────────────
 python scripts/gen_commands.py $REG train sex_binary_lstm_abl_no_resp              | bash
 python scripts/gen_commands.py $REG train apnea_binary_lstm_abl_no_resp            | bash
 python scripts/gen_commands.py $REG train sleep_efficiency_binary_lstm_abl_no_resp | bash
 python scripts/gen_commands.py $REG train age_class_lstm_abl_no_resp               | bash
 python scripts/gen_commands.py $REG train bmi_binary_lstm_abl_no_resp              | bash
 
-# ── Condition 3: no EKG (BAS+RESP+EMG active) — NEW, run this ───────────────
+# ── Condition 3: no EKG (BAS+RESP+EMG active) ────────────────────────────────
 python scripts/gen_commands.py $REG train sex_binary_lstm_abl_no_ekg              | bash
 python scripts/gen_commands.py $REG train apnea_binary_lstm_abl_no_ekg            | bash
 python scripts/gen_commands.py $REG train sleep_efficiency_binary_lstm_abl_no_ekg | bash
 python scripts/gen_commands.py $REG train age_class_lstm_abl_no_ekg               | bash
 python scripts/gen_commands.py $REG train bmi_binary_lstm_abl_no_ekg              | bash
 
-# ── Condition 4: cardio only (BAS+EMG zeroed, RESP+EKG active) — already complete
+# ── Condition 4: cardio only (BAS+EMG zeroed, RESP+EKG active) ──────────────
 python scripts/gen_commands.py $REG train sex_binary_lstm_abl_cardio              | bash
 python scripts/gen_commands.py $REG train apnea_binary_lstm_abl_cardio            | bash
 python scripts/gen_commands.py $REG train sleep_efficiency_binary_lstm_abl_cardio | bash
 python scripts/gen_commands.py $REG train age_class_lstm_abl_cardio               | bash
 python scripts/gen_commands.py $REG train bmi_binary_lstm_abl_cardio              | bash
 
-# ── Condition 5: BAS only (RESP+EKG+EMG zeroed) — already complete ──────────
+# ── Condition 5: BAS only (RESP+EKG+EMG zeroed) ──────────────────────────────
 python scripts/gen_commands.py $REG train sex_binary_lstm_abl_bas_only              | bash
 python scripts/gen_commands.py $REG train apnea_binary_lstm_abl_bas_only            | bash
 python scripts/gen_commands.py $REG train sleep_efficiency_binary_lstm_abl_bas_only | bash
@@ -777,9 +778,9 @@ python scripts/gen_commands.py $REG train age_class_lstm_abl_bas_only           
 python scripts/gen_commands.py $REG train bmi_binary_lstm_abl_bas_only              | bash
 ```
 
-All 25 jobs can be submitted simultaneously — they are independent. Only the 10 `no_resp`/
-`no_ekg` jobs (Conditions 2–3 above) are new; the others already have `best_model.pt` and will
-be skipped automatically if resubmitted.
+✅ All 25 jobs are complete as of 2026-06-17 (all `best_model.pt` files exist; resubmitting any
+of the commands above is safe — they will be skipped automatically). The list above is kept for
+reproducibility/reference.
 
 **Check status:**
 ```bash

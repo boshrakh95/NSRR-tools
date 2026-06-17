@@ -249,10 +249,10 @@ Run all ablation conditions at a **single fixed context per task** equal to the 
 
 ##### A.4 Run count and effort
 
-**Essential ablation (Table 6 primary), updated 2026-06-17:**
+**Essential ablation (Table 6 primary) — ✅ COMPLETE as of 2026-06-17:**
 - 5 tasks × 5 conditions (no_bas, no_resp, no_ekg, cardio, bas_only) × 1 head (lstm) × 1 context = **25 training jobs**
 - Inference + analysis for each = 25 more jobs
-- Total: **50 cluster jobs** (15 already complete as of the first pass; 10 new training jobs — `no_resp` × 5 tasks + `no_ekg` × 5 tasks — plus matching infer/analyze)
+- Total: **50 cluster jobs, all complete.** Results in §A.6.1.
 
 **Optional (supplementary, not scheduled):**
 - 5 tasks × 2 more conditions (resp_only, ekg_only) × 1 head × 1 context = **10 more training jobs**
@@ -334,30 +334,84 @@ The `zero_modalities` field lists which groups are zeroed (the complement is wha
 
 ---
 
-##### A.6.1 Actual results (2026-06-17, partial — 15/25 conditions; `no_resp`/`no_ekg` pending)
+##### A.6.1 Actual results (final, 2026-06-17 — all 25/25 conditions complete)
 
-The first 15 jobs (no_bas, cardio, bas_only × 5 tasks) are complete. `no_resp` and `no_ekg` (10 more training jobs) were added 2026-06-17 after reviewing OSF's missing-channel ablation (§A.1) and are queued — not yet reflected in the table below. AUROC at K=all (full-night ceiling), test split, LSTM head. Generated via `python scripts/make_table6_modality.py` (see `results/tables/table6_modality.{csv,md,tex}`); the script already supports all 5 conditions and will fill in `No RESP`/`No EKG` columns automatically once those jobs finish.
+AUROC at K=all (full-night ceiling), test split, LSTM head. Generated via
+`python scripts/make_table6_modality.py` (see `results/tables/table6_modality.{csv,md,tex}`).
 
-| Task | Context | N_test | Full | No BAS | Δ(No BAS) | Cardio only | Δ(Cardio) | BAS only | Δ(BAS only) |
-|------|---------|--------|------|--------|-----------|-------------|-----------|----------|--------------|
-| Sex | 120m | 1430 | 0.872 | 0.799 | -0.073 | 0.796 | -0.076 | 0.777 | -0.096 |
-| Sleep apnea (AHI≥15) | 120m | 2054 | 0.832 | 0.782 | -0.050 | 0.770 | -0.062 | 0.723 | -0.109 |
-| Sleep efficiency | 120m | 2023 | 0.780 | 0.682 | -0.099 | 0.670 | -0.110 | 0.786 | +0.005 |
-| Age group | 120m | 1859 | 0.893 | 0.835 | -0.059 | 0.821 | -0.072 | 0.860 | -0.034 |
-| BMI (obese) | 40m | 1856 | 0.756 | 0.728 | -0.028 | 0.663 | -0.093 | 0.741 | -0.015 |
+| Task | Context | N_test | Full | No BAS | Δ | No RESP | Δ | No EKG | Δ | Cardio only | Δ | BAS only | Δ |
+|------|---------|--------|------|--------|---|---------|---|--------|---|-------------|---|----------|---|
+| Sex | 120m | 1430 | 0.872 | 0.799 | -0.073 | 0.843 | -0.029 | 0.782 | -0.090 | 0.796 | -0.076 | 0.777 | -0.096 |
+| Sleep apnea (AHI≥15) | 120m | 2054 | 0.832 | 0.782 | -0.050 | 0.766 | -0.066 | 0.808 | -0.024 | 0.770 | -0.062 | 0.723 | -0.109 |
+| Sleep efficiency | 120m | 2023 | 0.780 | 0.682 | -0.099 | 0.760 | -0.021 | 0.750 | -0.030 | 0.670 | -0.110 | 0.786 | +0.005 |
+| Age group | 120m | 1859 | 0.893 | 0.835 | -0.059 | 0.882 | -0.012 | 0.868 | -0.025 | 0.821 | -0.072 | 0.860 | -0.034 |
+| BMI (obese) | 40m | 1856 | 0.756 | 0.728 | -0.028 | 0.759 | +0.003 | 0.758 | +0.002 | 0.663 | -0.093 | 0.741 | -0.015 |
 
-**Interpretation:**
+**Caveat on effect size before interpreting:** each cell is a *single* training run — there is
+no multi-seed retraining variance estimate for the ablation conditions (unlike the bootstrap CIs
+available for the K-sweep within a run). Treat |Δ| < 0.02 as **not distinguishable from noise**
+(e.g. BMI's `no_resp` +0.003 and `no_ekg` +0.002, and sleep efficiency's `bas_only` +0.005, should
+be reported as "no detectable effect," not as the condition "matching or exceeding" full). |Δ| in
+0.02–0.05 is borderline; |Δ| > 0.05 is very likely a real effect at this N_test (1430–2054 for
+4 of 5 tasks).
 
-- **Sleep efficiency confirms the hypothesis most cleanly — and more strongly than predicted.** BAS-only essentially *matches* full (+0.005), while no_bas and cardio both drop by ~0.10. Sleep efficiency is determined by sleep stage, and EEG alone carries that signal almost completely; RESP/EKG/EMG contribute almost nothing on their own.
-- **Apnea is directionally as predicted but EEG retains more signal than expected.** Full > no_bas ≈ cardio (0.782 vs 0.770, as hypothesized) > bas_only (0.723). The bas_only drop is real but far from "near chance" — EEG-only AUROC of 0.723 suggests sleep-stage/arousal correlates of apnea leak through brain signals even without direct respiratory sensing.
-- **Sex prediction does *not* match the pre-registered hypothesis.** We expected `bas_only ≈ no_bas`; instead `no_bas ≈ cardio` (0.799 vs 0.796) and bas_only is the *worst* condition (0.777, largest drop of all). RESP+EKG+EMG together carry more sex-discriminative signal than EEG/EOG alone — the opposite of what was predicted.
-- **Age class shows a real (not negligible) BAS contribution.** The predicted `full ≈ no_bas` does not hold — there's a moderate -0.059 drop, meaning EEG/EOG meaningfully helps age prediction beyond what RESP+EKG+EMG provide alone.
-- **BMI is the most channel-robust task as predicted, with one exception.** no_bas (-0.028) and bas_only (-0.015) are both small drops as expected, but cardio shows a larger-than-predicted drop (-0.093) — losing BAS *and* EMG together costs more than either loss alone would suggest, hinting at a small interaction effect rather than purely additive channel contributions.
-- **Cross-task pattern: cardio is consistently ≤ no_bas.** In every task except sleep efficiency (where both are similarly bad), zeroing BAS+EMG (cardio) underperforms zeroing BAS alone (no_bas) by 0.003–0.065 AUROC. EMG (chin/leg muscle) carries a small but consistently real contribution on top of RESP+EKG, even though no condition isolates EMG's effect alone.
-- **SleepFounder comparison (cardio condition vs. their cardiorespiratory-only model):** our cardio-only apnea AUROC (0.770) is well below SleepFounder's reported OSA AUROC (0.917). This gap is expected and should **not** be read as "our cardio signal is worse" — SleepFounder fine-tunes a model pre-trained on 800K+ hours specifically on cardiorespiratory signals, while we train only a lightweight LSTM head on a frozen, general-purpose SleepFM backbone restricted to its RESP+EKG slice. The comparison is informative about evaluation protocol, not about the cardiorespiratory channels' intrinsic information content.
-- **Headline finding:** no single ablated condition recovers full performance for any task except sleep efficiency's bas_only (which ties it). All four SleepFM modality groups contribute non-trivially to most clinical tasks — there is no "free" channel to drop across the board, though the *which* group matters most is strongly task-dependent (BAS for sleep efficiency/age, RESP+EKG for apnea, all groups jointly for sex/BMI).
+**Headline finding — the single most necessary modality is task-dependent, and not always the
+intuitive one:**
 
-> **Pending update:** this interpretation will be revised once `no_resp`/`no_ekg` results land — in particular, the `apnea_binary` claim above ("RESP carries the OSA signal") is currently inferred indirectly from `no_bas`/`cardio`/`bas_only` and has not yet been tested with the direct `no_resp` knockout.
+| Task | Most necessary single group (largest single-knockout Δ) | Ranking (most → least necessary) |
+|---|---|---|
+| Sex | **EKG** (-0.090) | EKG > BAS (-0.073) > RESP (-0.029) |
+| Sleep apnea | **RESP** (-0.066) | RESP > BAS (-0.050) > EKG (-0.024) |
+| Sleep efficiency | **BAS** (-0.099) | BAS > EKG (-0.030) > RESP (-0.021, borderline) |
+| Age group | **BAS** (-0.059) | BAS > EKG (-0.025) > RESP (-0.012, noise) |
+| BMI (obese) | **BAS** (-0.028, borderline) | BAS > EKG≈RESP (noise) |
+
+BAS is the most necessary single group for 3 of 5 tasks (sleep efficiency, age, BMI), RESP for 1
+(apnea — confirming the original respiratory-disorder hypothesis), and **EKG for 1 (sex) — the
+one genuinely surprising result**, since no task in the 5-task set was hypothesized to be
+EKG-dominant.
+
+**Per-task interpretation:**
+
+- **Apnea — the OSF-style leave-one-out directly confirms the respiratory hypothesis.** Among
+  the three single-knockouts, `no_resp` causes the largest drop (-0.066), larger than `no_bas`
+  (-0.050) and far larger than `no_ekg` (-0.024, borderline noise). Averaging across all 5
+  conditions, those that remove RESP (`no_resp`, `bas_only`) drop AUROC by 0.088 on average,
+  versus 0.045 for conditions that retain RESP (`no_bas`, `no_ekg`, `cardio`) — roughly 2×. This
+  is the cleanest, most direct evidence in the table and the result this round of ablation was
+  specifically designed to obtain. EEG still retains real (non-noise) signal for apnea (`no_bas`
+  -0.050, `bas_only` -0.109 vs. cardio's -0.062 — BAS alone is much worse than RESP+EKG together),
+  consistent with sleep-stage/arousal correlates of apnea leaking through brain signals even
+  without direct respiratory sensing.
+- **Sex — `no_ekg` is the most damaging single-knockout, not `no_bas`.** This was not
+  pre-registered and is the most novel finding in the table: cardiac signal (plausibly
+  heart-rate/HRV differences between sexes) carries more sex-discriminative information than
+  EEG/EOG or respiratory signal alone. `no_resp` is the smallest single-knockout drop (-0.029,
+  borderline), reproducing the original (pre-`no_resp`/`no_ekg`) finding that `bas_only` is the
+  worst overall condition (-0.096) — RESP+EKG+EMG together still beat BAS alone, but within that
+  group EKG appears to be doing most of the work.
+- **Sleep efficiency — confirmed most cleanly of all 5 tasks, now with three converging lines of
+  evidence.** `no_bas` causes the largest drop in the table for this task (-0.099); `no_resp`
+  (-0.021) and `no_ekg` (-0.030) are both small; `bas_only` ties full (+0.005, noise-level). All
+  three results point the same direction: sleep efficiency is determined by sleep stage, which is
+  encoded almost entirely in EEG, and RESP/EKG/EMG contribute close to nothing on their own.
+- **Age group — BAS dominates, EKG second, RESP negligible.** `no_bas` (-0.059) confirms a real
+  (not negligible) brain-signal contribution to age prediction; `no_ekg` (-0.025) is borderline;
+  `no_resp` (-0.012) is within noise. Physiological aging signatures are concentrated in EEG and,
+  to a lesser extent, cardiac signal, not in respiration.
+- **BMI — no single group matters, but losing BAS+EMG together does.** `no_resp` (+0.003) and
+  `no_ekg` (+0.002) are pure noise; `no_bas` (-0.028) is borderline. Yet `cardio` (BAS+EMG zeroed
+  together) drops by -0.093 — far more than `no_bas` alone, and the largest condition-effect for
+  this task. This is not explained by any single group's marginal contribution and points to an
+  **interaction effect**: BAS and EMG jointly carry BMI-relevant signal that neither carries
+  alone (e.g. body-habitus-related EMG amplitude/baseline combined with EEG-derived sleep
+  macrostructure). This is the one result in the table that doesn't fit a simple additive
+  "modality importance" story and deserves a cautious, exploratory framing rather than a strong
+  claim.
+- **SleepFounder comparison unchanged:** our cardio-only apnea AUROC (0.770) remains well below
+  SleepFounder's reported OSA AUROC (0.917). As before, this reflects evaluation protocol
+  (frozen general-purpose backbone + lightweight head vs. their domain-specific 800K-hour
+  fine-tuned model), not the intrinsic information content of cardiorespiratory channels.
 
 ---
 
@@ -502,7 +556,7 @@ in the paper — the primary fast→full comparison.
 
 | Order | Experiment | Effort | Blocking? | Requires retraining? |
 |---|---|---|---|---|
-| 1 | **Modality ablation — training-time (§A, essential 5 conditions: no_bas, no_resp, no_ekg, cardio, bas_only)** | 3–4 days | No | **Yes** — 25 training jobs (15 done, 10 pending as of 2026-06-17) |
+| 1 | **Modality ablation — training-time (§A, essential 5 conditions: no_bas, no_resp, no_ekg, cardio, bas_only)** | ✅ Done (2026-06-17) | No | **Yes** — 25 training jobs, all complete |
 | 2 | Inference-time robustness check (Experiment G, supplementary) | 1 day | No | No — run on existing checkpoints |
 | 3 | Cross-dataset generalization breakdown (Experiment E) | 0.5 day | No | No |
 | 4 | Data efficiency curve (Experiment C) | 1 day | No | No |
