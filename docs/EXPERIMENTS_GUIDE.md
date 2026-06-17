@@ -853,6 +853,17 @@ REG="--registry experiments/v2_ablation_registry.yaml"
 python scripts/gen_commands.py $REG collect | bash
 ```
 
+> **Note:** `collect_results_v2.py`'s experiment-folder parser originally matched
+> only `{task}_{head}` (suffix `_lstm`/`_transformer`/`_mean_pool`). Ablation folders
+> are named `{task}_{head}_{run_tag}` (e.g. `sex_binary_lstm_abl_no_bas`), so the
+> parser silently dropped every ablation row. This has been fixed — `parse_exp_dir()`
+> now finds the head as a substring and captures everything after it as `run_tag`,
+> and `run_tag` was added to the dedup keys (`TRAIN_KEY`, `ANALYSIS_KEY`) so the three
+> ablation conditions for the same task/context don't collide. The fix is backward
+> compatible: old CSVs without a `run_tag` column are treated as `run_tag=""` on
+> read. If you collected ablation results before this fix and got 0 new rows,
+> re-run the command above — it will now pick them up.
+
 Outputs to:
 ```
 /scratch/boshra95/psg/unified/results/phase0_v3_abl/collected/analysis.csv
@@ -864,38 +875,42 @@ These CSVs are committed to the repo (same as v3 collect) and appear under
 
 #### Step 5 — Table 6 generation
 
-> **Note:** `scripts/make_table6_modality.py` is not yet written. It will read the
-> collected `analysis.csv` (filtered to `phase0_v3_abl`) and produce Table 6 in
-> `SOTA_COMPARISON_AND_ABLATIONS.md §4A.6` format. Until that script exists, extract
-> the relevant rows manually from the collected CSV or from `window_analysis.md` files.
+**Script:** `scripts/make_table6_modality.py` ✅ implemented.
+Reads `results/collected/phase0_v3/analysis.csv` (the "Full" baseline) and
+`results/collected/phase0_v3_abl/analysis.csv` (the three ablation conditions, keyed
+by `run_tag`), and joins them into one task × condition AUROC table with deltas.
 
-**Manual extraction (interim — until make_table6_modality.py exists):**
 ```bash
 source /home/boshra95/sleepfm_env/bin/activate
 
-# Print k=all AUROC from each experiment's analysis markdown
-for exp in \
-  sex_binary_lstm_abl_no_bas sex_binary_lstm_abl_cardio sex_binary_lstm_abl_bas_only \
-  apnea_binary_lstm_abl_no_bas apnea_binary_lstm_abl_cardio apnea_binary_lstm_abl_bas_only \
-  sleep_efficiency_binary_lstm_abl_no_bas sleep_efficiency_binary_lstm_abl_cardio sleep_efficiency_binary_lstm_abl_bas_only \
-  age_class_lstm_abl_no_bas age_class_lstm_abl_cardio age_class_lstm_abl_bas_only \
-  bmi_binary_lstm_abl_no_bas bmi_binary_lstm_abl_cardio bmi_binary_lstm_abl_bas_only; do
-    echo "=== $exp ==="
-    grep "all " /scratch/boshra95/psg/unified/results/phase0_v3_abl/inference/${exp}/window_analysis_test.csv 2>/dev/null || echo "(not ready)"
-done
+# Default: all 5 tasks, lstm head, K=all (full-night ceiling), test split
+python scripts/make_table6_modality.py
+
+# K=5 deployment scenario instead of K=all
+python scripts/make_table6_modality.py --k 5
+
+# Subset of tasks
+python scripts/make_table6_modality.py --tasks sex_binary apnea_binary
+
+# LaTeX output (printed to stdout in addition to saved files)
+python scripts/make_table6_modality.py --latex
 ```
 
-**Compare to v3 baseline** (fast-channel results at matched context):
-```bash
-# sex_binary baseline at 120m (v3 fast-channel)
-grep "120m" /scratch/boshra95/psg/unified/results/phase0_v3/inference/sex_binary_lstm/window_analysis_test.csv
-
-# bmi_binary baseline at 40m (v3 fast-channel)
-grep "40m" /scratch/boshra95/psg/unified/results/phase0_v3/inference/bmi_binary_lstm/window_analysis_test.csv
+Output:
+```
+results/tables/table6_modality.csv
+results/tables/table6_modality.md
+results/tables/table6_modality.tex
 ```
 
-The baseline AUROC for each task (from v3 fast-channel, all modalities active) is the
-reference point for computing the drop/gain from ablation.
+Columns: `Task`, `Context`, `N_test`, `Full`, `No BAS`, `Δ(No BAS)`, `Cardio only`,
+`Δ(Cardio only)`, `BAS only`, `Δ(BAS only)`. A `—` in any condition column means that
+(task, condition) hasn't finished training/inference/analysis yet — the script prints
+a reminder to check `gen_commands.py … status` when this happens.
+
+If `results/collected/phase0_v3_abl/analysis.csv` is missing or stale (e.g. you trained
+more conditions since the last collect), re-run Step 4 first — the script will tell you
+which file is missing rather than failing silently.
 
 #### Interpreting the results
 

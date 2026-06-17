@@ -1,0 +1,2 @@
+{"ts":"2026-06-16T15:19:50-07:00","job_id":"44574239","node":"fc10916","status":"STARTED","task":"sex_binary","head":"lstm","context":"120m","lr":"5e-5","datasets":"apples shhs"}
+{"ts":"2026-06-16T18:04:51-07:00","job_id":"44574239","node":"fc10916","status":"SUCCESS","task":"sex_binary","head":"lstm","context":"120m","lr":"5e-5","datasets":"apples shhs"}

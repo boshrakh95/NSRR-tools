@@ -255,7 +255,7 @@ Run all ablation conditions at a **single fixed context per task** equal to the 
 **Effort estimate:**
 - Training time per job: ~same as baseline (same context, same GPU hours)
 - Scheduling + monitoring: 1–2 days
-- Analysis + table generation: use existing `make_table6_modality.py` (to be written next)
+- Analysis + table generation: `scripts/make_table6_modality.py` (implemented — see §A.7)
 
 ---
 
@@ -340,7 +340,9 @@ Implement and compare the results with these expectations
 4. ✅ **`experiments/v2_ablation_registry.yaml`** — 15 entries (5 tasks × 3 conditions).  
    ✅ **`configs/phase0_v3_abl_config.yaml`** — separate config pointing to `phase0_v3_abl/` results dir.
 
-5. ⏳ **`scripts/make_table6_modality.py`** — not yet written. After ablation results are collected, this script will read `results/collected/phase0_v3_abl/analysis.csv` and output Table 6 in task × condition format. Until it exists, extract results manually from the `window_analysis_test.csv` files (see `docs/EXPERIMENTS_GUIDE.md` §Modality ablation — Step 5).
+5. ✅ **`scripts/make_table6_modality.py`** — reads `results/collected/phase0_v3/analysis.csv` (Full baseline) and `results/collected/phase0_v3_abl/analysis.csv` (the three ablation conditions, keyed by `run_tag`), joins them into the task × condition AUROC table with deltas, and saves CSV/markdown/LaTeX to `results/tables/table6_modality.*`. See `docs/EXPERIMENTS_GUIDE.md` §Modality ablation — Step 5 for usage.
+
+6. ⚠️ **Bug found and fixed while wiring up Table 6:** `scripts/collect_results_v2.py`'s `parse_exp_dir()` originally matched experiment folders only by suffix (`_lstm`, `_transformer`, `_mean_pool`), so it silently dropped every `run_tag`-suffixed folder (`{task}_{head}_abl_no_bas`, etc. — and also the pre-existing `sleep_staging_lstm_with_stages`). Fixed to find the head as a substring and capture the trailing run_tag separately; `run_tag` was added to the train/analysis dedup keys so the three ablation conditions per task don't collide under the same key. Backward compatible — old CSVs without a `run_tag` column are read as `run_tag=""`.
 
 ---
 

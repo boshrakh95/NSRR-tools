@@ -86,17 +86,35 @@ MAX_CLASSES = 5   # handles binary(2) through sleep_staging(5)
 
 SKIP_DIRS = {"inference", "figures", "collected"}
 
-TRAIN_KEY    = ("task", "head", "context_length", "epoch")
-ANALYSIS_KEY = ("task", "head", "context_length", "k", "split")
+# Folders/files prefixed with "_" are archived/old runs by convention — never collected.
+def _is_archived(name: str) -> bool:
+    return name.startswith("_")
+
+TRAIN_KEY    = ("task", "head", "run_tag", "context_length", "epoch")
+ANALYSIS_KEY = ("task", "head", "run_tag", "context_length", "k", "split")
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def parse_exp_dir(name: str) -> tuple[str | None, str | None]:
-    """'sleep_efficiency_binary_mean_pool' → ('sleep_efficiency_binary', 'mean_pool')."""
+def parse_exp_dir(name: str) -> tuple[str | None, str | None, str]:
+    """'sleep_efficiency_binary_mean_pool' → ('sleep_efficiency_binary', 'mean_pool', '').
+    'sex_binary_lstm_abl_no_bas' → ('sex_binary', 'lstm', 'abl_no_bas').
+
+    Experiment folders follow {task}_{head}{_run_tag}. The head marker is found
+    as a substring (not just a suffix) so any trailing run_tag — used by ablation
+    runs (abl_no_bas, abl_cardio, abl_bas_only) and other tagged variants
+    (with_stages) — is captured separately instead of causing a parse failure.
+    """
     for head in KNOWN_HEADS:
-        if name.endswith(f"_{head}"):
-            return name[: -(len(head) + 1)], head
-    return None, None
+        marker = f"_{head}"
+        idx = name.find(marker)
+        if idx == -1:
+            continue
+        end = idx + len(marker)
+        if end == len(name):
+            return name[:idx], head, ""
+        if name[end] == "_":
+            return name[:idx], head, name[end + 1:]
+    return None, None, ""
 
 
 def load_csv(path: Path) -> pd.DataFrame:
@@ -104,9 +122,13 @@ def load_csv(path: Path) -> pd.DataFrame:
 
 
 def done_keys(df: pd.DataFrame, key_cols: tuple) -> set:
-    if df.empty or not all(c in df.columns for c in key_cols):
+    if df.empty:
         return set()
-    return set(zip(*[df[c].astype(str) for c in key_cols]))
+    df = df.copy()
+    for c in key_cols:
+        if c not in df.columns:
+            df[c] = ""  # older CSVs predate the run_tag column; treat as untagged
+    return set(zip(*[df[c].fillna("").astype(str) for c in key_cols]))
 
 
 def write_csv(df: pd.DataFrame, paths: list[Path]) -> None:
@@ -127,11 +149,11 @@ def collect_training(results_dir: Path, out_paths: list[Path],
     new_rows: list[dict] = []
 
     for exp_dir in sorted(results_dir.iterdir()):
-        if not exp_dir.is_dir() or exp_dir.name in SKIP_DIRS:
+        if not exp_dir.is_dir() or exp_dir.name in SKIP_DIRS or _is_archived(exp_dir.name):
             continue
         if exp_ids and exp_dir.name not in exp_ids:
             continue
-        task, head = parse_exp_dir(exp_dir.name)
+        task, head, run_tag = parse_exp_dir(exp_dir.name)
         if task is None:
             continue
 
@@ -165,7 +187,7 @@ def collect_training(results_dir: Path, out_paths: list[Path],
 
             for _, row in curves.iterrows():
                 epoch = int(row["epoch"])
-                if (task, head, ctx, str(epoch)) in done:
+                if (task, head, run_tag, ctx, str(epoch)) in done:
                     continue
 
                 is_best      = epoch == best_epoch
@@ -173,6 +195,7 @@ def collect_training(results_dir: Path, out_paths: list[Path],
                 r: dict = {
                     "task":              task,
                     "head":              head,
+                    "run_tag":           run_tag,
                     "context_length":    ctx,
                     "epoch":             epoch,
                     # per-epoch curves
@@ -223,9 +246,13 @@ def collect_training(results_dir: Path, out_paths: list[Path],
         [existing, pd.DataFrame(new_rows)], ignore_index=True
     ) if not existing.empty else pd.DataFrame(new_rows)
 
+    if "run_tag" not in combined.columns:
+        combined["run_tag"] = ""
+    combined["run_tag"] = combined["run_tag"].fillna("")
+
     combined["_s"] = ctx_sort_key(combined)
     combined = (combined
-                .sort_values(["task", "head", "_s", "epoch"])
+                .sort_values(["task", "head", "run_tag", "_s", "epoch"])
                 .drop(columns=["_s"])
                 .reset_index(drop=True))
     write_csv(combined, out_paths)
@@ -241,11 +268,11 @@ def collect_analysis(inference_dir: Path, out_paths: list[Path],
     new_rows: list[dict] = []
 
     for exp_dir in sorted(inference_dir.iterdir()):
-        if not exp_dir.is_dir():
+        if not exp_dir.is_dir() or _is_archived(exp_dir.name):
             continue
         if exp_ids and exp_dir.name not in exp_ids:
             continue
-        task, head = parse_exp_dir(exp_dir.name)
+        task, head, run_tag = parse_exp_dir(exp_dir.name)
         if task is None:
             continue
 
@@ -256,7 +283,7 @@ def collect_analysis(inference_dir: Path, out_paths: list[Path],
             for _, row in wa.iterrows():
                 k_val = str(row["k"])
                 ctx   = str(row["context_length"])
-                if (task, head, ctx, k_val, split) in done:
+                if (task, head, run_tag, ctx, k_val, split) in done:
                     continue
 
                 ctx_min = CTX_MINUTES.get(ctx)
@@ -268,6 +295,7 @@ def collect_analysis(inference_dir: Path, out_paths: list[Path],
                 new_rows.append({
                     "task":               task,
                     "head":               head,
+                    "run_tag":            run_tag,
                     "context_length":     ctx,
                     "k":                  k_val,
                     "split":              split,
@@ -304,9 +332,13 @@ def collect_analysis(inference_dir: Path, out_paths: list[Path],
         [existing, pd.DataFrame(new_rows)], ignore_index=True
     ) if not existing.empty else pd.DataFrame(new_rows)
 
+    if "run_tag" not in combined.columns:
+        combined["run_tag"] = ""
+    combined["run_tag"] = combined["run_tag"].fillna("")
+
     combined["_s"] = ctx_sort_key(combined)
     combined = (combined
-                .sort_values(["task", "head", "_s", "k", "split"])
+                .sort_values(["task", "head", "run_tag", "_s", "k", "split"])
                 .drop(columns=["_s"])
                 .reset_index(drop=True))
     write_csv(combined, out_paths)
@@ -322,11 +354,11 @@ def collect_predictions(inference_dir: Path, scratch_out: Path,
     count = 0
 
     for exp_dir in sorted(inference_dir.iterdir()):
-        if not exp_dir.is_dir():
+        if not exp_dir.is_dir() or _is_archived(exp_dir.name):
             continue
         if exp_ids and exp_dir.name not in exp_ids:
             continue
-        task, head = parse_exp_dir(exp_dir.name)
+        task, head, run_tag = parse_exp_dir(exp_dir.name)
         if task is None:
             continue
 
@@ -334,16 +366,18 @@ def collect_predictions(inference_dir: Path, scratch_out: Path,
             ctx = ctx_dir.name.removeprefix("context_")
 
             for pq_path in sorted(ctx_dir.glob("*_windows.parquet")):
-                split    = pq_path.stem.removesuffix("_windows")
-                out_path = pred_dir / f"{task}_{head}_{ctx}_{split}.parquet"
+                split     = pq_path.stem.removesuffix("_windows")
+                tag_part  = f"_{run_tag}" if run_tag else ""
+                out_path  = pred_dir / f"{task}_{head}{tag_part}_{ctx}_{split}.parquet"
                 if out_path.exists():
                     continue
 
                 df = pd.read_parquet(pq_path)
                 df.insert(0, "task",           task)
                 df.insert(1, "head",           head)
-                df.insert(2, "context_length", ctx)
-                df.insert(3, "split",          split)
+                df.insert(2, "run_tag",        run_tag)
+                df.insert(3, "context_length", ctx)
+                df.insert(4, "split",          split)
 
                 # Pad to MAX_CLASSES so all tasks share one schema
                 for c in range(MAX_CLASSES):
