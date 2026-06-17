@@ -20,6 +20,7 @@ __pycache__/
 
 # logs / outputs
 outputs/
+papers/
 runs/
 *.log
 *.err
