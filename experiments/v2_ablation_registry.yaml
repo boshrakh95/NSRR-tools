@@ -15,10 +15,23 @@
 #     EKG   [256:384] — cardiac signal
 #     EMG   [384:512] — chin / leg EMG
 #
-# Ablation conditions (essential 3 for Table 6):
+# Ablation conditions (5 per task, for Table 6):
 #   abl_no_bas   — zero BAS  → head sees RESP+EKG+EMG only (no EEG/EOG)
+#   abl_no_resp  — zero RESP → head sees BAS+EKG+EMG only (no respiratory signals)
+#                  Direct analogue of OSF's (arXiv:2603.00190) flagship missing-channel
+#                  finding: they zero Resp. channels alone and evaluate on Hypopnea/Ox.
+#                  Desat — our apnea_binary is the equivalent task. Added 2026-06-17.
+#   abl_no_ekg   — zero EKG  → head sees BAS+RESP+EMG only (no cardiac signal)
+#                  Analogue of OSF's "Sleep Micro-Arch. Study" realistic setting
+#                  (Brain+Resp present, ECG absent). Added 2026-06-17.
 #   abl_cardio   — zero BAS+EMG → head sees RESP+EKG only (SleepFounder comparison)
 #   abl_bas_only — zero RESP+EKG+EMG → head sees BAS only (brain signals only)
+#
+# no_resp and no_ekg complete the single-modality leave-one-out matrix for the three
+# non-EMG groups (no_bas already existed; cardio/bas_only test combined removals).
+# EMG is not isolated (no_emg/emg_only) — none of our 5 ablation tasks are
+# EMG/PLM-driven the way sleep staging would be, and OSF doesn't vary Somatic
+# in their realistic-settings table either. See SOTA_COMPARISON_AND_ABLATIONS.md §A.1.
 #
 # Task/context choices (per SOTA_COMPARISON_AND_ABLATIONS.md §A.2-A.3):
 #   sex_binary             → 120m  (well-powered, all modalities expected to contribute)
@@ -116,6 +129,36 @@ experiments:
     tier: 1
     notes: "Brain signals only (BAS). EEG+EOG alone predicting sex."
 
+  sex_binary_lstm_abl_no_resp:
+    task: sex_binary
+    task_type: seq2label
+    num_classes: 2
+    head: lstm
+    datasets: [apples, shhs]
+    contexts: ["120m"]
+    batch_size: 32
+    lr: 5.0e-5
+    run_tag: "abl_no_resp"
+    zero_modalities: [RESP]
+    n_size: large
+    tier: 1
+    notes: "No respiratory channels. Head sees BAS+EKG+EMG. Tests whether breathing patterns carry sex-discriminative signal beyond EEG/EKG/EMG."
+
+  sex_binary_lstm_abl_no_ekg:
+    task: sex_binary
+    task_type: seq2label
+    num_classes: 2
+    head: lstm
+    datasets: [apples, shhs]
+    contexts: ["120m"]
+    batch_size: 32
+    lr: 5.0e-5
+    run_tag: "abl_no_ekg"
+    zero_modalities: [EKG]
+    n_size: large
+    tier: 1
+    notes: "No cardiac channel. Head sees BAS+RESP+EMG. Tests whether cardiac signal (e.g. HRV) carries sex-discriminative signal independently."
+
   # ── apnea_binary — 120m ──────────────────────────────────────────────────────
   apnea_binary_lstm_abl_no_bas:
     task: apnea_binary
@@ -161,6 +204,36 @@ experiments:
     n_size: large
     tier: 1
     notes: "Brain signals only. Expect large AUROC drop — EEG alone cannot detect apnea."
+
+  apnea_binary_lstm_abl_no_resp:
+    task: apnea_binary
+    task_type: seq2label
+    num_classes: 2
+    head: lstm
+    datasets: [apples, shhs, mros]
+    contexts: ["120m"]
+    batch_size: 32
+    lr: 5.0e-5
+    run_tag: "abl_no_resp"
+    zero_modalities: [RESP]
+    n_size: large
+    tier: 1
+    notes: "No respiratory channels. Head sees BAS+EKG+EMG. Direct analogue of OSF's flagship missing-channel finding (Resp removed, evaluated on hypopnea/ox-desat) — expect the largest AUROC drop of any condition for this task."
+
+  apnea_binary_lstm_abl_no_ekg:
+    task: apnea_binary
+    task_type: seq2label
+    num_classes: 2
+    head: lstm
+    datasets: [apples, shhs, mros]
+    contexts: ["120m"]
+    batch_size: 32
+    lr: 5.0e-5
+    run_tag: "abl_no_ekg"
+    zero_modalities: [EKG]
+    n_size: large
+    tier: 1
+    notes: "No cardiac channel. Head sees BAS+RESP+EMG. Tests whether HRV/cardiac signal contributes to apnea detection independently of RESP."
 
   # ── sleep_efficiency_binary — 120m ───────────────────────────────────────────
   sleep_efficiency_binary_lstm_abl_no_bas:
@@ -208,6 +281,36 @@ experiments:
     tier: 1
     notes: "Brain signals only. EEG sleep staging features should carry strong signal."
 
+  sleep_efficiency_binary_lstm_abl_no_resp:
+    task: sleep_efficiency_binary
+    task_type: seq2label
+    num_classes: 2
+    head: lstm
+    datasets: [apples, shhs, mros]
+    contexts: ["120m"]
+    batch_size: 32
+    lr: 5.0e-5
+    run_tag: "abl_no_resp"
+    zero_modalities: [RESP]
+    n_size: large
+    tier: 1
+    notes: "No respiratory channels. Head sees BAS+EKG+EMG. Sleep efficiency correlates with apnea — tests whether RESP contributes beyond the EEG-driven staging signal."
+
+  sleep_efficiency_binary_lstm_abl_no_ekg:
+    task: sleep_efficiency_binary
+    task_type: seq2label
+    num_classes: 2
+    head: lstm
+    datasets: [apples, shhs, mros]
+    contexts: ["120m"]
+    batch_size: 32
+    lr: 5.0e-5
+    run_tag: "abl_no_ekg"
+    zero_modalities: [EKG]
+    n_size: large
+    tier: 1
+    notes: "No cardiac channel. Head sees BAS+RESP+EMG. Tests whether EKG contributes to sleep efficiency beyond EEG/RESP."
+
   # ── age_class — 120m ─────────────────────────────────────────────────────────
   age_class_lstm_abl_no_bas:
     task: age_class
@@ -253,6 +356,36 @@ experiments:
     n_size: large
     tier: 1
     notes: "Brain signals only. EEG slowing with age is well documented — may retain significant AUROC."
+
+  age_class_lstm_abl_no_resp:
+    task: age_class
+    task_type: seq2label
+    num_classes: 3
+    head: lstm
+    datasets: [apples, shhs, mros]
+    contexts: ["120m"]
+    batch_size: 32
+    lr: 5.0e-5
+    run_tag: "abl_no_resp"
+    zero_modalities: [RESP]
+    n_size: large
+    tier: 1
+    notes: "No respiratory channels. Head sees BAS+EKG+EMG. Tests whether age-related breathing changes contribute independently of EEG/EKG."
+
+  age_class_lstm_abl_no_ekg:
+    task: age_class
+    task_type: seq2label
+    num_classes: 3
+    head: lstm
+    datasets: [apples, shhs, mros]
+    contexts: ["120m"]
+    batch_size: 32
+    lr: 5.0e-5
+    run_tag: "abl_no_ekg"
+    zero_modalities: [EKG]
+    n_size: large
+    tier: 1
+    notes: "No cardiac channel. Head sees BAS+RESP+EMG. Tests whether cardiac aging signatures (HRV) contribute independently of EEG/RESP."
 
   # ── bmi_binary — 40m ─────────────────────────────────────────────────────────
   # Context = 40m (not 120m): bmi_binary saturates at L*=10m; 40m provides
@@ -301,3 +434,33 @@ experiments:
     n_size: large
     tier: 1
     notes: "Brain signals only. If AUROC is similar to full → BMI info is in EEG patterns."
+
+  bmi_binary_lstm_abl_no_resp:
+    task: bmi_binary
+    task_type: seq2label
+    num_classes: 2
+    head: lstm
+    datasets: [apples, shhs, mros]
+    contexts: ["40m"]
+    batch_size: 32
+    lr: 1.0e-4
+    run_tag: "abl_no_resp"
+    zero_modalities: [RESP]
+    n_size: large
+    tier: 1
+    notes: "No respiratory channels. Head sees BAS+EKG+EMG. Tests whether BMI-related breathing changes (e.g. obesity hypoventilation) contribute independently."
+
+  bmi_binary_lstm_abl_no_ekg:
+    task: bmi_binary
+    task_type: seq2label
+    num_classes: 2
+    head: lstm
+    datasets: [apples, shhs, mros]
+    contexts: ["40m"]
+    batch_size: 32
+    lr: 1.0e-4
+    run_tag: "abl_no_ekg"
+    zero_modalities: [EKG]
+    n_size: large
+    tier: 1
+    notes: "No cardiac channel. Head sees BAS+RESP+EMG. Tests whether BMI-related cardiac signal (e.g. resting HR) contributes independently."

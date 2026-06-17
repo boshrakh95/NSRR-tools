@@ -2,15 +2,15 @@
 \centering
 \caption{Modality group ablation (training-time zeroing). Full = all four SleepFM modality groups active (baseline, fast-channel). No BAS = EEG/EOG zeroed (RESP+EKG+EMG active). Cardio only = BAS+EMG zeroed (RESP+EKG active; SleepFounder comparison). BAS only = RESP+EKG+EMG zeroed (BAS active). $\Delta$ = condition AUROC minus Full AUROC. Head: lstm. K=all.}
 \label{tab:modality_ablation}
-\begin{tabular}{lrrrrrrrrr}
+\begin{tabular}{lrrrrrrrrrrrrr}
 \toprule
-Task & Context & N_test & Full & No BAS & Δ(No BAS) & Cardio only & Δ(Cardio only) & BAS only & Δ(BAS only) \\
+Task & Context & N_test & Full & No BAS & Δ(No BAS) & No RESP & Δ(No RESP) & No EKG & Δ(No EKG) & Cardio only & Δ(Cardio only) & BAS only & Δ(BAS only) \\
 \midrule
-Sex & 120m & 1430 & 0.872 & 0.799 & -0.073 & 0.796 & -0.076 & 0.777 & -0.096 \\
-Sleep apnea (AHI≥15) & 120m & 2054 & 0.832 & 0.782 & -0.050 & 0.770 & -0.062 & 0.723 & -0.109 \\
-Sleep efficiency & 120m & 2023 & 0.780 & 0.682 & -0.099 & 0.670 & -0.110 & 0.786 & +0.005 \\
-Age group & 120m & 1859 & 0.893 & 0.835 & -0.059 & 0.821 & -0.072 & 0.860 & -0.034 \\
-BMI (obese) & 40m & 1856 & 0.756 & 0.728 & -0.028 & 0.663 & -0.093 & 0.741 & -0.015 \\
+Sex & 120m & 1430 & 0.872 & 0.799 & -0.073 & — & — & — & — & 0.796 & -0.076 & 0.777 & -0.096 \\
+Sleep apnea (AHI≥15) & 120m & 2054 & 0.832 & 0.782 & -0.050 & — & — & — & — & 0.770 & -0.062 & 0.723 & -0.109 \\
+Sleep efficiency & 120m & 2023 & 0.780 & 0.682 & -0.099 & — & — & — & — & 0.670 & -0.110 & 0.786 & +0.005 \\
+Age group & 120m & 1859 & 0.893 & 0.835 & -0.059 & — & — & — & — & 0.821 & -0.072 & 0.860 & -0.034 \\
+BMI (obese) & 40m & 1856 & 0.756 & 0.728 & -0.028 & — & — & — & — & 0.663 & -0.093 & 0.741 & -0.015 \\
 \bottomrule
 \end{tabular}
 \end{table}

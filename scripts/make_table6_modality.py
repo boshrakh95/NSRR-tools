@@ -2,10 +2,12 @@
 """
 make_table6_modality.py — Table 6: Modality group ablation.
 
-For each ablation task, compares AUROC across four conditions: the full-channel
-baseline (all four SleepFM modality groups active) and three training-time
-ablation conditions (no_bas, cardio, bas_only) where the named groups were
-zeroed in the embedding at both training and inference time. See
+For each ablation task, compares AUROC across six conditions: the full-channel
+baseline (all four SleepFM modality groups active) and five training-time
+ablation conditions (no_bas, no_resp, no_ekg, cardio, bas_only) where the named
+groups were zeroed in the embedding at both training and inference time.
+no_resp/no_ekg complete the single-modality leave-one-out matrix and are
+directly inspired by OSF's (arXiv:2603.00190) missing-channel ablation. See
 docs/SOTA_COMPARISON_AND_ABLATIONS.md §4A and docs/sections/methods.md §III-I
 for the full design rationale.
 
@@ -48,6 +50,8 @@ ABLATION_TASKS = [
 # (run_tag, display name) — order matches SOTA_COMPARISON_AND_ABLATIONS.md §A.1/A.6
 CONDITIONS = [
     ("abl_no_bas",   "No BAS"),
+    ("abl_no_resp",  "No RESP"),
+    ("abl_no_ekg",   "No EKG"),
     ("abl_cardio",   "Cardio only"),
     ("abl_bas_only", "BAS only"),
 ]

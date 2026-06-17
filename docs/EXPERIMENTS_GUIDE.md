@@ -651,19 +651,31 @@ inference-only robustness variant).
   applied to the float32 copy before the model sees it — the `.npy` files on disk are never touched.
 - **Completely separate outputs.** Results go to `phase0_v3_abl/`, logs to `logs_v3_abl/`.
   There is zero overlap with `phase0_v3/` or `phase0_v3_full/`.
-- **Status starts at pending.** Because the registry points to an empty directory, all 15
+- **Status starts at pending.** Because the registry points to an empty directory, all 25
   experiments report "pending" from the start.
 
-#### Why these three ablation conditions?
+#### Why these five ablation conditions?
 
 | Condition (`run_tag`) | Groups zeroed | Groups active | Active embedding ranges | Answers |
 |---|---|---|---|---|
 | `abl_no_bas` | BAS (EEG+EOG) | RESP+EKG+EMG | [128:512] | Can we drop the neural sensor entirely? |
+| `abl_no_resp` | RESP | BAS+EKG+EMG | [0:128], [256:512] | Does removing respiratory signal alone hurt? |
+| `abl_no_ekg` | EKG | BAS+RESP+EMG | [0:256], [384:512] | Does removing the cardiac signal alone hurt? |
 | `abl_cardio` | BAS+EMG | RESP+EKG | [128:256], [256:384] | SleepFounder comparison: cardio-only performance |
 | `abl_bas_only` | RESP+EKG+EMG | BAS only | [0:128] | How much do brain signals alone explain? |
 
 The baseline (all channels active) is the existing `phase0_v3` result for each task at the
 matched context length — no additional "full" training run is needed.
+
+**`no_resp` and `no_ekg` were added 2026-06-17**, after reviewing OSF (arXiv:2603.00190). OSF's
+own flagship missing-channel ablation is exactly a single-group leave-one-out: they zero
+Respiratory channels alone and evaluate on Hypopnea/Oxygen Desaturation — the direct analogue of
+our `apnea_binary`. Without `no_resp`, our design could only infer RESP's necessity indirectly
+(via `no_bas`/`cardio`/`bas_only`, all of which conflate RESP with EKG/EMG). `no_ekg` completes
+the single-knockout matrix for the three non-EMG groups OSF varies in their secondary
+"realistic settings" table. EMG is still not isolated — none of our 5 ablation tasks are
+EMG/PLM-driven the way sleep staging would be. See `SOTA_COMPARISON_AND_ABLATIONS.md` §A.1 for
+the full rationale.
 
 **SleepFM embedding layout (512 dim = 4 × 128):**
 ```
@@ -683,7 +695,8 @@ matched context length — no additional "full" training run is needed.
 | `age_class` | 120m | Large N, physiological aging visible in all modalities |
 | `bmi_binary` | 40m | L*=10m; 40m avoids sparse-window issues at 120m, uses default LR=1e-4 |
 
-15 experiments total: 5 tasks × 3 conditions.
+25 experiments total: 5 tasks × 5 conditions (15 already complete: no_bas, cardio, bas_only;
+10 pending as of 2026-06-17: no_resp, no_ekg).
 
 #### Path summary
 
@@ -715,7 +728,7 @@ find /scratch/boshra95/psg/unified/embeddings/sleepfm_5sec -name '*.npy' | wc -l
 # Expected: ~14,992
 ```
 
-#### Step 1 — Training (15 jobs: 5 tasks × 3 conditions)
+#### Step 1 — Training (25 jobs: 5 tasks × 5 conditions; 10 new as of 2026-06-17)
 
 Config: `configs/phase0_v3_abl_config.yaml` (hidden=128, layers=1 — LSTM head only).
 Results: `/scratch/boshra95/psg/unified/results/phase0_v3_abl/{task}_lstm_{tag}/context_{L}/`.
@@ -728,21 +741,35 @@ The `zero_modalities` field in the registry is read by `gen_commands.py` and for
 ```bash
 REG="--registry experiments/v2_ablation_registry.yaml"
 
-# ── Condition 1: no BAS (RESP+EKG+EMG active) ────────────────────────────────
+# ── Condition 1: no BAS (RESP+EKG+EMG active) — already complete ────────────
 python scripts/gen_commands.py $REG train sex_binary_lstm_abl_no_bas              | bash
 python scripts/gen_commands.py $REG train apnea_binary_lstm_abl_no_bas            | bash
 python scripts/gen_commands.py $REG train sleep_efficiency_binary_lstm_abl_no_bas | bash
 python scripts/gen_commands.py $REG train age_class_lstm_abl_no_bas               | bash
 python scripts/gen_commands.py $REG train bmi_binary_lstm_abl_no_bas              | bash
 
-# ── Condition 2: cardio only (BAS+EMG zeroed, RESP+EKG active) ───────────────
+# ── Condition 2: no RESP (BAS+EKG+EMG active) — NEW, run this ───────────────
+python scripts/gen_commands.py $REG train sex_binary_lstm_abl_no_resp              | bash
+python scripts/gen_commands.py $REG train apnea_binary_lstm_abl_no_resp            | bash
+python scripts/gen_commands.py $REG train sleep_efficiency_binary_lstm_abl_no_resp | bash
+python scripts/gen_commands.py $REG train age_class_lstm_abl_no_resp               | bash
+python scripts/gen_commands.py $REG train bmi_binary_lstm_abl_no_resp              | bash
+
+# ── Condition 3: no EKG (BAS+RESP+EMG active) — NEW, run this ───────────────
+python scripts/gen_commands.py $REG train sex_binary_lstm_abl_no_ekg              | bash
+python scripts/gen_commands.py $REG train apnea_binary_lstm_abl_no_ekg            | bash
+python scripts/gen_commands.py $REG train sleep_efficiency_binary_lstm_abl_no_ekg | bash
+python scripts/gen_commands.py $REG train age_class_lstm_abl_no_ekg               | bash
+python scripts/gen_commands.py $REG train bmi_binary_lstm_abl_no_ekg              | bash
+
+# ── Condition 4: cardio only (BAS+EMG zeroed, RESP+EKG active) — already complete
 python scripts/gen_commands.py $REG train sex_binary_lstm_abl_cardio              | bash
 python scripts/gen_commands.py $REG train apnea_binary_lstm_abl_cardio            | bash
 python scripts/gen_commands.py $REG train sleep_efficiency_binary_lstm_abl_cardio | bash
 python scripts/gen_commands.py $REG train age_class_lstm_abl_cardio               | bash
 python scripts/gen_commands.py $REG train bmi_binary_lstm_abl_cardio              | bash
 
-# ── Condition 3: BAS only (RESP+EKG+EMG zeroed) ──────────────────────────────
+# ── Condition 5: BAS only (RESP+EKG+EMG zeroed) — already complete ──────────
 python scripts/gen_commands.py $REG train sex_binary_lstm_abl_bas_only              | bash
 python scripts/gen_commands.py $REG train apnea_binary_lstm_abl_bas_only            | bash
 python scripts/gen_commands.py $REG train sleep_efficiency_binary_lstm_abl_bas_only | bash
@@ -750,7 +777,9 @@ python scripts/gen_commands.py $REG train age_class_lstm_abl_bas_only           
 python scripts/gen_commands.py $REG train bmi_binary_lstm_abl_bas_only              | bash
 ```
 
-All 15 jobs can be submitted simultaneously — they are independent.
+All 25 jobs can be submitted simultaneously — they are independent. Only the 10 `no_resp`/
+`no_ekg` jobs (Conditions 2–3 above) are new; the others already have `best_model.pt` and will
+be skipped automatically if resubmitted.
 
 **Check status:**
 ```bash
@@ -784,13 +813,23 @@ Results: `.../phase0_v3_abl/inference/{task}_lstm_{tag}/context_{L}/test_windows
 ```bash
 REG="--registry experiments/v2_ablation_registry.yaml"
 
-# All three conditions, all five tasks (run after each condition's training finishes)
+# All five conditions, all five tasks (run after each condition's training finishes)
 for exp in \
   sex_binary_lstm_abl_no_bas              \
   apnea_binary_lstm_abl_no_bas            \
   sleep_efficiency_binary_lstm_abl_no_bas \
   age_class_lstm_abl_no_bas               \
   bmi_binary_lstm_abl_no_bas              \
+  sex_binary_lstm_abl_no_resp              \
+  apnea_binary_lstm_abl_no_resp            \
+  sleep_efficiency_binary_lstm_abl_no_resp \
+  age_class_lstm_abl_no_resp               \
+  bmi_binary_lstm_abl_no_resp              \
+  sex_binary_lstm_abl_no_ekg              \
+  apnea_binary_lstm_abl_no_ekg            \
+  sleep_efficiency_binary_lstm_abl_no_ekg \
+  age_class_lstm_abl_no_ekg               \
+  bmi_binary_lstm_abl_no_ekg              \
   sex_binary_lstm_abl_cardio              \
   apnea_binary_lstm_abl_cardio            \
   sleep_efficiency_binary_lstm_abl_cardio \
@@ -824,6 +863,16 @@ for exp in \
   sleep_efficiency_binary_lstm_abl_no_bas \
   age_class_lstm_abl_no_bas               \
   bmi_binary_lstm_abl_no_bas              \
+  sex_binary_lstm_abl_no_resp              \
+  apnea_binary_lstm_abl_no_resp            \
+  sleep_efficiency_binary_lstm_abl_no_resp \
+  age_class_lstm_abl_no_resp               \
+  bmi_binary_lstm_abl_no_resp              \
+  sex_binary_lstm_abl_no_ekg              \
+  apnea_binary_lstm_abl_no_ekg            \
+  sleep_efficiency_binary_lstm_abl_no_ekg \
+  age_class_lstm_abl_no_ekg               \
+  bmi_binary_lstm_abl_no_ekg              \
   sex_binary_lstm_abl_cardio              \
   apnea_binary_lstm_abl_cardio            \
   sleep_efficiency_binary_lstm_abl_cardio \
@@ -877,7 +926,7 @@ These CSVs are committed to the repo (same as v3 collect) and appear under
 
 **Script:** `scripts/make_table6_modality.py` ✅ implemented.
 Reads `results/collected/phase0_v3/analysis.csv` (the "Full" baseline) and
-`results/collected/phase0_v3_abl/analysis.csv` (the three ablation conditions, keyed
+`results/collected/phase0_v3_abl/analysis.csv` (the five ablation conditions, keyed
 by `run_tag`), and joins them into one task × condition AUROC table with deltas.
 
 ```bash
@@ -903,10 +952,10 @@ results/tables/table6_modality.md
 results/tables/table6_modality.tex
 ```
 
-Columns: `Task`, `Context`, `N_test`, `Full`, `No BAS`, `Δ(No BAS)`, `Cardio only`,
-`Δ(Cardio only)`, `BAS only`, `Δ(BAS only)`. A `—` in any condition column means that
-(task, condition) hasn't finished training/inference/analysis yet — the script prints
-a reminder to check `gen_commands.py … status` when this happens.
+Columns: `Task`, `Context`, `N_test`, `Full`, `No BAS`, `Δ(No BAS)`, `No RESP`, `Δ(No RESP)`,
+`No EKG`, `Δ(No EKG)`, `Cardio only`, `Δ(Cardio only)`, `BAS only`, `Δ(BAS only)`. A `—` in
+any condition column means that (task, condition) hasn't finished training/inference/analysis
+yet — the script prints a reminder to check `gen_commands.py … status` when this happens.
 
 If `results/collected/phase0_v3_abl/analysis.csv` is missing or stale (e.g. you trained
 more conditions since the last collect), re-run Step 4 first — the script will tell you
@@ -918,16 +967,25 @@ which file is missing rather than failing silently.
 |---|---|
 | `abl_no_bas` ≈ full AUROC | Task is independent of EEG/EOG; wrist-worn or contactless PSG may suffice |
 | `abl_no_bas` large drop | Brain signals are uniquely informative; EEG/EOG cannot be dropped |
+| `abl_no_resp` large drop, esp. for `apnea_binary` | Direct confirmation that respiratory signal alone is necessary — the OSF-style leave-one-out test |
+| `abl_no_resp` ≈ full | Task does not need respiratory channels specifically (information is redundant with BAS/EKG/EMG) |
+| `abl_no_ekg` ≈ full | Cardiac signal is not uniquely necessary for this task (no task in our 5-task set is hypothesized EKG-dominant) |
+| `abl_no_ekg` notable drop | Unexpected — would suggest EKG/HRV carries independent signal even for non-cardiac tasks |
 | `abl_cardio` ≈ `abl_no_bas` | EMG adds little; RESP+EKG drives the cardiorespiratory information |
 | `abl_cardio` > SleepFounder AUROC | Full PSG superiority is not purely from extra cardiorespiratory channels |
 | `abl_bas_only` ≈ full AUROC | Task is primarily encoded in EEG (e.g., sleep efficiency) |
 | `abl_bas_only` near chance | No task information survives without RESP+EKG (e.g., apnea) |
+| `abl_no_resp` ≪ `abl_no_bas`/`abl_no_ekg` for the same task | RESP is the single most necessary group — strongest, cleanest evidence in the table |
 
 For `apnea_binary`: we expect `abl_no_bas` ≈ full and `abl_bas_only` near chance (OSA is a
-respiratory disorder). For `sleep_efficiency_binary`: we expect `abl_bas_only` > `abl_cardio`
-(sleep staging features are in EEG, and SE = TST/TIB is determined by staging). For
-`sex_binary`: all three ablation AUROCs remain above 0.65 (sex is encoded in all physiological
-channels), but `abl_bas_only` may show the largest drop.
+respiratory disorder); **`abl_no_resp` is the cleanest test of this and should show the
+largest drop of any condition for this task** — this is the direct OSF-style leave-one-out
+analogue of their hypopnea/oxygen-desaturation finding (see `SOTA_COMPARISON_AND_ABLATIONS.md`
+§A.1). For `sleep_efficiency_binary`: we expect `abl_bas_only` > `abl_cardio`, and `abl_no_resp`
+to show a moderate drop too (sleep efficiency correlates with apnea). For `sex_binary`,
+`age_class`, and `bmi_binary`: no strong prior on `abl_no_resp`/`abl_no_ekg` — these two
+conditions are genuinely exploratory for these three tasks (no task in our 5-task set is
+hypothesized to be EKG-dominant; that would be `cvd_binary`, which is not in the ablation set).
 
 ---
 

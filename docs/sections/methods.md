@@ -635,16 +635,29 @@ extraction is required — the same fast-channel `.npy` files are reused unchang
 
 ### Ablation conditions
 
-Three conditions are chosen to answer complementary questions:
+Five conditions are chosen to answer complementary questions. `No RESP` and `No EKG` were
+added after the initial three (`No BAS`, `Cardio only`, `BAS only`) to complete the
+single-modality leave-one-out matrix, directly inspired by OSF's (Shuai et al., arXiv:2603.00190)
+own missing-channel ablation — their flagship result zeros Respiratory channels alone and
+evaluates on Hypopnea/Oxygen Desaturation, the direct analogue of our `apnea_binary`. Without
+`No RESP`, RESP's necessity could only be inferred indirectly through conditions that also
+remove EKG/EMG (`No BAS`, `Cardio only`) or that remove RESP alongside EKG/EMG (`BAS only`) —
+never as a clean single-group knockout.
 
 | Condition | Groups zeroed | Groups active | Scientific question |
 |---|---|---|---|
 | No BAS | BAS [0:128] | RESP+EKG+EMG [128:512] | Can the task be solved without any EEG/EOG? (minimal-sensor setting) |
+| No RESP | RESP [128:256] | BAS+EKG+EMG [0:128, 256:512] | Does removing respiratory signal alone hurt? (OSF-style leave-one-out) |
+| No EKG | EKG [256:384] | BAS+RESP+EMG [0:256, 384:512] | Does removing the cardiac signal alone hurt? |
 | Cardio only | BAS+EMG [0:128, 384:512] | RESP+EKG [128:384] | Direct comparison to SleepFounder (RESP+EKG model) |
 | BAS only | RESP+EKG+EMG [128:512] | BAS [0:128] | How much do brain signals alone explain? |
 
 The baseline (all four groups active) comes from the corresponding fast-channel (`phase0_v3`)
 experiment at the same context length — no additional training is required for the reference.
+
+EMG is not isolated (No EMG / EMG only) — none of the five ablation tasks are EMG/periodic-limb-movement-driven
+the way sleep staging would be, and OSF does not vary the Somatic group in their own
+missing-channel evaluation either.
 
 ### Task and context selection
 
@@ -665,34 +678,49 @@ give K_infer ≈ 3–4 windows/subject (too sparse for stable AUROC estimates).
 
 ### Experimental scope and isolation
 
-15 experiments total (5 tasks × 3 conditions), LSTM head only. Results are written to a
+25 experiments total (5 tasks × 5 conditions), LSTM head only. Results are written to a
 completely separate directory (`phase0_v3_abl/`) and log directory (`logs_v3_abl/`), defined
 in a dedicated registry (`experiments/v2_ablation_registry.yaml`) and config
 (`configs/phase0_v3_abl_config.yaml`). This guarantees zero overlap with `phase0_v3/` or
-`phase0_v3_full/`.
+`phase0_v3_full/`. No code changes were required to add `No RESP`/`No EKG` — the
+`zero_modality_indices` mechanism already supports any subset of groups; only new registry
+entries were needed.
 
 ### Expected findings (pre-registration)
 
 - **`apnea_binary`, no BAS:** Drop < 0.02. RESP carries the OSA signal; EEG is uninformative.
+- **`apnea_binary`, no RESP:** Largest drop of any condition for this task — the direct,
+  clean test of "RESP carries the OSA signal," mirroring OSF's hypopnea finding. Expect AUROC
+  to fall toward (but likely not all the way to) chance.
+- **`apnea_binary`, no EKG:** Small drop. EKG is not expected to be apnea's primary signal.
 - **`apnea_binary`, BAS only:** Drop > 0.15. EEG alone cannot detect apnea (near chance).
 - **`apnea_binary`, cardio only:** Should approach SleepFounder (0.917 on their OSA task).
   If our cardio-only AUROC exceeds SleepFounder, the gap is attributable to RESP richness
   (7-channel vs. their single airflow/SpO2 proxy), not to additional modalities.
 - **`sleep_efficiency_binary`, BAS only:** Small drop (< 0.05). Sleep efficiency is determined
   by sleep stage, which is encoded primarily in EEG alpha/spindle/slow-wave patterns.
+- **`sleep_efficiency_binary`, no RESP:** Moderate drop expected — sleep efficiency correlates
+  with apnea, so RESP may carry information beyond what EEG-driven staging signal provides.
 - **`sex_binary`, no BAS:** Moderate drop (0.02–0.08). Sex differences in EEG are documented
   but RESP and EKG also carry sex-related information (respiration rate, HRV).
+- **`sex_binary`/`age_class`/`bmi_binary`, no RESP and no EKG:** No strong prior — genuinely
+  exploratory for these three tasks. No task in the 5-task ablation set is hypothesized to be
+  EKG-dominant (that would be `cvd_binary`, not currently in the ablation set).
 
 ### Paper Methods wording (draft)
 
 > "To quantify the contribution of each PSG modality group, we repeated the LSTM training with
 > one or more SleepFM modality groups set to zero in the embedding at both training and
-> inference time. Three conditions were evaluated across five high-AUROC tasks (sex,
+> inference time. Five conditions were evaluated across five high-AUROC tasks (sex,
 > apnea, sleep efficiency, age, BMI): (i) no brain signals (BAS zeroed; RESP+EKG+EMG active),
-> (ii) cardiorespiratory only (BAS+EMG zeroed; RESP+EKG active — matching the SleepFounder
-> sensor set), and (iii) brain signals only (RESP+EKG+EMG zeroed; BAS active). The baseline
-> for each task is the corresponding full-channel LSTM result at the same context length.
-> This training-time ablation measures peak capability of each channel subset, not robustness
+> (ii) no respiratory signals (RESP zeroed; BAS+EKG+EMG active), (iii) no cardiac signal (EKG
+> zeroed; BAS+RESP+EMG active), (iv) cardiorespiratory only (BAS+EMG zeroed; RESP+EKG active —
+> matching the SleepFounder sensor set), and (v) brain signals only (RESP+EKG+EMG zeroed; BAS
+> active). Conditions (ii) and (iii) complete the single-modality leave-one-out decomposition
+> and are directly inspired by OSF's missing-channel ablation, which zeros respiratory channels
+> alone and evaluates on the analogous hypopnea/oxygen-desaturation tasks. The baseline for each
+> task is the corresponding full-channel LSTM result at the same context length. This
+> training-time ablation measures peak capability of each channel subset, not robustness
 > to channel dropout (see §III-J for the inference-time robustness analysis)."
 
 **[QUESTION 14]** Is SleepFounder's sensor set described precisely as RESP+EKG in their paper,
