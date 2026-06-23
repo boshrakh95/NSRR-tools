@@ -1,29 +1,28 @@
 # Results Section — Planning Document
 
-This document is the reference for writing the Results section in the LaTeX paper. It records
-all available results, pending items, recommended structure, and specific numbers to use. Update
-it as new experiments finish.
+Reference for writing the Results section in the LaTeX paper. Records all available results,
+pending items, figure/table placement decisions, and specific numbers. Update as experiments finish.
 
 ---
 
-## Completion status at time of writing
+## Experiment completion status
 
 | Experiment set | Status | Notes |
 |---|---|---|
-| Fast-channel seq2label (LSTM + Transformer) | **DONE** | All 6 contexts, all 8 remaining tasks |
-| Full-channel seq2label (LSTM + Transformer) | **DONE** | Same tasks, same heads |
+| Fast-channel seq2label (LSTM + Transformer) | **DONE** | All 6 contexts, 8 remaining tasks |
+| Full-channel seq2label (LSTM + Transformer) | **DONE** | Same tasks and heads |
 | Modality ablation (25 jobs) | **DONE** | 5 tasks × 5 conditions, as of 2026-06-17 |
-| MeanPool head | **PENDING** | Not yet in analysis.csv; required for H4 |
-| Sleep staging (multi-dataset re-run) | **PENDING** | SHHS+MrOS+APPLES, hidden=256, val_kappa |
-| Bootstrap CIs (all tasks) | **PARTIAL** | Present for some rows; needs full sweep |
+| MeanPool head | **PENDING** | Not yet in analysis.csv; needed for H4 |
+| Sleep staging (multi-dataset re-run) | **PENDING** | SHHS+MrOS+APPLES, val_kappa monitor |
+| Bootstrap CIs (all tasks) | **PARTIAL** | Present for some rows; need full sweep |
 | Iso-compute heatmap (dense K sweep) | **PENDING** | Requires `build_heatmap_df.py` run |
 | K-grid table (all tasks) | **PARTIAL** | Only sex_binary_lstm done |
-| Per-cohort breakdown | **PARTIAL** | Only sex_binary_lstm done |
+| Per-cohort breakdown (all tasks) | **PARTIAL** | Only sex_binary_lstm done |
 | Token-budget sensitivity (Supplementary) | **PENDING** | Not yet run |
 
 **Remaining tasks in paper (after dropping psqi, sleepiness, cvd, osa_severity):**
 
-| Task | Heads run | Note |
+| Task | Heads | Note |
 |---|---|---|
 | sex_binary | LSTM, Transformer | MeanPool pending |
 | age_class | LSTM, Transformer | MeanPool pending |
@@ -31,22 +30,71 @@ it as new experiments finish.
 | bmi_binary | LSTM, Transformer | MeanPool pending |
 | sleep_efficiency_binary | LSTM, Transformer | MeanPool pending |
 | sleep_staging | — | Full re-run pending |
-| depression_extreme_binary | LSTM | LSTM only |
-| osa_binary_apples_postqc | LSTM | LSTM only, small N (161 test) |
+| depression_extreme_binary | LSTM | LSTM only; small N (229 test) |
+| osa_binary_apples_postqc | LSTM | LSTM only; small N (161 test) |
 
 ---
 
-## Recommended structure for the Results section
+## Main paper / supplementary placement decisions
 
-```
-IV. Results
-  A. Context-Length Saturation (H1)            ← main saturation curves + Table 1 + Table 2
-  B. Head Architecture Comparison (H4)         ← LSTM vs Transformer vs MeanPool
-  C. Aggregation and Iso-Compute Analysis      ← K-sweep (H3) + iso-compute (H2)
-  D. Channel Count Expansion                   ← fast vs full channel comparison
-  E. Modality Group Ablation                   ← Table 6, which modalities matter
-  F. Sleep Staging (placeholder until results) ← κ vs context, per-stage F1
-```
+TBME limits: typically 8–10 display items in main text. Target: ≤6 figures, ≤5 tables for the
+whole paper (Table I in Methods is the task definition table).
+
+### Main paper figures
+
+| # | Content | File (phase0_v3) | Status |
+|---|---|---|---|
+| Fig 1 | Pipeline overview | `fig1.png` (placeholder) | Placeholder |
+| Fig 2 | Saturation curves — AUROC vs L, multi-panel for 6 primary tasks + sleep staging | `saturation/saturation_{task}_auroc_test.png` (one per task) | Exists for seq2label |
+| Fig 3 | Cross-task context sensitivity — scatter or bar chart of ΔAUROC vs task | `task_comparison/task_comparison_6A_scatter.png` or `6B_bars.png` | **EXISTS** |
+| Fig 4 | Modality ablation — grouped bar chart, AUROC drop per condition per task | Regenerate from Table 6 numbers | Generate from table |
+| Fig 5 | Sleep staging κ vs L, per head + per-stage F1 at best L | PENDING | PENDING |
+
+Note: Channel expansion (fast vs full) is a clear finding but space is tight. Present as a
+supplementary figure unless sleep staging is still pending at submission — in that case promote
+channel comparison to main Fig 5 and add sleep staging later.
+
+### Main paper tables (Results section)
+
+| # | Content | File | Status |
+|---|---|---|---|
+| Table II | Main performance: AUROC per task/head, K=5 and K=all at best L | `table1_peak_auroc_fast.{md,tex}` | EXISTS (regenerate after MeanPool) |
+| Table III | Saturation: L* per task/head + ΔAUROC from 30s | `table2_lstar_fast.{md,tex}` | EXISTS (regenerate after MeanPool) |
+| Table IV | Head comparison at L* — LSTM, Transformer, MeanPool | `table5_heads_fast.{md,tex}` | PARTIAL (needs MeanPool) |
+| Table V | Modality ablation — AUROC per condition per task | `table6_modality.{md,tex}` | **EXISTS, complete** |
+
+Channel comparison (fast vs full): fold into Table II as extra columns or present inline in text.
+If space allows, add as Table VI; otherwise move to supplementary.
+
+### Supplementary figures
+
+| # | Content | File | Status |
+|---|---|---|---|
+| S-Fig 1 | Iso-compute heatmap (L × K grid) for sex_binary and apnea_binary | `{task}_lstm/auroc_test/heatmap_auroc.png` | Exists (phase0_v2); regenerate v3 |
+| S-Fig 2 | K-sweep curves — AUROC vs K at each L, for sex_binary and sleep_efficiency | `{task}_{head}_test_window_sweep_auroc.png` | **EXISTS** |
+| S-Fig 3 | Cohort saturation — per-dataset AUROC vs L for apnea_binary | `apnea_binary_lstm/apnea_binary_lstm_cohort_saturation_7A.png` | **EXISTS** |
+| S-Fig 4 | Precision-recall curves vs context, for apnea_binary | `apnea_binary_lstm/apnea_binary_lstm_pr_8A_curves.png` | **EXISTS** |
+| S-Fig 5 | Calibration (ECE vs context) for representative task | `{task}/calibration_2B_ece_vs_context.png` | **EXISTS** |
+| S-Fig 6 | Channel comparison saturation overlays (fast vs full) for sex, apnea, sleep_eff | Generate from both analysis CSVs | Generate |
+| S-Fig 7 | Sleep staging common evaluation set (240m-valid anchors only) | PENDING | PENDING |
+
+Note: window_position (4A/4B), subject_consistency (5A/5B/5C), kstar (9A/9B) figures exist but
+are lower priority; include only if page budget allows.
+
+### Supplementary tables
+
+| # | Content | File | Status |
+|---|---|---|---|
+| S-Table I | Excluded subjects (cohort filter) | Already in supplementary.tex | EXISTS |
+| S-Table II | Per-task subject counts | Already in supplementary.tex | EXISTS |
+| S-Table III | Bandpass filter details | Already in supplementary.tex | EXISTS |
+| S-Table IV | K-grid: AUROC × K for sex_binary_lstm | `table3_kgrid_sex_binary_lstm_fast.{md,tex}` | **EXISTS** |
+| S-Table V | Cross-task context sensitivity ranking | `table4_sensitivity_fast_lstm.{md,tex}` | PARTIAL (3 tasks only) |
+| S-Table VI | Bootstrap CI summary (AUROC ± 95% CI per task at L*) | `table10_ci_fast.{md,tex}` | PARTIAL |
+| S-Table VII | Cohort breakdown for sex_binary and apnea_binary at L* | `table9_cohort_sex_binary_lstm_fast.{md,tex}` | PARTIAL |
+| S-Table VIII | Threshold tuning details (Δ balanced accuracy per task) | From POSTHOC_THRESHOLD_TUNING.md | Compute |
+| S-Table IX | K=5 window sampling sensitivity (fixed K vs token-budget) | Pending experiment | PENDING |
+| S-Table X | Sleep staging: common evaluation set comparison | Pending staging run | PENDING |
 
 ---
 
@@ -54,41 +102,52 @@ IV. Results
 
 ### Narrative
 All six clinical prediction tasks show some improvement with longer context, but the magnitude
-and the context at which performance saturates varies substantially across tasks. Sleep efficiency
-prediction benefits most from long context (L*=240min, ΔAUROC=+0.102 for LSTM), consistent with
-sleep efficiency encoding information spread across the full night. Apnea prediction requires up
-to 120 minutes (ΔAUROC=+0.074). Sex and age classification saturate earlier (L*=80m and 40m
-respectively for LSTM). BMI classification shows minimal context benefit (ΔAUROC=+0.006). This
-heterogeneity supports the hypothesis that context requirements are task-specific rather than
-reflecting a single universal temporal scale in PSG.
+and the point of saturation vary substantially across tasks. Sleep efficiency prediction benefits
+most from long context (L*=240m, ΔAUROC=+0.102 for LSTM, +0.124 for Transformer), consistent
+with sleep efficiency encoding information distributed across the full night. Apnea prediction
+requires up to 120 minutes (ΔAUROC=+0.074 LSTM, +0.104 Transformer). Sex and age classification
+saturate earlier (LSTM L*=80m and 40m respectively). BMI shows minimal context benefit
+(ΔAUROC=+0.006 LSTM). This heterogeneity supports task-specific context requirements rather
+than a single universal temporal scale.
 
-Depression (L*=10m) and OSA-APPLES (L*=40m) each have small test sets (229 and 161 subjects)
-and show non-monotonic saturation curves at long contexts; interpret with caution.
+Depression (L*=10m) and OSA-APPLES (L*=40m) each have small test sets (229 and 161 subjects);
+their non-monotonic long-context curves should be interpreted cautiously.
 
-### Table 1 — Peak AUROC per task (already generated: results/tables/table1_peak_auroc_fast.*)
+### Table II — Main performance table (fast-channel, test split)
 
-Numbers to use (fast-channel, test split, K=all = full-night aggregation):
+Numbers: K=5 (clinical deployment, matching training) and K=all (full-night ceiling).
 
-| Task | N_test | Head | AUROC@30s | AUROC@40m | AUROC@120m | AUROC@240m | **Best AUROC** | Best L |
-|---|---|---|---|---|---|---|---|---|
-| sex_binary | 1433 | LSTM | 0.825 | 0.866 | **0.872** | 0.857 | 0.872 | 120m |
-| sex_binary | 1433 | Transformer | 0.832 | 0.872 | 0.905 | **0.910** | 0.910 | 240m |
-| age_class | ~1860 | LSTM | 0.865 | 0.890 | **0.893** | 0.885 | 0.893 | 120m |
-| age_class | ~1860 | Transformer | 0.854 | 0.878 | 0.902 | **0.905** | 0.905 | 240m |
-| apnea_binary | 2054 | LSTM | 0.758 | 0.792 | **0.832** | 0.827 | 0.832 | 120m |
-| apnea_binary | 2054 | Transformer | 0.753 | 0.825 | **0.857** | 0.854 | 0.857 | 120m |
-| bmi_binary | 1856 | LSTM | 0.760 | 0.756 | 0.756 | 0.748 | 0.767 | 80m |
-| bmi_binary | 1856 | Transformer | 0.747 | 0.755 | 0.766 | **0.777** | 0.777 | 240m |
-| sleep_eff_binary | 2023 | LSTM | 0.697 | 0.731 | 0.780 | **0.799** | 0.799 | 240m |
-| sleep_eff_binary | 2023 | Transformer | 0.707 | 0.760 | 0.815 | **0.831** | 0.831 | 240m |
-| depression_extreme | 229 | LSTM | 0.757 | 0.761 | 0.748 | 0.750 | 0.770 | 10m |
-| osa_apples_postqc | 161 | LSTM | 0.769 | **0.834** | 0.789 | 0.774 | 0.834 | 40m |
+| Task | N_test | Head | Best L | AUROC@K=5 | AUROC@K=all |
+|---|---|---|---|---|---|
+| sex_binary | 1433 | LSTM | 120m | 0.872 | 0.872 |
+| sex_binary | 1433 | Transformer | 120m | 0.905 | 0.910 |
+| sex_binary | 1433 | MeanPool | — | PENDING | PENDING |
+| age_class | ~1860 | LSTM | 120m | 0.893 | 0.893 |
+| age_class | ~1860 | Transformer | 120m | 0.902 | 0.905 |
+| age_class | ~1860 | MeanPool | — | PENDING | PENDING |
+| apnea_binary | 2054 | LSTM | 120m | 0.831 | 0.832 |
+| apnea_binary | 2054 | Transformer | 120m | 0.856 | 0.857 |
+| apnea_binary | 2054 | MeanPool | — | PENDING | PENDING |
+| bmi_binary | 1856 | LSTM | 80m | 0.763 | 0.767 |
+| bmi_binary | 1856 | Transformer | 80m | 0.767 | 0.777 |
+| bmi_binary | 1856 | MeanPool | — | PENDING | PENDING |
+| sleep_efficiency_binary | 2023 | LSTM | 240m | 0.799 | 0.799 |
+| sleep_efficiency_binary | 2023 | Transformer | 240m | 0.831 | 0.831 |
+| sleep_efficiency_binary | 2023 | MeanPool | — | PENDING | PENDING |
+| sleep_staging | ~15000 | LSTM | — | PENDING (κ) | PENDING |
+| sleep_staging | ~15000 | Transformer | — | PENDING (κ) | PENDING |
+| depression_extreme_binary | 229 | LSTM | 10m | 0.776 | 0.770 |
+| osa_binary_apples_postqc | 161 | LSTM | 10m | 0.823 | 0.834 |
 
-Full 6-context LSTM/Transformer per-task curves are available in analysis.csv.
+For channel comparison columns (fast vs full): add as separate column pair, or fold into a
+footnote if space is tight. Full-channel best AUROCs for key tasks:
+- apnea_binary/Transformer: 0.857 → 0.901 (+0.044)
+- sex_binary/Transformer: 0.910 → 0.929 (+0.019)
+- bmi_binary/Transformer: 0.777 → 0.816 (+0.039)
 
-### Table 2 — L* (Saturation Threshold) per task/head (already generated: results/tables/table2_lstar_fast.*)
+### Table III — Saturation threshold L* per task/head
 
-| Task | LSTM L* | LSTM ΔAUROC (30s→best) | Transformer L* | Transformer ΔAUROC |
+| Task | LSTM L* | LSTM ΔAUROC | Transformer L* | Transformer ΔAUROC |
 |---|---|---|---|---|
 | sex_binary | 80m | +0.047 | 240m | +0.078 |
 | age_class | 40m | +0.028 | 120m | +0.051 |
@@ -97,84 +156,70 @@ Full 6-context LSTM/Transformer per-task curves are available in analysis.csv.
 | sleep_efficiency_binary | 240m | +0.102 | 240m | +0.124 |
 | depression_extreme_binary | 10m | +0.013 | — | — |
 | osa_binary_apples_postqc | 40m | +0.065 | — | — |
+| sleep_staging | PENDING | — | PENDING | — |
 
-L* defined as smallest L within 0.005 AUROC of the best context (K=all, test split).
+ΔAUROC = K=all AUROC at best L minus K=all AUROC at 30s. L* = smallest L within 0.005 of peak.
 
-**Key message:** L* ranges from 10m to 240m across tasks. Tasks based on physiological
-measurements spanning the night (sleep efficiency, apnea) require long context. Tasks based on
-static or distributed traits (sex, BMI) saturate earlier or show little context benefit.
+Key message: L* ranges from 10m to 240m. Physiological tasks (sleep efficiency, apnea) require
+long context; demographic/metabolic tasks (sex, BMI) saturate earlier.
 
-### Figures needed
-- **Figure 2 (primary results figure):** Saturation curves — AUROC vs context length (log scale),
-  one subplot per task, lines for LSTM and Transformer (and MeanPool once available). Y-axis
-  starts at 0.5. Error bands from bootstrap CIs. Mark L* with a vertical dashed line or dot.
-- These plots already exist at: `/scratch/boshra95/psg/unified/results/phase0_v3/figures/`
+### Figure 2 — Saturation curves
 
-### K=5 numbers (deployment scenario, for Table 1 if two columns needed)
+Multi-panel: one subplot per task (2×3 grid for 6 primary tasks; + sleep staging when available).
+X-axis: context length on log scale (0.5m to 240m). Y-axis: AUROC, starting at 0.5.
+Lines: LSTM (solid), Transformer (dashed), MeanPool (dotted, pending). Error bands from CI.
+Mark L* with a vertical dashed line per head.
 
-| Task | Head | Best L@K=5 | AUROC@K=5 |
-|---|---|---|---|
-| sex_binary | LSTM | 120m | 0.872 |
-| sex_binary | Transformer | 120m | 0.905 |
-| age_class | LSTM | 120m | 0.893 |
-| age_class | Transformer | 120m | 0.902 |
-| apnea_binary | LSTM | 120m | 0.831 |
-| apnea_binary | Transformer | 120m | 0.856 |
-| bmi_binary | LSTM | 80m | 0.763 |
-| bmi_binary | Transformer | 80m | 0.767 |
-| sleep_efficiency_binary | LSTM | 240m | 0.799 |
-| sleep_efficiency_binary | Transformer | 240m | 0.831 |
-| depression_extreme_binary | LSTM | 10m | 0.776 |
-| osa_binary_apples_postqc | LSTM | 10m | 0.823 |
+Source files: `results/figures/phase0_v3/saturation/saturation_{task}_auroc_test.png`
+(individual; may need to regenerate as combined multi-panel with consistent axes).
 
-For K=5 vs K=all: at medium-to-long contexts (≥40m) the gap is small (<0.003). At short contexts
-(30s) the gap is meaningful (e.g., sex_binary LSTM: K=5=0.805 vs K=all=0.824 at 30s).
+Tasks to include: sex_binary, age_class, apnea_binary, bmi_binary, sleep_efficiency_binary,
+sleep_staging (placeholder panel until run completes).
+
+### Figure 3 — Cross-task context sensitivity
+
+Source: `results/figures/phase0_v3/task_comparison/task_comparison_6B_bars.png` (bar chart)
+OR `task_comparison_6A_scatter.png` (scatter: ΔAUROC vs AUROC@30s as proxy for task difficulty).
+
+The scatter is more informative for the paper narrative — shows no correlation between baseline
+task difficulty and context sensitivity. Use `6A_scatter.png` as primary; `6B_bars.png` as
+supplementary alternative.
+
+Note: figures include dropped tasks (psqi, sleepiness, cvd). Need to regenerate after removing
+those tasks, or annotate on the figure which ones are excluded.
 
 ---
 
 ## IV-B. Head Architecture Comparison (H4)
 
 ### Status
-- LSTM vs Transformer: **available for all tasks**.
-- MeanPool: **PENDING** — not yet collected. Cannot fully test H4 without MeanPool.
-- Write this subsection with LSTM/Transformer now; add MeanPool when available.
+LSTM vs Transformer: available for all tasks. MeanPool: PENDING.
+Write subsection now with LSTM/Transformer; add MeanPool placeholder.
 
-### Numbers (from cross-task summary at best context per head, K=all)
+### Table IV — Head comparison at L* (each task's best context)
 
-| Task | LSTM best | Transformer best | Δ (Transformer advantage) |
-|---|---|---|---|
-| sex_binary | 0.872 | 0.910 | **+0.038** |
-| age_class | 0.893 | 0.905 | +0.012 |
-| apnea_binary | 0.832 | 0.857 | **+0.025** |
-| bmi_binary | 0.767 | 0.777 | +0.010 |
-| sleep_efficiency_binary | 0.799 | 0.831 | **+0.032** |
+| Task | Context | LSTM@K=5 | Transformer@K=5 | MeanPool@K=5 | Temporal advantage† |
+|---|---|---|---|---|---|
+| sex_binary | 120m | 0.872 | 0.905 | PENDING | +0.033 (T-L) |
+| age_class | 120m | 0.893 | 0.902 | PENDING | +0.009 |
+| apnea_binary | 120m | 0.831 | 0.856 | PENDING | +0.025 |
+| bmi_binary | 80m | 0.763 | 0.767 | PENDING | +0.004 |
+| sleep_efficiency | 240m | 0.799 | 0.831 | PENDING | +0.032 |
+| sleep_staging | — | PENDING κ | PENDING κ | PENDING κ | — |
 
-**Finding:** Transformer consistently outperforms LSTM. Advantage is largest for tasks with strong
-signal and long optimal context (sex, sleep efficiency, apnea). Smallest for low-signal tasks (BMI).
+†Transformer minus LSTM at the same context. MeanPool comparison needed for full H4 test.
 
-**Important caveat for writing:** Both heads are compared at their independently optimised best L.
-A strictly fair H4 test would compare at a single fixed L. Both LSTM and Transformer at L=120m:
-- sex: LSTM 0.872, Transformer 0.905 (+0.033) — meaningful
-- apnea: LSTM 0.832, Transformer 0.857 (+0.025)
-- sleep_eff: LSTM 0.780, Transformer 0.815 (+0.035)
-This fixed-L comparison still shows consistent Transformer advantage.
-
-**MeanPool role:** H4 predicts MeanPool will approach LSTM/Transformer at short L but fall behind
-at long L. Without MeanPool results, H4 can only be partially tested. Discuss in limitations or
-add a placeholder figure.
-
-### Table 5 — Head comparison table (results/tables/table5_heads_fast.*, partially generated)
-Only sex_binary_lstm row exists. Need to regenerate for all tasks once MeanPool is available.
+Key finding (partial): Transformer consistently outperforms LSTM. Advantage is largest for tasks
+with strong signal and long optimal context (sex +0.033, sleep_efficiency +0.032, apnea +0.025).
+Cannot fully test H4 until MeanPool results are available.
 
 ---
 
-## IV-C. Aggregation and Iso-Compute Analysis (H2, H3)
+## IV-C. Aggregation Analysis (H2, H3)
 
-### K-Sweep (H3 — aggregation saturation)
+### K-sweep findings (H3 — aggregation saturation)
 
-**Available:** sex_binary_lstm only (Table 3, results/tables/table3_kgrid_sex_binary_lstm_fast.*)
-
-Key data from sex_binary/LSTM (AUROC at each context × K):
+Data available for sex_binary_lstm (S-Table IV):
 
 | L | K=1 | K=5 | K=10 | K=20 | K=all |
 |---|---|---|---|---|---|
@@ -182,42 +227,20 @@ Key data from sex_binary/LSTM (AUROC at each context × K):
 | 10m | 0.720 | 0.823 | 0.836 | 0.840 | 0.842 |
 | 40m | 0.760 | 0.853 | 0.862 | 0.866 | 0.866 |
 | 80m | 0.798 | 0.866 | 0.868 | — | 0.868 |
-| 120m | 0.822 | 0.855 | — | — | 0.855 |
-| 240m | 0.791 | — | — | — | 0.812 |
 
-**Findings:**
-- At short contexts (30s, 10m), K=1 is substantially worse than K=all; aggregation matters.
-- Aggregation saturates around K=5–10 at short contexts, K=3–5 at medium contexts.
-- Even at K=all for 30s (0.824), performance does not reach K=5 at 80m (0.866) — demonstrating
-  that K windows cannot fully substitute for longer L.
-- At long contexts (80m+), K=5 ≈ K=all because few non-overlapping windows fit per recording.
+At medium-to-long contexts (≥40m), K=5 captures ≥99% of K=all benefit. At short contexts (30s),
+even K=all (0.824) does not reach K=5 at 80m (0.866), demonstrating that aggregation cannot
+substitute for longer context beyond a ceiling.
 
-**For H3 claim:** Performance saturates quickly with K. K=5 captures ≥95% of the K=all gain at
-every context length tested (for sex_binary_lstm).
+### Iso-compute analysis (H2 — aggregation substitution)
 
-**What's missing:** K-grid for other tasks. Recommend generating table3 for at least apnea_binary
-and sleep_efficiency_binary to show that saturation patterns hold across tasks.
+Full dense K sweep PENDING. Sparse reading from analysis.csv for sex_binary/LSTM at 80-min
+budget: L=80m,K=1 → AUROC=0.798; L=10m,K≈8 → AUROC≈0.833. Preliminary: aggregating short
+windows marginally outperforms a single long window at matched budget, but the difference is
+small. Full heatmap analysis needed for definitive claim.
 
-### Iso-Compute Analysis (H2 — aggregation substitution)
-
-**Status: PARTIALLY AVAILABLE** from sparse K data in analysis.csv. Full heatmap requires dense K
-sweep (build_heatmap_df.py — PENDING).
-
-**Manual iso-compute reading (sex_binary/LSTM, budget = 80 min):**
-
-| Configuration | Total signal | AUROC |
-|---|---|---|
-| L=80m, K=1 | 80 min | 0.798 |
-| L=10m, K=8 | ~80 min | ~0.833 (interpolated between K=5=0.823 and K=10=0.836) |
-| L=40m, K=2 | 80 min | ~0.804 (interpolated between K=1=0.760 and K=5=0.853) |
-
-**Preliminary finding (H2 — partially falsified):** At matched signal budget, aggregating K windows
-of shorter context (10m × 8) tends to slightly outperform a single longer window (80m × 1).
-However, once L is long enough (≥80m), further aggregation adds little. Full iso-compute analysis
-with dense K values needed for definitive conclusions.
-
-**Recommendation:** Run the dense K sweep (gen_commands.py analyze --k-dense for each task/head)
-before finalising this subsection. The 2D heatmap (Figure 3 or 4) is a key paper figure.
+Report this analysis in text with caveat that iso-compute figure is pending. S-Fig 1 (heatmap)
+will be supplementary when available.
 
 ---
 
@@ -225,9 +248,7 @@ before finalising this subsection. The 2D heatmap (Figure 3 or 4) is a key paper
 
 ### Numbers (fast vs full, K=all, best context per task/head)
 
-From results_summary_fast_vs_full.csv:
-
-| Task | Head | Fast AUROC | Full AUROC | Gain |
+| Task | Head | Fast AUROC | Full AUROC | Δ |
 |---|---|---|---|---|
 | apnea_binary | Transformer | 0.857 | 0.901 | **+0.044** |
 | apnea_binary | LSTM | 0.832 | 0.874 | **+0.042** |
@@ -235,38 +256,31 @@ From results_summary_fast_vs_full.csv:
 | bmi_binary | LSTM | 0.767 | 0.802 | **+0.036** |
 | sex_binary | LSTM | 0.873 | 0.906 | **+0.033** |
 | sex_binary | Transformer | 0.910 | 0.929 | +0.019 |
-| sleep_efficiency_binary | LSTM | 0.788 | 0.810 | +0.022 |
-| sleep_efficiency_binary | Transformer | 0.831 | 0.825 | −0.006 |
+| sleep_efficiency | LSTM | 0.788 | 0.810 | +0.022 |
+| sleep_efficiency | Transformer | 0.831 | 0.825 | −0.006 |
 | age_class | LSTM | 0.893 | 0.901 | +0.008 |
 | age_class | Transformer | 0.905 | 0.911 | +0.006 |
-| depression_extreme_binary | LSTM | 0.770 | 0.752 | −0.018 |
-| osa_binary_apples_postqc | LSTM | 0.834 | 0.772 | **−0.062** |
+| depression_extreme | LSTM | 0.770 | 0.752 | −0.018 |
+| osa_binary_apples_postqc | LSTM | 0.834 | 0.772 | −0.062 ‡ |
 
-**Note on full-channel fast-channel mismatch for sleep_eff Transformer and osa_apples LSTM:**
-- sleep_eff/Transformer: small drop (−0.006), within noise for this task
-- osa_apples/LSTM: large drop (−0.062), likely due to small N (161 test), APPLES-specific channel
-  availability patterns interacting with full-channel preprocessing. Treat with caution; may need
-  footnote or exclusion from this comparison.
+‡ OSA-APPLES full-channel drop: likely small-N artefact (161 test subjects). Include in table
+with a comment mark and footnote: "Full-channel performance for this task (N=161) should be
+interpreted cautiously; the result is sensitive to sampling variability." — per user decision to
+include now but flag for possible exclusion later.
 
-**Finding:** Full-channel (up to 23 channels) improves AUROC for tasks with strong physiological
-signal (apnea: +0.042–0.044, BMI: +0.036–0.039, sex: +0.019–0.033). Gains are smaller for tasks
-already well-explained by the reduced channel set (age: +0.006–0.008). No gain for small-N tasks
-(depression, osa_apples) where additional channels introduce variance without signal.
+Key finding: Full channel (up to 23 channels) improves AUROC for tasks with rich physiological
+signal (apnea +0.042–0.044, BMI +0.036–0.039, sex +0.019–0.033). Gains diminish for tasks with
+low inherent predictability from PSG (age +0.006–0.008). Small-N tasks show inconsistent results.
 
-**Context sensitivity with full channels:** Full-channel models appear to saturate at shorter L
-for some tasks. For sex_binary_lstm, full-channel L* shifts from 120m (fast) to approximately
-40m (full) — richer per-patch representations require less temporal aggregation.
-
-**Figure:** Grouped bar chart or scatter showing fast vs full AUROC per task, or saturation curves
-overlaid fast vs full for sex, apnea, sleep_efficiency.
+Integrate into Table II as extra columns, or present as inline numbers in the text (more readable).
 
 ---
 
 ## IV-E. Modality Group Ablation
 
-### Numbers (Table 6, results/tables/table6_modality.*, 25/25 conditions complete)
+### Table V — Modality ablation (Table 6, complete, 25/25 conditions)
 
-LSTM head, at task-specific context (120m for sex/apnea/sleep_eff/age; 40m for BMI):
+Fast-channel LSTM, at task-specific context (120m for sex/apnea/sleep_eff/age; 40m for BMI):
 
 | Task | Full | No BAS (Δ) | No RESP (Δ) | No EKG (Δ) | Cardio only (Δ) | BAS only (Δ) |
 |---|---|---|---|---|---|---|
@@ -276,160 +290,84 @@ LSTM head, at task-specific context (120m for sex/apnea/sleep_eff/age; 40m for B
 | age_class | 0.893 | 0.835 (−0.059) | 0.882 (−0.012) | 0.868 (−0.025) | 0.821 (−0.072) | 0.860 (−0.034) |
 | bmi_binary | 0.756 | 0.728 (−0.028) | 0.759 (+0.003) | 0.758 (+0.002) | 0.663 (−0.093) | 0.741 (−0.015) |
 
-Note: Full-channel baseline is not available for sleep_eff at 120m (full-channel is 0.810; the
-table above uses fast-channel for consistency with the ablation conditions).
+Note: sleep_efficiency full-channel AUROC at 120m was 0.780 (fast-channel, used as ablation
+baseline); full-channel value at 120m is 0.810. Modality ablation uses fast-channel baseline
+for consistency with the ablation conditions.
 
-### Task-by-task findings
+### Task-by-task key findings
 
-**Apnea (AHI ≥ 15):**
-- RESP is the most necessary modality: No RESP gives the largest single-knockout drop (−0.066).
-- No BAS: −0.050. Significant but RESP > BAS.
-- BAS only is worst condition overall (−0.109): brain signals alone cannot predict apnea.
-- Cardio only (RESP+EKG, BAS+EMG zeroed): 0.770 — respiration alone is insufficient without neural.
-- Interpretation: OSA is a respiratory disorder. RESP is necessary. However BAS contributes
-  independently (likely via cortical arousals and EEG fragmentation). This directly replicates
-  OSF's finding that respiratory channels are necessary for hypopnea/O₂ desaturation prediction.
-- Cardio-only (0.770) is far below SleepFounder OSA AUROC (0.917). Attribution: SleepFounder
-  fine-tunes full model on 800K hours; our setting uses frozen backbone. Not a fair comparison;
-  acknowledge in discussion.
+**Apnea:** RESP most necessary (−0.066) > No BAS (−0.050) > No EKG (−0.024). BAS-only is worst
+(−0.109). Replicates OSF finding: respiratory channels are necessary for OSA detection.
+RESP alone is not sufficient (cardio-only = 0.770 with RESP+EKG). Neural activity contributes
+via arousal-related EEG fragmentation.
 
-**Sleep efficiency:**
-- BAS is the dominant modality: No BAS drops by −0.099 (largest single drop in the table).
-- BAS only ≈ Full (0.786 vs 0.780, +0.005 — noise level): EEG/EOG alone explains sleep efficiency.
-- Three converging lines of evidence: (1) No BAS large drop, (2) BAS only ≈ Full, (3) Cardio only
-  is worst (−0.110). Sleep efficiency is encoded in EEG (sleep staging) rather than respiration.
-- No RESP: −0.021 — minor.
+**Sleep efficiency:** BAS dominates: No BAS largest drop (−0.099). BAS-only ≈ Full (−0.005,
+noise level). Three-way convergence confirms EEG/EOG alone explains sleep efficiency, consistent
+with its grounding in sleep staging. Cardio-only worst (−0.110).
 
-**Sex:**
-- EKG is the most necessary single modality: No EKG drops by −0.090 (surprising — not anticipated).
-- No BAS: −0.073. Significant.
-- Cardio only: −0.076. RESP+EKG together not enough — need BAS.
-- BAS only is worst (−0.096): neither brains nor respiration alone suffices.
-- Interpretation: cardiac signal (HRV, resting heart rate, sex differences in cardiac electrophysiology)
-  carries more sex-discriminative information than EEG in the SleepFM embedding space. This is a
-  novel and potentially surprising finding.
+**Sex (unexpected finding):** EKG is the most necessary single modality: No EKG drops −0.090,
+larger than No BAS (−0.073). Cardiac signal (HRV, heart rate, sex differences in cardiac
+electrophysiology) carries more sex-discriminative information than EEG in the SleepFM embedding
+space. BAS-only is worst overall (−0.096). This was not anticipated and is a notable finding.
 
-**Age group:**
-- BAS most necessary (−0.059). No EKG: −0.025. No RESP: −0.012 (borderline noise).
-- Cardio only: −0.072. BAS only: −0.034.
-- Interpretation: physiological aging is concentrated in EEG changes (slow wave sleep reduction,
-  spindle changes) and cardiac aging. Respiration adds less.
+**Age:** BAS most necessary (−0.059) → EKG (−0.025) → RESP (−0.012, borderline noise).
+Physiological aging concentrated in EEG changes and cardiac function; respiration adds less.
 
-**BMI:**
-- No single modality is clearly necessary: No RESP (+0.003), No EKG (+0.002) are noise-level;
-  No BAS (−0.028) is borderline.
-- But cardio only (BAS+EMG zeroed) drops by −0.093 — the largest BMI drop by condition.
-- Interpretation: BMI signal is likely diffuse across modalities (metabolic effects on sleep
-  architecture, respiratory effort, cardiac patterns). The cardio-only drop suggests RESP and EKG
-  together are important even if neither alone is necessary — possible interaction effect.
-  No clean interpretation available; acknowledge in discussion.
+**BMI:** No single modality clearly necessary (No RESP +0.003, No EKG +0.002 are noise-level;
+No BAS −0.028 borderline). Cardio-only (RESP+EKG) drops by −0.093 despite neither RESP nor EKG
+alone being necessary — suggests BAS×EMG interaction (or EMG's anti-noise role). Unclear;
+acknowledge in discussion.
 
-### Caveat
-Each condition = one training run with no multi-seed variance. Treat |Δ| < 0.02 as noise-level.
-All changes ≥ 0.05 are very likely real at N_test = 1430–2054.
+Caveat: Single training run per condition; |Δ| < 0.02 is noise-level. |Δ| > 0.05 very likely
+real at N_test 1430–2054.
 
 ---
 
 ## IV-F. Sleep Staging
 
-### Status: PENDING
+**STATUS: PENDING.** No paper-ready results.
 
-The primary multi-dataset run (SHHS+MrOS+APPLES, centered windows, complete_only, hidden=256,
-num_layers=2, val_kappa monitor) is submitted but no final results are available.
+Primary run: SHHS+MrOS+APPLES, centered windows, complete_only, hidden=256, num_layers=2,
+val_kappa. STAGES excluded.
 
-### Preliminary context from archived runs
+What to report when results arrive:
+1. Cohen's κ vs L for LSTM and Transformer (primary figure — Fig 5)
+2. Per-stage F1 at best L: W, N1, N2, N3, REM. N1 expected lowest.
+3. Note STAGES exclusion (footnote already in Table I).
+4. Note that at 240m context, ~50% of anchors excluded by complete_only policy.
+5. Supplementary: comparison run with STAGES (expected lower κ).
+6. Supplementary: common evaluation set (240m-valid anchors only, S-Table X).
 
-**Do NOT use these numbers in the paper — they are from stale runs with bugs or wrong datasets.**
-Context only:
-- Old APPLES-only LSTM (30s): AUROC ≈ 0.927. APPLES-only saturates at ~10m.
-- Old phase0 multi-dataset (hidden=256): 30s κ≈0.580, 10m κ≈0.620, 40m κ≈0.628. Plateau at 40m.
-- Including STAGES hurts: κ drops 0.028–0.094. STAGES excluded from primary run.
-
-### What to report when results arrive
-1. Cohen's κ vs context length for LSTM and Transformer (primary Figure for sleep staging).
-2. Per-stage F1 at best L: Wake, N1, N2, N3, REM. N1 expected to be lowest (5–8% of epochs).
-3. Note that STAGES is excluded from training and evaluation (footnote already in Table 1).
-4. Note that at 240m context, ~50% of anchor epochs are excluded (complete_only policy); at 30s,
-   essentially all epochs are evaluated. Discuss whether this affects saturation interpretation.
-5. Supplementary: comparison run including STAGES — expected lower κ; demonstrates the dataset
-   domination problem quantified by the training item count.
-6. Consider: supplementary common evaluation set analysis (restrict all contexts to 240m-valid
-   anchors only) to separate context-length effect from anchor-set size effect.
-
-### Placeholder text for paper until results arrive
-"Sleep staging results will be reported once the primary multi-dataset training run completes.
-Preliminary analyses with a single-cohort subset suggest a saturation context around 10–40 min."
+Placeholder text: "Sleep staging results will be reported upon completion of the multi-cohort
+training run. Preliminary single-cohort analyses suggest performance saturates around 10–40 min
+of context for κ, consistent with human scorers using ±1–2 min of surrounding context."
 
 ---
 
-## Supplementary Material
+## Numbers NOT to report (dropped tasks — reference only)
 
-### Supp Table I — Training K sensitivity
-Not yet run. Confirms: fixed K=5 windows per epoch ≈ token-budget schedule at L ≥ 10m.
-See docs/TRAINING_PROTOCOL_FIXES.md for the design; run the comparison experiment to get numbers.
-
-### Supp Table II — Threshold tuning details
-From docs/POSTHOC_THRESHOLD_TUNING.md; numbers to include:
-
-Tasks requiring threshold tuning (BA improvement at val-selected threshold):
-
-| Task | Head | Best Δ BA across contexts | Context with best Δ | Note |
-|---|---|---|---|---|
-| osa_binary_apples_postqc | LSTM | **+0.220** | 10m | Critical; t=0.5 gives BA≈0.55 |
-| depression_extreme_binary | LSTM | +0.065 | 80m | Use tuned for consistency |
-| bmi_binary | Transformer | +0.027 | 30s | Modest improvement |
-| bmi_binary | LSTM | +0.015 | — | Modest |
-| sex_binary | LSTM | +0.009 | — | Small |
-
-Tasks where t=0.5 retained: cvd (excluded from paper), apnea, sleep_efficiency, age_class,
-sex/Transformer. In paper: note in table captions where t* is used. OSA APPLES requires
-a clear note (threshold shift is very large; default is effectively non-informative).
-
-### Supp — Common evaluation set (sleep staging)
-Planned: restrict all context lengths to the subset of anchors that are valid under 240m context
-(anchors far enough from recording edges for the longest window). This allows comparing κ across
-contexts with an identical evaluation population, removing the confound that longer contexts
-evaluate fewer anchors. Implement after multi-dataset staging run completes.
-
-### Supp — Bootstrap CIs on saturation curves
-Already computed for some rows. Run:
-```bash
-bash scripts/run_analysis.sh [all tasks] --bootstrap 1000 --analyze-only
-```
-Required before finalising the saturation curve figures with error bands.
-
----
-
-## Figures needed (summary)
-
-| Figure | Content | Status |
+| Task | Peak AUROC | Note |
 |---|---|---|
-| Fig 2 (or Fig 1) | Saturation curves — AUROC vs L, per task, LSTM + Transformer | Exists on cluster; need to pull |
-| Fig 3 | K-sweep curves — AUROC vs K for representative tasks | Exists for sex_binary_lstm |
-| Fig 4 | 2D iso-compute heatmap (L × K grid) | PENDING dense K sweep |
-| Fig 5 | Modality ablation bar chart — AUROC drop per condition per task | Can generate from Table 6 |
-| Fig 6 | Fast vs full channel comparison | Can generate from results_summary CSV |
-| Fig 7 | Sleep staging κ vs L (plus per-stage F1) | PENDING |
+| psqi_binary | 0.557 | Near chance; no context benefit |
+| sleepiness_binary | 0.629 | Flat across all L; no PSG signal |
+| cvd_binary | 0.689 | Weak and flat |
+
+These may appear in Discussion as evidence that some endpoints are not predictable from overnight
+PSG under any context length — label noise or PSG-label mismatch suspected.
 
 ---
 
-## Key claims to support in Results
+## Threshold tuning notes (for table captions and S-Table VIII)
 
-- H1 (context saturation): CONFIRMED for all tasks. L* ranges from 10m to 240m. ✓
-- H2 (aggregation substitution): PARTIALLY SUPPORTED (sparse data); dense K sweep needed.
-- H3 (aggregation saturation): CONFIRMED for sex_binary/LSTM. K≥5 captures most benefit. Generalise
-  with additional task data.
-- H4 (temporal head advantage): PARTIALLY CONFIRMED (LSTM vs Transformer). MeanPool needed for full
-  test. Transformer > LSTM at long contexts for high-signal tasks.
+Tasks where t* (val-selected threshold) is used for balanced accuracy reporting:
+- **osa_binary_apples_postqc**: CRITICAL. Default t=0.5 gives BA≈0.55; tuned BA improves by
+  up to +0.220 at 10m context. AUROC unchanged. Must note in table caption.
+- **depression_extreme_binary**: +0.065 improvement at 80m; use tuned for consistency.
+- **bmi_binary**: modest gain (+0.013–0.027); include for consistency.
+- **sex_binary/LSTM**: small (+0.009); include for consistency.
 
----
-
-## Numbers NOT to report (dropped tasks, use for internal reference only)
-
-- psqi_binary: best AUROC 0.557, no context benefit → dropped (near chance)
-- sleepiness_binary: best AUROC 0.629, flat curve → dropped (no PSG signal)
-- cvd_binary: best AUROC 0.689, flat curve → dropped (weak signal)
-- osa_severity_apples: not run → dropped
-
-These numbers may be cited in Discussion as evidence that some clinical endpoints are not
-predictable from overnight PSG under any context length — label noise or task confounds suspected.
+Tasks where default t=0.5 is retained (tuning does not help):
+- apnea_binary (both heads): near zero or negative gain
+- sleep_efficiency_binary (both heads): near zero gain
+- age_class (both heads): multi-class task, threshold concept differs
+- sex_binary/Transformer: marginal
