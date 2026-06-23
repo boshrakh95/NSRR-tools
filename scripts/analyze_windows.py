@@ -46,6 +46,7 @@ Usage
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
 import matplotlib
@@ -55,6 +56,9 @@ import matplotlib.ticker as mticker
 import numpy as np
 import pandas as pd
 from scipy.stats import mode as scipy_mode
+
+sys.path.insert(0, str(Path(__file__).parent))
+from repo_sync import mirror_file
 
 try:
     from sklearn.metrics import (
@@ -340,7 +344,7 @@ def to_markdown(results_df: pd.DataFrame, task: str, head: str, strategy: str) -
 # ── Plotting ──────────────────────────────────────────────────────────────────
 
 def plot_window_sweep(results_df: pd.DataFrame, task: str, head: str,
-                      metric: str, out_path: Path):
+                      metric: str, out_path: Path, repo_dir: Path = None):
     """One figure per context length, showing all three methods vs K."""
     contexts = [c for c in CONTEXT_ORDER if c in results_df["context_length"].unique()]
     contexts += [c for c in results_df["context_length"].unique() if c not in contexts]
@@ -397,7 +401,8 @@ def plot_window_sweep(results_df: pd.DataFrame, task: str, head: str,
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
-    print(f"  Plot saved: {out_path}")
+    mirror_file(out_path, repo_dir)
+    print(f"  Plot saved: {out_path}" + ("  (+ repo copy)" if repo_dir else ""))
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -440,6 +445,14 @@ def main():
                         dest="results_dir")
     parser.add_argument("--run-tag",    default="", dest="run_tag",
                         help="Must match the --run-tag used during training/inference (default: no suffix).")
+    parser.add_argument("--repo-out", type=Path, default=None, dest="repo_out",
+                        help="Also mirror window_analysis.md/csv into this repo dir "
+                             "(e.g. results/inference/phase0_v3/{task}_{head}). "
+                             "Default: no repo mirror.")
+    parser.add_argument("--repo-figures-dir", type=Path, default=None,
+                        dest="repo_figures_dir",
+                        help="Also mirror --plot PNGs into this repo dir (e.g. "
+                             "results/figures/phase0_v3). Default: no repo mirror.")
     args = parser.parse_args()
 
     exp_id  = f"{args.task}_{args.head}" + (f"_{args.run_tag}" if args.run_tag else "")
@@ -547,7 +560,8 @@ def main():
         # Save per-split CSV
         out_csv = inf_dir / f"window_analysis_{split}.csv"
         split_df.to_csv(out_csv, index=False)
-        print(f"CSV saved: {out_csv}")
+        mirror_file(out_csv, args.repo_out)
+        print(f"CSV saved: {out_csv}" + ("  (+ repo copy)" if args.repo_out else ""))
 
         # Collect markdown section for this split
         split_contents[split] = _split_to_markdown(split_df, args.window_strategy, task=args.task)
@@ -557,7 +571,9 @@ def main():
                 out_fig = (args.results_dir / "figures" /
                            f"{args.task}_{args.head}" /
                            f"{args.task}_{args.head}_{split}_window_sweep_{pm}.png")
-                plot_window_sweep(split_df, args.task, args.head, pm, out_fig)
+                fig_repo_dir = (args.repo_figures_dir / f"{args.task}_{args.head}"
+                                if args.repo_figures_dir else None)
+                plot_window_sweep(split_df, args.task, args.head, pm, out_fig, fig_repo_dir)
 
     # ── Save combined markdown (all splits, separate sections) ────────────────
     out_md = inf_dir / "window_analysis.md"
@@ -585,7 +601,8 @@ def main():
             lines.append(existing_contents[split])
 
     out_md.write_text("\n".join(lines))
-    print(f"\nMarkdown saved: {out_md}")
+    mirror_file(out_md, args.repo_out)
+    print(f"\nMarkdown saved: {out_md}" + ("  (+ repo copy)" if args.repo_out else ""))
 
 
 if __name__ == "__main__":

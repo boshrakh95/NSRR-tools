@@ -36,6 +36,7 @@ Output:
 """
 
 import argparse
+import sys
 import warnings
 from pathlib import Path
 
@@ -46,6 +47,9 @@ import matplotlib.cm as cm
 import matplotlib.ticker as mticker
 import numpy as np
 import pandas as pd
+
+sys.path.insert(0, str(Path(__file__).parent))
+from repo_sync import configure_repo_figures, save_figure
 
 try:
     from scipy.optimize import curve_fit
@@ -207,12 +211,8 @@ def plot_uShape(df: pd.DataFrame, task: str, head: str, out_dir: Path) -> None:
 
     fig.tight_layout()
     stem = f"{task}_{head}_1A_uShape"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    for ext in ("png", "pdf"):
-        fig.savefig(out_dir / f"{stem}.{ext}",
-                    dpi=150 if ext == "png" else None, bbox_inches="tight")
+    save_figure(fig, out_dir, stem)
     plt.close(fig)
-    print(f"  [1A] Saved: {stem}.{{png,pdf}}")
 
 
 # ── Plot 1B: Compute scaling law ──────────────────────────────────────────────
@@ -305,11 +305,8 @@ def plot_scaling_law(df: pd.DataFrame, task: str, heads: list, out_dir: Path) ->
     fig.tight_layout()
 
     stem = f"{task}_1B_compute_scaling"
-    for ext in ("png", "pdf"):
-        fig.savefig(out_dir / f"{stem}.{ext}",
-                    dpi=150 if ext == "png" else None, bbox_inches="tight")
+    save_figure(fig, out_dir, stem)
     plt.close(fig)
-    print(f"  [1B] Saved: {stem}.{{png,pdf}}")
 
 
 # ── Plot 1C: Optimal epoch vs context length ──────────────────────────────────
@@ -365,11 +362,8 @@ def plot_optimal_epoch(df: pd.DataFrame, task: str, heads: list, out_dir: Path) 
     fig.tight_layout()
 
     stem = f"{task}_1C_optimal_epoch"
-    for ext in ("png", "pdf"):
-        fig.savefig(out_dir / f"{stem}.{ext}",
-                    dpi=150 if ext == "png" else None, bbox_inches="tight")
+    save_figure(fig, out_dir, stem)
     plt.close(fig)
-    print(f"  [1C] Saved: {stem}.{{png,pdf}}")
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -394,8 +388,13 @@ def main() -> None:
     parser.add_argument("--plots", nargs="+",
                         default=["1A", "1B", "1C"],
                         help="Which plots to generate (1A 1B 1C, default: all)")
+    parser.add_argument("--repo-figures-dir", type=Path, default=None,
+                        dest="repo_figures_dir",
+                        help="Also mirror PNGs into this repo dir (e.g. "
+                             "results/figures/phase0_v3). Default: no repo mirror.")
     args = parser.parse_args()
 
+    configure_repo_figures(args.results_dir, args.repo_figures_dir)
     out_dir = args.results_dir / "figures" / "scaling_laws"
     out_dir.mkdir(parents=True, exist_ok=True)
 

@@ -431,11 +431,13 @@ def build_analyze_cmd(exp: dict, registry: dict, plot: bool = False,
                 _cfg = yaml.safe_load(_f)
             bootstrap_n = int(_cfg.get("analysis", {}).get("bootstrap_samples", 0))
 
+    exp_id = exp['task'] + '_' + exp['head'] + (f"_{tag}" if tag else "")
     cmd_parts = [
         f"{python} scripts/analyze_windows.py",
         f"--task {exp['task']}",
         f"--head {exp['head']}",
         f"--results-dir {results_dir}",
+        f"--repo-out {repo_inference_dir(results_dir)}/{exp_id}",
     ]
     if tag:
         cmd_parts.append(f"--run-tag {tag}")
@@ -446,6 +448,7 @@ def build_analyze_cmd(exp: dict, registry: dict, plot: bool = False,
     if plot:
         cmd_parts.append("--plot")
         cmd_parts.append("--plot-metric auroc balanced_accuracy")
+        cmd_parts.append(f"--repo-figures-dir {repo_figures_dir(results_dir)}")
     return " ".join(cmd_parts)
 
 
@@ -479,6 +482,7 @@ def build_iso_plots_cmd(exp: dict, registry: dict, split: str = "test",
         f"--split {split}",
         f"--metric {' '.join(metrics)}",
         f"--budget {budget:.0f}",
+        f"--repo-figures-dir {repo_figures_dir(results_dir)}",
     ]
     if tag:
         cmd_parts.append(f"--run-tag {tag}")
@@ -498,6 +502,7 @@ def build_saturation_cmd(task: str, heads: list, registry: dict,
         f"--results-dir {results_dir}",
         f"--metric {' '.join(metrics)}",
         f"--split {split}",
+        f"--repo-figures-dir {repo_figures_dir(results_dir)}",
     ]
     if run_tag:
         cmd_parts.append(f"--run-tag {run_tag}")
@@ -726,11 +731,14 @@ def cmd_threshold_tuning(args, registry):
         print(f"# ⚠ val parquets missing for: {val_missing}")
         print(f"#   Run val inference first (see gen_commands.py infer {args.exp_id} --split val)")
     print()
+    results_dir = Path(registry["results_dir"])
+    exp_id_full = f"{exp['task']}_{exp['head']}" + (f"_{tag}" if tag else "")
     cmd_parts = [
         f"{python} scripts/apply_threshold_tuning.py",
         f"--config {cfg}",
         f"--task {exp['task']}",
         f"--head {exp['head']}",
+        f"--repo-out {repo_inference_dir(results_dir)}/{exp_id_full}",
     ]
     if tag:
         cmd_parts.append(f"--run-tag {tag}")
@@ -822,15 +830,25 @@ def cmd_runs(args, registry):
 
 # ── Extended analysis command builders ────────────────────────────────────────
 
+# repo mirrors are round-tagged (results_dir.name, e.g. phase0_v3, phase0_v3_full)
+# so different rounds never overwrite each other in the git-tracked results/ dir.
+_REPO_ROOT = Path(__file__).parent.parent / "results"
+
+
+def repo_figures_dir(results_dir: Path) -> str:
+    return str(_REPO_ROOT / "figures" / Path(results_dir).name)
+
+
+def repo_inference_dir(results_dir: Path) -> str:
+    return str(_REPO_ROOT / "inference" / Path(results_dir).name)
+
+
 def build_collect_cmd(exp_ids: list, registry: dict,
                       collected_dir: str = "") -> str:
     python = registry.get("python_bin", "/home/boshra95/sleepfm_env/bin/python")
     results_dir = Path(registry["results_dir"])
     cdir = collected_dir or str(results_dir / "collected")
-    # repo-out is channel-specific so fast (phase0_v3) and full (phase0_v3_full)
-    # never overwrite each other in the git-tracked results/ directory.
-    repo_root = Path(__file__).parent.parent / "results" / "collected"
-    repo_out  = str(repo_root / results_dir.name)
+    repo_out  = str(_REPO_ROOT / "collected" / results_dir.name)
     cmd_parts = [
         f"{python} scripts/collect_results_v2.py",
         f"--results-dir {results_dir}",
@@ -856,6 +874,7 @@ def build_scaling_laws_cmd(task: str, heads: list, registry: dict,
         f"--collected-dir {cdir}",
         f"--results-dir {results_dir}",
         f"--plots {' '.join(plots)}",
+        f"--repo-figures-dir {repo_figures_dir(results_dir)}",
     ]
     return " ".join(cmd_parts)
 
@@ -873,6 +892,7 @@ def build_calibration_cmd(exp: dict, registry: dict, split: str = "test",
         f"--results-dir {results_dir}",
         f"--split {split}",
         f"--plots {' '.join(plots)}",
+        f"--repo-figures-dir {repo_figures_dir(results_dir)}",
     ]
     if tag:
         cmd_parts.append(f"--run-tag {tag}")
@@ -894,6 +914,7 @@ def build_window_position_cmd(exp: dict, registry: dict, split: str = "test",
         f"--results-dir {results_dir}",
         f"--split {split}",
         f"--plots {' '.join(plots)}",
+        f"--repo-figures-dir {repo_figures_dir(results_dir)}",
     ]
     if tag:
         cmd_parts.append(f"--run-tag {tag}")
@@ -913,6 +934,7 @@ def build_subject_consistency_cmd(exp: dict, registry: dict, split: str = "test"
         f"--results-dir {results_dir}",
         f"--split {split}",
         f"--plots {' '.join(plots)}",
+        f"--repo-figures-dir {repo_figures_dir(results_dir)}",
     ]
     if tag:
         cmd_parts.append(f"--run-tag {tag}")
@@ -933,6 +955,7 @@ def build_task_comparison_cmd(tasks: list, head: str, split: str,
         f"--collected-dir {cdir}",
         f"--results-dir {results_dir}",
         f"--plots {' '.join(plots)}",
+        f"--repo-figures-dir {repo_figures_dir(results_dir)}",
     ]
     if tasks:
         cmd_parts.append(f"--tasks {' '.join(tasks)}")
@@ -954,6 +977,7 @@ def build_cohort_saturation_cmd(exp: dict, registry: dict, split: str = "test",
         f"--split {split}",
         f"--datasets {' '.join(datasets)}",
         f"--plots {' '.join(plots)}",
+        f"--repo-figures-dir {repo_figures_dir(results_dir)}",
     ]
     if tag:
         cmd_parts.append(f"--run-tag {tag}")
@@ -974,6 +998,7 @@ def build_precision_recall_cmd(exp: dict, registry: dict, split: str = "test",
         f"--results-dir {results_dir}",
         f"--split {split}",
         f"--plots {' '.join(plots)}",
+        f"--repo-figures-dir {repo_figures_dir(results_dir)}",
     ]
     if tag:
         cmd_parts.append(f"--run-tag {tag}")
@@ -998,6 +1023,7 @@ def build_subject_kstar_cmd(exp: dict, registry: dict, split: str = "test",
         f"--kmax {k_max}",
         f"--reps {reps}",
         f"--plots {' '.join(plots)}",
+        f"--repo-figures-dir {repo_figures_dir(results_dir)}",
     ]
     if tag:
         cmd_parts.append(f"--run-tag {tag}")

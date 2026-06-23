@@ -32,6 +32,7 @@ Output:
 """
 
 import argparse
+import sys
 from pathlib import Path
 
 import matplotlib
@@ -40,6 +41,9 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 import numpy as np
 import pandas as pd
+
+sys.path.insert(0, str(Path(__file__).parent))
+from repo_sync import configure_repo_figures, default_repo_figures_dir, save_figure
 
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -211,15 +215,11 @@ def plot_saturation(task: str, heads: list, results_dir: Path,
         ax.grid(True, which="minor", alpha=0.1)
 
         plt.tight_layout()
-        out_dir.mkdir(parents=True, exist_ok=True)
         stem = f"saturation_{task}_{metric}_{split}"
-        for ext in ("png", "pdf"):
-            fig.savefig(out_dir / f"{stem}.{ext}",
-                        dpi=150 if ext == "png" else None,
-                        bbox_inches="tight")
+        save_figure(fig, out_dir, stem)
         plt.close(fig)
-        print(f"  Saved: {out_dir.name}/{stem}.{{png,pdf}}"
-              + ("  (with CI bands)" if has_ci else ""))
+        if has_ci:
+            print("  (with CI bands)")
 
 
 def main():
@@ -246,8 +246,13 @@ def main():
                         help="Directory containing analysis.csv with bootstrap CI bounds "
                              "(from collect_results_v2.py --bootstrap N). "
                              "If provided, CI bands are drawn as shaded regions.")
+    parser.add_argument("--repo-figures-dir", type=Path, default=None,
+                        dest="repo_figures_dir",
+                        help="Also mirror PNGs into this repo dir (e.g. "
+                             "results/figures/phase0_v3). Default: no repo mirror.")
     args = parser.parse_args()
 
+    configure_repo_figures(args.results_dir, args.repo_figures_dir)
     out_dir = args.results_dir / "figures" / "saturation"
 
     print(f"Task: {args.task}  Heads: {args.heads}  Metrics: {args.metric}")

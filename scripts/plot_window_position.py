@@ -32,6 +32,7 @@ Output:
 """
 
 import argparse
+import sys
 from pathlib import Path
 
 import matplotlib
@@ -41,6 +42,9 @@ import matplotlib.cm as cm
 import matplotlib.ticker as mticker
 import numpy as np
 import pandas as pd
+
+sys.path.insert(0, str(Path(__file__).parent))
+from repo_sync import configure_repo_figures, save_figure
 
 # ── Style ─────────────────────────────────────────────────────────────────────
 
@@ -209,11 +213,8 @@ def plot_position_profiles(parquets: dict, task: str, head: str, out_dir: Path) 
     fig.tight_layout()
 
     stem = f"{task}_{head}_window_position_4A_profiles"
-    for ext in ("png", "pdf"):
-        fig.savefig(out_dir / f"{stem}.{ext}",
-                    dpi=150 if ext == "png" else None, bbox_inches="tight")
+    save_figure(fig, out_dir, stem)
     plt.close(fig)
-    print(f"  [4A] Saved: {stem}.{{png,pdf}}")
 
 
 # ── Plot 4B: Prediction variance vs position ──────────────────────────────────
@@ -258,11 +259,8 @@ def plot_variance_vs_position(parquets: dict, task: str, head: str, out_dir: Pat
     fig.tight_layout()
 
     stem = f"{task}_{head}_window_position_4B_variance"
-    for ext in ("png", "pdf"):
-        fig.savefig(out_dir / f"{stem}.{ext}",
-                    dpi=150 if ext == "png" else None, bbox_inches="tight")
+    save_figure(fig, out_dir, stem)
     plt.close(fig)
-    print(f"  [4B] Saved: {stem}.{{png,pdf}}")
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -281,8 +279,13 @@ def main() -> None:
     parser.add_argument("--contexts", nargs="+", default=None,
                         help="Restrict to these context lengths (default: all available)")
     parser.add_argument("--plots",   nargs="+", default=["4A", "4B"])
+    parser.add_argument("--repo-figures-dir", type=Path, default=None,
+                        dest="repo_figures_dir",
+                        help="Also mirror PNGs into this repo dir (e.g. "
+                             "results/figures/phase0_v3). Default: no repo mirror.")
     args = parser.parse_args()
 
+    configure_repo_figures(args.results_dir, args.repo_figures_dir)
     out_dir = args.results_dir / "figures" / f"{args.task}_{args.head}"
     out_dir.mkdir(parents=True, exist_ok=True)
 

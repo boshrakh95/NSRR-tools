@@ -26,6 +26,7 @@ Output:
 """
 
 import argparse
+import sys
 from pathlib import Path
 
 import matplotlib
@@ -34,6 +35,9 @@ import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 import matplotlib.ticker as mticker
 import numpy as np
+
+sys.path.insert(0, str(Path(__file__).parent))
+from repo_sync import configure_repo_figures, save_figure
 import pandas as pd
 
 try:
@@ -174,11 +178,8 @@ def plot_cohort_saturation(parquets: dict, task: str, head: str,
     fig.tight_layout()
 
     stem = f"{task}_{head}_cohort_saturation_7A"
-    for ext in ("png", "pdf"):
-        fig.savefig(out_dir / f"{stem}.{ext}",
-                    dpi=150 if ext == "png" else None, bbox_inches="tight")
+    save_figure(fig, out_dir, stem)
     plt.close(fig)
-    print(f"  [7A] Saved: {stem}.{{png,pdf}}")
 
 
 # ── Plot 7B: Per-cohort N (subject count) ─────────────────────────────────────
@@ -220,11 +221,8 @@ def plot_cohort_n(parquets: dict, task: str, head: str,
     fig.tight_layout()
 
     stem = f"{task}_{head}_cohort_saturation_7B_n"
-    for ext in ("png", "pdf"):
-        fig.savefig(out_dir / f"{stem}.{ext}",
-                    dpi=150 if ext == "png" else None, bbox_inches="tight")
+    save_figure(fig, out_dir, stem)
     plt.close(fig)
-    print(f"  [7B] Saved: {stem}.{{png,pdf}}")
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -247,6 +245,10 @@ def main() -> None:
                         choices=["auroc"],
                         help="Metric (currently only auroc supported, default: auroc)")
     parser.add_argument("--plots",   nargs="+", default=["7A", "7B"])
+    parser.add_argument("--repo-figures-dir", type=Path, default=None,
+                        dest="repo_figures_dir",
+                        help="Also mirror PNGs into this repo dir (e.g. "
+                             "results/figures/phase0_v3). Default: no repo mirror.")
     args = parser.parse_args()
 
     if not HAS_SKLEARN:
@@ -254,6 +256,7 @@ def main() -> None:
               "Activate sleepfm_env: source ~/sleepfm_env/bin/activate")
         return
 
+    configure_repo_figures(args.results_dir, args.repo_figures_dir)
     out_dir = args.results_dir / "figures" / f"{args.task}_{args.head}"
     out_dir.mkdir(parents=True, exist_ok=True)
 

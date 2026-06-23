@@ -40,6 +40,7 @@ Output:
 """
 
 import argparse
+import sys
 from pathlib import Path
 
 import matplotlib
@@ -48,6 +49,9 @@ import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 import numpy as np
 import pandas as pd
+
+sys.path.insert(0, str(Path(__file__).parent))
+from repo_sync import configure_repo_figures, save_figure
 
 # ── Style ─────────────────────────────────────────────────────────────────────
 
@@ -213,11 +217,8 @@ def plot_reliability_diagrams(parquets: dict, task: str, head: str,
 
     fig.tight_layout()
     stem = f"{task}_{head}_calibration_2A_reliability"
-    for ext in ("png", "pdf"):
-        fig.savefig(out_dir / f"{stem}.{ext}",
-                    dpi=150 if ext == "png" else None, bbox_inches="tight")
+    save_figure(fig, out_dir, stem)
     plt.close(fig)
-    print(f"  [2A] Saved: {stem}.{{png,pdf}}")
 
 
 # ── Plot 2B: ECE vs context length ────────────────────────────────────────────
@@ -273,11 +274,8 @@ def plot_ece_vs_context(all_parquets: dict, task: str, heads: list,
     fig.tight_layout()
 
     stem = f"{task}_calibration_2B_ece_vs_context"
-    for ext in ("png", "pdf"):
-        fig.savefig(out_dir / f"{stem}.{ext}",
-                    dpi=150 if ext == "png" else None, bbox_inches="tight")
+    save_figure(fig, out_dir, stem)
     plt.close(fig)
-    print(f"  [2B] Saved: {stem}.{{png,pdf}}")
 
 
 # ── Plot 2C: ECE vs K ─────────────────────────────────────────────────────────
@@ -332,11 +330,8 @@ def plot_ece_vs_k(parquets: dict, task: str, head: str,
     fig.tight_layout()
 
     stem = f"{task}_{head}_calibration_2C_ece_vs_k"
-    for ext in ("png", "pdf"):
-        fig.savefig(out_dir / f"{stem}.{ext}",
-                    dpi=150 if ext == "png" else None, bbox_inches="tight")
+    save_figure(fig, out_dir, stem)
     plt.close(fig)
-    print(f"  [2C] Saved: {stem}.{{png,pdf}}")
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -367,8 +362,13 @@ def main() -> None:
                         dest="k_values",
                         help="K values for ECE vs K plot (default: 1 2 3 5 8 10 15 20 30 50 all)")
     parser.add_argument("--plots",   nargs="+", default=["2A", "2B", "2C"])
+    parser.add_argument("--repo-figures-dir", type=Path, default=None,
+                        dest="repo_figures_dir",
+                        help="Also mirror PNGs into this repo dir (e.g. "
+                             "results/figures/phase0_v3). Default: no repo mirror.")
     args = parser.parse_args()
 
+    configure_repo_figures(args.results_dir, args.repo_figures_dir)
     heads_2b = args.heads or [args.head]
     k_values = [
         "all" if str(k).lower() == "all" else int(k)
