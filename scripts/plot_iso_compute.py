@@ -28,6 +28,7 @@ Usage:
 """
 
 import argparse
+import sys
 from pathlib import Path
 
 import matplotlib
@@ -36,6 +37,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
+
+sys.path.insert(0, str(Path(__file__).parent))
+from repo_sync import configure_repo_figures, save_figure
 
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -104,13 +108,8 @@ def _palette(n: int):
 
 
 def _save(fig, out_dir: Path, stem: str):
-    out_dir.mkdir(parents=True, exist_ok=True)
-    for ext in ("png", "pdf"):
-        fig.savefig(out_dir / f"{stem}.{ext}",
-                    dpi=150 if ext == "png" else None,
-                    bbox_inches="tight")
+    save_figure(fig, out_dir, stem)
     plt.close(fig)
-    print(f"  Saved: {out_dir.name}/{stem}.{{png,pdf}}")
 
 
 # ── Plot 1: 2D Heatmap ────────────────────────────────────────────────────────
@@ -594,8 +593,13 @@ def main():
     parser.add_argument("--budget",  type=float, default=480.0,
                         help="Max compute budget in minutes for Pareto / min-cost "
                              "plots (default: 480)")
+    parser.add_argument("--repo-figures-dir", type=Path, default=None,
+                        dest="repo_figures_dir",
+                        help="Also mirror PNGs into this repo dir (e.g. "
+                             "results/figures/phase0_v3). Default: no repo mirror.")
     args = parser.parse_args()
 
+    configure_repo_figures(args.results_dir, args.repo_figures_dir)
     exp_id  = (f"{args.task}_{args.head}"
                + (f"_{args.run_tag}" if args.run_tag else ""))
     inf_dir = args.results_dir / "inference" / exp_id

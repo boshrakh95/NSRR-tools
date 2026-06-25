@@ -188,15 +188,21 @@ Eight conditions covering all scientifically meaningful combinations:
 | `resp_only` | RESP | BAS+EKG+EMG | Respiratory wearable only |
 | `ekg_only` | EKG | BAS+RESP+EMG | Single-lead cardiac monitor |
 
-**Essential conditions for Table 6 (main paper):** `no_bas`, `cardio`, `bas_only` (3 new runs per task; `full` baseline already exists).
+**Essential conditions for Table 6 (main paper), as of 2026-06-17: `no_bas`, `no_resp`, `no_ekg`, `cardio`, `bas_only`** (5 new runs per task; `full` baseline already exists). `no_resp` and `no_ekg` were promoted from "optional" to "essential" after reviewing OSF (arXiv:2603.00190) — see rationale below.
 
-**Optional conditions (supplementary):** `no_resp`, `no_ekg`, `resp_only`, `ekg_only` — complete the single-modality and leave-one-out decomposition.
+**Optional conditions (supplementary, not yet run):** `resp_only`, `ekg_only` — would complete the single-modality sufficiency decomposition (currently only `bas_only` tests single-modality sufficiency).
+
+**Why `no_resp` and `no_ekg` were promoted (2026-06-17):** OSF's own flagship missing-channel ablation (their Fig. 3 / Finding 1) is exactly a single-group leave-one-out: they zero Respiratory channels alone (keeping Brain/ECG/Somatic) and evaluate on Hypopnea/Oxygen Desaturation — directly analogous to our `apnea_binary`. Quote: *"hypopnea is driven by respiration... these results match clinical intuition."* Without `no_resp`, our design could only infer RESP's necessity indirectly (via `no_bas` and `bas_only`, both of which conflate RESP with EKG/EMG) — a reviewer familiar with OSF would reasonably ask why we didn't run the same clean test they did. `no_ekg` completes the single-knockout matrix for all three non-EMG groups OSF varies in their secondary "realistic settings" table (their "Sleep Micro-Arch. Study" row is Brain+Resp present, ECG absent — i.e. exactly `no_ekg`). EMG is still not isolated (`no_emg`/`emg_only`) — none of our 5 ablation tasks are EMG/PLM-driven the way sleep staging would be, and OSF doesn't vary Somatic in their realistic-settings table either.
+
+**Note on OSF's ablation being inference-time, not training-time:** OSF's Fig. 3 result zero-masks channels on an already-trained model (no retraining) — that is the OSF analogue of our *currently unimplemented* Experiment G (inference-only robustness), not Experiment A (training-time, peak-capability, which is what `no_resp`/`no_ekg` are added to here). Worth eventually running the same 5 conditions through Experiment G on the existing baseline checkpoints for a clean "peak capability vs. deployment robustness" pairing, directly mirroring OSF's framing — not yet scheduled.
 
 **Scientific hypothesis per condition:**
 - `no_bas` vs `full`: Does removing EEG/EOG hurt? Expected: yes for sleep staging, maybe not for apnea (respiratory) or CVD (cardiac).
+- `no_resp` vs `full`: Does removing respiratory channels hurt? Expected: yes, strongly, for apnea (direct OSF analogue); expected to also matter for sleep_efficiency_binary (correlates with apnea).
+- `no_ekg` vs `full`: Does removing the cardiac channel hurt? No task in our 5-task ablation set is hypothesized to be EKG-dominant (that would be `cvd_binary`, not currently in the ablation set) — included for matrix completeness; expect small drops across all 5 tasks.
 - `cardio` vs `full`: How much does SleepFounder's cardiorespiratory-only setting sacrifice? SleepFounder achieves OSA AUROC=0.917 with cardio only — can we match or approach this with our frozen-backbone setup?
 - `bas_only` vs `full`: Can brain signals alone (EEG/EOG) predict clinical outcomes? Expected: yes for sleep quality, age, sex; no for apnea severity.
-- `resp_only` vs `ekg_only`: Which single signal carries more clinical information? RESP expected to dominate for respiratory tasks; EKG for cardiovascular tasks.
+- `resp_only` vs `ekg_only` (not yet run): Which single signal carries more clinical information? RESP expected to dominate for respiratory tasks; EKG for cardiovascular tasks.
 
 ---
 
@@ -243,134 +249,261 @@ Run all ablation conditions at a **single fixed context per task** equal to the 
 
 ##### A.4 Run count and effort
 
-**Essential ablation (Table 6 primary):**
-- 5 tasks × 3 new conditions (no_bas, cardio, bas_only) × 1 head (lstm) × 1 context = **15 training jobs**
-- Inference + analysis for each = 15 more jobs
-- Total: **30 new cluster jobs**, each roughly equivalent to one baseline training job
+**Essential ablation (Table 6 primary) — ✅ COMPLETE as of 2026-06-17:**
+- 5 tasks × 5 conditions (no_bas, no_resp, no_ekg, cardio, bas_only) × 1 head (lstm) × 1 context = **25 training jobs**
+- Inference + analysis for each = 25 more jobs
+- Total: **50 cluster jobs, all complete.** Results in §A.6.1.
 
-**Optional (supplementary):**
-- 5 tasks × 3 more conditions (no_resp, no_ekg, resp_only or ekg_only) × 1 head × 1 context = **15 more training jobs**
-- Adding cvd_binary: 6 tasks × 3–6 conditions = up to 18 more training jobs
+**Optional (supplementary, not scheduled):**
+- 5 tasks × 2 more conditions (resp_only, ekg_only) × 1 head × 1 context = **10 more training jobs**
+- Adding cvd_binary for an EKG-dominant task: 1 task × up to 5 conditions = up to 5 more training jobs
 
 **Effort estimate:**
 - Training time per job: ~same as baseline (same context, same GPU hours)
 - Scheduling + monitoring: 1–2 days
-- Analysis + table generation: use existing `make_table6_modality.py` (to be written next)
+- Analysis + table generation: `scripts/make_table6_modality.py` (implemented — see §A.7)
 
 ---
 
 ##### A.5 Registry structure
 
-Add ablation experiments to `experiments/v2_registry.yaml` (or a separate `v2_ablation_registry.yaml`) using `run_tag` to namespace results:
+Ablation experiments live in a **separate registry** `experiments/v2_ablation_registry.yaml` with a separate config (`configs/phase0_v3_abl_config.yaml`) that points to a dedicated results directory (`phase0_v3_abl/`) and log directory (`logs_v3_abl/`). This guarantees zero overlap with v3 or v3_full results. ✅ **Implemented.**
 
 ```yaml
-# Example — one entry per task × condition × context
+# Excerpt from experiments/v2_ablation_registry.yaml
+config: configs/phase0_v3_abl_config.yaml
+results_dir: /scratch/boshra95/psg/unified/results/phase0_v3_abl
+logs_dir: /home/boshra95/NSRR-tools/logs_v3_abl
+
 sex_binary_lstm_abl_no_bas:
   task: sex_binary
   task_type: seq2label
+  num_classes: 2
   head: lstm
   datasets: [apples, shhs]
-  contexts: [120m]
+  contexts: ["120m"]
+  lr: 5.0e-5       # context_lr_override matches v3 for 120m
   run_tag: "abl_no_bas"          # results go to sex_binary_lstm_abl_no_bas/context_120m/
-  zero_modalities: [BAS]         # new field — read by train_context_sweep.py
-  tier: 3
+  zero_modalities: [BAS]         # gen_commands.py → ZERO_MODALITIES="BAS" env var
+  tier: 1
+
+sex_binary_lstm_abl_no_resp:
+  ...
+  run_tag: "abl_no_resp"
+  zero_modalities: [RESP]      # added 2026-06-17, inspired by OSF's Fig. 3
+  tier: 1
+
+sex_binary_lstm_abl_no_ekg:
+  ...
+  run_tag: "abl_no_ekg"
+  zero_modalities: [EKG]       # added 2026-06-17
+  tier: 1
 
 sex_binary_lstm_abl_cardio:
-  task: sex_binary
-  task_type: seq2label
-  head: lstm
-  datasets: [apples, shhs]
-  contexts: [120m]
+  ...
   run_tag: "abl_cardio"
   zero_modalities: [BAS, EMG]
-  tier: 3
+  tier: 1
 
 sex_binary_lstm_abl_bas_only:
-  task: sex_binary
-  task_type: seq2label
-  head: lstm
-  datasets: [apples, shhs]
-  contexts: [120m]
+  ...
   run_tag: "abl_bas_only"
   zero_modalities: [RESP, EKG, EMG]
-  tier: 3
-# ... (repeat for each task)
+  tier: 1
+# ... 25 entries total (5 tasks × 5 conditions)
 ```
 
-The `zero_modalities` field lists which groups are zeroed (the complement is what the head sees). `run_tag` ensures outputs go to a separate directory from the baseline.
+The `zero_modalities` field lists which groups are zeroed (the complement is what the head sees). `run_tag` ensures outputs go to a separate subfolder from the baseline. All 25 entries are in the registry; use `REG="--registry experiments/v2_ablation_registry.yaml"` with all gen_commands.py calls. No code changes were needed to add `no_resp`/`no_ekg` — the `zero_modalities` mechanism already supports any subset of groups.
 
 ---
 
 ##### A.6 What Table 6 will show
 
-| Task | Context | full AUROC | no_bas AUROC | cardio AUROC | bas_only AUROC |
-|------|---------|------------|--------------|--------------|----------------|
-| Sleep apnea (AHI≥15) | 120m | 0.832 | ? | ? | ? |
-| Sex | 120m | 0.872 | ? | ? | ? |
-| Sleep efficiency | 120m | 0.780 | ? | ? | ? |
-| Age group | 120m | 0.893 | ? | ? | ? |
-| BMI (obese) | 40m | 0.767 | ? | ? | ? |
-
-**Expected pattern:**
+**Pre-registered expected pattern (written before any ablation training):**
 - apnea_binary: full > cardio ≈ no_bas >> bas_only (RESP carries the OSA signal; EEG alone can't detect apnea)
 - sex_binary: full > bas_only ≈ no_bas > cardio (EEG/EOG and RESP both encode sex; EKG alone loses some signal)
 - sleep_efficiency_binary: full > bas_only ≈ no_bas > cardio (EEG sleep staging features crucial; but RESP also important since sleep efficiency correlates with apnea)
 - age_class: full ≈ no_bas (physiological aging present in all modalities; removing one modality loses less)
 - bmi_binary: full ≈ all conditions (BMI encodes into all modalities; saturates fast → channel differences may be small)
-Implement and compare the results with these expectations
+
+**Pre-registered expectations for `no_resp`/`no_ekg` (added 2026-06-17, before training):**
+- apnea_binary `no_resp`: largest drop of any condition for this task — directly testing the "RESP carries the OSA signal" claim, expect AUROC to fall toward (but likely not all the way to) chance, mirroring OSF's hypopnea finding.
+- apnea_binary `no_ekg`: small drop — EKG is not expected to be apnea's primary signal.
+- sleep_efficiency_binary `no_resp`: moderate drop expected, since SE correlates with apnea (already hypothesized in the `cardio` row above).
+- sex_binary / age_class / bmi_binary `no_resp` and `no_ekg`: small-to-moderate drops expected for both; no strong prior on which dominates — this is genuinely exploratory for these three tasks (`no_ekg` has no specific hypothesis since the EKG-dominant task, `cvd_binary`, is not in our 5-task ablation set).
 
 ---
 
-##### A.7 Implementation requirements (next prompt)
+##### A.6.1 Actual results (final, 2026-06-17 — all 25/25 conditions complete)
 
-The following code changes are needed (to be implemented in the next session):
+AUROC at K=all (full-night ceiling), test split, LSTM head. Generated via
+`python scripts/make_table6_modality.py` (see `results/tables/table6_modality.{csv,md,tex}`).
 
-1. **`scripts/train_context_sweep.py`** and/or **`sleepfm_env` dataset loader:**
-   - Add `--zero-modalities BAS RESP EKG EMG` CLI flag
-   - In the data loading loop, after loading the 512-dim embedding from HDF5, zero the specified slices:
-     ```python
-     MODALITY_SLICES = {"BAS": slice(0,128), "RESP": slice(128,256),
-                        "EKG": slice(256,384), "EMG": slice(384,512)}
-     for m in zero_modalities:
-         embedding[:, MODALITY_SLICES[m]] = 0.0
-     ```
-   - Apply zeroing consistently at both training and inference
+| Task | Context | N_test | Full | No BAS | Δ | No RESP | Δ | No EKG | Δ | Cardio only | Δ | BAS only | Δ |
+|------|---------|--------|------|--------|---|---------|---|--------|---|-------------|---|----------|---|
+| Sex | 120m | 1430 | 0.872 | 0.799 | -0.073 | 0.843 | -0.029 | 0.782 | -0.090 | 0.796 | -0.076 | 0.777 | -0.096 |
+| Sleep apnea (AHI≥15) | 120m | 2054 | 0.832 | 0.782 | -0.050 | 0.766 | -0.066 | 0.808 | -0.024 | 0.770 | -0.062 | 0.723 | -0.109 |
+| Sleep efficiency | 120m | 2023 | 0.780 | 0.682 | -0.099 | 0.760 | -0.021 | 0.750 | -0.030 | 0.670 | -0.110 | 0.786 | +0.005 |
+| Age group | 120m | 1859 | 0.893 | 0.835 | -0.059 | 0.882 | -0.012 | 0.868 | -0.025 | 0.821 | -0.072 | 0.860 | -0.034 |
+| BMI (obese) | 40m | 1856 | 0.756 | 0.728 | -0.028 | 0.759 | +0.003 | 0.758 | +0.002 | 0.663 | -0.093 | 0.741 | -0.015 |
 
-2. **`experiments/v2_registry.yaml` (or new `v2_ablation_registry.yaml`):**
-   - Add 15 ablation entries (5 tasks × 3 conditions) with `run_tag` and `zero_modalities`
+**Caveat on effect size before interpreting:** each cell is a *single* training run — there is
+no multi-seed retraining variance estimate for the ablation conditions (unlike the bootstrap CIs
+available for the K-sweep within a run). Treat |Δ| < 0.02 as **not distinguishable from noise**
+(e.g. BMI's `no_resp` +0.003 and `no_ekg` +0.002, and sleep efficiency's `bas_only` +0.005, should
+be reported as "no detectable effect," not as the condition "matching or exceeding" full). |Δ| in
+0.02–0.05 is borderline; |Δ| > 0.05 is very likely a real effect at this N_test (1430–2054 for
+4 of 5 tasks).
 
-3. **`scripts/gen_commands.py`:**
-   - Read `zero_modalities` from registry entry
-   - Pass `--zero-modalities {groups}` to train and infer commands when present
+**Headline finding — the single most necessary modality is task-dependent, and not always the
+intuitive one:**
 
-4. **`scripts/make_table6_modality.py`:**
-   - New script to generate Table 6 from collected ablation results
-   - Groups results by condition, displays as a task × condition matrix
+| Task | Most necessary single group (largest single-knockout Δ) | Ranking (most → least necessary) |
+|---|---|---|
+| Sex | **EKG** (-0.090) | EKG > BAS (-0.073) > RESP (-0.029) |
+| Sleep apnea | **RESP** (-0.066) | RESP > BAS (-0.050) > EKG (-0.024) |
+| Sleep efficiency | **BAS** (-0.099) | BAS > EKG (-0.030) > RESP (-0.021, borderline) |
+| Age group | **BAS** (-0.059) | BAS > EKG (-0.025) > RESP (-0.012, noise) |
+| BMI (obese) | **BAS** (-0.028, borderline) | BAS > EKG≈RESP (noise) |
+
+BAS is the most necessary single group for 3 of 5 tasks (sleep efficiency, age, BMI), RESP for 1
+(apnea — confirming the original respiratory-disorder hypothesis), and **EKG for 1 (sex) — the
+one genuinely surprising result**, since no task in the 5-task set was hypothesized to be
+EKG-dominant.
+
+**Per-task interpretation:**
+
+- **Apnea — the OSF-style leave-one-out directly confirms the respiratory hypothesis.** Among
+  the three single-knockouts, `no_resp` causes the largest drop (-0.066), larger than `no_bas`
+  (-0.050) and far larger than `no_ekg` (-0.024, borderline noise). Averaging across all 5
+  conditions, those that remove RESP (`no_resp`, `bas_only`) drop AUROC by 0.088 on average,
+  versus 0.045 for conditions that retain RESP (`no_bas`, `no_ekg`, `cardio`) — roughly 2×. This
+  is the cleanest, most direct evidence in the table and the result this round of ablation was
+  specifically designed to obtain. EEG still retains real (non-noise) signal for apnea (`no_bas`
+  -0.050, `bas_only` -0.109 vs. cardio's -0.062 — BAS alone is much worse than RESP+EKG together),
+  consistent with sleep-stage/arousal correlates of apnea leaking through brain signals even
+  without direct respiratory sensing.
+- **Sex — `no_ekg` is the most damaging single-knockout, not `no_bas`.** This was not
+  pre-registered and is the most novel finding in the table: cardiac signal (plausibly
+  heart-rate/HRV differences between sexes) carries more sex-discriminative information than
+  EEG/EOG or respiratory signal alone. `no_resp` is the smallest single-knockout drop (-0.029,
+  borderline), reproducing the original (pre-`no_resp`/`no_ekg`) finding that `bas_only` is the
+  worst overall condition (-0.096) — RESP+EKG+EMG together still beat BAS alone, but within that
+  group EKG appears to be doing most of the work.
+- **Sleep efficiency — confirmed most cleanly of all 5 tasks, now with three converging lines of
+  evidence.** `no_bas` causes the largest drop in the table for this task (-0.099); `no_resp`
+  (-0.021) and `no_ekg` (-0.030) are both small; `bas_only` ties full (+0.005, noise-level). All
+  three results point the same direction: sleep efficiency is determined by sleep stage, which is
+  encoded almost entirely in EEG, and RESP/EKG/EMG contribute close to nothing on their own.
+- **Age group — BAS dominates, EKG second, RESP negligible.** `no_bas` (-0.059) confirms a real
+  (not negligible) brain-signal contribution to age prediction; `no_ekg` (-0.025) is borderline;
+  `no_resp` (-0.012) is within noise. Physiological aging signatures are concentrated in EEG and,
+  to a lesser extent, cardiac signal, not in respiration.
+- **BMI — no single group matters, but losing BAS+EMG together does.** `no_resp` (+0.003) and
+  `no_ekg` (+0.002) are pure noise; `no_bas` (-0.028) is borderline. Yet `cardio` (BAS+EMG zeroed
+  together) drops by -0.093 — far more than `no_bas` alone, and the largest condition-effect for
+  this task. This is not explained by any single group's marginal contribution and points to an
+  **interaction effect**: BAS and EMG jointly carry BMI-relevant signal that neither carries
+  alone (e.g. body-habitus-related EMG amplitude/baseline combined with EEG-derived sleep
+  macrostructure). This is the one result in the table that doesn't fit a simple additive
+  "modality importance" story and deserves a cautious, exploratory framing rather than a strong
+  claim.
+- **SleepFounder comparison unchanged:** our cardio-only apnea AUROC (0.770) remains well below
+  SleepFounder's reported OSA AUROC (0.917). As before, this reflects evaluation protocol
+  (frozen general-purpose backbone + lightweight head vs. their domain-specific 800K-hour
+  fine-tuned model), not the intrinsic information content of cardiorespiratory channels.
 
 ---
 
-#### B. More channels per modality group (preprocessing rerun required)
-**What:** The current config uses a limited number of channels per SleepFM modality group:
-- BAS (EEG + EOG): priority list = C3-M2, C4-M1, LOC, ROC, O1-M2, O2-M1, F3-M2, F4-M1, A1, A2 (up to 10)
-- RESP: Airflow, Thor, ABD, SpO2, HR, Snore, RespRate (up to 7)
-- EKG: priority = [EKG] only (max 2 slots)
-- EMG: priority = [EMG] only (max 4 slots)
+##### A.6.2 Paper inclusion guidance — what goes where
 
-Currently EKG uses only 1 channel (EKG) and EMG uses only 1 channel (EMG chin lead), with the remaining slots empty. Adding ECG-L, ECG-R for EKG and CHIN, LLEG, RLEG for EMG would use the max_channels budget.
+**Main paper Results (Table 6 + 1–2 paragraphs):**
+- The full 5×5 table itself — this is the core ablation result.
+- **Headline finding**: the most-necessary single modality is task-dependent — BAS for sleep
+  efficiency/age/BMI, RESP for apnea, **EKG for sex** (genuinely novel, not predicted). Lead
+  with this.
+- **Apnea `no_resp`**: the cleanest, most citation-worthy result — directly validates the
+  OSF-style respiratory-necessity claim (RESP-removed conditions drop ~2× more on average than
+  RESP-retained ones). Strongest tie-in to related work (§A.1).
+- **Sleep efficiency**: three converging lines of evidence (no_bas worst, no_resp/no_ekg small,
+  bas_only ties full) — the cleanest, lowest-risk result; good for building reader confidence in
+  the method before presenting the more surprising results.
+- **Sex `no_ekg`**: report as a genuine surprise with appropriate hedging (cardiac/HRV sex
+  differences are documented physiology — cite a mechanism if available, otherwise flag as
+  "unexpected, warrants follow-up").
 
-**What it answers:** Does adding more channels within each group improve performance? What is the marginal gain from more EEG leads?
+**Supplementary:**
+- Full per-condition delta/N_test/context breakdown (main text should show the headline table
+  plus one summary table of "most-necessary group per task"; full numeric detail to
+  supplementary).
+- The pre-registered-vs-actual hypothesis comparison (§A.6, the long bullet list) — shows rigor
+  but is too much detail for main text.
+- SleepFounder protocol-mismatch caveat — informative but a footnote, not body text.
+- BMI's `cardio` interaction effect — interesting but speculative (no single group explains it
+  alone); present as an exploratory note, not a strong claim, since it does not fit the rest of
+  the additive "modality importance" story cleanly.
 
-**Implementation:**
-1. Update `channel_priority` in `configs/phase0_v3_config.yaml` (add channels)
-2. Re-run `scripts/extract_nsrr_channels.py` for all 4 cohorts (cluster jobs)
-3. Re-run SleepFM embedding extraction for all subjects (expensive — multi-day cluster job)
-4. Then re-run training and inference as normal
+**Throw away / do not claim as findings (noise-level, |Δ| < 0.02, no multi-seed variance
+estimate exists for these single-run ablation conditions):**
+- BMI `no_resp` (+0.003) and `no_ekg` (+0.002), and sleep efficiency `bas_only` (+0.005) — report
+  as "no detectable effect," not as the condition "matching or exceeding full."
+- Apnea `no_ekg` (-0.024) — borderline/noise; consistent with (but not separate evidence for)
+  EKG being unimportant for apnea, do not present as its own finding.
+- Apply the |Δ| thresholds from §A.6.1 consistently (< 0.02 noise, 0.02–0.05 borderline,
+  > 0.05 likely real) when drafting paper text so small deltas are not over-claimed.
 
-**Tasks to run:** All Tier 1 tasks at representative context lengths.
+---
 
-**Effort:** 1–2 weeks (dominated by embedding re-extraction). **Plan for after all main runs are complete.**
+##### A.7 Implementation status
 
-**Paper contribution:** Shows sensitivity to channel configuration. Justifies our current channel choices (or motivates future work with richer channels).
+1. ✅ **`src/nsrr_tools/datasets/context_window_dataset.py`** — `zero_modality_indices` parameter added.  
+   Zeroing is applied to the `(N, 4, 128)` float32 copy before reshaping to `(N, 512)`, so the `.npy` memory-map is never written:
+   ```python
+   w = window.astype(np.float32)      # (N, 4, 128) — always a new copy (float16→float32)
+   for mi in self._zero_modality_indices:   # modality index: 0=BAS, 1=RESP, 2=EKG, 3=EMG
+       w[:, mi, :] = 0.0
+   x = w.reshape(N, FLAT_DIM)         # (N, 512) fed to head
+   ```
+   Applied identically at training time (all three window methods) and inference time.
+
+2. ✅ **`scripts/train_context_sweep.py`** — `--zero-modalities BAS RESP EKG EMG` flag added.  
+   `scripts/infer_subject_windows.py` — same flag, same zeroing.  
+   `jobs/train_context_sweep_gpu.sh` and `jobs/infer_subject_windows_gpu.sh` — `ZERO_MODALITIES` env var forwarded to both.
+
+3. ✅ **`scripts/gen_commands.py`** — reads `zero_modalities` from registry entry, emits `ZERO_MODALITIES="BAS"` etc. in the generated sbatch command.
+
+4. ✅ **`experiments/v2_ablation_registry.yaml`** — 25 entries (5 tasks × 5 conditions: no_bas, no_resp, no_ekg, cardio, bas_only). `no_resp`/`no_ekg` added 2026-06-17 — required **zero code changes**, only new registry entries, since the `zero_modalities` mechanism already supports any single-group or multi-group subset.  
+   ✅ **`configs/phase0_v3_abl_config.yaml`** — separate config pointing to `phase0_v3_abl/` results dir.
+
+5. ✅ **`scripts/make_table6_modality.py`** — reads `results/collected/phase0_v3/analysis.csv` (Full baseline) and `results/collected/phase0_v3_abl/analysis.csv` (the five ablation conditions, keyed by `run_tag`), joins them into the task × condition AUROC table with deltas, and saves CSV/markdown/LaTeX to `results/tables/table6_modality.*`. `CONDITIONS` list updated 2026-06-17 to include `no_resp`/`no_ekg` — no other code change needed. See `docs/EXPERIMENTS_GUIDE.md` §Modality ablation — Step 5 for usage.
+
+6. ⚠️ **Bug found and fixed while wiring up Table 6:** `scripts/collect_results_v2.py`'s `parse_exp_dir()` originally matched experiment folders only by suffix (`_lstm`, `_transformer`, `_mean_pool`), so it silently dropped every `run_tag`-suffixed folder (`{task}_{head}_abl_no_bas`, etc. — and also the pre-existing `sleep_staging_lstm_with_stages`). Fixed to find the head as a substring and capture the trailing run_tag separately; `run_tag` was added to the train/analysis dedup keys so the three ablation conditions per task don't collide under the same key. Backward compatible — old CSVs without a `run_tag` column are read as `run_tag=""`.
+
+---
+
+#### B. More channels per modality group — ✅ THIS IS THE v3_full RUN (already in progress)
+
+> **This experiment is not new work.** It is the full-channel run (`phase0_v3_full`) that was
+> implemented and is currently running. Nothing here needs to be scheduled or coded.
+> See `docs/EXPERIMENTS_GUIDE.md` → **"Full-channel run (channel expansion)"** for the
+> step-by-step playbook, current status, and all commands.
+
+**What v3_full does (= what this section originally described as future work):**
+
+| Originally planned | v3_full implementation |
+|---|---|
+| Expand EKG from 1 channel to ECG-L, ECG-R (use 2-slot budget) | `preprocessing_params_full.yaml` — EKG≤2, priority: [EKG, ECG-L, ECG-R] |
+| Expand EMG from 1 channel to CHIN, LLEG, RLEG (use 4-slot budget) | `preprocessing_params_full.yaml` — EMG≤4, priority: [CHIN, LLEG, RLEG, EMG] |
+| Use full BAS priority list (up to 10 channels) | `preprocessing_params_full.yaml` — BAS≤10, all EEG + EOG leads |
+| Re-run preprocessing + embedding extraction | Done in v3_full Step 0–1 (IN PROGRESS) |
+| Re-run training on all Tier 1 tasks | Done in v3_full Step 2–3 |
+
+**What it answers:** Fast-channel (v3) vs full-channel (v3_full) AUROC comparison shows the
+marginal gain from using more PSG channels per modality group. This is Table 5 (or equivalent)
+in the paper — the primary fast→full comparison.
+
+**Status:** IN PROGRESS — preprocessing and embedding extraction running on cluster.
+**No new code or jobs needed here.**
 
 ---
 
@@ -462,11 +595,11 @@ Currently EKG uses only 1 channel (EKG) and EMG uses only 1 channel (EMG chin le
 
 | Order | Experiment | Effort | Blocking? | Requires retraining? |
 |---|---|---|---|---|
-| 1 | **Modality ablation — training-time (§A, essential 3 conditions)** | 2–3 days | No | **Yes** — 15 new training jobs |
+| 1 | **Modality ablation — training-time (§A, essential 5 conditions: no_bas, no_resp, no_ekg, cardio, bas_only)** | ✅ Done (2026-06-17) | No | **Yes** — 25 training jobs, all complete |
 | 2 | Inference-time robustness check (Experiment G, supplementary) | 1 day | No | No — run on existing checkpoints |
 | 3 | Cross-dataset generalization breakdown (Experiment E) | 0.5 day | No | No |
 | 4 | Data efficiency curve (Experiment C) | 1 day | No | No |
-| 5 | Modality ablation — optional 3 conditions (§A, supplementary) | 2–3 days | No | Yes — 15 more training jobs |
+| 5 | Modality ablation — optional 2 conditions (resp_only, ekg_only; §A, supplementary) | 1–2 days | No | Yes — 10 more training jobs |
 | 6 | Mamba head on 2 tasks (Experiment D — pilot) | 3–5 days | No | Yes |
 | 7 | Full Mamba sweep (Experiment D — full) | 2 weeks | Depends on pilot | Yes |
 | 8 | Bidirectional LSTM (Experiment F) | 0.5 day | No | Yes |

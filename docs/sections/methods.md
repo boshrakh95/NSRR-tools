@@ -134,27 +134,72 @@ All tasks are framed as classification. Labels are derived from validated instru
 
 ---
 
-## III-C. Signal Preprocessing
+## III-C. Signal Preprocessing and Embedding Extraction
 
-### Pipeline overview
+*Full step-by-step pipeline reference: `docs/PREPROCESSING_PIPELINE.md`*
 
-Raw EDF files → standardised HDF5 → SleepFM embeddings (.npy)
+### Pipeline overview — TWO STAGES, 10 steps
+
+```
+Step 0  test_*_adapter.py          — validate dataset adapters
+Step 1  extract_nsrr_channels.py   — build channel inventory from EDF files
+Step 2  extract_metadata.py        — unified subject metadata parquet
+Step 3  test_preprocessing.py      — sanity check on small N
+Step 4  preprocess_signals.py      — EDF → HDF5 (filter, resample, z-score)
+Steps 5-7: extract_targets_*.py + create_master_targets.py + create_task_subject_lists.py
+Step 8  extract_sleepfm_embeddings.py — HDF5 → .npy via frozen SleepFM
+Step 9  test_context_window_dataset.py — validate data loading
+Step 10 train_context_sweep.py     — train heads
+```
+
+Steps 4 and 8 are the two heavy stages (cluster jobs). All steps are idempotent.
+
+### Why TWO stages matter for channel counts
+
+The effective channels reaching SleepFM are determined by what was SAVED to HDF5 in Step 4, not by what Step 8 requests. Step 8 reads `data.max_channels` from the config but can only find whatever channels exist in the HDF5 (missing slots are zero-padded with mask=True).
+
+### [QUESTION 14 — CRITICAL for paper] Which channel strategy was used?
+
+**`preprocessing_params.yaml`** controls Step 4. TWO strategies exist:
+
+| Strategy | BAS | RESP | EKG | EMG | Total | Data path |
+|---|---|---|---|---|---|---|
+| **fast** | 4 | 1 | 1 | 1-2 | ~7-8 | `/scratch/boshra95/psg/` (v3 results) |
+| **sleepfm_full** | 10 | 7 | 2 | 4 | up to 23 | `/scratch/boshra95/psg_full/` (v3_full) |
+
+`CHANNEL_EXPANSION_GUIDE.md` states: *"Current (fast) run: All datasets: 7-8 channels (BAS=4, RESP=1, EKG=1, EMG=1-2)."*
+
+But `preprocessing_params.yaml` currently has `strategy:` commented out (Python default → 'sleepfm_full'). **Please confirm which strategy was actually applied on the cluster for the v3 data used in the paper.**
+
+For now, methods.md documents **both** versions. The paper must state the correct one.
+
+### Channel name harmonisation — OUR MAPPING, NOT SLEEPFM'S
+
+We use our OWN channel mapping (`configs/channel_definitions.yaml`), NOT SleepFM's `channel_groups.json`. SleepFM was pre-trained on other datasets with different channel naming conventions. Our pipeline bypasses SleepFM's name lookup entirely — we assemble the modality tensor manually and pass it to SleepFM with explicit channel masks.
+
+Our harmonisation is a two-level process:
+1. **Name mapping** (`channel_definitions.yaml`): thousands of raw EDF variants → ~40 standardised canonical labels. Case-insensitive, priority-ordered. Example: "EEG C3-A2", "C3M2", "C3_M2", "C3:A2", "EEG_C3-A2" → all map to **C3-M2**.
+2. **Modality assignment** (`modality_groups.yaml`): standardised labels → BAS / RESP / EKG / EMG groups.
 
 This pipeline runs once per subject and per dataset. The outputs are cached; all downstream training reads from the cache.
 
-### Step 1: EDF → HDF5 (`preprocess_signals.py`)
+### Step 1 (Step 4 in full pipeline): EDF → HDF5 (`preprocess_signals.py`)
 
 **Tool:** MNE-Python for EDF loading.
 
-**Channel selection:**
+**Channel selection (Step 4 of the full pipeline):**
 1. Each EDF is scanned for available channel names.
-2. Channels are mapped to standardised names via `ChannelMapper` (handles dataset-specific naming conventions, e.g., SHHS uses "C3-M2", STAGES may use "EEG C3-A2").
-3. For each modality group, channels are selected by priority order (defined in `configs/phase0_v3_config.yaml`):
-   - BAS (EEG + EOG): C3-M2, C4-M1, LOC, ROC, O1-M2, O2-M1, F3-M2, F4-M1, A1, A2 (up to 10)
-   - RESP: Airflow, Thor, ABD, SpO2, HR, Snore, RespRate (up to 7)
-   - EKG: EKG, ECG-L, ECG-R (up to 2)
-   - EMG: CHIN, LLEG, RLEG, EMG (up to 4)
-4. If a channel is unavailable in a recording, its slot is zero-padded and a boolean mask records its absence (mask=True → padded/missing).
+2. Channels are mapped to standardised canonical names via `ChannelMapper` using `configs/channel_definitions.yaml`. Over 1,000 raw EDF name variants are mapped to ~40 standardised labels. Example: "EEG C3-A2", "C3M2", "C3_M2", "C3:A2" → all canonicalised to "C3-M2".
+3. Standardised channels are assigned to SleepFM modality groups via `configs/modality_groups.yaml`.
+4. The channel limit strategy from `configs/preprocessing_params.yaml` determines how many channels per modality are SAVED to HDF5:
+   - **fast strategy (v3 current):** BAS=4, RESP=1, EKG=1, EMG=2 (total ≈7-8)
+   - **sleepfm_full strategy (v3_full):** BAS=10, RESP=7, EKG=2, EMG=4 (total up to 23)
+5. Within each modality, channels are selected in priority order:
+   - BAS: C3-M2, C4-M1, LOC, ROC, O1-M2, O2-M1, F3-M2, F4-M1, A1, A2
+   - RESP: Airflow, Thor, ABD, SpO2, HR, Snore, RespRate
+   - EKG: EKG, ECG-L, ECG-R
+   - EMG: CHIN, LLEG, RLEG, EMG
+6. Only channels that physically exist in the EDF are saved. If an EDF lacks a priority channel, that channel is simply absent from the HDF5 (not zero-padded at this stage — padding happens at Step 8 during SleepFM encoding).
 
 **Signal processing (per channel):**
 1. **Bandpass filtering** (Butterworth, 4th order, MNE FFT-based for long signals):
@@ -205,6 +250,31 @@ This pipeline runs once per subject and per dataset. The outputs are cached; all
 **Storage:** ~5.6 MB per subject (float16). ~22 GB total across ~4,000 subjects.
 
 **At training time:** The `[T, 4, 128]` array is memory-mapped (never fully loaded). Context windows are sliced as `emb[t_start:t_start+N, :, :]` then flattened to `[N, 512]` (= 4 × 128) as input to the downstream head.
+
+### Step 2 (Step 8 in full pipeline): HDF5 → embeddings (`extract_sleepfm_embeddings.py`)
+
+**Config:** `phase0_v3_config.yaml` (`data.channel_priority` and `data.max_channels` sections)
+
+The embedding extractor reads the HDF5 files produced by Step 4 and constructs the modality tensors for SleepFM:
+
+1. For each modality group, iterate through the priority list from `data.channel_priority`
+2. Collect only those channels that exist as keys in the HDF5 file
+3. Build tensor `(B, C_max, 38400)` where `C_max = data.max_channels[modality]`; real channels fill the first slots; remaining slots are zeros; `mask[slot] = True` for zero-padded slots
+4. Run the frozen SetTransformer: `model(x, mask)` returns `(pooled_5min, patch_embeddings)`
+5. Store `patch_embeddings` (shape `(B, 60, 128)` per modality) — NOT the pooled 5-min summary
+
+**Effective channels in SleepFM input = min(channels in HDF5, max_channels):**
+
+| Modality | Config max_channels | Fast HDF5 has | Full HDF5 has | Real channels going into SleepFM (fast) |
+|---|---|---|---|---|
+| BAS | 10 | 4 | up to 10 | 4 real + 6 zero-padded |
+| RESP | 7 | 1 | up to 7 | 1 real + 6 zero-padded |
+| EKG | 2 | 1 | up to 2 | 1 real + 1 zero-padded |
+| EMG | 4 | 1-2 | up to 4 | 1-2 real + 2-3 zero-padded |
+
+**This is the correct description for the current paper results (if fast strategy was used).**
+
+**IMPORTANT: We do NOT use SleepFM's `channel_groups.json`**. That file maps raw channel names during SleepFM's original training. In our pipeline, the HDF5 already uses canonical names (C3-M2, LOC, etc.) and the embedding extractor builds the tensor directly using our priority list. SleepFM's name lookup is entirely bypassed.
 
 **[QUESTION 9]** What was the total GPU compute time for embedding extraction across all 4 datasets? (Approximate, for Methods or supplementary — reviewers of TBME often ask about compute costs.)
 
@@ -587,6 +657,219 @@ This allows direct attribution of AUROC differences to context length.
 
 ---
 
+## III-I. Modality Group Ablation
+
+### Motivation and design principle
+
+The SleepFM encoder compresses up to 23 PSG channels into four 128-dim modality embeddings
+(BAS, RESP, EKG, EMG) that are concatenated into a 512-dim vector. In the main context-length
+experiment, the head always sees all four groups. Ablation removes one or more groups at
+training time to determine how much of the performance on each task is attributable to each
+channel group independently.
+
+**Training-time ablation (primary):** The selected modality groups are zeroed in the embedding
+before the head sees any data — at both training and inference time. This forces the head to
+learn without the absent group and measures the **peak capability** of that channel subset.
+Because the head is retrained from scratch, it fully adapts to the available channels rather
+than partially ignoring them.
+
+This is distinct from inference-time ablation (Experiment G), where the pre-trained
+full-channel head is evaluated on embeddings with groups zeroed only at inference.
+Inference-time ablation measures **robustness** to missing channels at deployment;
+training-time ablation measures **informational sufficiency**.
+
+### Implementation
+
+The zeroing is applied in `ContextWindowDataset.__getitem__()` via the `zero_modality_indices`
+parameter. After the float16 `.npy` array is cast to float32 (which always creates a new
+writable copy), the selected modality slices are set to zero before the context window is
+flattened to `(N, 512)` and fed to the head:
+
+```python
+w = window.astype(np.float32)     # (N, 4, 128) — writable copy; .npy mmap untouched
+for mi in zero_modality_indices:  # e.g. [0] for BAS, [0, 3] for cardio
+    w[:, mi, :] = 0.0
+x = w.reshape(N, FLAT_DIM)
+```
+
+The zeroing is identical at training and inference time. No new preprocessing or embedding
+extraction is required — the same fast-channel `.npy` files are reused unchanged.
+
+**SleepFM embedding layout (512 dim = 4 × 128):**
+```
+[  0:128]  BAS  — EEG leads + EOG (brain activity)
+[128:256]  RESP — Airflow, Thor, ABD, SpO2, HR, Snore, RespRate
+[256:384]  EKG  — cardiac
+[384:512]  EMG  — chin + leg muscles
+```
+
+### Ablation conditions
+
+Five conditions are chosen to answer complementary questions. `No RESP` and `No EKG` were
+added after the initial three (`No BAS`, `Cardio only`, `BAS only`) to complete the
+single-modality leave-one-out matrix, directly inspired by OSF's (Shuai et al., arXiv:2603.00190)
+own missing-channel ablation — their flagship result zeros Respiratory channels alone and
+evaluates on Hypopnea/Oxygen Desaturation, the direct analogue of our `apnea_binary`. Without
+`No RESP`, RESP's necessity could only be inferred indirectly through conditions that also
+remove EKG/EMG (`No BAS`, `Cardio only`) or that remove RESP alongside EKG/EMG (`BAS only`) —
+never as a clean single-group knockout.
+
+| Condition | Groups zeroed | Groups active | Scientific question |
+|---|---|---|---|
+| No BAS | BAS [0:128] | RESP+EKG+EMG [128:512] | Can the task be solved without any EEG/EOG? (minimal-sensor setting) |
+| No RESP | RESP [128:256] | BAS+EKG+EMG [0:128, 256:512] | Does removing respiratory signal alone hurt? (OSF-style leave-one-out) |
+| No EKG | EKG [256:384] | BAS+RESP+EMG [0:256, 384:512] | Does removing the cardiac signal alone hurt? |
+| Cardio only | BAS+EMG [0:128, 384:512] | RESP+EKG [128:384] | Direct comparison to SleepFounder (RESP+EKG model) |
+| BAS only | RESP+EKG+EMG [128:512] | BAS [0:128] | How much do brain signals alone explain? |
+
+The baseline (all four groups active) comes from the corresponding fast-channel (`phase0_v3`)
+experiment at the same context length — no additional training is required for the reference.
+
+EMG is not isolated (No EMG / EMG only) — none of the five ablation tasks are EMG/periodic-limb-movement-driven
+the way sleep staging would be, and OSF does not vary the Somatic group in their own
+missing-channel evaluation either.
+
+### Task and context selection
+
+Ablation is run on five tasks selected to cover the most informative and well-powered
+experiments from the main context-length sweep (tasks with N_test < 200 or baseline AUROC
+< 0.60 are excluded as uninformative for modality attribution):
+
+| Task | Context | v3 AUROC | Rationale |
+|---|---|---|---|
+| `sex_binary` | 120m | 0.872 | High AUROC; all modalities expected to contribute |
+| `apnea_binary` | 120m | 0.832 | Primary clinical task; RESP expected dominant (OSA is respiratory) |
+| `sleep_efficiency_binary` | 120m | 0.780 | Highest context benefit; BAS expected crucial (SE is determined by staging) |
+| `age_class` | 120m | 0.893 | Large N; aging expressed across all modalities |
+| `bmi_binary` | 40m | 0.767 | Saturates at L*=10m; 40m avoids sparse-window regime; uses LR=1e-4 |
+
+Context 120m matches L* for four tasks. For `bmi_binary`, 40m is used because 120m would
+give K_infer ≈ 3–4 windows/subject (too sparse for stable AUROC estimates).
+
+### Experimental scope and isolation
+
+25 experiments total (5 tasks × 5 conditions), LSTM head only. Results are written to a
+completely separate directory (`phase0_v3_abl/`) and log directory (`logs_v3_abl/`), defined
+in a dedicated registry (`experiments/v2_ablation_registry.yaml`) and config
+(`configs/phase0_v3_abl_config.yaml`). This guarantees zero overlap with `phase0_v3/` or
+`phase0_v3_full/`. No code changes were required to add `No RESP`/`No EKG` — the
+`zero_modality_indices` mechanism already supports any subset of groups; only new registry
+entries were needed.
+
+### Expected findings (pre-registration)
+
+- **`apnea_binary`, no BAS:** Drop < 0.02. RESP carries the OSA signal; EEG is uninformative.
+- **`apnea_binary`, no RESP:** Largest drop of any condition for this task — the direct,
+  clean test of "RESP carries the OSA signal," mirroring OSF's hypopnea finding. Expect AUROC
+  to fall toward (but likely not all the way to) chance.
+- **`apnea_binary`, no EKG:** Small drop. EKG is not expected to be apnea's primary signal.
+- **`apnea_binary`, BAS only:** Drop > 0.15. EEG alone cannot detect apnea (near chance).
+- **`apnea_binary`, cardio only:** Should approach SleepFounder (0.917 on their OSA task).
+  If our cardio-only AUROC exceeds SleepFounder, the gap is attributable to RESP richness
+  (7-channel vs. their single airflow/SpO2 proxy), not to additional modalities.
+- **`sleep_efficiency_binary`, BAS only:** Small drop (< 0.05). Sleep efficiency is determined
+  by sleep stage, which is encoded primarily in EEG alpha/spindle/slow-wave patterns.
+- **`sleep_efficiency_binary`, no RESP:** Moderate drop expected — sleep efficiency correlates
+  with apnea, so RESP may carry information beyond what EEG-driven staging signal provides.
+- **`sex_binary`, no BAS:** Moderate drop (0.02–0.08). Sex differences in EEG are documented
+  but RESP and EKG also carry sex-related information (respiration rate, HRV).
+- **`sex_binary`/`age_class`/`bmi_binary`, no RESP and no EKG:** No strong prior — genuinely
+  exploratory for these three tasks. No task in the 5-task ablation set is hypothesized to be
+  EKG-dominant (that would be `cvd_binary`, not currently in the ablation set).
+
+### Actual results (all 25/25 conditions complete — 2026-06-17)
+
+Source: `docs/SOTA_COMPARISON_AND_ABLATIONS.md §A.6.1`. Generated via `scripts/make_table6_modality.py`.
+
+AUROC at K=all (full-night ceiling), test split, LSTM head.
+
+| Task | Context | N_test | Full | No BAS | Δ | No RESP | Δ | No EKG | Δ | Cardio only | Δ | BAS only | Δ |
+|------|---------|--------|------|--------|---|---------|---|--------|---|-------------|---|----------|---|
+| Sex | 120m | 1430 | 0.872 | 0.799 | **-0.073** | 0.843 | -0.029 | 0.782 | **-0.090** | 0.796 | -0.076 | 0.777 | -0.096 |
+| Apnea (AHI≥15) | 120m | 2054 | 0.832 | 0.782 | -0.050 | 0.766 | **-0.066** | 0.808 | -0.024 | 0.770 | -0.062 | 0.723 | -0.109 |
+| Sleep efficiency | 120m | 2023 | 0.780 | 0.682 | **-0.099** | 0.760 | -0.021 | 0.750 | -0.030 | 0.670 | -0.110 | 0.786 | +0.005 |
+| Age group | 120m | 1859 | 0.893 | 0.835 | **-0.059** | 0.882 | -0.012 | 0.868 | -0.025 | 0.821 | -0.072 | 0.860 | -0.034 |
+| BMI (obese) | 40m | 1856 | 0.756 | 0.728 | -0.028 | 0.759 | +0.003 | 0.758 | +0.002 | 0.663 | **-0.093** | 0.741 | -0.015 |
+
+**Effect-size thresholds (no multi-seed variance for ablation conditions; treat as single-run estimates):**
+- |Δ| < 0.02: not distinguishable from noise — report as "no detectable effect"
+- |Δ| 0.02–0.05: borderline — note as marginal
+- |Δ| > 0.05: likely a real effect at N_test 1400–2050
+
+**Headline findings:**
+- **Most-necessary single group is task-dependent**: BAS for sleep_efficiency/age/BMI, RESP for apnea, EKG for sex (the one genuine surprise — not pre-registered)
+- **Apnea `no_resp` (-0.066)** is the largest single-knockout for that task, directly confirming the OSF-style respiratory-necessity hypothesis
+- **Sleep efficiency `bas_only` (+0.005)** — BAS alone matches full, confirming SE is driven entirely by EEG-based sleep staging features; RESP/EKG/EMG carry almost nothing
+- **Sex `no_ekg` (-0.090)** — removing cardiac signal hurts sex classification more than removing brain signal; not pre-registered; cardiac HRV/rate sex differences plausible mechanism
+- **BMI `cardio` (-0.093)** — combined BAS+EMG zeroing causes the largest BMI drop; does not match any single-group effect (BAS -0.028, RESP +0.003, EKG +0.002) → interaction effect, not simple additive; treated as exploratory
+
+**Noise-level results to report as "no detectable effect" (not as supporting evidence):**
+BMI `no_resp` (+0.003), BMI `no_ekg` (+0.002), sleep_efficiency `bas_only` (+0.005)
+
+### Paper Methods wording (approved — from SOTA_COMPARISON_AND_ABLATIONS.md §A.6.2)
+
+> "To quantify the contribution of each PSG modality group, we repeated the LSTM training with
+> one or more SleepFM modality groups set to zero at both training and inference time — forcing
+> the head to learn from only the remaining modalities (training-time ablation, measuring peak
+> capability of each channel subset). Five conditions were evaluated across five tasks
+> (sex, apnea, sleep efficiency, age, BMI): (i)~no brain signals (BAS zeroed),
+> (ii)~no respiratory signals (RESP zeroed), (iii)~no cardiac signal (EKG zeroed),
+> (iv)~cardiorespiratory only (BAS+EMG zeroed; RESP+EKG active — matching SleepFounder's
+> sensor set), and (v)~brain signals only (BAS active). Conditions (ii) and (iii) complete
+> the single-modality leave-one-out matrix and are directly inspired by OSF's missing-channel
+> ablation~\cite{osf}, which zeros respiratory channels alone on a hypopnea/oxygen-desaturation
+> task — the direct analogue of our apnea task. The baseline for each task is the LSTM result
+> from the main context-length sweep at the same context length."
+
+**[QUESTION 14]** Is SleepFounder's sensor set precisely RESP+EKG (cardiorespiratory = airflow/effort + ECG), or does it include something additional (SpO2? Pulse pleth)? Confirm before the cardio-only comparison to SleepFounder is stated in the paper (affects whether "RESP+EKG" is the right label for the `abl_cardio` condition).
+
+**What goes where:**
+- Main paper: 5×5 AUROC table (Table 6) + ~1.5 columns of discussion (headline finding, apnea result, sex surprise, sleep efficiency interpretation, SleepFounder comparison caveat)
+- Supplementary: pre-registered vs actual comparison, BMI interaction effect (exploratory), noise-level results with explicit "no detectable effect" language, full delta/N_test/context breakdown
+
+---
+
+## III-J. Channel Count Comparison: Fast (7–8 ch) vs Full (up to 23 ch)
+
+### Purpose
+
+The main context-length experiments (v3 results) used a **reduced channel set** (~7–8 channels: BAS=4, RESP=1, EKG=1, EMG=1–2) to keep preprocessing and storage costs manageable. A separate **full-channel run** (v3_full; up to 23 channels: BAS=10, RESP=7, EKG=2, EMG=4) has been prepared as a controlled channel-count comparison. The two runs use identical architectures, training protocols, context lengths, and subject partitions — the only difference is how many channels were saved during HDF5 preprocessing and thus how many real (non-padded) channels reach SleepFM.
+
+### What this answers
+
+Does richer channel input (more EEG leads, more respiratory signals) improve clinical prediction performance, and does context-length saturation change? This is analogous to asking whether a richer sensor set shifts L* or merely scales the absolute AUROC. It also provides context for interpreting the modality ablation: if adding channels 5–10 of BAS barely changes performance, the marginal BAS channels carry little information.
+
+### Config and data paths
+
+| Parameter | Fast (v3) | Full (v3_full) |
+|---|---|---|
+| Preprocessing config | `preprocessing_params.yaml` (strategy: fast) | `preprocessing_params_full.yaml` (strategy: sleepfm_full) |
+| HDF5 path | `/scratch/boshra95/psg/` | `/scratch/boshra95/psg_full/` |
+| Embedding path | `psg/unified/embeddings/sleepfm_5sec/` | `psg_full/unified/embeddings/sleepfm_5sec/` |
+| Results path | `psg/unified/results/phase0_v3/` | `psg_full/unified/results/phase0_v3_full/` |
+| Registry | `experiments/v2_registry.yaml` | `experiments/v2_full_registry.yaml` |
+| Head config | `phase0_v3_config.yaml` (hidden=128, layers=1) | `phase0_v3_full_config.yaml` (hidden=128, layers=1) |
+
+Architectures are **matched** between fast and full: any AUROC difference is attributable solely to the richer channel set, not to model capacity differences.
+
+### Typical channels per dataset
+
+| Dataset | Fast BAS (4) | Full BAS (up to 10) | Fast RESP (1) | Full RESP (up to 7) |
+|---|---|---|---|---|
+| STAGES | C3-M2, C4-M1, LOC, ROC | + O1-M2, O2-M1, F3-M2, F4-M1, A1, A2 | Airflow | + Thor, ABD, SpO2, HR |
+| SHHS | Generic EEG names (1–2 real) | Same + variants | Airflow | + Thor, ABD, SpO2 |
+| APPLES | C3-M2, C4-M1, LOC, ROC | + O1-M2, O2-M1 | Airflow | + Thor, ABD, SpO2 |
+| MrOS | C3-M2, C4-M1, LOC, ROC | + O1-M2, O2-M1 | Airflow | + Thor, ABD, SpO2, HR |
+
+### Paper inclusion
+
+- **Main paper**: 1 comparison table (fast vs full, best AUROC per task, possibly just LSTM) showing whether richer channels improve performance or not. If effects are small (expected based on prior SleepFM pre-training on rich data), the paragraph in Discussion can be short.
+- **Supplementary**: saturation curves for fast vs full, showing whether L* shifts with richer channels.
+
+**[QUESTION 15]** Are the v3_full results available yet (training complete)? If so, pull the numbers. If not, mark as [PENDING].
+
+---
+
 ## Open questions summary
 
 | # | Question | Blocking what? |
@@ -604,6 +887,8 @@ This allows direct attribution of AUROC differences to context length.
 | Q11 | BiLSTM for staging: backward pass is into past context only? | Methods accuracy |
 | Q12 | Total GPU compute for all v3 training runs | Supplementary compute table |
 | Q13 | L* threshold: 0.005 absolute, or CI-overlap criterion? | Results framing |
+| Q14 | Which channel strategy was used for /scratch/boshra95/psg/ (fast or sleepfm_full)? | Paper channel count statement |
+| Q15 | Are v3_full (full channel) training results available? | Fast vs full comparison table |
 
 ---
 

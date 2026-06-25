@@ -72,6 +72,9 @@ import numpy as np
 import pandas as pd
 import yaml
 
+sys.path.insert(0, str(Path(__file__).parent))
+from repo_sync import mirror_file
+
 try:
     from sklearn.metrics import (
         balanced_accuracy_score,
@@ -146,6 +149,10 @@ def main():
                         help="Restrict to these context lengths (default: all found).")
     parser.add_argument("--dry-run",   action="store_true", dest="dry_run",
                         help="Print table but do not write CSV.")
+    parser.add_argument("--repo-out", type=Path, default=None, dest="repo_out",
+                        help="Also mirror threshold_tuning.csv into this repo dir "
+                             "(e.g. results/inference/phase0_v3/{task}_{head}). "
+                             "Default: no repo mirror.")
     args = parser.parse_args()
 
     with open(args.config) as f:
@@ -273,7 +280,8 @@ def main():
         print(f"\n[DRY-RUN] Would write {len(rows)} rows to: {out_csv}")
     else:
         pd.DataFrame(rows).to_csv(out_csv, index=False)
-        print(f"\nSaved → {out_csv}")
+        mirror_file(out_csv, args.repo_out)
+        print(f"\nSaved → {out_csv}" + ("  (+ repo copy)" if args.repo_out else ""))
         print(f"  {len(rows)} context(s) processed.")
         if skipped:
             print(f"  {len(skipped)} context(s) skipped (re-run after generating val parquets).")

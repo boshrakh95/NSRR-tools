@@ -40,6 +40,7 @@ Output:
 """
 
 import argparse
+import sys
 from pathlib import Path
 
 import matplotlib
@@ -48,6 +49,9 @@ import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 import matplotlib.ticker as mticker
 import numpy as np
+
+sys.path.insert(0, str(Path(__file__).parent))
+from repo_sync import configure_repo_figures, save_figure
 import pandas as pd
 
 try:
@@ -187,11 +191,8 @@ def plot_pr_curves(parquets: dict, task: str, head: str, out_dir: Path) -> None:
     fig.tight_layout()
 
     stem = f"{task}_{head}_pr_8A_curves"
-    for ext in ("png", "pdf"):
-        fig.savefig(out_dir / f"{stem}.{ext}",
-                    dpi=150 if ext == "png" else None, bbox_inches="tight")
+    save_figure(fig, out_dir, stem)
     plt.close(fig)
-    print(f"  [8A] Saved: {stem}.{{png,pdf}}")
 
 
 # ── Plot 8B: AUC-PR vs context length (multi-head) ────────────────────────────
@@ -264,11 +265,8 @@ def plot_aucpr_vs_context(results_dir: Path, task: str, heads: list,
     fig.tight_layout()
 
     stem = f"{task}_pr_8B_aucpr_vs_context"
-    for ext in ("png", "pdf"):
-        fig.savefig(out_dir / f"{stem}.{ext}",
-                    dpi=150 if ext == "png" else None, bbox_inches="tight")
+    save_figure(fig, out_dir, stem)
     plt.close(fig)
-    print(f"  [8B] Saved: {stem}.{{png,pdf}}")
 
 
 # ── Plot 8C: Majority-vote threshold sweep ────────────────────────────────────
@@ -360,11 +358,8 @@ def plot_vote_sweep(parquets: dict, task: str, head: str,
     fig.tight_layout()
 
     stem = f"{task}_{head}_pr_8C_vote_sweep"
-    for ext in ("png", "pdf"):
-        fig.savefig(out_dir / f"{stem}.{ext}",
-                    dpi=150 if ext == "png" else None, bbox_inches="tight")
+    save_figure(fig, out_dir, stem)
     plt.close(fig)
-    print(f"  [8C] Saved: {stem}.{{png,pdf}}")
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -387,6 +382,10 @@ def main() -> None:
                         dest="contexts_show",
                         help="Restrict 8C vote sweep to these context labels")
     parser.add_argument("--plots",   nargs="+", default=["8A", "8B", "8C"])
+    parser.add_argument("--repo-figures-dir", type=Path, default=None,
+                        dest="repo_figures_dir",
+                        help="Also mirror PNGs into this repo dir (e.g. "
+                             "results/figures/phase0_v3). Default: no repo mirror.")
     args = parser.parse_args()
 
     if not HAS_SKLEARN:
@@ -394,6 +393,7 @@ def main() -> None:
               "Activate sleepfm_env: source ~/sleepfm_env/bin/activate")
         return
 
+    configure_repo_figures(args.results_dir, args.repo_figures_dir)
     heads_8b = args.heads if args.heads else [args.head]
     out_dir  = args.results_dir / "figures" / f"{args.task}_{args.head}"
     out_dir.mkdir(parents=True, exist_ok=True)

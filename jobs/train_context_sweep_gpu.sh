@@ -83,6 +83,7 @@ BATCH_SIZE=${BATCH_SIZE:-""}   # micro-batch size fed to the GPU (default: 32)
 ACCUM_STEPS=${ACCUM_STEPS:-1}  # gradient accumulation steps; effective_batch = BATCH_SIZE × ACCUM_STEPS
 LR=${LR:-""}                   # learning rate override, e.g. LR=1e-4
 RUN_TAG=${RUN_TAG:-""}        # suffix for experiment folder, e.g. RUN_TAG=lr1e4
+ZERO_MODALITIES=${ZERO_MODALITIES:-""}  # space-separated modality names to zero out, e.g. "BAS RESP"
 WANDB_PROJECT=${WANDB_PROJECT:-"nsrr-phase0-v3"}
 NO_WANDB=${NO_WANDB:-""}
 
@@ -153,6 +154,7 @@ echo "Task:      ${TASK:-'(from config)'}  type=${TASK_TYPE:-'(from config)'}"
 echo "Head:      ${HEAD:-'(from config)'}"
 echo "Datasets:  ${DATASETS:-'(all)'}"
 echo "W&B:       $([ -n "$NO_WANDB" ] && echo disabled || echo "project=$WANDB_PROJECT")"
+echo "Zero mods: ${ZERO_MODALITIES:-(none)}"
 echo "Start:     $(date)"
 echo "========================================================================"
 echo ""
@@ -167,9 +169,10 @@ CMD="python scripts/train_context_sweep.py --config $CONFIG"
 [ -n "$BATCH_SIZE"     ] && CMD="$CMD --batch-size $BATCH_SIZE"
 CMD="$CMD --accum-steps $ACCUM_STEPS"
 [ -n "$LR"             ] && CMD="$CMD --lr $LR"
-[ -n "$RUN_TAG"        ] && CMD="$CMD --run-tag $RUN_TAG"
-[ -n "$WANDB_PROJECT"  ] && CMD="$CMD --wandb-project $WANDB_PROJECT"
-[ -n "$NO_WANDB"       ] && CMD="$CMD --no-wandb"
+[ -n "$RUN_TAG"          ] && CMD="$CMD --run-tag $RUN_TAG"
+[ -n "$ZERO_MODALITIES"  ] && CMD="$CMD --zero-modalities $ZERO_MODALITIES"
+[ -n "$WANDB_PROJECT"    ] && CMD="$CMD --wandb-project $WANDB_PROJECT"
+[ -n "$NO_WANDB"         ] && CMD="$CMD --no-wandb"
 
 echo "Running: $CMD"
 echo ""

@@ -37,6 +37,7 @@ Output:
 """
 
 import argparse
+import sys
 from pathlib import Path
 
 import matplotlib
@@ -45,6 +46,9 @@ import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 import matplotlib.ticker as mticker
 import numpy as np
+
+sys.path.insert(0, str(Path(__file__).parent))
+from repo_sync import configure_repo_figures, save_figure
 import pandas as pd
 
 # ── Style ─────────────────────────────────────────────────────────────────────
@@ -179,11 +183,8 @@ def plot_sensitivity_scatter(summary: pd.DataFrame, out_dir: Path) -> None:
     fig.tight_layout()
 
     stem = "task_comparison_6A_scatter"
-    for ext in ("png", "pdf"):
-        fig.savefig(out_dir / f"{stem}.{ext}",
-                    dpi=150 if ext == "png" else None, bbox_inches="tight")
+    save_figure(fig, out_dir, stem)
     plt.close(fig)
-    print(f"  [6A] Saved: {stem}.{{png,pdf}}")
 
 
 # ── Plot 6B: AUROC bars by task ───────────────────────────────────────────────
@@ -243,11 +244,8 @@ def plot_sensitivity_bars(summary: pd.DataFrame, df_all: pd.DataFrame,
     fig.tight_layout()
 
     stem = "task_comparison_6B_bars"
-    for ext in ("png", "pdf"):
-        fig.savefig(out_dir / f"{stem}.{ext}",
-                    dpi=150 if ext == "png" else None, bbox_inches="tight")
+    save_figure(fig, out_dir, stem)
     plt.close(fig)
-    print(f"  [6B] Saved: {stem}.{{png,pdf}}")
 
 
 # ── Plot 6C: L* per task ──────────────────────────────────────────────────────
@@ -290,11 +288,8 @@ def plot_lstar(summary: pd.DataFrame, out_dir: Path) -> None:
     fig.tight_layout()
 
     stem = "task_comparison_6C_lstar"
-    for ext in ("png", "pdf"):
-        fig.savefig(out_dir / f"{stem}.{ext}",
-                    dpi=150 if ext == "png" else None, bbox_inches="tight")
+    save_figure(fig, out_dir, stem)
     plt.close(fig)
-    print(f"  [6C] Saved: {stem}.{{png,pdf}}")
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -315,8 +310,13 @@ def main() -> None:
                         default=Path("/scratch/boshra95/psg/unified/results/phase0_v2"),
                         dest="results_dir")
     parser.add_argument("--plots", nargs="+", default=["6A", "6B", "6C"])
+    parser.add_argument("--repo-figures-dir", type=Path, default=None,
+                        dest="repo_figures_dir",
+                        help="Also mirror PNGs into this repo dir (e.g. "
+                             "results/figures/phase0_v3). Default: no repo mirror.")
     args = parser.parse_args()
 
+    configure_repo_figures(args.results_dir, args.repo_figures_dir)
     out_dir = args.results_dir / "figures" / "task_comparison"
     out_dir.mkdir(parents=True, exist_ok=True)
 

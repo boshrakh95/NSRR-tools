@@ -20,6 +20,7 @@ __pycache__/
 
 # logs / outputs
 outputs/
+papers/
 runs/
 *.log
 *.err
@@ -37,6 +38,6 @@ runs/
 **/*.gz
 **/*.h5
 **/*.parquet
-**/*.csv  # (optional: keep if you want only small metadata CSVs)
-!results/collected/training.csv
-!results/collected/analysis.csv
+
+# Result PDFs are large and slow down git add; PNGs are kept for quick viewing.
+results/figures/**/*.pdf

@@ -43,6 +43,7 @@ Output:
 """
 
 import argparse
+import sys
 from pathlib import Path
 
 import matplotlib
@@ -51,6 +52,9 @@ import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 import matplotlib.ticker as mticker
 import numpy as np
+
+sys.path.insert(0, str(Path(__file__).parent))
+from repo_sync import configure_repo_figures, save_figure
 import pandas as pd
 
 # ── Style ─────────────────────────────────────────────────────────────────────
@@ -195,11 +199,8 @@ def plot_kstar_histogram(parquets: dict, task: str, head: str,
 
     fig.tight_layout()
     stem = f"{task}_{head}_kstar_9A_histogram"
-    for ext in ("png", "pdf"):
-        fig.savefig(out_dir / f"{stem}.{ext}",
-                    dpi=150 if ext == "png" else None, bbox_inches="tight")
+    save_figure(fig, out_dir, stem)
     plt.close(fig)
-    print(f"  [9A] Saved: {stem}.{{png,pdf}}")
 
 
 # ── Plot 9B: Coverage curves ──────────────────────────────────────────────────
@@ -252,11 +253,8 @@ def plot_coverage_curves(parquets: dict, task: str, head: str,
     fig.tight_layout()
 
     stem = f"{task}_{head}_kstar_9B_coverage"
-    for ext in ("png", "pdf"):
-        fig.savefig(out_dir / f"{stem}.{ext}",
-                    dpi=150 if ext == "png" else None, bbox_inches="tight")
+    save_figure(fig, out_dir, stem)
     plt.close(fig)
-    print(f"  [9B] Saved: {stem}.{{png,pdf}}")
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -280,8 +278,13 @@ def main() -> None:
     parser.add_argument("--reps",    type=int, default=REPS_DEFAULT,
                         help=f"Random draws per (subject, k) (default: {REPS_DEFAULT})")
     parser.add_argument("--plots",   nargs="+", default=["9A", "9B"])
+    parser.add_argument("--repo-figures-dir", type=Path, default=None,
+                        dest="repo_figures_dir",
+                        help="Also mirror PNGs into this repo dir (e.g. "
+                             "results/figures/phase0_v3). Default: no repo mirror.")
     args = parser.parse_args()
 
+    configure_repo_figures(args.results_dir, args.repo_figures_dir)
     out_dir = args.results_dir / "figures" / f"{args.task}_{args.head}"
     out_dir.mkdir(parents=True, exist_ok=True)
 
