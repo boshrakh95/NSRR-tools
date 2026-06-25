@@ -276,6 +276,34 @@ experiments:
     tier: 2
     notes: "Extreme-group design: BDI<=9->0 or >=20->1 (APPLES); PHQ-9 <=4->0 or >=15->1 (STAGES). Middle group dropped."
 
+  depression_extreme_binary_transformer:
+    task: depression_extreme_binary
+    task_type: seq2label
+    num_classes: 2
+    head: transformer
+    datasets: [apples, stages]
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
+    batch_size: 32
+    lr: 1.0e-4
+    run_tag: ""
+    n_size: small
+    tier: 2
+    notes: ""
+
+  depression_extreme_binary_mean_pool:
+    task: depression_extreme_binary
+    task_type: seq2label
+    num_classes: 2
+    head: mean_pool
+    datasets: [apples, stages]
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
+    batch_size: 32
+    lr: 1.0e-4
+    run_tag: ""
+    n_size: small
+    tier: 2
+    notes: "Baseline (no temporal modelling)."
+
   # ── osa_binary_apples_postqc (N=1,516 — APPLES only) ─────────────────────
   osa_binary_apples_postqc_lstm:
     task: osa_binary_apples_postqc
@@ -290,6 +318,34 @@ experiments:
     n_size: small
     tier: 2
     notes: "Binary OSA severity post-QC: Non-rand+Mild->0, Moderate+Severe->1. APPLES only."
+
+  osa_binary_apples_postqc_transformer:
+    task: osa_binary_apples_postqc
+    task_type: seq2label
+    num_classes: 2
+    head: transformer
+    datasets: [apples]
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
+    batch_size: 32
+    lr: 1.0e-4
+    run_tag: ""
+    n_size: small
+    tier: 2
+    notes: ""
+
+  osa_binary_apples_postqc_mean_pool:
+    task: osa_binary_apples_postqc
+    task_type: seq2label
+    num_classes: 2
+    head: mean_pool
+    datasets: [apples]
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
+    batch_size: 32
+    lr: 1.0e-4
+    run_tag: ""
+    n_size: small
+    tier: 2
+    notes: "Baseline (no temporal modelling)."
 
   # ── osa_severity_apples (N=1,516 — APPLES only, 4-class) ─────────────────
   osa_severity_apples_lstm:
