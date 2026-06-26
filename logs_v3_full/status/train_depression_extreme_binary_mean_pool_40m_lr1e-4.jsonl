@@ -1,0 +1,2 @@
+{"ts":"2026-06-25T15:59:24-07:00","job_id":"45849232","node":"fc11011","status":"STARTED","task":"depression_extreme_binary","head":"mean_pool","context":"40m","lr":"1e-4","datasets":"apples stages"}
+{"ts":"2026-06-25T16:04:13-07:00","job_id":"45849232","node":"fc11011","status":"SUCCESS","task":"depression_extreme_binary","head":"mean_pool","context":"40m","lr":"1e-4","datasets":"apples stages"}

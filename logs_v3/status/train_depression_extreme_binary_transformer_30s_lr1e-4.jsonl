@@ -1,0 +1,4 @@
+{"ts":"2026-06-25T13:45:09-07:00","job_id":"45820776","node":"fc11004","status":"STARTED","task":"depression_extreme_binary","head":"transformer","context":"30s","lr":"1e-4","datasets":"apples stages"}
+{"ts":"2026-06-25T13:49:15-07:00","job_id":"45820776","node":"fc11004","status":"FAILED","reason":"30s: wandb_crash: Failed to read port info after 30.0 seconds.","task":"depression_extreme_binary","head":"transformer","context":"30s","lr":"1e-4","datasets":"apples stages"}
+{"ts":"2026-06-25T14:11:37-07:00","job_id":"45832295","node":"fc11005","status":"STARTED","task":"depression_extreme_binary","head":"transformer","context":"30s","lr":"1e-4","datasets":"apples stages"}
+{"ts":"2026-06-25T14:18:52-07:00","job_id":"45832295","node":"fc11005","status":"SUCCESS","task":"depression_extreme_binary","head":"transformer","context":"30s","lr":"1e-4","datasets":"apples stages"}

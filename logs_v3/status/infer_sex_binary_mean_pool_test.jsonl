@@ -1,0 +1,2 @@
+{"ts":"2026-06-26T13:09:37-07:00","job_id":"45980863","node":"fc11013","status":"STARTED","task":"sex_binary","head":"mean_pool","contexts":"30s 10m 40m 80m 120m 240m","split":"test","datasets":"apples shhs"}
+{"ts":"2026-06-26T13:18:35-07:00","job_id":"45980863","node":"fc11013","status":"SUCCESS","task":"sex_binary","head":"mean_pool","contexts":"30s 10m 40m 80m 120m 240m","split":"test","datasets":"apples shhs"}

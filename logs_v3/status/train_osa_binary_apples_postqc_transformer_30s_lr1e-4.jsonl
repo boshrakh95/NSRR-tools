@@ -1,0 +1,2 @@
+{"ts":"2026-06-25T14:34:05-07:00","job_id":"45839244","node":"fc11012","status":"STARTED","task":"osa_binary_apples_postqc","head":"transformer","context":"30s","lr":"1e-4","datasets":"apples"}
+{"ts":"2026-06-25T14:39:09-07:00","job_id":"45839244","node":"fc11012","status":"SUCCESS","task":"osa_binary_apples_postqc","head":"transformer","context":"30s","lr":"1e-4","datasets":"apples"}

@@ -1,0 +1,2 @@
+{"ts":"2026-06-26T13:30:04-07:00","job_id":"45984156","node":"fc11013","status":"STARTED","task":"age_class","head":"mean_pool","contexts":"30s 10m 40m 80m 120m 240m","split":"test","datasets":"apples shhs mros"}
+{"ts":"2026-06-26T13:39:39-07:00","job_id":"45984156","node":"fc11013","status":"SUCCESS","task":"age_class","head":"mean_pool","contexts":"30s 10m 40m 80m 120m 240m","split":"test","datasets":"apples shhs mros"}

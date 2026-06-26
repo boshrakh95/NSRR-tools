@@ -1,0 +1,2 @@
+{"ts":"2026-06-25T15:22:21-07:00","job_id":"45846238","node":"fc10916","status":"STARTED","task":"osa_binary_apples_postqc","head":"mean_pool","context":"30s","lr":"1e-4","datasets":"apples"}
+{"ts":"2026-06-25T15:26:54-07:00","job_id":"45846238","node":"fc10916","status":"SUCCESS","task":"osa_binary_apples_postqc","head":"mean_pool","context":"30s","lr":"1e-4","datasets":"apples"}
