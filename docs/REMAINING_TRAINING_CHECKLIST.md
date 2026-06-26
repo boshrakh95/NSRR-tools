@@ -476,30 +476,26 @@ for every experiment uniformly.
 `collect_results_v2.py --force` re-reads every experiment's `metrics.json`/`window_analysis_*.csv`
 from disk, but **does not deduplicate against the existing CSV** — concatenating "forced" fresh
 rows onto an `analysis.csv` that already contains the *same* keys produces literal duplicate
-rows. The only safe way to force-refresh without duplicating is to **delete the existing
-collected CSVs first**, so the script starts from an empty `existing` and writes a clean,
-single-row-per-key file.
+rows. The safe way to force-refresh without duplicating is to make sure `collect_results_v2.py`
+starts from an **empty** `existing` DataFrame, so every row it writes is genuinely new.
 
-This `rm -f` is safe to run as-is **only because the backup plan above already copied these exact
-two files** (`collected_backup_$TS/` for scratch, the `pre-refresh-2026-06-26` git tag for the
-repo copy) — if you skipped that step, copy them now before deleting.
+**✅ Already done for this refresh (2026-06-26):** rather than deleting the current collected
+CSVs, they were **renamed in place** — `training.csv` → `training_old_20260626.csv`,
+`analysis.csv` → `analysis_old_20260626.csv` — for both channels, both in scratch and in the
+repo. This is equivalent to delete-after-backup but keeps the "old" copy sitting right next to
+where the new one will appear, with zero risk window in between (rename is atomic; copy-then-rm
+has a brief window where both the backup and the original exist as separate operations).
+Verified: `results/collected/phase0_v3/` and `results/collected/phase0_v3_full/` (and their
+scratch counterparts) now contain only `*_old_20260626.csv` — no `training.csv`/`analysis.csv` at
+the original path, so the next `collect_results_v2.py` run starts clean (no `--force` needed at
+all, since `existing` will be empty either way).
 
 ```bash
-# Fast channel — delete then rebuild clean
-rm -f /scratch/boshra95/psg/unified/results/phase0_v3/collected/training.csv
-rm -f /scratch/boshra95/psg/unified/results/phase0_v3/collected/analysis.csv
-rm -f results/collected/phase0_v3/training.csv
-rm -f results/collected/phase0_v3/analysis.csv
-
+# Fast channel — fresh collect (original path is now empty; no --force needed)
 python scripts/collect_results_v2.py
 # --repo-out defaults to results/collected/phase0_v3/ automatically — dual-write confirmed.
 
-# Full channel — same pattern
-rm -f /scratch/boshra95/psg_full/unified/results/phase0_v3_full/collected/training.csv
-rm -f /scratch/boshra95/psg_full/unified/results/phase0_v3_full/collected/analysis.csv
-rm -f results/collected/phase0_v3_full/training.csv
-rm -f results/collected/phase0_v3_full/analysis.csv
-
+# Full channel — same
 python scripts/collect_results_v2.py \
   --results-dir /scratch/boshra95/psg_full/unified/results/phase0_v3_full
 ```
@@ -510,6 +506,20 @@ This re-scans **all** experiments under each `results_dir` — including the dro
 dropped-task rows are harmless in `analysis.csv` itself, as long as every downstream multi-task
 command filters with `--tasks` (Step 3 does this explicitly; `run_analysis.sh` does it
 automatically).
+
+**If repeating this pattern later** (e.g. for the v3_abl rerun, or any future re-collect), the
+rename-in-place recipe is:
+```bash
+TS=$(date +%Y%m%d)
+for f in training analysis; do
+  mv "$BASE/collected/$f.csv" "$BASE/collected/${f}_old_$TS.csv" 2>/dev/null
+  mv "results/collected/<round>/$f.csv" "results/collected/<round>/${f}_old_$TS.csv" 2>/dev/null
+done
+python scripts/collect_results_v2.py --results-dir "$BASE"
+```
+The `*_old_$TS.csv` files are safe to delete once you've confirmed the fresh collect looks right
+— they're a transition safety net, not meant to be kept forever (and the `pre-refresh` git tag /
+scratch backup dirs already preserve the same content anyway).
 
 **Verify no duplicates after rebuilding:**
 ```bash
@@ -671,16 +681,22 @@ in order to keep every downstream file correct — listed so nothing gets silent
 
 2. **Force-recollect `phase0_v3_abl`'s analysis.csv — do not just re-run `collect` plain.** This
    is the one case where the duplication trap in Step 2 above is *guaranteed* to bite you if you
-   don't delete first: the retrained experiments reuse the **same** experiment folder paths
-   (same task/head/run_tag/context), so a normal `collect` (no `--force`) will see those keys as
-   "already collected" and **silently keep the old, wrong-architecture numbers**. **Back up first**
-   (same pattern as the main backup plan above — `git commit`/tag for the repo copy, `cp` the
-   scratch CSVs to a `collected_backup_$TS/` dir), then delete and rebuild:
+   don't clear the existing CSV first: the retrained experiments reuse the **same** experiment
+   folder paths (same task/head/run_tag/context), so a normal `collect` (no `--force`) will see
+   those keys as "already collected" and **silently keep the old, wrong-architecture numbers**.
+   Use the same **rename-in-place** pattern as Step 2 above (commit/tag the repo copy first):
    ```bash
-   rm -f /scratch/boshra95/psg/unified/results/phase0_v3_abl/collected/training.csv
-   rm -f /scratch/boshra95/psg/unified/results/phase0_v3_abl/collected/analysis.csv
-   rm -f results/collected/phase0_v3_abl/training.csv
-   rm -f results/collected/phase0_v3_abl/analysis.csv
+   git add -A && git commit -m "Snapshot before v3_abl re-collect (post arch fix)"
+   git tag pre-abl-refresh-$(date +%Y%m%d)
+   git push origin pre-abl-refresh-$(date +%Y%m%d)
+
+   TS=$(date +%Y%m%d)
+   mv /scratch/boshra95/psg/unified/results/phase0_v3_abl/collected/training.csv \
+      /scratch/boshra95/psg/unified/results/phase0_v3_abl/collected/training_old_$TS.csv
+   mv /scratch/boshra95/psg/unified/results/phase0_v3_abl/collected/analysis.csv \
+      /scratch/boshra95/psg/unified/results/phase0_v3_abl/collected/analysis_old_$TS.csv
+   mv results/collected/phase0_v3_abl/training.csv results/collected/phase0_v3_abl/training_old_$TS.csv
+   mv results/collected/phase0_v3_abl/analysis.csv  results/collected/phase0_v3_abl/analysis_old_$TS.csv
 
    python scripts/collect_results_v2.py \
      --results-dir /scratch/boshra95/psg/unified/results/phase0_v3_abl
