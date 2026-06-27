@@ -74,9 +74,12 @@ def n_subjects(df):
     return int(sub["n_subjects"].iloc[0])
 
 
-def build_table(infer_dirs: dict, k_values=(5, "all")):
+def build_table(infer_dirs: dict, k_values=(5, "all"), tasks: list = None):
     rows = []
-    for task_id, task_label, heads in SEQ2LABEL_TASKS:
+    task_list = SEQ2LABEL_TASKS if tasks is None else [
+        t for t in SEQ2LABEL_TASKS if t[0] in tasks
+    ]
+    for task_id, task_label, heads in task_list:
         for head in heads:
             row = {"task_id": task_id, "task": task_label, "head": head}
             for channel, infer_base in infer_dirs.items():
@@ -163,6 +166,10 @@ def main():
                              "<results-dir>/tables/summary_<channel>.{csv,md}")
     parser.add_argument("--latex", action="store_true",
                         help="Print LaTeX table instead of plain text")
+    parser.add_argument("--tasks", nargs="+", default=None,
+                        help="Restrict to these task IDs (default: all tasks hardcoded in "
+                             "SEQ2LABEL_TASKS, including ones you may have since dropped from "
+                             "the paper — pass --tasks explicitly to exclude them)")
     args = parser.parse_args()
 
     if args.compare:
@@ -171,7 +178,7 @@ def main():
         infer_dirs = {"fast": FAST_INFER}
 
     channels = list(infer_dirs.keys())
-    df = build_table(infer_dirs)
+    df = build_table(infer_dirs, tasks=args.tasks)
 
     if args.latex:
         print(to_latex(df, channels, k=args.k))

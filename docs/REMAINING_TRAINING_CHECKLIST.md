@@ -710,8 +710,22 @@ done
 ### Other things you may have missed (flagging per your request)
 
 - **`results_summary_fast_vs_full.csv`** (`scripts/summarize_results.py --compare`) — the
-  fast-vs-full comparison table. Re-run after Step 2 so it reflects the new mean_pool/transformer
-  coverage: `python scripts/summarize_results.py --compare --out results/collected/results_summary_fast_vs_full.csv`.
+  fast-vs-full comparison table. Unlike the `make_tableN_*.py` scripts, this one had a **hardcoded
+  task list** (`SEQ2LABEL_TASKS` at the top of the file) with no `--tasks` filter at all — running
+  it as originally documented pulls in the dropped tasks (`cvd_binary`, `sleepiness_binary`,
+  `psqi_binary`). **Fixed**: added a `--tasks` flag (same convention as the table scripts). Always
+  pass it explicitly; the old hardcoded-list default is kept only for backward compatibility, not
+  because it's correct for the paper.
+  ```bash
+  python scripts/summarize_results.py --compare \
+    --tasks sex_binary age_class bmi_binary sleep_efficiency_binary apnea_binary depression_extreme_binary osa_binary_apples_postqc \
+    --out results/collected/results_summary_fast_vs_full.csv
+  ```
+  Note: `SEQ2LABEL_TASKS` also hardcodes which heads each task shows (e.g. `depression_extreme_binary`
+  and `osa_binary_apples_postqc` are still listed as `["lstm"]` only) — it predates the
+  transformer/mean_pool backfill in this checklist, so it won't show those new heads even though
+  they're now trained and analyzed. Out of scope for this fix; flagging so the missing rows in
+  the printed table aren't mistaken for a new bug.
 - **`heatmap_df_{split}.csv`** (written by `build-heatmap`, part of `run_analysis.sh` Step 1) is
   intentionally **scratch-only** — it's redundant with `analysis.csv`'s `total_compute_min`
   column, not mirrored to the repo by design.
