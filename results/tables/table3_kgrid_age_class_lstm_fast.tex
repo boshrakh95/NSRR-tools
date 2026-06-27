@@ -1,0 +1,17 @@
+\begin{table}[ht]
+\centering
+\caption{AUROC vs K grid for Age group (lstm, channel: fast). Rows: training context length L. Columns: inference-time K (windows per subject). Cells with identical K×L are on the same iso-compute diagonal.}
+\label{tab:kgrid_age_class_lstm_fast}
+\begin{tabular}{lrrrrrr}
+\toprule
+Context_L & K=1 & K=5 & K=10 & K=20 & K=50 & K=all \\
+\midrule
+30s & 0.798 & 0.853 & 0.859 & 0.864 & 0.865 & 0.865 \\
+10m & 0.814 & 0.860 & 0.865 & 0.869 & 0.870 & 0.870 \\
+40m & 0.837 & 0.882 & 0.886 & 0.887 & — & 0.887 \\
+80m & 0.843 & 0.890 & 0.890 & — & — & 0.890 \\
+120m & 0.864 & 0.893 & — & — & — & 0.893 \\
+240m & 0.869 & — & — & — & — & 0.885 \\
+\bottomrule
+\end{tabular}
+\end{table}

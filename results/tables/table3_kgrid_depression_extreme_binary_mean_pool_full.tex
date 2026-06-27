@@ -1,0 +1,17 @@
+\begin{table}[ht]
+\centering
+\caption{AUROC vs K grid for Depression (extreme) (mean_pool, channel: full). Rows: training context length L. Columns: inference-time K (windows per subject). Cells with identical K×L are on the same iso-compute diagonal.}
+\label{tab:kgrid_depression_extreme_binary_mean_pool_full}
+\begin{tabular}{lrrrrrr}
+\toprule
+Context_L & K=1 & K=5 & K=10 & K=20 & K=50 & K=all \\
+\midrule
+30s & 0.728 & 0.729 & 0.733 & 0.733 & 0.734 & 0.735 \\
+10m & 0.708 & 0.721 & 0.729 & 0.726 & 0.727 & 0.727 \\
+40m & 0.730 & 0.726 & 0.732 & — & — & 0.732 \\
+80m & 0.737 & 0.724 & — & — & — & 0.721 \\
+120m & 0.730 & 0.713 & — & — & — & 0.713 \\
+240m & 0.742 & — & — & — & — & 0.744 \\
+\bottomrule
+\end{tabular}
+\end{table}

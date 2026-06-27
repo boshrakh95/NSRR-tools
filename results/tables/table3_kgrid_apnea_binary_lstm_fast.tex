@@ -1,0 +1,17 @@
+\begin{table}[ht]
+\centering
+\caption{AUROC vs K grid for Sleep apnea (AHI≥15) (lstm, channel: fast). Rows: training context length L. Columns: inference-time K (windows per subject). Cells with identical K×L are on the same iso-compute diagonal.}
+\label{tab:kgrid_apnea_binary_lstm_fast}
+\begin{tabular}{lrrrrrr}
+\toprule
+Context_L & K=1 & K=5 & K=10 & K=20 & K=50 & K=all \\
+\midrule
+30s & 0.614 & 0.735 & 0.751 & 0.750 & 0.757 & 0.758 \\
+10m & 0.635 & 0.752 & 0.768 & 0.769 & 0.773 & 0.774 \\
+40m & 0.645 & 0.779 & 0.788 & 0.792 & — & 0.792 \\
+80m & 0.688 & 0.814 & 0.821 & — & — & 0.821 \\
+120m & 0.727 & 0.831 & — & — & — & 0.832 \\
+240m & 0.787 & — & — & — & — & 0.827 \\
+\bottomrule
+\end{tabular}
+\end{table}

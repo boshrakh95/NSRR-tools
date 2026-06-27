@@ -1,0 +1,32 @@
+\begin{table}[ht]
+\centering
+\caption{AUROC with 95\%% bootstrap confidence intervals at saturation context L* (channel: full). K=5: deployment scenario. K=all: full-night ceiling. CI computed by subject-level bootstrap resampling (N=1000).}
+\label{tab:ci_full}
+\begin{tabular}{lrrrrr}
+\toprule
+Task & Head & N_test & L* & AUROC@K=5 [95% CI] & AUROC@K=all [95% CI] \\
+\midrule
+Sex & lstm & 1430 & 40m & 0.894 [0.878–0.910] & 0.906 [0.890–0.921] \\
+Sex & transformer & 1430 & 80m & 0.921 [0.905–0.934] & 0.925 [0.910–0.938] \\
+Sex & mean_pool & 1430 & 120m & 0.829 [0.807–0.850] & 0.829 [0.808–0.850] \\
+Age group & lstm & 1859 & 40m & 0.895 [0.884–0.906] & 0.899 [0.889–0.910] \\
+Age group & transformer & 1859 & 120m & 0.908 [0.898–0.918] & 0.908 [0.898–0.918] \\
+Age group & mean_pool & 1859 & 120m & 0.847 [0.834–0.861] & 0.847 [0.834–0.861] \\
+BMI (obese) & lstm & 1856 & 40m & 0.794 [0.773–0.815] & 0.798 [0.777–0.818] \\
+BMI (obese) & transformer & 1856 & 80m & 0.810 [0.789–0.830] & 0.811 [0.790–0.831] \\
+BMI (obese) & mean_pool & 1856 & 80m & 0.775 [0.751–0.797] & 0.774 [0.750–0.796] \\
+Sleep efficiency & lstm & 2020 & 240m & 0.810 [0.791–0.829] & 0.810 [0.791–0.829] \\
+Sleep efficiency & transformer & 2020 & 240m & 0.825 [0.808–0.843] & 0.825 [0.808–0.843] \\
+Sleep efficiency & mean_pool & 2020 & 240m & 0.757 [0.736–0.780] & 0.757 [0.736–0.780] \\
+Sleep apnea (AHI≥15) & lstm & 2054 & 120m & 0.874 [0.859–0.889] & 0.874 [0.860–0.889] \\
+Sleep apnea (AHI≥15) & transformer & 2054 & 120m & 0.900 [0.887–0.913] & 0.900 [0.888–0.914] \\
+Sleep apnea (AHI≥15) & mean_pool & 2054 & 120m & 0.818 [0.799–0.835] & 0.819 [0.800–0.835] \\
+Depression (extreme) & lstm & 229 & 10m & 0.746 [0.637–0.834] & 0.751 [0.648–0.837] \\
+Depression (extreme) & transformer & 229 & 40m & 0.751 [0.653–0.833] & 0.752 [0.653–0.834] \\
+Depression (extreme) & mean_pool & 229 & 240m & — & 0.744 [0.640–0.826] \\
+OSA (APPLES) & lstm & 161 & 30s & 0.677 [0.559–0.789] & 0.772 [0.688–0.858] \\
+OSA (APPLES) & transformer & 161 & 80m & 0.808 [0.729–0.885] & 0.814 [0.733–0.891] \\
+OSA (APPLES) & mean_pool & 161 & 240m & — & 0.818 [0.740–0.885] \\
+\bottomrule
+\end{tabular}
+\end{table}

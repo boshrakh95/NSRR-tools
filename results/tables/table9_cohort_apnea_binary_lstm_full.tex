@@ -1,0 +1,16 @@
+\begin{table}[ht]
+\centering
+\caption{Per-cohort AUROC breakdown for Sleep apnea (AHI≥15) (lstm) at context 120m (channel: full). AUROC computed from mean-probability aggregation over all inference windows per subject.}
+\label{tab:cohort_apnea_binary_lstm_full}
+\begin{tabular}{lrrrrr}
+\toprule
+Task & Head & Context & Dataset & N & AUROC \\
+\midrule
+Sleep apnea (AHI≥15) & lstm & 120m & Overall & 2054 & 0.874 \\
+Sleep apnea (AHI≥15) & lstm & 120m & apples & 168 & 0.857 \\
+Sleep apnea (AHI≥15) & lstm & 120m & mros & 408 & 0.866 \\
+Sleep apnea (AHI≥15) & lstm & 120m & shhs & 1278 & 0.879 \\
+Sleep apnea (AHI≥15) & lstm & 120m & stages & 200 & 0.750 \\
+\bottomrule
+\end{tabular}
+\end{table}

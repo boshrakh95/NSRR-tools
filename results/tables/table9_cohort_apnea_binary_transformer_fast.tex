@@ -1,0 +1,16 @@
+\begin{table}[ht]
+\centering
+\caption{Per-cohort AUROC breakdown for Sleep apnea (AHI≥15) (transformer) at context 120m (channel: fast). AUROC computed from mean-probability aggregation over all inference windows per subject.}
+\label{tab:cohort_apnea_binary_transformer_fast}
+\begin{tabular}{lrrrrr}
+\toprule
+Task & Head & Context & Dataset & N & AUROC \\
+\midrule
+Sleep apnea (AHI≥15) & transformer & 120m & Overall & 2054 & 0.857 \\
+Sleep apnea (AHI≥15) & transformer & 120m & apples & 168 & 0.918 \\
+Sleep apnea (AHI≥15) & transformer & 120m & mros & 408 & 0.861 \\
+Sleep apnea (AHI≥15) & transformer & 120m & shhs & 1278 & 0.835 \\
+Sleep apnea (AHI≥15) & transformer & 120m & stages & 200 & 0.863 \\
+\bottomrule
+\end{tabular}
+\end{table}

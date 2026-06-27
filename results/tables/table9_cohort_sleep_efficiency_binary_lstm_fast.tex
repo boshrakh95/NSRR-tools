@@ -1,0 +1,15 @@
+\begin{table}[ht]
+\centering
+\caption{Per-cohort AUROC breakdown for Sleep efficiency (lstm) at context 240m (channel: fast). AUROC computed from mean-probability aggregation over all inference windows per subject.}
+\label{tab:cohort_sleep_efficiency_binary_lstm_fast}
+\begin{tabular}{lrrrrr}
+\toprule
+Task & Head & Context & Dataset & N & AUROC \\
+\midrule
+Sleep efficiency & lstm & 240m & Overall & 2020 & 0.788 \\
+Sleep efficiency & lstm & 240m & apples & 168 & 0.764 \\
+Sleep efficiency & lstm & 240m & mros & 571 & 0.749 \\
+Sleep efficiency & lstm & 240m & shhs & 1281 & 0.778 \\
+\bottomrule
+\end{tabular}
+\end{table}

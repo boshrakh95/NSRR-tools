@@ -1,0 +1,15 @@
+\begin{table}[ht]
+\centering
+\caption{Per-cohort AUROC breakdown for BMI (obese) (transformer) at context 240m (channel: fast). AUROC computed from mean-probability aggregation over all inference windows per subject.}
+\label{tab:cohort_bmi_binary_transformer_fast}
+\begin{tabular}{lrrrrr}
+\toprule
+Task & Head & Context & Dataset & N & AUROC \\
+\midrule
+BMI (obese) & transformer & 240m & Overall & 1856 & 0.777 \\
+BMI (obese) & transformer & 240m & apples & 167 & 0.776 \\
+BMI (obese) & transformer & 240m & mros & 435 & 0.742 \\
+BMI (obese) & transformer & 240m & shhs & 1254 & 0.758 \\
+\bottomrule
+\end{tabular}
+\end{table}

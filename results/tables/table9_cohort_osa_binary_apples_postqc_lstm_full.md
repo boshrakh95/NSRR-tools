@@ -1,0 +1,4 @@
+| Task         | Head  | Context | Dataset | N     | AUROC |
+| ------------ | ----- | ------- | ------- | ----- | ----- |
+| OSA (APPLES) | lstm  | 30s     | Overall | 161   | 0.772 |
+| OSA (APPLES) | lstm  | 30s     | apples  | 161   | 0.772 |

@@ -1,0 +1,2 @@
+{"ts":"2026-06-27T00:00:46-07:00","job_id":"46038461","node":"fc11017","status":"STARTED","task":"osa_binary_apples_postqc","head":"lstm","contexts":"30s 10m 40m 80m 120m 240m","split":"val","datasets":"apples"}
+{"ts":"2026-06-27T00:02:15-07:00","job_id":"46038461","node":"fc11017","status":"SUCCESS","task":"osa_binary_apples_postqc","head":"lstm","contexts":"30s 10m 40m 80m 120m 240m","split":"val","datasets":"apples"}

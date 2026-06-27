@@ -1,0 +1,5 @@
+| Task                 | Head  | Context | Dataset | N     | AUROC |
+| -------------------- | ----- | ------- | ------- | ----- | ----- |
+| Depression (extreme) | lstm  | 10m     | Overall | 229   | 0.751 |
+| Depression (extreme) | lstm  | 10m     | apples  | 130   | 0.803 |
+| Depression (extreme) | lstm  | 10m     | stages  | 99    | 0.606 |

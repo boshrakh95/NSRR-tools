@@ -1,0 +1,6 @@
+| Task             | Head      | Context | Dataset | N     | AUROC |
+| ---------------- | --------- | ------- | ------- | ----- | ----- |
+| Sleep efficiency | mean_pool | 240m    | Overall | 2020  | 0.757 |
+| Sleep efficiency | mean_pool | 240m    | apples  | 168   | 0.724 |
+| Sleep efficiency | mean_pool | 240m    | mros    | 571   | 0.670 |
+| Sleep efficiency | mean_pool | 240m    | shhs    | 1281  | 0.755 |

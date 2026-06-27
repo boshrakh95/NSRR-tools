@@ -1,0 +1,4 @@
+Task,Head,Context,Dataset,N,AUROC
+Depression (extreme),mean_pool,240m,Overall,229,0.744
+Depression (extreme),mean_pool,240m,apples,130,0.795
+Depression (extreme),mean_pool,240m,stages,99,0.575

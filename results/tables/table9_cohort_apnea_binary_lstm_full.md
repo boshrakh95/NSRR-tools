@@ -1,0 +1,7 @@
+| Task                 | Head  | Context | Dataset | N     | AUROC |
+| -------------------- | ----- | ------- | ------- | ----- | ----- |
+| Sleep apnea (AHI≥15) | lstm  | 120m    | Overall | 2054  | 0.874 |
+| Sleep apnea (AHI≥15) | lstm  | 120m    | apples  | 168   | 0.857 |
+| Sleep apnea (AHI≥15) | lstm  | 120m    | mros    | 408   | 0.866 |
+| Sleep apnea (AHI≥15) | lstm  | 120m    | shhs    | 1278  | 0.879 |
+| Sleep apnea (AHI≥15) | lstm  | 120m    | stages  | 200   | 0.750 |

@@ -1,0 +1,23 @@
+| Task                 | Head        | L*    | AUROC@30s | AUROC@L* | Δ(30s→L*) |
+| -------------------- | ----------- | ----- | --------- | -------- | --------- |
+| Sex                  | lstm        | 40m   | 0.861     | 0.906    | +0.045    |
+| Sex                  | transformer | 80m   | 0.843     | 0.929    | +0.086    |
+| Sex                  | mean_pool   | 120m  | 0.793     | 0.834    | +0.041    |
+| Age group            | lstm        | 40m   | 0.871     | 0.901    | +0.030    |
+| Age group            | transformer | 120m  | 0.859     | 0.911    | +0.052    |
+| Age group            | mean_pool   | 120m  | 0.825     | 0.851    | +0.026    |
+| BMI (obese)          | lstm        | 40m   | 0.788     | 0.802    | +0.014    |
+| BMI (obese)          | transformer | 80m   | 0.777     | 0.816    | +0.038    |
+| BMI (obese)          | mean_pool   | 80m   | 0.743     | 0.778    | +0.035    |
+| Sleep efficiency     | lstm        | 240m  | 0.715     | 0.810    | +0.095    |
+| Sleep efficiency     | transformer | 240m  | 0.707     | 0.825    | +0.118    |
+| Sleep efficiency     | mean_pool   | 240m  | 0.697     | 0.757    | +0.060    |
+| Sleep apnea (AHI≥15) | lstm        | 120m  | 0.792     | 0.874    | +0.082    |
+| Sleep apnea (AHI≥15) | transformer | 120m  | 0.800     | 0.901    | +0.101    |
+| Sleep apnea (AHI≥15) | mean_pool   | 120m  | 0.765     | 0.821    | +0.057    |
+| Depression (extreme) | lstm        | 10m   | 0.738     | 0.752    | +0.014    |
+| Depression (extreme) | transformer | 40m   | 0.738     | 0.756    | +0.018    |
+| Depression (extreme) | mean_pool   | 240m  | 0.735     | 0.744    | +0.009    |
+| OSA (APPLES)         | lstm        | 30s   | 0.772     | 0.772    | +0.000    |
+| OSA (APPLES)         | transformer | 80m   | 0.755     | 0.818    | +0.062    |
+| OSA (APPLES)         | mean_pool   | 240m  | 0.744     | 0.818    | +0.074    |

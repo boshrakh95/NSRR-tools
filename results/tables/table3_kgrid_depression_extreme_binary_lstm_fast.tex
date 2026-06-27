@@ -1,0 +1,17 @@
+\begin{table}[ht]
+\centering
+\caption{AUROC vs K grid for Depression (extreme) (lstm, channel: fast). Rows: training context length L. Columns: inference-time K (windows per subject). Cells with identical K×L are on the same iso-compute diagonal.}
+\label{tab:kgrid_depression_extreme_binary_lstm_fast}
+\begin{tabular}{lrrrrrr}
+\toprule
+Context_L & K=1 & K=5 & K=10 & K=20 & K=50 & K=all \\
+\midrule
+30s & 0.777 & 0.771 & 0.760 & 0.762 & 0.759 & 0.757 \\
+10m & 0.788 & 0.776 & 0.771 & 0.772 & 0.768 & 0.770 \\
+40m & 0.793 & 0.751 & 0.762 & 0.761 & — & 0.761 \\
+80m & 0.812 & 0.754 & 0.744 & — & — & 0.744 \\
+120m & 0.771 & 0.748 & — & — & — & 0.748 \\
+240m & 0.757 & — & — & — & — & 0.750 \\
+\bottomrule
+\end{tabular}
+\end{table}

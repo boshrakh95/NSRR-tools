@@ -1,0 +1,17 @@
+\begin{table}[ht]
+\centering
+\caption{AUROC vs K grid for BMI (obese) (transformer, channel: full). Rows: training context length L. Columns: inference-time K (windows per subject). Cells with identical K×L are on the same iso-compute diagonal.}
+\label{tab:kgrid_bmi_binary_transformer_full}
+\begin{tabular}{lrrrrrr}
+\toprule
+Context_L & K=1 & K=5 & K=10 & K=20 & K=50 & K=all \\
+\midrule
+30s & 0.709 & 0.771 & 0.773 & 0.778 & 0.778 & 0.777 \\
+10m & 0.719 & 0.777 & 0.785 & 0.786 & 0.789 & 0.788 \\
+40m & 0.761 & 0.798 & 0.801 & 0.801 & — & 0.801 \\
+80m & 0.766 & 0.810 & 0.811 & — & — & 0.811 \\
+120m & 0.783 & 0.812 & — & — & — & 0.812 \\
+240m & 0.804 & — & — & — & — & 0.816 \\
+\bottomrule
+\end{tabular}
+\end{table}

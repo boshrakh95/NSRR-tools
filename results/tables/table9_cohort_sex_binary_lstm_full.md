@@ -1,0 +1,5 @@
+| Task  | Head  | Context | Dataset | N     | AUROC |
+| ----- | ----- | ------- | ------- | ----- | ----- |
+| Sex   | lstm  | 40m     | Overall | 1430  | 0.906 |
+| Sex   | lstm  | 40m     | apples  | 166   | 0.816 |
+| Sex   | lstm  | 40m     | shhs    | 1264  | 0.918 |

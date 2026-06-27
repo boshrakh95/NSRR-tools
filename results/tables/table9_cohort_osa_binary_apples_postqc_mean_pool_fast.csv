@@ -1,0 +1,3 @@
+Task,Head,Context,Dataset,N,AUROC
+OSA (APPLES),mean_pool,240m,Overall,161,0.848
+OSA (APPLES),mean_pool,240m,apples,161,0.848

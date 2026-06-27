@@ -1,0 +1,17 @@
+\begin{table}[ht]
+\centering
+\caption{AUROC vs K grid for Sleep apnea (AHI≥15) (lstm, channel: full). Rows: training context length L. Columns: inference-time K (windows per subject). Cells with identical K×L are on the same iso-compute diagonal.}
+\label{tab:kgrid_apnea_binary_lstm_full}
+\begin{tabular}{lrrrrrr}
+\toprule
+Context_L & K=1 & K=5 & K=10 & K=20 & K=50 & K=all \\
+\midrule
+30s & 0.638 & 0.768 & 0.780 & 0.788 & 0.791 & 0.792 \\
+10m & 0.627 & 0.782 & 0.799 & 0.805 & 0.808 & 0.808 \\
+40m & 0.673 & 0.827 & 0.839 & 0.843 & — & 0.843 \\
+80m & 0.735 & 0.857 & 0.865 & — & — & 0.865 \\
+120m & 0.760 & 0.874 & — & — & — & 0.874 \\
+240m & 0.821 & — & — & — & — & 0.871 \\
+\bottomrule
+\end{tabular}
+\end{table}

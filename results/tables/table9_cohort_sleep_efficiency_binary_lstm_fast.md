@@ -1,0 +1,6 @@
+| Task             | Head  | Context | Dataset | N     | AUROC |
+| ---------------- | ----- | ------- | ------- | ----- | ----- |
+| Sleep efficiency | lstm  | 240m    | Overall | 2020  | 0.788 |
+| Sleep efficiency | lstm  | 240m    | apples  | 168   | 0.764 |
+| Sleep efficiency | lstm  | 240m    | mros    | 571   | 0.749 |
+| Sleep efficiency | lstm  | 240m    | shhs    | 1281  | 0.778 |

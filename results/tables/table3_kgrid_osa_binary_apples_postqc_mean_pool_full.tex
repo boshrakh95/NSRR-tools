@@ -1,0 +1,17 @@
+\begin{table}[ht]
+\centering
+\caption{AUROC vs K grid for OSA (APPLES) (mean_pool, channel: full). Rows: training context length L. Columns: inference-time K (windows per subject). Cells with identical K×L are on the same iso-compute diagonal.}
+\label{tab:kgrid_osa_binary_apples_postqc_mean_pool_full}
+\begin{tabular}{lrrrrrr}
+\toprule
+Context_L & K=1 & K=5 & K=10 & K=20 & K=50 & K=all \\
+\midrule
+30s & 0.615 & 0.688 & 0.709 & 0.729 & 0.728 & 0.744 \\
+10m & 0.619 & 0.747 & 0.748 & 0.762 & 0.759 & 0.757 \\
+40m & 0.754 & 0.784 & 0.798 & — & — & 0.794 \\
+80m & 0.714 & 0.784 & — & — & — & 0.791 \\
+120m & 0.739 & 0.798 & — & — & — & 0.798 \\
+240m & 0.775 & — & — & — & — & 0.818 \\
+\bottomrule
+\end{tabular}
+\end{table}

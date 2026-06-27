@@ -6,10 +6,27 @@
 \toprule
 Task & Head & L* & AUROC@30s & AUROC@L* & Δ(30s→L*) \\
 \midrule
-Sex & lstm & 80m & 0.825 & 0.872 & +0.047 \\
+Sex & lstm & 120m & 0.825 & 0.872 & +0.047 \\
 Sex & transformer & 240m & 0.832 & 0.910 & +0.079 \\
+Sex & mean_pool & 120m & 0.780 & 0.818 & +0.038 \\
+Age group & lstm & 80m & 0.865 & 0.893 & +0.028 \\
+Age group & transformer & 120m & 0.854 & 0.905 & +0.051 \\
+Age group & mean_pool & 120m & 0.819 & 0.850 & +0.031 \\
 BMI (obese) & lstm & 10m & 0.760 & 0.767 & +0.006 \\
 BMI (obese) & transformer & 240m & 0.747 & 0.777 & +0.030 \\
+BMI (obese) & mean_pool & 80m & 0.729 & 0.746 & +0.018 \\
+Sleep efficiency & lstm & 240m & 0.697 & 0.788 & +0.091 \\
+Sleep efficiency & transformer & 240m & 0.707 & 0.831 & +0.124 \\
+Sleep efficiency & mean_pool & 240m & 0.694 & 0.760 & +0.066 \\
+Sleep apnea (AHI≥15) & lstm & 120m & 0.758 & 0.832 & +0.074 \\
+Sleep apnea (AHI≥15) & transformer & 120m & 0.753 & 0.857 & +0.103 \\
+Sleep apnea (AHI≥15) & mean_pool & 120m & 0.725 & 0.765 & +0.040 \\
+Depression (extreme) & lstm & 10m & 0.757 & 0.770 & +0.013 \\
+Depression (extreme) & transformer & 30s & 0.756 & 0.756 & +0.000 \\
+Depression (extreme) & mean_pool & 120m & 0.748 & 0.765 & +0.018 \\
+OSA (APPLES) & lstm & 40m & 0.769 & 0.834 & +0.064 \\
+OSA (APPLES) & transformer & 80m & 0.789 & 0.888 & +0.098 \\
+OSA (APPLES) & mean_pool & 240m & 0.796 & 0.848 & +0.052 \\
 \bottomrule
 \end{tabular}
 \end{table}

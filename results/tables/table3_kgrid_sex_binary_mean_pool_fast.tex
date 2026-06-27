@@ -1,0 +1,17 @@
+\begin{table}[ht]
+\centering
+\caption{AUROC vs K grid for Sex (mean_pool, channel: fast). Rows: training context length L. Columns: inference-time K (windows per subject). Cells with identical K×L are on the same iso-compute diagonal.}
+\label{tab:kgrid_sex_binary_mean_pool_fast}
+\begin{tabular}{lrrrrrr}
+\toprule
+Context_L & K=1 & K=5 & K=10 & K=20 & K=50 & K=all \\
+\midrule
+30s & 0.678 & 0.765 & 0.776 & 0.780 & 0.780 & 0.780 \\
+10m & 0.703 & 0.784 & 0.790 & 0.794 & 0.794 & 0.794 \\
+40m & 0.732 & 0.798 & 0.802 & 0.804 & — & 0.804 \\
+80m & 0.761 & 0.811 & 0.812 & — & — & 0.812 \\
+120m & 0.784 & 0.815 & — & — & — & 0.815 \\
+240m & 0.816 & — & — & — & — & 0.818 \\
+\bottomrule
+\end{tabular}
+\end{table}

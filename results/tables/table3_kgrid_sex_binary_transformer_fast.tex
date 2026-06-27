@@ -1,0 +1,17 @@
+\begin{table}[ht]
+\centering
+\caption{AUROC vs K grid for Sex (transformer, channel: fast). Rows: training context length L. Columns: inference-time K (windows per subject). Cells with identical K×L are on the same iso-compute diagonal.}
+\label{tab:kgrid_sex_binary_transformer_fast}
+\begin{tabular}{lrrrrrr}
+\toprule
+Context_L & K=1 & K=5 & K=10 & K=20 & K=50 & K=all \\
+\midrule
+30s & 0.695 & 0.815 & 0.827 & 0.831 & 0.831 & 0.832 \\
+10m & 0.741 & 0.840 & 0.848 & 0.850 & 0.852 & 0.851 \\
+40m & 0.782 & 0.866 & 0.869 & 0.872 & — & 0.872 \\
+80m & 0.800 & 0.893 & 0.897 & — & — & 0.897 \\
+120m & 0.849 & 0.905 & — & — & — & 0.905 \\
+240m & 0.898 & — & — & — & — & 0.910 \\
+\bottomrule
+\end{tabular}
+\end{table}

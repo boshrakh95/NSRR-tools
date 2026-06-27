@@ -1,0 +1,5 @@
+Task,Head,Context,Dataset,N,AUROC
+Sleep efficiency,transformer,240m,Overall,2020,0.825
+Sleep efficiency,transformer,240m,apples,168,0.876
+Sleep efficiency,transformer,240m,mros,571,0.721
+Sleep efficiency,transformer,240m,shhs,1281,0.829

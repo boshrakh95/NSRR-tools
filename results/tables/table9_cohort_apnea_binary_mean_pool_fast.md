@@ -1,0 +1,7 @@
+| Task                 | Head      | Context | Dataset | N     | AUROC |
+| -------------------- | --------- | ------- | ------- | ----- | ----- |
+| Sleep apnea (AHI≥15) | mean_pool | 120m    | Overall | 2054  | 0.764 |
+| Sleep apnea (AHI≥15) | mean_pool | 120m    | apples  | 168   | 0.777 |
+| Sleep apnea (AHI≥15) | mean_pool | 120m    | mros    | 408   | 0.705 |
+| Sleep apnea (AHI≥15) | mean_pool | 120m    | shhs    | 1278  | 0.749 |
+| Sleep apnea (AHI≥15) | mean_pool | 120m    | stages  | 200   | 0.738 |

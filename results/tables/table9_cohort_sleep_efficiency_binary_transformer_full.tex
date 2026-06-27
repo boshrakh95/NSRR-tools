@@ -1,0 +1,15 @@
+\begin{table}[ht]
+\centering
+\caption{Per-cohort AUROC breakdown for Sleep efficiency (transformer) at context 240m (channel: full). AUROC computed from mean-probability aggregation over all inference windows per subject.}
+\label{tab:cohort_sleep_efficiency_binary_transformer_full}
+\begin{tabular}{lrrrrr}
+\toprule
+Task & Head & Context & Dataset & N & AUROC \\
+\midrule
+Sleep efficiency & transformer & 240m & Overall & 2020 & 0.825 \\
+Sleep efficiency & transformer & 240m & apples & 168 & 0.876 \\
+Sleep efficiency & transformer & 240m & mros & 571 & 0.721 \\
+Sleep efficiency & transformer & 240m & shhs & 1281 & 0.829 \\
+\bottomrule
+\end{tabular}
+\end{table}

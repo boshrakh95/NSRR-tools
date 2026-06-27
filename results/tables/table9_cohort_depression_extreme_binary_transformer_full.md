@@ -1,0 +1,5 @@
+| Task                 | Head        | Context | Dataset | N     | AUROC |
+| -------------------- | ----------- | ------- | ------- | ----- | ----- |
+| Depression (extreme) | transformer | 40m     | Overall | 229   | 0.752 |
+| Depression (extreme) | transformer | 40m     | apples  | 130   | 0.837 |
+| Depression (extreme) | transformer | 40m     | stages  | 99    | 0.581 |

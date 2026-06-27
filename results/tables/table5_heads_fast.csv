@@ -1,2 +1,8 @@
-Task,L*,lstm@K=5,lstm@K=all,transformer@K=5,transformer@K=all
-Sex,80m,0.866,0.868,0.893,0.897
+Task,L*,lstm@K=5,lstm@K=all,transformer@K=5,transformer@K=all,mean_pool@K=5,mean_pool@K=all,Temporal_adv_(LSTM-MP)
+Sex,120m,0.872,0.872,0.905,0.905,0.815,0.815,+0.057
+Age group,80m,0.890,0.890,0.897,0.900,0.843,0.843,+0.047
+BMI (obese),10m,0.745,0.762,0.737,0.755,0.718,0.734,+0.028
+Sleep efficiency,240m,0.788,0.788,0.831,0.831,0.760,0.760,+0.028
+Sleep apnea (AHI≥15),120m,0.831,0.832,0.856,0.857,0.764,0.764,+0.068
+Depression (extreme),10m,0.776,0.770,0.746,0.739,0.749,0.751,+0.019
+OSA (APPLES),40m,0.792,0.834,0.823,0.853,0.819,0.821,+0.012

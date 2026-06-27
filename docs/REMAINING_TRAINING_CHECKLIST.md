@@ -541,6 +541,18 @@ for ch, path in [('fast','results/collected/phase0_v3/analysis.csv'),
 auto-derive it). Also pass `--results-dir` to get the scratch copy in addition to the repo
 default.
 
+**Environment note — different from Steps 1/2:** when you ran `gen_commands.py analyze ... |
+bash` in Step 1, the printed command always hardcodes `/home/boshra95/sleepfm_env/bin/python`
+(from `python_bin:` in the registry) — so it ran correctly under `sleepfm_env` no matter which
+Python you used to invoke `gen_commands.py` itself. **Steps 3 and 4 call `make_tableN_*.py`
+directly** (no `gen_commands.py` in between), so there's no hardcoded path — whatever `python` is
+active in your shell is what actually runs, and these scripts need `sklearn`, which only exists
+in `sleepfm_env` (confirmed: `sleepfm_env` has both `yaml` and `sklearn`; the repo's own `.venv`
+has `yaml` but not `sklearn`). Activate it before Steps 3/4:
+```bash
+source /home/boshra95/sleepfm_env/bin/activate
+```
+
 ```bash
 KEPT_TASKS="sex_binary age_class bmi_binary sleep_efficiency_binary apnea_binary depression_extreme_binary osa_binary_apples_postqc"
 
@@ -622,7 +634,15 @@ new experiments** (new heads for depression/osa, mean_pool for all 7, and **all 
 has never had threshold tuning at all). `age_class` is multiclass — skip it; the other 6 tasks
 are binary.
 
-Needs val-split inference first (cheap, reuses trained checkpoints, no GPU-heavy work):
+**Important — `infer --split val` submits an `sbatch` job, it does not run synchronously.**
+The command prints/runs a `sbatch ...` line and returns immediately; the actual val-inference
+job then sits in the SLURM queue and runs for up to ~1h (per-experiment wall-time estimate).
+Running the `threshold-tuning` loop immediately after submitting will see **no val parquet
+yet** for any experiment whose job hasn't finished, and `apply_threshold_tuning.py` silently
+skips those contexts (writing nothing at all if *every* context is skipped — confirmed no
+partial/corrupt file gets left behind, so this is safe to just rerun once the parquets exist).
+**Do not run the two loops back-to-back — submit, wait for the jobs to finish, verify, then
+run threshold-tuning.**
 
 ```bash
 BINARY_EXPS="sex_binary_lstm sex_binary_transformer sex_binary_mean_pool \
@@ -631,20 +651,54 @@ sleep_efficiency_binary_lstm sleep_efficiency_binary_transformer sleep_efficienc
 apnea_binary_lstm apnea_binary_transformer apnea_binary_mean_pool \
 depression_extreme_binary_lstm depression_extreme_binary_transformer depression_extreme_binary_mean_pool \
 osa_binary_apples_postqc_lstm osa_binary_apples_postqc_transformer osa_binary_apples_postqc_mean_pool"
+```
 
-# Fast channel
+**5a. Submit val inference (fast channel):**
+```bash
 for exp in $BINARY_EXPS; do
   python scripts/gen_commands.py infer $exp --split val | bash
 done
-for exp in $BINARY_EXPS; do
-  python scripts/gen_commands.py threshold-tuning $exp | bash
-done
+```
 
-# Full channel
+**5b. Submit val inference (full channel):**
+```bash
 REG="--registry experiments/v2_full_registry.yaml"
 for exp in $BINARY_EXPS; do
   python scripts/gen_commands.py $REG infer $exp --split val | bash
 done
+```
+
+**5c. Wait, then verify every context has a val parquet before proceeding — for both channels:**
+```bash
+# Check job queue status until all "infer ... val" jobs are gone
+squeue -u $USER | grep infer
+
+# Once the queue is clear, verify (expect 6 per experiment, 18 experiments = 108 total each channel)
+for exp in $BINARY_EXPS; do
+  n=$(find /scratch/boshra95/psg/unified/results/phase0_v3/inference/$exp -name "val_windows.parquet" 2>/dev/null | wc -l)
+  echo "fast  $exp: $n/6 val parquets"
+done
+for exp in $BINARY_EXPS; do
+  n=$(find /scratch/boshra95/psg_full/unified/results/phase0_v3_full/inference/$exp -name "val_windows.parquet" 2>/dev/null | wc -l)
+  echo "full  $exp: $n/6 val parquets"
+done
+```
+Don't proceed to 5d/5e until every line above reads `6/6`. If any job failed (check
+`logs_v3/infer_*_val_*.err` / `logs_v3_full/infer_*_val_*.err`), resubmit just that one
+experiment via the same `infer $exp --split val` command — it auto-skips contexts that already
+succeeded.
+
+**5d. Threshold tuning (fast channel) — safe to run for all 18, including the 10 that already
+succeeded earlier; it's a full overwrite, not an append, so re-running is harmless:**
+```bash
+for exp in $BINARY_EXPS; do
+  python scripts/gen_commands.py threshold-tuning $exp | bash
+done
+```
+
+**5e. Threshold tuning (full channel):**
+```bash
+REG="--registry experiments/v2_full_registry.yaml"
 for exp in $BINARY_EXPS; do
   python scripts/gen_commands.py $REG threshold-tuning $exp | bash
 done

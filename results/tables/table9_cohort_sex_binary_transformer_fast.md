@@ -1,0 +1,5 @@
+| Task  | Head        | Context | Dataset | N     | AUROC |
+| ----- | ----------- | ------- | ------- | ----- | ----- |
+| Sex   | transformer | 240m    | Overall | 1430  | 0.910 |
+| Sex   | transformer | 240m    | apples  | 166   | 0.872 |
+| Sex   | transformer | 240m    | shhs    | 1264  | 0.916 |

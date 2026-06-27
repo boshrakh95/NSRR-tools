@@ -1,0 +1,15 @@
+\begin{table}[ht]
+\centering
+\caption{Per-cohort AUROC breakdown for BMI (obese) (lstm) at context 40m (channel: full). AUROC computed from mean-probability aggregation over all inference windows per subject.}
+\label{tab:cohort_bmi_binary_lstm_full}
+\begin{tabular}{lrrrrr}
+\toprule
+Task & Head & Context & Dataset & N & AUROC \\
+\midrule
+BMI (obese) & lstm & 40m & Overall & 1856 & 0.798 \\
+BMI (obese) & lstm & 40m & apples & 167 & 0.750 \\
+BMI (obese) & lstm & 40m & mros & 435 & 0.760 \\
+BMI (obese) & lstm & 40m & shhs & 1254 & 0.790 \\
+\bottomrule
+\end{tabular}
+\end{table}

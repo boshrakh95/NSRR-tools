@@ -1,0 +1,17 @@
+\begin{table}[ht]
+\centering
+\caption{AUROC vs K grid for Age group (mean_pool, channel: full). Rows: training context length L. Columns: inference-time K (windows per subject). Cells with identical K×L are on the same iso-compute diagonal.}
+\label{tab:kgrid_age_class_mean_pool_full}
+\begin{tabular}{lrrrrrr}
+\toprule
+Context_L & K=1 & K=5 & K=10 & K=20 & K=50 & K=all \\
+\midrule
+30s & 0.789 & 0.818 & 0.822 & 0.826 & 0.824 & 0.825 \\
+10m & 0.805 & 0.829 & 0.832 & 0.834 & 0.833 & 0.833 \\
+40m & 0.818 & 0.838 & 0.839 & 0.840 & — & 0.840 \\
+80m & 0.822 & 0.843 & 0.843 & — & — & 0.843 \\
+120m & 0.828 & 0.847 & — & — & — & 0.847 \\
+240m & 0.842 & — & — & — & — & 0.851 \\
+\bottomrule
+\end{tabular}
+\end{table}
