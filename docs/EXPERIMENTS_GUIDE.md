@@ -639,6 +639,15 @@ python scripts/gen_commands.py --registry experiments/v2_full_registry.yaml \
 
 ### Modality ablation run (channel importance)
 
+> **⚠️ 2026-06-27: the completed run below used the wrong model architecture for all 25
+> experiments** (`hidden_dim: 256, num_layers: 2` — the sleep-staging arch — instead of
+> `hidden_dim: 128, num_layers: 1`, matching `v3`/`v3_full`'s seq2label arch). The playbook steps
+> below are still correct and will be reused as-is for the rerun — only
+> `configs/phase0_v3_abl_config.yaml`'s `model:` section needs fixing first. Nothing in this
+> section has been deleted; it documents what was run and remains the reference for how to run it
+> again correctly. **Full archive-then-rerun plan: `docs/REMAINING_TRAINING_CHECKLIST.md` §
+> Later: re-running v3_abl analysis after the architecture fix.**
+
 **Goal:** Measure how much each SleepFM modality group contributes to each clinical task by
 retraining the head with one or more groups permanently zeroed. The head never sees the absent
 modality during training — this measures **peak capability** of each channel subset, not
@@ -651,9 +660,10 @@ inference-only robustness variant).
   applied to the float32 copy before the model sees it — the `.npy` files on disk are never touched.
 - **Completely separate outputs.** Results go to `phase0_v3_abl/`, logs to `logs_v3_abl/`.
   There is zero overlap with `phase0_v3/` or `phase0_v3_full/`.
-- **Status:** ✅ all 25 experiments complete as of 2026-06-17 (status starts at "pending" for any
-  new registry entries you add later, since the registry points to a dedicated, otherwise-empty
-  results directory).
+- **Status:** ✅ all 25 experiments completed 2026-06-17, but ⚠️ with the wrong architecture (see
+  warning above) — being rerun. Once retrained, status will start at "pending" again for the
+  fresh run (the registry points to a dedicated results directory, archived and recreated empty
+  — see the rerun plan).
 
 #### Why these five ablation conditions?
 
@@ -729,9 +739,13 @@ find /scratch/boshra95/psg/unified/embeddings/sleepfm_5sec -name '*.npy' | wc -l
 # Expected: ~14,992
 ```
 
-#### Step 1 — Training (25 jobs: 5 tasks × 5 conditions) ✅ all complete
+#### Step 1 — Training (25 jobs: 5 tasks × 5 conditions) ✅ completed 2026-06-17, ⚠️ wrong arch, rerunning
 
-Config: `configs/phase0_v3_abl_config.yaml` (hidden=128, layers=1 — LSTM head only).
+Config: `configs/phase0_v3_abl_config.yaml` — **intended** hidden=128, layers=1 (LSTM head only,
+matching the seq2label arch used by `v3`/`v3_full`). The file as actually used for the 2026-06-17
+run had `hidden_dim: 256, num_layers: 2` instead (a copy-paste bug from the staging config) — see
+the warning at the top of this section. Being fixed and rerun; this line will be updated once the
+corrected run completes.
 Results: `/scratch/boshra95/psg/unified/results/phase0_v3_abl/{task}_lstm_{tag}/context_{L}/`.
 Logs: `logs_v3_abl/train_{task}_lstm_{tag}_{context}_lr{lr}_{jobid}.out`.
 

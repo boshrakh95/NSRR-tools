@@ -334,7 +334,24 @@ The `zero_modalities` field lists which groups are zeroed (the complement is wha
 
 ---
 
-##### A.6.1 Actual results (final, 2026-06-17 — all 25/25 conditions complete)
+##### A.6.1 Actual results (2026-06-17 run) — ⚠️ INVALIDATED, rerun required, kept below for reference
+
+> **⚠️ 2026-06-27: this entire run used the wrong architecture.** `configs/phase0_v3_abl_config.yaml`'s
+> `model:` section had `hidden_dim: 256, num_layers: 2` — the architecture reserved for sleep
+> staging (5-class seq2seq) — instead of `hidden_dim: 128, num_layers: 1`, which is what `v3` and
+> `v3_full` correctly use for these same seq2label tasks. Verified via `metrics.json` across all
+> 25 experiments: every one trained with ~3.15M params instead of ~658K. This means every number
+> in the table below compares a 658K-param "Full" baseline (from `v3`) against ~3.15M-param
+> ablation models — a ~4.8× capacity mismatch confounding every Δ in this table with a model-size
+> effect, not just a channel effect. **None of the numbers below should be cited or used in the
+> paper as-is.** The original 256/2-architecture results are archived (not deleted) at
+> `phase0_v3_abl_arch256_20260627` (scratch and repo, both `results/` and `logs_v3_abl/`) for
+> comparison once the corrected rerun completes. **Full rerun plan: `docs/REMAINING_TRAINING_CHECKLIST.md`
+> § Later: re-running v3_abl analysis after the architecture fix.** The table, headline finding,
+> and per-task interpretation below are kept as-is (not deleted) for now, purely so the *shape* of
+> the analysis (what conditions, what comparisons, what table format) is preserved — they will be
+> replaced with corrected numbers once the rerun finishes, and the architecture-confound caveat
+> applies to every claim below until then.
 
 AUROC at K=all (full-night ceiling), test split, LSTM head. Generated via
 `python scripts/make_table6_modality.py` (see `results/tables/table6_modality.{csv,md,tex}`).
@@ -478,6 +495,17 @@ estimate exists for these single-run ablation conditions):**
 5. ✅ **`scripts/make_table6_modality.py`** — reads `results/collected/phase0_v3/analysis.csv` (Full baseline) and `results/collected/phase0_v3_abl/analysis.csv` (the five ablation conditions, keyed by `run_tag`), joins them into the task × condition AUROC table with deltas, and saves CSV/markdown/LaTeX to `results/tables/table6_modality.*`. `CONDITIONS` list updated 2026-06-17 to include `no_resp`/`no_ekg` — no other code change needed. See `docs/EXPERIMENTS_GUIDE.md` §Modality ablation — Step 5 for usage.
 
 6. ⚠️ **Bug found and fixed while wiring up Table 6:** `scripts/collect_results_v2.py`'s `parse_exp_dir()` originally matched experiment folders only by suffix (`_lstm`, `_transformer`, `_mean_pool`), so it silently dropped every `run_tag`-suffixed folder (`{task}_{head}_abl_no_bas`, etc. — and also the pre-existing `sleep_staging_lstm_with_stages`). Fixed to find the head as a substring and capture the trailing run_tag separately; `run_tag` was added to the train/analysis dedup keys so the three ablation conditions per task don't collide under the same key. Backward compatible — old CSVs without a `run_tag` column are read as `run_tag=""`.
+
+7. ⚠️ **Bug found 2026-06-27, not yet fixed: `configs/phase0_v3_abl_config.yaml` used the wrong
+   model architecture for all 25 experiments.** Its `model:` section had `hidden_dim: 256,
+   num_layers: 2` (the sleep-staging architecture, ~3.15M params) instead of `hidden_dim: 128,
+   num_layers: 1` (the seq2label architecture used by `v3`/`v3_full`, ~658K params) — confirmed by
+   inspecting `metrics.json` across all 25 trained experiments, every one shows `hidden_dim: 256`.
+   Root cause looks like the config was copied from the staging config template rather than the
+   seq2label one. **Not yet fixed at the code level** — fixing the YAML and retraining all 25 is
+   the next action item; see `docs/REMAINING_TRAINING_CHECKLIST.md` § Later: re-running v3_abl
+   analysis after the architecture fix for the full archive-then-rerun pipeline. §A.6.1's results
+   table is flagged invalid until that rerun completes.
 
 ---
 

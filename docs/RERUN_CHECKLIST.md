@@ -4,6 +4,18 @@
 
 ---
 
+## ⚠️ 2026-06-27 update: v3_abl (modality ablation) also needs a full rerun
+
+Not part of this doc's original scope (predates the ablation work), flagging here too since this
+is the first place anyone would check for "what needs rerunning." All 25 `phase0_v3_abl`
+experiments were trained with the wrong architecture (`hidden_dim: 256, num_layers: 2` — the
+sleep-staging arch — instead of `128, 1`, the seq2label arch used everywhere else). Nothing here
+needs touching; see `docs/REMAINING_TRAINING_CHECKLIST.md` § Later: re-running v3_abl analysis
+after the architecture fix for the full archive-then-rerun pipeline, and
+`docs/SOTA_COMPARISON_AND_ABLATIONS.md` §A.7 item 7 for the bug writeup.
+
+---
+
 ## What was archived (2026-05-25)
 
 Directories renamed in `$BASE = /scratch/boshra95/psg/unified/results/phase0_v3/` so that

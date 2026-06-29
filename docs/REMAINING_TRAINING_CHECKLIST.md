@@ -738,50 +738,158 @@ done
 ## Later: re-running `v3_abl` analysis after the architecture fix
 
 `phase0_v3_abl` was trained with the wrong architecture (hidden_dim=256/num_layers=2 — the
-sleep-staging arch — instead of 128/1) for all 25 experiments. Once you fix
-`configs/phase0_v3_abl_config.yaml` and **retrain all 25 jobs**, the following must be re-run
-in order to keep every downstream file correct — listed so nothing gets silently left stale:
+sleep-staging arch — instead of 128/1, confirmed via `metrics.json` across all 25 experiments)
+for all 25 experiments. Full pipeline below: archive everything current (nothing deleted, just
+moved aside), fix the config, sanity-check on one experiment, then retrain/infer/analyze/collect
+all 25, regenerate Table 6, and rewrite the SOTA doc interpretation.
 
-1. **Re-infer + re-analyze all 25 experiments** (same pattern as the main ablation playbook in
-   `EXPERIMENTS_GUIDE.md` § Modality ablation run, Steps 2–3). Use `--k-dense --bootstrap 1000
-   --plot` this time, to match the rigor of the v3/v3_full refresh above (the original ablation
-   run used plain `analyze` with no flags).
+### The 25 experiment IDs (used throughout this section)
 
-2. **Force-recollect `phase0_v3_abl`'s analysis.csv — do not just re-run `collect` plain.** This
-   is the one case where the duplication trap in Step 2 above is *guaranteed* to bite you if you
-   don't clear the existing CSV first: the retrained experiments reuse the **same** experiment
-   folder paths (same task/head/run_tag/context), so a normal `collect` (no `--force`) will see
-   those keys as "already collected" and **silently keep the old, wrong-architecture numbers**.
-   Use the same **rename-in-place** pattern as Step 2 above (commit/tag the repo copy first):
-   ```bash
-   git add -A && git commit -m "Snapshot before v3_abl re-collect (post arch fix)"
-   git tag pre-abl-refresh-$(date +%Y%m%d)
-   git push origin pre-abl-refresh-$(date +%Y%m%d)
+```bash
+ABL_EXPS="sex_binary_lstm_abl_no_bas sex_binary_lstm_abl_cardio sex_binary_lstm_abl_bas_only sex_binary_lstm_abl_no_resp sex_binary_lstm_abl_no_ekg \
+apnea_binary_lstm_abl_no_bas apnea_binary_lstm_abl_cardio apnea_binary_lstm_abl_bas_only apnea_binary_lstm_abl_no_resp apnea_binary_lstm_abl_no_ekg \
+sleep_efficiency_binary_lstm_abl_no_bas sleep_efficiency_binary_lstm_abl_cardio sleep_efficiency_binary_lstm_abl_bas_only sleep_efficiency_binary_lstm_abl_no_resp sleep_efficiency_binary_lstm_abl_no_ekg \
+age_class_lstm_abl_no_bas age_class_lstm_abl_cardio age_class_lstm_abl_bas_only age_class_lstm_abl_no_resp age_class_lstm_abl_no_ekg \
+bmi_binary_lstm_abl_no_bas bmi_binary_lstm_abl_cardio bmi_binary_lstm_abl_bas_only bmi_binary_lstm_abl_no_resp bmi_binary_lstm_abl_no_ekg"
+REG="--registry experiments/v2_ablation_registry.yaml"
+```
 
-   TS=$(date +%Y%m%d)
-   mv /scratch/boshra95/psg/unified/results/phase0_v3_abl/collected/training.csv \
-      /scratch/boshra95/psg/unified/results/phase0_v3_abl/collected/training_old_$TS.csv
-   mv /scratch/boshra95/psg/unified/results/phase0_v3_abl/collected/analysis.csv \
-      /scratch/boshra95/psg/unified/results/phase0_v3_abl/collected/analysis_old_$TS.csv
-   mv results/collected/phase0_v3_abl/training.csv results/collected/phase0_v3_abl/training_old_$TS.csv
-   mv results/collected/phase0_v3_abl/analysis.csv  results/collected/phase0_v3_abl/analysis_old_$TS.csv
+### Step 0 — Safety checkpoint (repo)
 
-   python scripts/collect_results_v2.py \
-     --results-dir /scratch/boshra95/psg/unified/results/phase0_v3_abl
-   ```
+```bash
+cd /home/boshra95/NSRR-tools
+git add -A && git commit -m "Snapshot before archiving wrong-architecture (256/2) v3_abl results"
+git tag pre-abl-rearch-20260627
+git push origin pre-abl-rearch-20260627
+```
 
-3. **Regenerate Table 6**: `python scripts/make_table6_modality.py`. This reads both
-   `results/collected/phase0_v3/analysis.csv` (the "Full" baseline — unaffected by the ablation
-   fix, no need to touch it) and `results/collected/phase0_v3_abl/analysis.csv` (now corrected).
+### Step 1 — Archive scratch (single `mv` per location — atomic, nothing lost)
 
-4. **Rewrite the interpretation in `docs/SOTA_COMPARISON_AND_ABLATIONS.md` §A.6.1** — the current
-   text was already flagged as invalid pending this fix; once Table 6 is regenerated, redo the
-   per-task interpretation bullets and the "most necessary modality per task" summary table with
-   the corrected numbers.
+```bash
+TS=20260627
+mv /scratch/boshra95/psg/unified/results/phase0_v3_abl /scratch/boshra95/psg/unified/results/phase0_v3_abl_arch256_$TS
+mkdir -p /scratch/boshra95/psg/unified/results/phase0_v3_abl
 
-5. **No figures exist yet for `phase0_v3_abl`** (the original ablation `analyze` calls never used
-   `--plot`) — if you want per-task ablation figures, generate them fresh after the fix; there's
-   nothing stale to clean up there.
+mv /home/boshra95/NSRR-tools/logs_v3_abl /home/boshra95/NSRR-tools/logs_v3_abl_arch256_$TS
+mkdir -p /home/boshra95/NSRR-tools/logs_v3_abl/status
+```
 
-6. **Nothing in `phase0_v3`/`phase0_v3_full` is affected** by the ablation fix — their collected
-   CSVs, tables, and figures from this refresh remain valid and don't need to be touched again.
+### Step 2 — Archive repo (`git mv`, shows as a rename in history, not delete+add)
+
+```bash
+TS=20260627
+git mv results/inference/phase0_v3_abl results/inference/phase0_v3_abl_arch256_$TS
+git mv results/figures/phase0_v3_abl   results/figures/phase0_v3_abl_arch256_$TS
+git mv results/collected/phase0_v3_abl results/collected/phase0_v3_abl_arch256_$TS
+
+mkdir -p results/inference/phase0_v3_abl results/collected/phase0_v3_abl
+mkdir -p results/figures/phase0_v3_abl && touch results/figures/phase0_v3_abl/.gitkeep
+
+# table6_modality is COPIED not moved — it joins v3 (unaffected) + v3_abl (affected), and the
+# live path gets regenerated in place later, so it must keep existing.
+cp results/tables/table6_modality.csv results/tables/table6_modality_arch256_$TS.csv
+cp results/tables/table6_modality.md  results/tables/table6_modality_arch256_$TS.md
+cp results/tables/table6_modality.tex results/tables/table6_modality_arch256_$TS.tex
+
+git add -A && git commit -m "Archive wrong-architecture (256/2) v3_abl results before rerunning with 128/1"
+git push
+```
+
+### Step 3 — Fix the architecture
+
+Edit `configs/phase0_v3_abl_config.yaml`:
+```yaml
+model:
+  hidden_dim: 128   # was 256
+  num_layers: 1     # was 2
+```
+Commit separately for a clean, reviewable diff:
+```bash
+git commit -am "Fix v3_abl architecture to match v3/v3_full (128/1) instead of sleep-staging arch (256/2)"
+git push
+```
+
+### Step 4 — Sanity-check on ONE experiment before retraining all 25
+
+Cheap insurance against repeating the same mistake — confirm the fix actually took effect before
+burning compute on the other 24:
+```bash
+python scripts/gen_commands.py $REG train sex_binary_lstm_abl_no_bas | bash
+```
+Once that job finishes, check `metrics.json` directly:
+```bash
+python3 -c "
+import json
+d = json.load(open('/scratch/boshra95/psg/unified/results/phase0_v3_abl/sex_binary_lstm_abl_no_bas/context_120m/metrics.json'))
+print('hidden_dim:', d['hidden_dim'], '(expect 128)')
+print('n_trainable_params:', d['n_trainable_params'], '(expect ~658K, not ~3.15M)')
+"
+```
+Only proceed to Step 5 once this prints `128` and `~658K`.
+
+### Step 5 — Retrain the remaining 24, then infer all 25, then analyze all 25
+
+Upgrading rigor to match the v3/v3_full refresh — the original ablation run used plain `analyze`
+with no flags; use `--k-dense --bootstrap 1000 --plot` this time.
+
+```bash
+# Train (skips sex_binary_lstm_abl_no_bas — already done in Step 4 — gen_commands.py detects
+# the existing best_model.pt and skips automatically if you just rerun the full list)
+for exp in $ABL_EXPS; do
+  python scripts/gen_commands.py $REG train $exp | bash
+done
+
+# Infer (after training finishes)
+for exp in $ABL_EXPS; do
+  python scripts/gen_commands.py $REG infer $exp | bash
+done
+
+# Analyze (after inference finishes) — logged, with progress markers
+for exp in $ABL_EXPS; do
+  echo "=== START $exp $(date) ==="
+  python scripts/gen_commands.py $REG analyze $exp --k-dense --bootstrap 1000 --plot | bash
+  echo "=== END $exp $(date) ==="
+done 2>&1 | tee analysis_abl_step5.log
+```
+
+### Step 6 — Collect (path is already empty from Steps 1–2, no rename-first needed this time)
+
+```bash
+python scripts/collect_results_v2.py \
+  --results-dir /scratch/boshra95/psg/unified/results/phase0_v3_abl
+```
+
+Verify clean (expect 25 unique (task, head, run_tag) combos, 0 duplicate keys):
+```bash
+python3 -c "
+import pandas as pd
+df = pd.read_csv('results/collected/phase0_v3_abl/analysis.csv')
+dupe_key = ['task','head','run_tag','context_length','k','split']
+print('rows:', len(df), '| unique (task,head,run_tag):', df[['task','head','run_tag']].drop_duplicates().shape[0], '(expect 25) | dupes:', df.duplicated(subset=dupe_key).sum())
+"
+```
+
+### Step 7 — Regenerate Table 6 and rewrite the SOTA doc interpretation
+
+```bash
+python scripts/make_table6_modality.py
+```
+This reads both `results/collected/phase0_v3/analysis.csv` (the "Full" baseline — unaffected by
+the ablation fix, no need to touch it) and `results/collected/phase0_v3_abl/analysis.csv` (now
+corrected). Then rewrite `docs/SOTA_COMPARISON_AND_ABLATIONS.md` §A.6.1 — replace the flagged
+2026-06-17 table and interpretation with the corrected numbers, and redo the "most necessary
+modality per task" summary table. Compare against the archived
+`results/tables/table6_modality_arch256_20260627.csv` to sanity-check the direction/magnitude of
+change makes sense (architecture shouldn't flip which modality matters most per task, just shift
+absolute AUROC).
+
+### Notes
+
+- **Nothing in `phase0_v3`/`phase0_v3_full` is affected** by the ablation fix — their collected
+  CSVs, tables, and figures remain valid and don't need to be touched again.
+- **No figures existed for `phase0_v3_abl` before this fix** (the original ablation `analyze`
+  calls never used `--plot`) — Step 5 above generates them fresh for the first time; nothing
+  stale to archive there beyond the empty `.gitkeep` placeholder already moved in Step 2.
+- The archived `*_arch256_20260627` directories/files (scratch, repo, logs) are a permanent record
+  of the bug, not a temporary safety net like the `*_old_<date>` renames used elsewhere in this
+  doc — no need to delete them after verifying the rerun.

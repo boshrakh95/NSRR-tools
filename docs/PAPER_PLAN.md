@@ -174,7 +174,7 @@ Target for main paper: **~8 figures/tables** at 12–14 pages. The exact count a
 | **Fig 3** | 2D iso-compute heatmap | L×K grid, AUROC as colour, iso-compute lines; 1 hero task (finalise after results) | Main | Partial (bmi_binary) or PENDING | `plot_iso_compute.py` (heatmap) |
 | **Fig 4** | Sleep staging saturation | Cohen's κ vs context length, 3 heads; per-stage F1 as inset or sub-panel | Main | Group D ✗ PENDING | `plot_saturation.py` (kappa metric) |
 | **Fig 5** | Task sensitivity scatter | ΔAUROC (30s→best) vs baseline difficulty (1−AUROC@30s); each dot = one task; reference lines at medians | Main | All Groups ✗ PENDING | `plot_task_comparison.py` (§6A) |
-| **Fig 6** | Modality ablation | Bar chart: AUROC for All / RESP+EKG / BAS only / No-BAS conditions at 2 contexts, 1–2 tasks | Main (if results available) | Ablation runs ✗ PENDING | Custom bar plot |
+| **Fig 6** | Modality ablation | Table 6 (5 tasks × 5 conditions: no_bas, no_resp, no_ekg, cardio, bas_only) | Main | Ablation runs done once (2026-06-17) but ⚠️ wrong architecture — rerunning, see `REMAINING_TRAINING_CHECKLIST.md` | `make_table6_modality.py` |
 | **Table I** | Main results | Best test AUROC per task × best context (LSTM head); all tasks with AUROC ≥ ~0.62; 95% CI; balanced accuracy at t_opt; [PENDING] cells where experiments not yet done | Main | All Groups | `collect_results_v2.py` → manual |
 | **Table II** | L* and context sensitivity | Per task: L* (min context within 0.5% of best), ΔAUROC (30s→best), N, datasets | Main | All Groups | `plot_task_comparison.py` (§6C) |
 
@@ -514,6 +514,15 @@ Running this adds ~12 training jobs (3 tasks × 2 context lengths × 4-5 modalit
 **Recommendation**: Option C (pilot on bmi_binary_lstm at 10m and 120m) before submission. This is low-risk and directly counters a predictable reviewer concern. **Your call.**
 
 **Your answer**: Will run the modality zero-out ablation on **1–2 tasks** (e.g., apnea_binary and bmi_binary at representative context lengths). This directly addresses the expected OSF-related reviewer question. Results will go in supplementary if there is no space in main paper, or in main paper as a brief ablation subsection if the finding is notable. Running soon.
+
+**Status update (2026-06-27):** Scope expanded beyond the original plan — ran on all 5 high-AUROC
+tasks (sex, apnea, sleep_efficiency, age, BMI) × 5 conditions (no_bas, no_resp, no_ekg, cardio,
+bas_only) = 25 experiments, not just 1–2 tasks. Completed once (2026-06-17) but with the **wrong
+model architecture** (256/2 instead of 128/1, a config copy-paste bug) — all 25 numbers are
+invalidated and being rerun with the corrected architecture before any results here are final. See
+`docs/SOTA_COMPARISON_AND_ABLATIONS.md` §A.6.1/§A.7 item 7 and
+`docs/REMAINING_TRAINING_CHECKLIST.md` § Later: re-running v3_abl for the bug and rerun plan. Do
+not cite Table 6 numbers in the paper draft until this is resolved.
 
 ---
 
