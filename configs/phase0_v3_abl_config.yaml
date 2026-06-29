@@ -109,8 +109,8 @@ dataset:
 model:
   input_dim: 512
   head_type: "lstm"
-  hidden_dim: 256 # change to 128 and rerun!
-  num_layers: 2 # change to 1 and rerun!
+  hidden_dim: 128
+  num_layers: 1
   num_heads:  8
   dropout:    0.3
   num_classes: 2
