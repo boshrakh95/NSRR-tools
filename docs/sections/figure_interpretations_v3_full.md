@@ -724,6 +724,30 @@ integration more gracefully.
 
 ## Table 2 — Across-Task Figures (Full Channel)
 
+---
+
+### Cross-Round Merged Figure (v3 + v3_full + v3_abl)
+
+The full-channel baselines in this file are used as reference lines in the cross-round
+modality ablation bar chart. The ablation study clarifies WHY full-channel helps or hurts
+for each task:
+
+- **BMI**: Full-channel helps (+6 pp) — ablation shows BAS+EMG drive BMI signal; RESP
+  hurts. Full-channel adds EKG+EMG which are useful, and EKG is neutral (−0.005 in
+  ablation) while EMG helps (gap in ablation).
+- **Apnea**: Full-channel hurts (−5 pp) — ablation shows apnea is BAS+RESP mixed;
+  adding more channels in v3_full likely creates optimization conflict, not a signal issue.
+- **Sleep efficiency**: Full-channel hurts (−6 pp) — ablation confirms BAS-only ≈ full
+  (−0.005). Adding non-BAS channels in v3_full therefore only adds noise.
+- **Sex**: Full-channel helps slightly (+1.6 pp for Transformer) — ablation shows EKG is
+  highly important for sex; full-channel adds EKG more effectively at long contexts.
+
+| Figure Name | Interpretation | Additional Comments |
+|---|---|---|
+| modality_ablation_summary_bar.png (pending, shared with v3_abl) | The same cross-round bar chart described in v3 and v3_abl. The full-channel baselines in this file serve as the upper reference lines (dashed). The ablation bars help explain why full-channel beats or loses to fast-channel for each task, bridging the v3_full saturation findings with mechanistic modality importance. | [CROSS-ROUND FIGURE] See figure_interpretations_v3_abl.md §Cross-Round Merged Figure Recommendation for full design spec. |
+
+---
+
 ### Saturation Curves
 
 > **Decision**: AUROC primary, BA supplementary. Same as v3.

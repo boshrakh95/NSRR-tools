@@ -756,6 +756,20 @@
 
 ## Table 2 — Across-Task Figures
 
+---
+
+### Cross-Round Merged Figure (v3 + v3_full + v3_abl)
+
+**Proposed figure: Modality Contribution Bar Chart** — combines fast-channel baseline
+(this file), full-channel baseline (figure_interpretations_v3_full.md), and ablation
+deltas (figure_interpretations_v3_abl.md) into a single 5-panel figure.
+
+| Figure Name | Interpretation | Additional Comments |
+|---|---|---|
+| modality_ablation_summary_bar.png (pending) | Five-panel grouped bar chart (one per task). Each panel shows absolute AUROC for all ablation conditions plus v3_fast and v3_full reference lines. Key findings visible at a glance: sleep_efficiency BAS-only ≈ full (−0.005); sex EKG-dominant; apnea RESP+BAS both needed; BMI RESP hurts. The v3_full reference line shows where full-channel sits relative to each ablation condition — for BMI, full-channel BEATS the no_resp ablation, confirming that EKG+EMG (not RESP) drive the full-channel BMI gain. | [CROSS-ROUND FIGURE] Generate from: v3 fast baselines (this file, Table 2 saturation values at task context), v3_full baselines (figure_interpretations_v3_full.md Table 2), and v3_abl analysis.csv. Design per figure_interpretations_v3_abl.md §Cross-Round Merged Figure Recommendation. |
+
+---
+
 ### Saturation Curves
 
 > **Decision (instruction #12)**: AUROC saturation curves are primary. Balanced Accuracy saturation curves (if generated) should be supplementary.
