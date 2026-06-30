@@ -829,8 +829,8 @@ Only proceed to Step 5 once this prints `128` and `~658K`.
 
 ### Step 5 — Retrain the remaining 24, then infer all 25, then analyze all 25
 
-Upgrading rigor to match the v3/v3_full refresh — the original ablation run used plain `analyze`
-with no flags; use `--k-dense --bootstrap 1000 --plot` this time.
+Plain `analyze` with no extra flags — Table 6 only needs AUROC at standard K values;
+bootstrap and dense K are not used in the paper for the ablation.
 
 ```bash
 # Train (skips sex_binary_lstm_abl_no_bas — already done in Step 4 — gen_commands.py detects
@@ -847,7 +847,7 @@ done
 # Analyze (after inference finishes) — logged, with progress markers
 for exp in $ABL_EXPS; do
   echo "=== START $exp $(date) ==="
-  python scripts/gen_commands.py $REG analyze $exp --k-dense --bootstrap 1000 --plot | bash
+  python scripts/gen_commands.py $REG analyze $exp | bash
   echo "=== END $exp $(date) ==="
 done 2>&1 | tee analysis_abl_step5.log
 ```

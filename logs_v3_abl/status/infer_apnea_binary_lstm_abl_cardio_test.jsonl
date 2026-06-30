@@ -1,0 +1,2 @@
+{"ts":"2026-06-30T10:03:16-07:00","job_id":"46360365","node":"fc11017","status":"STARTED","task":"apnea_binary","head":"lstm","contexts":"120m","split":"test","datasets":"apples shhs mros"}
+{"ts":"2026-06-30T10:12:51-07:00","job_id":"46360365","node":"fc11017","status":"SUCCESS","task":"apnea_binary","head":"lstm","contexts":"120m","split":"test","datasets":"apples shhs mros"}

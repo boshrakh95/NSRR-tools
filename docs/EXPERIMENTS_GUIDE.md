@@ -792,9 +792,12 @@ python scripts/gen_commands.py $REG train age_class_lstm_abl_bas_only           
 python scripts/gen_commands.py $REG train bmi_binary_lstm_abl_bas_only              | bash
 ```
 
-✅ All 25 jobs are complete as of 2026-06-17 (all `best_model.pt` files exist; resubmitting any
-of the commands above is safe — they will be skipped automatically). The list above is kept for
-reproducibility/reference.
+**Status as of 2026-06-29 (post architecture fix):** the 2026-06-17 run above is archived (see
+the warning at the top of this section) — the live `phase0_v3_abl/` directory was emptied and is
+being repopulated with the corrected 128/1 architecture. `sex_binary_lstm_abl_no_bas` was already
+retrained and verified (the Step 4 sanity check in `REMAINING_TRAINING_CHECKLIST.md`) — running
+the commands above now will correctly skip that one (its `best_model.pt` already exists with the
+fixed arch) and train the other 24. The list above is otherwise unchanged and reusable as-is.
 
 **Check status:**
 ```bash
@@ -865,41 +868,50 @@ be inferred with `ZERO_MODALITIES="BAS"` automatically — no manual matching is
 
 #### Step 3 — Analysis (window sweep, no GPU)
 
-Runs locally. Computes K-sweep AUROC at K=1, 5, 10, 20, 50, all. Writes
-`window_analysis_test.csv` and `window_analysis.md` per experiment.
+Runs locally. Computes K-sweep AUROC at the standard K values (1, 5, 10, 20, 50, all).
+No bootstrap or dense K needed — Table 6 only uses AUROC at K=5 and K=all.
+
+> **Why not `run_analysis.sh`?** That script is designed for the full v3/v3_full pipeline
+> (13 steps, multi-head, iso-compute heatmaps, task-comparison plots). Ablation is LSTM-only
+> and only needs per-experiment analyze → collect → Table 6. Use the loop below instead.
 
 ```bash
 REG="--registry experiments/v2_ablation_registry.yaml"
 source /home/boshra95/sleepfm_env/bin/activate
 
-for exp in \
-  sex_binary_lstm_abl_no_bas              \
-  apnea_binary_lstm_abl_no_bas            \
-  sleep_efficiency_binary_lstm_abl_no_bas \
-  age_class_lstm_abl_no_bas               \
-  bmi_binary_lstm_abl_no_bas              \
-  sex_binary_lstm_abl_no_resp              \
-  apnea_binary_lstm_abl_no_resp            \
-  sleep_efficiency_binary_lstm_abl_no_resp \
-  age_class_lstm_abl_no_resp               \
-  bmi_binary_lstm_abl_no_resp              \
-  sex_binary_lstm_abl_no_ekg              \
-  apnea_binary_lstm_abl_no_ekg            \
-  sleep_efficiency_binary_lstm_abl_no_ekg \
-  age_class_lstm_abl_no_ekg               \
-  bmi_binary_lstm_abl_no_ekg              \
-  sex_binary_lstm_abl_cardio              \
-  apnea_binary_lstm_abl_cardio            \
-  sleep_efficiency_binary_lstm_abl_cardio \
-  age_class_lstm_abl_cardio               \
-  bmi_binary_lstm_abl_cardio              \
-  sex_binary_lstm_abl_bas_only              \
-  apnea_binary_lstm_abl_bas_only            \
-  sleep_efficiency_binary_lstm_abl_bas_only \
-  age_class_lstm_abl_bas_only               \
-  bmi_binary_lstm_abl_bas_only; do
-    python scripts/gen_commands.py $REG analyze $exp | bash
-done
+ABL_EXPS="
+  sex_binary_lstm_abl_no_bas
+  apnea_binary_lstm_abl_no_bas
+  sleep_efficiency_binary_lstm_abl_no_bas
+  age_class_lstm_abl_no_bas
+  bmi_binary_lstm_abl_no_bas
+  sex_binary_lstm_abl_no_resp
+  apnea_binary_lstm_abl_no_resp
+  sleep_efficiency_binary_lstm_abl_no_resp
+  age_class_lstm_abl_no_resp
+  bmi_binary_lstm_abl_no_resp
+  sex_binary_lstm_abl_no_ekg
+  apnea_binary_lstm_abl_no_ekg
+  sleep_efficiency_binary_lstm_abl_no_ekg
+  age_class_lstm_abl_no_ekg
+  bmi_binary_lstm_abl_no_ekg
+  sex_binary_lstm_abl_cardio
+  apnea_binary_lstm_abl_cardio
+  sleep_efficiency_binary_lstm_abl_cardio
+  age_class_lstm_abl_cardio
+  bmi_binary_lstm_abl_cardio
+  sex_binary_lstm_abl_bas_only
+  apnea_binary_lstm_abl_bas_only
+  sleep_efficiency_binary_lstm_abl_bas_only
+  age_class_lstm_abl_bas_only
+  bmi_binary_lstm_abl_bas_only
+"
+
+for exp in $ABL_EXPS; do
+  echo "=== START $exp $(date) ==="
+  python scripts/gen_commands.py $REG analyze $exp | bash
+  echo "=== END $exp $(date) ==="
+done 2>&1 | tee analysis_abl_step5.log
 ```
 
 Output per experiment:
