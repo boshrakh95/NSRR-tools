@@ -41,3 +41,7 @@ runs/
 
 # Result PDFs are large and slow down git add; PNGs are kept for quick viewing.
 results/figures/**/*.pdf
+
+# Resized viewing variants (_sm = 1200px, _xs = 800px) created for API display limits.
+results/figures/**/*_sm.png
+results/figures/**/*_xs.png
