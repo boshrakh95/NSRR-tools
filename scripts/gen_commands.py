@@ -495,6 +495,7 @@ def build_saturation_cmd(task: str, heads: list, registry: dict,
     results_dir = Path(registry["results_dir"])
     python = registry.get("python_bin", "/home/boshra95/sleepfm_env/bin/python")
     metrics = metrics or ["auroc", "balanced_accuracy"]
+    cdir = str(results_dir / "collected")
     cmd_parts = [
         f"{python} scripts/plot_saturation.py",
         f"--task {task}",
@@ -502,6 +503,7 @@ def build_saturation_cmd(task: str, heads: list, registry: dict,
         f"--results-dir {results_dir}",
         f"--metric {' '.join(metrics)}",
         f"--split {split}",
+        f"--collected-dir {cdir}",
         f"--repo-figures-dir {repo_figures_dir(results_dir)}",
     ]
     if run_tag:

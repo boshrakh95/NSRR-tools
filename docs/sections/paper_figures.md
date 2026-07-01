@@ -262,6 +262,41 @@ Log-scale x-axis on lollipop to match Fig 1.
 
 ---
 
+### S-Fig 12 (or Fig 5) — Aggregate Context-Length Scaling `[v3, all tasks × all heads]`
+
+**Named:** *"General Context Scaling Law"*  
+**Layout:** 1 row × 3 panels, `figsize=(14, 4.5)`  
+**Script:** `scripts/plot_aggregate_scaling.py`  
+**Status:** [PENDING — generate after saturation code fix; placement (main vs supplementary)
+decided based on whether std bands are tight enough to support a general-law claim]
+
+**Content:**
+
+| Panel | Type | Key question |
+|---|---|---|
+| (a) | ΔAUROC from 30s baseline vs context (log-x), one line per head ±1 std across tasks, faint individual task lines | Is there a consistent average gain curve? How variable is it across tasks? |
+| (b) | Normalised gain (0%=30s, 100%=240m) vs context, same structure | What fraction of total achievable gain is captured at each context, regardless of task sensitivity? |
+| (c) | Bar chart: log-linear slope b per head (pp per log₂ doubling), ±1 std across tasks, individual task dots overlaid | Is Transformer steeper than LSTM? Is the scaling rate consistent across tasks? |
+
+**Placement rationale:**
+- **Promote to main (Fig 5)** if: std bands in (a)/(b) are tight (< ±2 pp at 240m), meaning
+  the scaling law is universal; and panel (c) shows a clear head ranking.
+- **Keep as S-Fig 12** if: std bands are wide, showing the result is highly task-dependent
+  (interesting, but not a "law"); the per-task story in Fig 1 is then the stronger contribution.
+- Regardless of placement: panel (c) slope values are reportable in the main text as a
+  one-sentence quantitative summary.
+
+**Key parameters:**
+- Tasks: all 7 retained (use `--exclude-tasks depression_extreme_binary` to check robustness
+  without the non-monotonic outlier)
+- Heads: lstm, transformer, mean_pool
+- Metric: mean_prob_auroc (K=all, split=test)
+- x-axis: log scale, standard context labels (30s → 240m)
+
+**Data source:** `phase0_v3/collected/analysis.csv`
+
+---
+
 ## Excluded from Paper Entirely
 
 | Figure type | Reason |
@@ -297,3 +332,4 @@ Log-scale x-axis on lollipop to match Fig 1.
 | S-Fig 7 | Temporal Position Profiles | v3 | `figure_interpretations_v3.md` §window_position_4A rows |
 | S-Fig 8 | Compute Scaling | v3 | `figure_interpretations_v3.md` §Scaling Laws 1B rows |
 | S-Fig 9 | Min Windows K* | v3 | `figure_interpretations_v3.md` §kstar_9A rows |
+| S-Fig 12 / Fig 5 (TBD) | Aggregate Context Scaling | v3 | — (new; interpret after generation) |

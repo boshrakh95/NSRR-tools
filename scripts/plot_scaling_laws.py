@@ -66,17 +66,15 @@ CONTEXT_TO_MIN = {
 CTX_ORDER = {c: i for i, c in enumerate(CONTEXT_TO_MIN)}
 
 HEAD_STYLE = {
-    "lstm":       {"color": "#4C72B0", "marker": "o", "ls": "-",  "label": "LSTM"},
-    "transformer":{"color": "#DD8452", "marker": "s", "ls": "--", "label": "Transformer"},
-    "mean_pool":  {"color": "#55A868", "marker": "^", "ls": ":",  "label": "Mean Pool"},
+    "lstm":        {"color": "#3A7EBF", "marker": "o", "ls": "-",  "label": "LSTM"},
+    "transformer": {"color": "#E86A33", "marker": "s", "ls": "--", "label": "Transformer"},
+    "mean_pool":   {"color": "#44A15E", "marker": "^", "ls": ":",  "label": "Mean Pool"},
 }
 
 plt.rcParams.update({
-    "figure.dpi": 150,
-    "savefig.bbox": "tight",
-    "axes.spines.top": False,
-    "axes.spines.right": False,
-    "font.size": 10,
+    "figure.dpi": 300, "savefig.bbox": "tight",
+    "axes.spines.top": False, "axes.spines.right": False,
+    "font.family": "serif", "font.size": 9,
 })
 
 
@@ -150,12 +148,6 @@ def plot_uShape(df: pd.DataFrame, task: str, head: str, out_dir: Path) -> None:
     fig, axes = plt.subplots(nrows, ncols,
                              figsize=(5 * ncols, 4 * nrows),
                              sharey=False, squeeze=False)
-    fig.suptitle(
-        f"U-Shape Overfitting Curves — {task}  ({head.upper()})\n"
-        "Shaded region = generalisation gap after early stopping",
-        fontsize=11, y=1.01,
-    )
-
     for ax_flat, ctx in zip(axes.flat, contexts):
         rows = sub[sub["context_length"] == ctx].sort_values("epoch")
         if rows.empty:
@@ -196,12 +188,12 @@ def plot_uShape(df: pd.DataFrame, task: str, head: str, out_dir: Path) -> None:
                             label=f"Best epoch ({best_epoch})")
 
         ctx_min = CONTEXT_TO_MIN.get(ctx)
-        ax_flat.set_title(
-            f"L = {ctx}" + (f"  ({ctx_min:.0f} min)" if ctx_min else ""),
-            fontsize=10,
-        )
-        ax_flat.set_xlabel("Epoch")
-        ax_flat.set_ylabel("Loss")
+        ax_flat.set_xlabel("Epoch", fontsize=10)
+        ax_flat.set_ylabel("Loss", fontsize=10)
+        ax_flat.text(0.5, -0.18,
+                     f"L = {ctx}" + (f"  ({ctx_min:.0f} min)" if ctx_min else ""),
+                     transform=ax_flat.transAxes, ha="center", va="top",
+                     fontsize=8, fontfamily="serif")
         ax_flat.set_xlim(left=1)
 
     axes.flat[0].legend(fontsize=8, loc="upper right")
@@ -294,13 +286,8 @@ def plot_scaling_law(df: pd.DataFrame, task: str, heads: list, out_dir: Path) ->
         ax.scatter([], [], color="gray", marker=hs["marker"], s=70, label=hs["label"])
 
     ax.set_xscale("log")
-    ax.set_xlabel("Total Training FLOPs (log scale)", fontsize=11)
-    ax.set_ylabel("Test AUROC at best epoch", fontsize=11)
-    ax.set_title(
-        f"Compute Scaling Law — {task}\n"
-        "Color = context length · Marker = head · Dashed = power-law fit",
-        fontsize=11,
-    )
+    ax.set_xlabel("Total training FLOPs (log scale)", fontsize=10)
+    ax.set_ylabel("Test AUROC at best epoch", fontsize=10)
     ax.legend(fontsize=8, ncol=3, loc="lower right")
     fig.tight_layout()
 
@@ -350,15 +337,10 @@ def plot_optimal_epoch(df: pd.DataFrame, task: str, heads: list, out_dir: Path) 
         plotted += 1
 
     ax.set_xticks(x)
-    ax.set_xticklabels(contexts, fontsize=10)
-    ax.set_xlabel("Context Length", fontsize=11)
-    ax.set_ylabel("Optimal Epoch (val-loss minimum)", fontsize=11)
-    ax.set_title(
-        f"Optimal Epoch vs Context Length — {task}\n"
-        "Longer context may require more epochs to converge",
-        fontsize=11,
-    )
-    ax.legend()
+    ax.set_xticklabels(contexts, fontsize=9)
+    ax.set_xlabel("Context length", fontsize=10)
+    ax.set_ylabel("Optimal epoch (val-loss minimum)", fontsize=10)
+    ax.legend(fontsize=9)
     fig.tight_layout()
 
     stem = f"{task}_1C_optimal_epoch"
@@ -386,8 +368,8 @@ def main() -> None:
                         default=Path("/scratch/boshra95/psg/unified/results/phase0_v2"),
                         dest="results_dir")
     parser.add_argument("--plots", nargs="+",
-                        default=["1A", "1B", "1C"],
-                        help="Which plots to generate (1A 1B 1C, default: all)")
+                        default=["1A", "1B"],
+                        help="Which plots to generate (1A 1B 1C, default: 1A 1B)")
     parser.add_argument("--repo-figures-dir", type=Path, default=None,
                         dest="repo_figures_dir",
                         help="Also mirror PNGs into this repo dir (e.g. "

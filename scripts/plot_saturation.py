@@ -1,34 +1,23 @@
 #!/usr/bin/env python3
 """
-plot_saturation.py — Step 4 of iso-compute analysis pipeline.
+plot_saturation.py — Context-length saturation curves (Fig 1 in paper).
 
-"Figure 1" for the paper: metric vs context length at K=all, one line per head.
-Reads summary.csv files (no parquet or heatmap DF needed).
+Data source: analysis.csv (from collect_results_v2.py), filtered to k='all'.
+Primary column: mean_prob_auroc (subject-level mean-pool AUROC at K=all).
 
-Answers H1 (does longer context improve performance, and where does it saturate?)
-and H4 (which head benefits most from longer context?).
-
-Optional CI bands: if --collected-dir points to a directory containing
-analysis.csv (from collect_results_v2.py --bootstrap N), bootstrap 95% CI
-bounds are drawn as shaded bands around the saturation curves.
+Falls back to summary.csv test_auroc only if analysis.csv is not found — this
+is the segment-level K=1 metric and should NOT be used for paper figures.
 
 Usage:
   python scripts/plot_saturation.py \\
       --task sex_binary \\
       --heads lstm transformer mean_pool \\
-      --results-dir /scratch/boshra95/psg/unified/results/phase0_v2 \\
-      --metric auroc balanced_accuracy
-
-  # With bootstrap CI bands:
-  python scripts/plot_saturation.py \\
-      --task sex_binary \\
-      --heads lstm transformer mean_pool \\
-      --results-dir /scratch/boshra95/psg/unified/results/phase0_v2 \\
-      --collected-dir results/collected \\
+      --results-dir /scratch/boshra95/psg/unified/results/phase0_v3 \\
+      --collected-dir results/collected/phase0_v3 \\
       --metric auroc
 
 Output:
-  {results_dir}/figures/saturation/saturation_{task}_{metric}.{png,pdf}
+  {results_dir}/figures/saturation/saturation_{task}_{metric}_{split}.{png,pdf}
 """
 
 import argparse
@@ -46,6 +35,17 @@ sys.path.insert(0, str(Path(__file__).parent))
 from repo_sync import configure_repo_figures, default_repo_figures_dir, save_figure
 
 
+# ── Global style ──────────────────────────────────────────────────────────────
+
+plt.rcParams.update({
+    "figure.dpi": 300,
+    "savefig.bbox": "tight",
+    "axes.spines.top": False,
+    "axes.spines.right": False,
+    "font.family": "serif",
+    "font.size": 9,
+})
+
 # ── Config ────────────────────────────────────────────────────────────────────
 
 CONTEXT_TO_MIN = {
@@ -54,19 +54,25 @@ CONTEXT_TO_MIN = {
 }
 
 HEAD_STYLE = {
-    "lstm":       {"color": "#4C72B0", "marker": "o", "ls": "-",  "label": "LSTM"},
-    "transformer":{"color": "#DD8452", "marker": "s", "ls": "--", "label": "Transformer"},
-    "mean_pool":  {"color": "#55A868", "marker": "^", "ls": ":",  "label": "Mean Pool"},
+    "lstm":        {"color": "#3A7EBF", "marker": "o", "ls": "-",  "label": "LSTM"},
+    "transformer": {"color": "#E86A33", "marker": "s", "ls": "--", "label": "Transformer"},
+    "mean_pool":   {"color": "#44A15E", "marker": "^", "ls": ":",  "label": "Mean Pool"},
 }
 
 METRIC_LABEL = {
-    "auroc":             "AUROC",
-    "balanced_accuracy": "Balanced Accuracy",
-    "accuracy":          "Accuracy",
-    "macro_f1":          "Macro F1",
+    "auroc":             "AUROC (%)",
+    "balanced_accuracy": "Balanced Accuracy (%)",
+    "accuracy":          "Accuracy (%)",
+    "macro_f1":          "Macro F1 (%)",
 }
 
-# Maps metric name → (ci_lo column, ci_hi column) in analysis.csv
+# analysis.csv column to use for each metric
+METRIC_COL = {
+    "auroc":             "mean_prob_auroc",
+    "balanced_accuracy": "mean_prob_balanced_accuracy",
+}
+
+# CI column pairs in analysis.csv
 CI_COLS = {
     "auroc":             ("mean_prob_auroc_ci_lo",    "mean_prob_auroc_ci_hi"),
     "balanced_accuracy": ("mean_prob_bal_acc_ci_lo",  "mean_prob_bal_acc_ci_hi"),
@@ -84,24 +90,42 @@ def parse_context_min(s: str) -> float:
     return float(s)
 
 
-def load_summary(results_dir: Path, task: str, head: str, run_tag: str) -> pd.DataFrame:
-    exp_id   = f"{task}_{head}" + (f"_{run_tag}" if run_tag else "")
-    csv_path = results_dir / exp_id / "summary.csv"
-    if not csv_path.exists():
-        return pd.DataFrame(columns=["context_length", "context_length_min"])
-    try:
-        df = pd.read_csv(csv_path)
-    except Exception:
-        # Fall back to Python engine, which tolerates rows with more fields than the header
-        df = pd.read_csv(csv_path, engine="python", on_bad_lines="warn")
-    df["context_length_min"] = df["context_length"].map(parse_context_min)
-    return df.sort_values("context_length_min").reset_index(drop=True)
+# ── Data loading ──────────────────────────────────────────────────────────────
+
+def load_from_analysis(collected_dir: Path, task: str, head: str,
+                       split: str, metric: str,
+                       run_tag: str = "") -> pd.DataFrame:
+    """Load saturation data from analysis.csv at k='all'.
+
+    Returns DataFrame with columns: context_length, context_length_min, value
+    (already on [0,1] scale). Empty if data unavailable.
+    """
+    col = METRIC_COL.get(metric)
+    if col is None or collected_dir is None:
+        return pd.DataFrame()
+    p = collected_dir / "analysis.csv"
+    if not p.exists():
+        return pd.DataFrame()
+    df = pd.read_csv(p)
+    if "run_tag" not in df.columns:
+        df["run_tag"] = ""
+    mask = (
+        (df["task"] == task) &
+        (df["head"] == head) &
+        (df["split"] == split) &
+        (df["k"].astype(str) == "all") &
+        (df["run_tag"].fillna("") == (run_tag or "")) &
+        df[col].notna()
+    )
+    sub = df.loc[mask, ["context_length", "context_length_min", col]].copy()
+    sub = sub.sort_values("context_length_min").reset_index(drop=True)
+    sub = sub.rename(columns={col: "value"})
+    return sub
 
 
 def load_ci_data(collected_dir: Path, task: str, head: str,
                  split: str, metric: str) -> dict:
-    """
-    Load bootstrap CI bounds from analysis.csv for (task, head, split, k=all).
+    """Load bootstrap CI bounds from analysis.csv at k='all'.
     Returns dict: context_label -> (ci_lo, ci_hi) or empty dict if unavailable.
     """
     if collected_dir is None:
@@ -114,8 +138,8 @@ def load_ci_data(collected_dir: Path, task: str, head: str,
         return {}
     df = pd.read_csv(p)
     sub = df[
-        (df["task"]  == task)  &
-        (df["head"]  == head)  &
+        (df["task"] == task) &
+        (df["head"] == head) &
         (df["split"] == split) &
         (df["k"].astype(str) == "all") &
         df[ci_lo_col].notna() &
@@ -127,55 +151,79 @@ def load_ci_data(collected_dir: Path, task: str, head: str,
     }
 
 
+def load_summary_fallback(results_dir: Path, task: str, head: str,
+                          run_tag: str, split: str, metric: str):
+    """Fallback: read test_auroc from summary.csv. Returns (xs, ys) or (None, None)."""
+    exp_id   = f"{task}_{head}" + (f"_{run_tag}" if run_tag else "")
+    csv_path = results_dir / exp_id / "summary.csv"
+    if not csv_path.exists():
+        return None, None
+    try:
+        df = pd.read_csv(csv_path)
+    except Exception:
+        df = pd.read_csv(csv_path, engine="python", on_bad_lines="warn")
+    df["context_length_min"] = df["context_length"].map(parse_context_min)
+    df = df.sort_values("context_length_min").reset_index(drop=True)
+    col = f"{split}_{metric}" if f"{split}_{metric}" in df.columns else f"val_{metric}"
+    if col not in df.columns:
+        return None, None
+    return df["context_length_min"].values, df[col].values
+
+
+# ── Plotting ──────────────────────────────────────────────────────────────────
+
 def plot_saturation(task: str, heads: list, results_dir: Path,
                     metrics: list, run_tag: str, out_dir: Path,
                     split: str = "test",
                     collected_dir: Path | None = None):
     for metric in metrics:
-        val_col  = f"val_{metric}"
-        test_col = f"{split}_{metric}"
-
         fig, ax = plt.subplots(figsize=(9, 6))
         any_data = False
         has_ci   = False
+        all_xs_seen: list[float] = []
 
         for head in heads:
-            df = load_summary(results_dir, task, head, run_tag)
-            if df.empty:
-                print(f"  [skip] No summary.csv for {task}_{head}")
-                continue
-
-            col = test_col if test_col in df.columns else val_col
-            if col not in df.columns:
-                print(f"  [skip] Column '{col}' not found in {task}_{head}/summary.csv")
-                continue
+            # ── Primary: analysis.csv ─────────────────────────────────────────
+            adf = load_from_analysis(collected_dir, task, head, split, metric, run_tag)
+            if not adf.empty:
+                xs = adf["context_length_min"].values
+                ys = adf["value"].values * 100
+                all_xs_seen.extend(xs.tolist())
+            else:
+                # Fallback to summary.csv (warns user; not the primary metric)
+                xs, raw_ys = load_summary_fallback(
+                    results_dir, task, head, run_tag, split, metric)
+                if xs is None:
+                    print(f"  [skip] No data for {task}_{head} — "
+                          f"run collect_results_v2.py or check --collected-dir")
+                    continue
+                ys = raw_ys * 100
+                all_xs_seen.extend(xs.tolist())
+                print(f"  [warning] {task}_{head}: using summary.csv fallback "
+                      f"(segment-level metric, not mean-pool); regenerate after collect.")
 
             style = HEAD_STYLE.get(head, {
                 "color": "grey", "marker": "o", "ls": "-",
                 "label": head.replace("_", " ").title(),
             })
-            xs = df["context_length_min"].values
-            ys = df[col].values * 100
 
             ax.plot(xs, ys,
                     color=style["color"], marker=style["marker"],
-                    linestyle=style["ls"], linewidth=2.5, markersize=8,
+                    linestyle=style["ls"], linewidth=2.0, markersize=7,
                     label=style["label"])
 
-            # Annotate each point with its value
             for x, y in zip(xs, ys):
                 ax.annotate(f"{y:.1f}", (x, y),
                             textcoords="offset points", xytext=(0, 7),
-                            fontsize=8, ha="center", color=style["color"])
+                            fontsize=7, ha="center", color=style["color"])
 
-            # Optional CI bands from analysis.csv
+            # Optional CI bands
             ci_map = load_ci_data(collected_dir, task, head, split, metric)
             if ci_map:
                 ctx_str_map = {v: k for k, v in CONTEXT_TO_MIN.items()}
-                ci_lo_vals, ci_hi_vals = [], []
-                ci_xs = []
-                for x, ctx_min in zip(xs, df["context_length_min"].values):
-                    ctx_lbl = ctx_str_map.get(ctx_min)
+                ci_xs, ci_lo_vals, ci_hi_vals = [], [], []
+                for x in xs:
+                    ctx_lbl = ctx_str_map.get(float(x))
                     if ctx_lbl and ctx_lbl in ci_map:
                         lo, hi = ci_map[ctx_lbl]
                         ci_xs.append(x)
@@ -193,26 +241,23 @@ def plot_saturation(task: str, heads: list, results_dir: Path,
             continue
 
         ax.set_xscale("log")
-        # Custom x-tick labels matching context strings
-        all_xs = sorted(set(
-            v for h in heads
-            for v in load_summary(results_dir, task, h, run_tag)["context_length_min"].tolist()
-        ))
+        all_xs_sorted = sorted(set(all_xs_seen))
         ctx_str = {v: k for k, v in CONTEXT_TO_MIN.items()}
-        ax.set_xticks(all_xs)
-        ax.set_xticklabels([ctx_str.get(x, f"{x:.0f}m") for x in all_xs], fontsize=10)
+        ax.set_xticks(all_xs_sorted)
+        ax.set_xticklabels(
+            [ctx_str.get(x, f"{x:.0f}m") for x in all_xs_sorted], fontsize=9)
         ax.xaxis.set_minor_formatter(mticker.NullFormatter())
 
-        ax.set_xlabel("Context length (log scale)", fontsize=12)
-        ylabel = f"{METRIC_LABEL.get(metric, metric)} ({split}) (%)"
+        ax.set_xlabel("Context length (minutes)", fontsize=10)
+        ylabel = METRIC_LABEL.get(metric, metric)
         if has_ci:
-            ylabel += "  [shading = 95% bootstrap CI]"
-        ax.set_ylabel(ylabel, fontsize=12)
-        ax.set_title(f"{task}  —  {METRIC_LABEL.get(metric, metric)} vs Context Length",
-                     fontsize=13)
-        ax.legend(fontsize=10)
-        ax.grid(True, which="major", alpha=0.35)
-        ax.grid(True, which="minor", alpha=0.1)
+            ylabel += "  [shading = 95% CI]"
+        ax.set_ylabel(ylabel, fontsize=10)
+        ax.legend(fontsize=9)
+        ax.grid(True, which="major", alpha=0.3)
+        ax.grid(True, which="minor", alpha=0.08)
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
 
         plt.tight_layout()
         stem = f"saturation_{task}_{metric}_{split}"
@@ -222,42 +267,38 @@ def plot_saturation(task: str, heads: list, results_dir: Path,
             print("  (with CI bands)")
 
 
+# ── CLI ───────────────────────────────────────────────────────────────────────
+
 def main():
     parser = argparse.ArgumentParser(
         description="Plot metric vs context length (saturation curve) per head."
     )
-    parser.add_argument("--task",    required=True,
-                        help="Task name, e.g. sex_binary")
+    parser.add_argument("--task",    required=True)
     parser.add_argument("--heads",   nargs="+",
-                        default=["lstm", "transformer", "mean_pool"],
-                        help="Heads to compare (default: lstm transformer mean_pool)")
+                        default=["lstm", "transformer", "mean_pool"])
     parser.add_argument("--results-dir", type=Path,
-                        default=Path("/scratch/boshra95/psg/unified/results/phase0_v2"),
+                        default=Path("/scratch/boshra95/psg/unified/results/phase0_v3"),
                         dest="results_dir")
     parser.add_argument("--metric",  nargs="+",
-                        default=["auroc", "balanced_accuracy"],
-                        help="Metrics to plot (default: auroc balanced_accuracy)")
-    parser.add_argument("--split",   default="test",
-                        choices=["val", "test"],
-                        help="Which split to use (default: test)")
+                        default=["auroc", "balanced_accuracy"])
+    parser.add_argument("--split",   default="test", choices=["val", "test"])
     parser.add_argument("--run-tag", default="", dest="run_tag")
     parser.add_argument("--collected-dir", type=Path, default=None,
                         dest="collected_dir",
-                        help="Directory containing analysis.csv with bootstrap CI bounds "
-                             "(from collect_results_v2.py --bootstrap N). "
-                             "If provided, CI bands are drawn as shaded regions.")
+                        help="Directory containing analysis.csv. "
+                             "Defaults to results_dir/collected.")
     parser.add_argument("--repo-figures-dir", type=Path, default=None,
-                        dest="repo_figures_dir",
-                        help="Also mirror PNGs into this repo dir (e.g. "
-                             "results/figures/phase0_v3). Default: no repo mirror.")
+                        dest="repo_figures_dir")
     args = parser.parse_args()
+
+    # Default collected_dir to results_dir/collected
+    collected_dir = args.collected_dir or (args.results_dir / "collected")
 
     configure_repo_figures(args.results_dir, args.repo_figures_dir)
     out_dir = args.results_dir / "figures" / "saturation"
 
     print(f"Task: {args.task}  Heads: {args.heads}  Metrics: {args.metric}")
-    if args.collected_dir:
-        print(f"  CI bands: loading from {args.collected_dir}/analysis.csv")
+    print(f"  Data source: {collected_dir}/analysis.csv  (k=all, {args.split})")
     plot_saturation(
         task=args.task,
         heads=args.heads,
@@ -266,7 +307,7 @@ def main():
         run_tag=args.run_tag,
         out_dir=out_dir,
         split=args.split,
-        collected_dir=args.collected_dir,
+        collected_dir=collected_dir,
     )
 
 

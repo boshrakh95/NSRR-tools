@@ -37,6 +37,12 @@ import matplotlib.ticker as mticker
 import numpy as np
 import pandas as pd
 
+plt.rcParams.update({
+    "figure.dpi": 300, "savefig.bbox": "tight",
+    "axes.spines.top": False, "axes.spines.right": False,
+    "font.family": "serif", "font.size": 9,
+})
+
 _ROOT = Path(__file__).resolve().parent.parent
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -311,10 +317,8 @@ def make_single_figure(task: str, head: str, metric: str,
         plt.close(fig)
         return
 
-    ax.set_title(f"{task}  ·  {head}  —  {METRIC_TITLE.get(metric, metric)}",
-                 fontsize=12, fontweight="bold")
-    ax.set_xlabel("Context length", fontsize=11)
-    ax.set_ylabel(METRIC_YLABELS.get(metric, metric), fontsize=11)
+    ax.set_xlabel("Context length", fontsize=10)
+    ax.set_ylabel(METRIC_YLABELS.get(metric, metric), fontsize=10)
     ax.set_xticks(range(len(ctx_order)))
     ax.set_xticklabels(ctx_order)
     ax.yaxis.set_major_formatter(mticker.FormatStrFormatter("%.1f"))
@@ -327,7 +331,7 @@ def make_single_figure(task: str, head: str, metric: str,
         plt.show()
     else:
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        fig.savefig(out_path, dpi=150, bbox_inches="tight")
+        fig.savefig(out_path, dpi=300, bbox_inches="tight")
         print(f"  Saved: {out_path}")
     plt.close(fig)
 
@@ -347,9 +351,10 @@ def make_summary_figure(tasks: list, head: str, metric: str,
         ax = axes_flat[i]
         ctx_order = _active_ctx_order(seg_df, subj_df, task, head)
         drawn = plot_task_head(ax, task, head, metric, seg_df, subj_df, ctx_order)
-        ax.set_title(task.replace("_", " "), fontsize=10, fontweight="bold")
         ax.set_xlabel("Context", fontsize=9)
         ax.set_ylabel(METRIC_YLABELS.get(metric, metric), fontsize=9)
+        ax.text(0.5, -0.22, task.replace("_", " "), transform=ax.transAxes,
+                ha="center", va="top", fontsize=8, fontfamily="serif")
         ax.set_xticks(range(len(ctx_order)))
         ax.set_xticklabels(ctx_order, fontsize=8)
         ax.yaxis.set_major_formatter(mticker.FormatStrFormatter("%.1f"))
@@ -361,10 +366,6 @@ def make_summary_figure(tasks: list, head: str, metric: str,
     for j in range(n, len(axes_flat)):
         axes_flat[j].set_visible(False)
 
-    fig.suptitle(
-        f"Phase 0 context-length comparison  ·  head={head}  ·  {METRIC_TITLE.get(metric, metric)}",
-        fontsize=13, fontweight="bold", y=1.01
-    )
     fig.tight_layout()
 
     if show:
@@ -372,7 +373,7 @@ def make_summary_figure(tasks: list, head: str, metric: str,
         plt.show()
     else:
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        fig.savefig(out_path, dpi=150, bbox_inches="tight")
+        fig.savefig(out_path, dpi=300, bbox_inches="tight")
         print(f"  Saved: {out_path}")
     plt.close(fig)
 
