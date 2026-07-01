@@ -4,6 +4,32 @@
 
 **Note:** Tasks dropped from the paper (cvd_binary, sleepiness_binary, psqi_binary) are included here but marked ⚠️ DROPPED.
 
+> **See `paper_figures.md` for the full paper figure plan.** This file contains the detailed
+> per-figure interpretations; `paper_figures.md` is the master index of what goes where.
+
+---
+
+## Paper Figure Assignment Index (v3 → paper)
+
+| Paper location | Named figure | Source plots from this file |
+|---|---|---|
+| **Fig 1** (main) | Context Saturation | `saturation/saturation_{task}_auroc_test.png` ×7 |
+| **Fig 2** (main) | Inference Efficiency | `sex_binary_transformer/auroc_test/` — metric_vs_k + heatmap + min_cost_frontier |
+| **Fig 3** (main) | Task Landscape | `task_comparison_6A_scatter.png` + `task_comparison_6C_lstar.png` |
+| **S-Fig 1** | K-Aggregation Curves | `{task}_transformer_test_window_sweep_auroc.png` ×7 |
+| **S-Fig 3** | Iso-Compute Analysis | `sex_binary + apnea_binary transformer/auroc_test/` — metric_vs_total, pareto_front, marginal_gain |
+| **S-Fig 4a** | ECE vs Context | `{task}_calibration_2B_ece_vs_context.png` ×6 |
+| **S-Fig 4b** | Reliability Diagrams | `{3 tasks}_lstm_calibration_2A_reliability.png` at 240m |
+| **S-Fig 5** | Cross-Cohort Saturation | `apnea/sleep_eff/sex_binary lstm_cohort_saturation_7A.png` |
+| **S-Fig 6a** | Prediction Variance Violins | `{3 tasks}_transformer_subject_consistency_5A_variance.png` |
+| **S-Fig 6b** | Hard-Subject Distribution | `{7 tasks}_transformer_subject_consistency_5C_hard_subjects.png` (after redesign) |
+| **S-Fig 7** | Window Position Profiles | `{2 tasks}_lstm_window_position_4A_profiles.png` + `4B_variance.png` |
+| **S-Fig 8** | Compute Scaling | `scaling_laws/{task}_1B_compute_scaling.png` ×7 |
+| **S-Fig 9** | Min Windows K* | `{task}_transformer_kstar_9A_histogram.png` ×7 |
+| **S-Fig 10a/b** | PR Curves | `{task}_{head}_pr_8A_curves.png` + `{task}_pr_8B_aucpr_vs_context.png` ×6 |
+| **S-Fig 11** | U-Shape Training | `{task}_transformer_1A_uShape.png` ×7 (pending BA rerun) |
+| **EXCLUDED** | — | `6B_bars`, `7B_n`, `8C_vote_sweep`, `2C_ece_vs_k`, `5B_variance_vs_k`, `9B_coverage`, `1C_optimal_epoch`, `double_tradeoff`, all BA variants |
+
 ---
 
 ## Global Decisions (applied throughout)
@@ -76,13 +102,13 @@
 | sex_binary_transformer_kstar_9A_histogram.png | K* distribution even more concentrated at K*=1 at 240m than LSTM — many subjects need only 1 window with Transformer at long contexts. Reinforces architectural advantage. | Part of 3-panel per task. |
 | sex_binary_transformer_kstar_9B_coverage.png | Coverage curve for Transformer. Unlike the blacklisted LSTM version, this is not on the blacklist by name. Retain for reference but consider omitting from paper for brevity. | Not blacklisted by instruction #6 name. Optional inclusion. |
 | sex_binary_transformer_1A_uShape.png | [FLAG: CODE CHANGE] Transformer validation loss U-shapes are shallower and later-peaking than LSTM, consistent with slower but higher-quality learning. **Rerun with BA metric.** | [FLAG: CODE CHANGE] |
-| auroc_test/heatmap_auroc.png | Transformer heatmap shows higher AUROC across all (L, K) cells vs LSTM. Plateau appears at lower K for any given L. | Group with lstm and mean_pool heatmaps for cross-head comparison. |
-| auroc_test/metric_vs_k_auroc.png | Faster saturation in K than LSTM — single window at 240m already reaches ~87%. | See global iso-compute comments. |
-| auroc_test/metric_vs_total_auroc.png | Transformer line lies above LSTM line at all total context values — architectural advantage beyond compute. | Include as key cross-head comparison. |
-| auroc_test/pareto_front_auroc.png | Same Pareto structure: long-L always dominates. Transformer absolute AUROC at Pareto points is ~2 pp above LSTM. | |
-| auroc_test/min_cost_frontier_auroc.png | Minimum cost to reach 87% AUROC for Transformer is (L=240m, K=2) ≈ 480 min total — the maximum budget. Shows even the best head requires near-maximum affordable context for top performance. | |
-| auroc_test/marginal_gain_auroc.png | Slightly steeper initial marginal gain than LSTM (Transformer extracts more from the 1st window) but same rapid decay. | |
-| auroc_test/double_tradeoff_auroc.png | Confirms same conclusion as LSTM: long-L + small-K is optimal at any fixed compute. | |
+| **[Fig 2a]** auroc_test/metric_vs_k_auroc.png | Faster K-saturation than LSTM — single window at 240m already reaches ~87%. Diminishing returns by K=5 at all long contexts. **This panel is the primary K-sweep panel in Fig 2.** | [→ Fig 2 panel (a)] Use Transformer head only. 4 context lengths shown with viridis_r color. Remove majority-vote. |
+| **[Fig 2b]** auroc_test/heatmap_auroc.png | Heatmap shows high AUROC region at long-L + small-K. Iso-compute contours (dashed) make the compute-efficiency argument visually clear. Plateau at lower K for long L. **Primary heatmap panel for Fig 2.** | [→ Fig 2 panel (b)] Use Transformer head only. Remove figure title. Caption explains iso-compute lines. |
+| **[Fig 2c]** auroc_test/min_cost_frontier_auroc.png | Minimum cost to reach target AUROC: staircase showing that L=30s cannot reach >85% at any affordable K; L=120m or 240m required. Red dashed line marks 480-min budget. **Primary frontier panel for Fig 2.** | [→ Fig 2 panel (c)] Use Transformer head only. Remove figure title. |
+| **[S-Fig 3]** auroc_test/metric_vs_total_auroc.png | Transformer line lies above LSTM at all total context values — architectural advantage beyond compute volume. Long-L is more efficient than large-K at equal total context. | [→ S-Fig 3 panel, row 1(a)] sex_binary_transformer |
+| **[S-Fig 3]** auroc_test/pareto_front_auroc.png | Long-L always on Pareto front. Transformer absolute AUROC at each Pareto point ~2 pp above LSTM. | [→ S-Fig 3 panel, row 1(b)] sex_binary_transformer |
+| **[S-Fig 3]** auroc_test/marginal_gain_auroc.png | Steep marginal gain decay K=1→5; negligible gain beyond K=20. | [→ S-Fig 3 panel, row 1(c)] sex_binary_transformer |
+| **[EXCLUDED]** auroc_test/double_tradeoff_auroc.png | Long-L + small-K is optimal — this conclusion is already captured by heatmap + pareto + metric_vs_total. Redundant. | [EXCLUDED from paper] |
 
 ---
 
@@ -773,16 +799,23 @@ deltas (figure_interpretations_v3_abl.md) into a single 5-panel figure.
 ### Saturation Curves
 
 > **Decision (instruction #12)**: AUROC saturation curves are primary. Balanced Accuracy saturation curves (if generated) should be supplementary.
+>
+> **[CODE FIX NEEDED — plot_saturation.py]**: Current figures read `test_auroc` from
+> per-experiment `summary.csv` (segment-level / K=1 from training evaluation loop).
+> This is inconsistent with all other paper figures, which use subject-level mean-pool
+> AUROC (K=all, `mean_prob_auroc` from `analysis.csv`). Fix: change `plot_saturation.py`
+> to read `mean_prob_auroc` at `k='all'` from the collected `analysis.csv`.
+> Numbers below are from `analysis.csv` (mean_prob_auroc, K=all) — the correct targets.
 
 | Figure Name | Interpretation | Additional Comments |
 |---|---|---|
-| saturation/saturation_sex_binary_auroc_test.png | All three heads show monotonic AUROC improvement from 30s to 240m. Transformer leads at all contexts, reaching ~89% at 240m vs ~84% for LSTM. No saturation reached by 240m (curve still rising). L* estimated >120m. The gap between heads grows with context length, suggesting the Transformer's sequential attention mechanism becomes more advantageous as longer patterns emerge. | GROUP: merge all task saturation curves into a single 2×4 panel figure (7 tasks + 1 empty or task comparison inset). Use consistent line colors per head (LSTM=blue, Transformer=orange, MeanPool=green). Log-scale x-axis. Remove figure titles; add panel labels (a–g). |
-| saturation/saturation_age_class_auroc_test.png | Monotonic improvement across heads. Transformer reaches ~87% at 240m. Curve still rising at 240m but with decreasing rate — L* estimated ~120–240m. Similar pattern to sex_binary but with lower absolute values. LSTM and MeanPool are competitive at long contexts. | See grouping comment above. |
-| saturation/saturation_apnea_binary_auroc_test.png | Steepest initial rise of any task. Transformer reaches ~93% by 240m; LSTM ~92%; MeanPool ~91%. All heads converge at high AUROC — task ceiling is high and similar across heads. L* estimated ~80–120m (curve flattens). Apnea is the strongest and most robust task. | Highest-performing task. Highlight in paper. |
-| saturation/saturation_bmi_binary_auroc_test.png | Weakest context sensitivity of retained tasks. All heads plateau early (L*~10–40m) at a low ceiling (~72%). Transformer reaches only ~74% at 240m. Minimal additional benefit of context beyond 40m. BMI is the task with lowest ceiling and earliest saturation — suggesting weak temporal PSG signature. | Lowest ceiling. Present as contrast to apnea and sleep_efficiency. |
-| saturation/saturation_sleep_efficiency_binary_auroc_test.png | Strongest context sensitivity: monotonic rise with no plateau by 240m (L*>240m). AUROC at 30s ~70%, at 240m ~85%. Transformer leads, reaching ~85%. The lack of saturation is a key finding — sleep efficiency requires the longest context to reach its performance ceiling, implying that the full-night architecture carries essential information not captured in any single segment. | KEY FIGURE. Emphasize "not yet saturated" finding. |
-| saturation/saturation_depression_extreme_binary_auroc_test.png | **Non-monotonic and erratic across heads and contexts. AUROC ranges ~0.63–0.72 without systematic improvement. No context length consistently yields best performance, and no head dominates. The saturation concept does not apply here because performance fluctuates within noise. APPLES-only cohort and small N likely contribute to instability.** | **[UNJUSTIFIABLE]** Consider moving depression to supplementary or discussion as a negative finding. Note APPLES-only limitation. |
-| saturation/saturation_osa_binary_apples_postqc_auroc_test.png | Marked head divergence: LSTM saturates at ~74% after 40m, while Transformer continues rising to ~85% and MeanPool to ~83% by 240m. This is the most striking inter-head divergence of all tasks. Suggests that OSA's temporal structure beyond 40m is incompatible with LSTM's sequential inductive bias but is well-captured by Transformer attention. APPLES-only cohort. | KEY FINDING: head-specific saturation. Include as a major example in paper. |
+| saturation/saturation_sex_binary_auroc_test.png | All three heads show monotonic AUROC improvement from 30s to 240m. Correct values (mean_prob_auroc K=all): Transformer 30s→91.0% 240m (vs 83.2% at 30s), LSTM 30s→85.7% 240m, MeanPool 30s→81.8% 240m. No saturation by 240m (L* > 120m). Transformer advantage grows with context length. | [CODE FIX] Regenerate using mean_prob_auroc K=all from analysis.csv. GROUP: merge all task saturation curves into 2×4 panel. LSTM=blue, Transformer=orange, MeanPool=green. Log-scale x-axis. Remove figure titles; add panel labels. |
+| saturation/saturation_age_class_auroc_test.png | Monotonic improvement across heads. Correct values: Transformer 240m=90.5%, LSTM 240m=88.5%, MeanPool 240m=85.0%. Curve still rising but with decreasing rate — L* estimated ~120–240m. All heads converge at high values; gap between heads small. | [CODE FIX] Regenerate. See grouping comment above. |
+| saturation/saturation_apnea_binary_auroc_test.png | Steepest absolute AUROC of any task. Correct values: Transformer 240m=85.4%, LSTM 240m=82.7%, MeanPool 240m=76.5%. Context sensitivity is strong (all rising from ~75% at 30s). L* estimated ~80–120m where curves begin to flatten. Apnea is the highest-performing task. Note: MeanPool is notably weaker (~9 pp below Transformer at 240m). | [CODE FIX] Regenerate. Highest-performing task; highlight in paper. |
+| saturation/saturation_bmi_binary_auroc_test.png | Weakest context sensitivity of retained tasks. Correct values: Transformer 240m=77.7%, LSTM 240m=74.7%, MeanPool 240m=74.6%. Heads plateau early (L*~40m). Minimal benefit of context beyond 40m. All heads reach similar ceiling. | [CODE FIX] Regenerate. Lowest ceiling — contrast to apnea and sleep_efficiency. |
+| saturation/saturation_sleep_efficiency_binary_auroc_test.png | Strongest context sensitivity — no saturation at 240m (L* > 240m). Correct values: Transformer 30s=70.7%→240m=83.1%, LSTM 30s=69.7%→240m=78.8%, MeanPool 30s=69.4%→240m=76.0%. Transformer leads. The lack of saturation is a key finding. | [CODE FIX] Regenerate. KEY FIGURE. Emphasize "not yet saturated." |
+| saturation/saturation_depression_extreme_binary_auroc_test.png | **Non-monotonic and erratic across heads and contexts. Correct values: Transformer 240m=74.6%, LSTM 240m=75.0%, MeanPool 240m=75.2% — but patterns across contexts are not monotonically rising. APPLES-only cohort and small N likely contribute to instability.** | **[UNJUSTIFIABLE]** [CODE FIX] Regenerate. Move to supplementary or discussion. |
+| saturation/saturation_osa_binary_apples_postqc_auroc_test.png | Marked head divergence. Correct values: Transformer 240m=86.1% (monotonically rising, no saturation), LSTM 240m=77.4% (saturates around 40m then continues slowly), MeanPool 240m=84.8% (strong rise, competitive with Transformer). LSTM saturates much earlier than Transformer/MeanPool. | [CODE FIX] Regenerate. KEY FINDING: head-specific saturation. LSTM ceiling is ~9 pp below Transformer at 240m. |
 | saturation/saturation_cvd_binary_auroc_test.png | ⚠️ DROPPED task. AUROC near-flat at ~0.69 across all contexts and heads. No context benefit. | Excluded from paper. Retained for reference. |
 | saturation/saturation_sleepiness_binary_auroc_test.png | ⚠️ DROPPED task. AUROC ~0.63, no context benefit across heads. | Excluded. |
 | saturation/saturation_psqi_binary_auroc_test.png | ⚠️ DROPPED task. AUROC ~0.56, near chance, no context benefit. | Excluded. |
@@ -793,9 +826,8 @@ deltas (figure_interpretations_v3_abl.md) into a single 5-panel figure.
 
 | Figure Name | Interpretation | Additional Comments |
 |---|---|---|
-| task_comparison/task_comparison_6A_scatter.png | Scatter plot of task difficulty (AUROC at 30s) vs context sensitivity (AUROC gain from 30s to 240m). Clear stratification: apnea (easy at 30s, moderate gain), sleep_efficiency (hardest at 30s, largest gain), sex_binary and age_class (moderate difficulty, moderate gain), bmi_binary (moderate difficulty, small gain), depression (hard, small/erratic gain). Tasks cluster into three groups: (1) strong signal, context-sensitive (sleep_efficiency); (2) strong signal, moderate context benefit (apnea, sex, age); (3) weak signal, low context benefit (bmi, depression). | [CODE FIX] Regenerate excluding dropped tasks (cvd, sleepiness, psqi). Consider adding task name labels directly on scatter points. TBME: use consistent color per task, marker size proportional to N. |
-| task_comparison/task_comparison_6B_bars.png | Grouped bar chart comparing AUROC at representative context lengths (30s, 80m, 240m) across tasks and heads. Confirms ranking: apnea > sex > age > sleep_efficiency > osa > bmi > depression. The 30s→240m gain varies: sleep_efficiency gains most, bmi gains least. Head differences are small at 30s but grow at 240m. | [CODE FIX] Regenerate without dropped tasks. Consider showing only Transformer as best head for clarity, or show all 3 heads as grouped bars within each context×task cell. |
-| task_comparison/task_comparison_6C_lstar.png | Lollipop plot of L* (saturation context length) per task. Sleep_efficiency: L*>240m (no saturation); apnea L*~80–120m; sex/age L*~120m; OSA (Transformer) L*~120m; bmi L*~10–40m. depression: L* undefined (non-monotonic). This plot cleanly communicates how different tasks require different context lengths for reliable prediction. | [CODE FIX] Regenerate without dropped tasks. Use horizontal lollipops with task names on y-axis. For sleep_efficiency, use an arrow or ">" marker indicating L*>240m. Adjust x-axis to be log scale to match saturation plot. |
+| **[Fig 3] task_comparison/task_comparison_6A_scatter.png + task_comparison_6C_lstar.png** | **GROUPED → Fig 3 "Task Landscape" (2-panel composite).** (a) Scatter: task difficulty (mean_prob_auroc @30s K=all) vs context sensitivity (AUROC gain 30s→240m K=all). Three clusters: (1) high-sensitivity (sleep_efficiency, OSA Transformer); (2) moderate (apnea, sex, age); (3) weak (bmi, depression). Task labels on points directly. (b) L* lollipop: sleep_eff →arrow (L*>240m); apnea ~80m; sex/age ~120m; OSA ~120m; bmi ~40m; depression hatched (undefined). Both panels use consistent task-color scheme. | [CODE FIX] Both regenerated from analysis.csv with mean_prob_auroc K=all. Log-scale x-axis on lollipop. Remove figure titles; shared caption. Exclude dropped tasks. Task name labels on scatter points (no separate legend). |
+| task_comparison/task_comparison_6B_bars.png | Grouped bar chart — AUROC per task per head at 30s, 80m, 240m. Confirms ranking: apnea > sex/age > sleep_eff > OSA > bmi > depression. Information is largely redundant with Fig 1 and Table II. | **[EXCLUDED from paper]** Redundant with Fig 1 + Table II. Retain as internal reference only. |
 
 ---
 

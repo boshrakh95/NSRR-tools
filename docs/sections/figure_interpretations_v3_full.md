@@ -7,6 +7,22 @@ anomalies, surprising findings, or things to follow up on.
 **Note:** Tasks dropped from the paper (cvd_binary, sleepiness_binary, psqi_binary) are
 included here but marked ⚠️ DROPPED.
 
+> **See `paper_figures.md` for the full paper figure plan.**
+
+---
+
+## Paper Figure Assignment Index (v3_full → paper)
+
+The full-channel experiment contributes **one supplementary figure** to the paper.
+All per-task per-condition detail figures are for internal reference only.
+
+| Paper location | Named figure | Source plots from this file |
+|---|---|---|
+| **S-Fig 2** (supp) | Fast vs Full Channel | `saturation/saturation_{task}_auroc_test.png` ×6 overlaid with v3 fast-channel (after code fix) |
+| **Table II extra cols** | Channel comparison numbers | `analysis.csv` mean_prob_auroc K=all at 240m, Transformer |
+| **Fig 4 reference lines** | Full-ch baselines in ablation bar chart | `analysis.csv` baselines (fed into v3_abl figure generation) |
+| **EXCLUDED (all else)** | Per-task calibration, window sweep, PR, K*, consistency, position, scaling | Internal reference only |
+
 ---
 
 ## Global Decisions (same as v3 unless noted)
@@ -732,15 +748,19 @@ The full-channel baselines in this file are used as reference lines in the cross
 modality ablation bar chart. The ablation study clarifies WHY full-channel helps or hurts
 for each task:
 
-- **BMI**: Full-channel helps (+6 pp) — ablation shows BAS+EMG drive BMI signal; RESP
-  hurts. Full-channel adds EKG+EMG which are useful, and EKG is neutral (−0.005 in
-  ablation) while EMG helps (gap in ablation).
-- **Apnea**: Full-channel hurts (−5 pp) — ablation shows apnea is BAS+RESP mixed;
-  adding more channels in v3_full likely creates optimization conflict, not a signal issue.
-- **Sleep efficiency**: Full-channel hurts (−6 pp) — ablation confirms BAS-only ≈ full
-  (−0.005). Adding non-BAS channels in v3_full therefore only adds noise.
-- **Sex**: Full-channel helps slightly (+1.6 pp for Transformer) — ablation shows EKG is
-  highly important for sex; full-channel adds EKG more effectively at long contexts.
+- **Apnea**: Full-channel BETTER (+4.7 pp Transformer, +4.4 pp LSTM at 240m K=all).
+  Ablation shows RESP moderately important for apnea (−0.057 removal drop). Full-channel
+  provides additional calibration of respiratory + cardiac signals that improves detection.
+- **BMI**: Full-channel BETTER (+3.9 pp Transformer, +5.5 pp LSTM). Ablation confirms
+  the improvement comes from EKG+EMG, not RESP (RESP removal gives +0.010 gain).
+- **Sleep efficiency**: Essentially neutral — LSTM slightly better (+2.2 pp), Transformer
+  slightly worse (−0.6 pp), MeanPool nearly same (−0.3 pp). Ablation shows BAS-only ≈
+  full (−0.005), so additional channels neither help nor hurt meaningfully.
+- **Sex**: Full-channel BETTER for all heads (+1 to +3 pp). Ablation confirms EKG is
+  highly important for sex; full-channel provides richer EKG information.
+- **OSA**: Full-channel WORSE (−4 to −8 pp). The only task where full-channel clearly
+  hurts. APPLES-only cohort and post-QC filtering may cause distribution mismatch with
+  the additional channels, or the RESP channels add noise for this specific cohort.
 
 | Figure Name | Interpretation | Additional Comments |
 |---|---|---|
@@ -751,15 +771,22 @@ for each task:
 ### Saturation Curves
 
 > **Decision**: AUROC primary, BA supplementary. Same as v3.
+>
+> **[CODE FIX NEEDED — plot_saturation.py]**: Current saturation figures read `test_auroc`
+> from per-experiment `summary.csv` (segment-level / K=1 metric from training evaluation).
+> This is **inconsistent** with all other paper figures which use subject-level mean-pool
+> AUROC (K=all, `mean_prob_auroc` from `analysis.csv`). Fix: change `plot_saturation.py`
+> to load from the collected `analysis.csv` and plot `mean_prob_auroc` at `k='all'`.
+> All numbers below are the correct target values from `analysis.csv`.
 
 | Figure Name | Interpretation | Additional Comments |
 |---|---|---|
-| saturation/saturation_sex_binary_auroc_test.png | Full-channel sex_binary: LSTM 75%→87%, Transformer 75%→90.6%, MeanPool 72%→82%. Transformer leads, all heads show strong monotonic improvement. No saturation at 240m. **Transformer full-channel outperforms fast-channel at long contexts (+1.6 pp at 240m), while MeanPool lags behind fast-channel (-4 pp).** Body-composition channels (limb EMG, cardiac) benefit Transformer and LSTM but not MeanPool for sex classification. | GROUP all task saturation curves into 2×4 panel. Overlay fast-channel (dashed) and full-channel (solid) for head-by-head comparison in paper. |
-| saturation/saturation_apnea_binary_auroc_test.png | **Full-channel apnea: LSTM 70.4%→85.5%, Transformer 70.1%→88.2%, MeanPool 67.8%→81.0%. All heads substantially WORSE than fast-channel (fast: ~84%→93%). The gap is 5–10 pp at all context lengths. Context dependence is preserved (monotonic improvement) but the ceiling is lower. MeanPool is most degraded (−10 pp at 240m vs fast-channel). This strongly implies that apnea is an EEG-dominant task; adding respiratory channels does not help and may hurt via optimization complexity.** | KEY FINDING: Full-channel hurts apnea. Discuss modality interaction in paper. |
-| saturation/saturation_bmi_binary_auroc_test.png | Full-channel BMI: LSTM 71.7%→78.4%, Transformer 71.5%→80.0%, MeanPool 69.0%→76.5%. **All heads BETTER than fast-channel (+6 pp at 240m for Transformer). BMI classification benefits from multi-modal PSG — body composition is reflected in respiratory mechanics, cardiac rhythm, limb EMG, and sleep architecture simultaneously, and full-channel captures all these dimensions.** Context sensitivity is stronger in full-channel (curve rises more steeply). | KEY FINDING: Full-channel benefits BMI. Strongest reversal of the fast-channel result. |
-| saturation/saturation_sleep_efficiency_binary_auroc_test.png | Full-channel sleep efficiency: LSTM 66.7%→77.5%, Transformer 66.5%→79.2%, MeanPool 66.0%→73.8%. **All heads WORSE than fast-channel (~70%→85% Transformer). The early-night position dependence may be attenuated. Still no saturation at 240m (consistent with fast-channel), but the ceiling is ~6 pp lower.** L* remains >240m. | Context sensitivity preserved but ceiling lowered. EEG-dominant task. |
-| saturation/saturation_depression_extreme_binary_auroc_test.png | Full-channel depression: LSTM ~72.2–73.0% (non-monotonic), Transformer 72.3%→74.5% at 80m then drops to 72.9% at 240m, MeanPool oscillating 71–73.6%. **Slightly higher floor than fast-channel (~72% vs ~63%) but non-monotonic character preserved.** Transformer shows the best result at 80m (74.5%) before collapsing. APPLES-only. | **[UNJUSTIFIABLE]** Slight improvement vs fast-channel in absolute AUROC but pattern remains non-monotonic and unreliable. |
-| saturation/saturation_osa_binary_apples_postqc_auroc_test.png | Full-channel OSA: LSTM non-monotonic (64.4%→70.6% at 40m, drops to 66.5% at 80m, recovers to 71.0% at 240m), Transformer 65.1%→80.8%, MeanPool 64.1%→78.9%. **LSTM is actively harmful in full-channel for OSA (non-monotonic/unstable). Transformer and MeanPool show monotonic improvement but at a lower ceiling than fast-channel (~80–81% vs ~85–83%).** The narrowing of the Transformer-MeanPool gap in full-channel is notable — respiratory channels captured by spectral averaging help MeanPool for OSA. | KEY FINDING: LSTM failure is exacerbated in full-channel for OSA. Discuss modality-architecture interaction. |
+| saturation/saturation_sex_binary_auroc_test.png | Full-channel sex_binary at 240m (mean_prob_auroc K=all): LSTM 88.7% (fast 85.7%, **+3.1 pp**), Transformer 92.0% (fast 91.0%, **+1.0 pp**), MeanPool 83.4% (fast 81.8%, **+1.5 pp**). All heads improve with full-channel. No saturation at 240m (all still rising). Body-composition channels (EKG, limb EMG) add discriminative power, consistent with ablation (EKG most important single modality for sex). | [CODE FIX] Regenerate with mean_prob_auroc K=all. GROUP all task panels 2×4 figure; overlay fast (dashed) and full (solid). |
+| saturation/saturation_apnea_binary_auroc_test.png | Full-channel apnea at 240m (mean_prob_auroc K=all): LSTM 87.1% (fast 82.7%, **+4.4 pp**), Transformer 90.1% (fast 85.4%, **+4.7 pp**), MeanPool 82.1% (fast 76.5%, **+5.7 pp**). **Full-channel consistently outperforms fast-channel for all heads.** MeanPool gains most (+5.7 pp). Ceiling is higher and context sensitivity is preserved. Consistent with ablation: RESP and EKG contribute substantially to apnea detection when included as full channels. | KEY FINDING: Full-channel HELPS apnea. [CODE FIX] Regenerate — current figures show wrong metric and will look very different. |
+| saturation/saturation_bmi_binary_auroc_test.png | Full-channel BMI at 240m (mean_prob_auroc K=all): LSTM 80.2% (fast 74.7%, **+5.5 pp**), Transformer 81.6% (fast 77.7%, **+3.9 pp**), MeanPool 77.8% (fast 74.6%, **+3.2 pp**). All heads substantially better with full-channel. Largest improvement for LSTM (+5.5 pp). Ablation explains: EKG and EMG drive BMI signal; RESP adds noise (removal gives +0.010 gain). | KEY FINDING: Full-channel strongly benefits BMI. [CODE FIX] Regenerate. |
+| saturation/saturation_sleep_efficiency_binary_auroc_test.png | Full-channel sleep efficiency at 240m (mean_prob_auroc K=all): LSTM 81.0% (fast 78.8%, **+2.2 pp**), Transformer 82.5% (fast 83.1%, −0.6 pp), MeanPool 75.7% (fast 76.0%, −0.3 pp). LSTM improves slightly; Transformer/MeanPool essentially unchanged. No saturation at 240m for any head (L* > 240m). Ablation confirms: BAS-only ≈ full (−0.005), so additional channels are neither helpful nor harmful at scale. | Head-dependent: LSTM slightly benefits, Transformer/MeanPool neutral. [CODE FIX] Regenerate. |
+| saturation/saturation_depression_extreme_binary_auroc_test.png | Full-channel depression at 240m (mean_prob_auroc K=all): LSTM 71.7% (fast 75.0%, −3.3 pp), Transformer 74.1% (fast 74.6%, −0.5 pp), MeanPool 74.4% (fast 75.2%, −0.9 pp). LSTM slightly worsens; Transformer/MeanPool nearly unchanged. Non-monotonic context pattern persists. APPLES-only. | **[UNJUSTIFIABLE]** Channel count does not fix depression instability. [CODE FIX] Regenerate. |
+| saturation/saturation_osa_binary_apples_postqc_auroc_test.png | Full-channel OSA at 240m (mean_prob_auroc K=all): LSTM 69.4% (fast 77.4%, **−8.0 pp**), Transformer 81.8% (fast 86.1%, **−4.4 pp**), MeanPool 81.8% (fast 84.8%, **−3.0 pp**). **OSA is the only task where full-channel is consistently and substantially worse across all heads.** LSTM loses most (−8.0 pp). APPLES-only post-QC cohort likely creates distribution mismatch with the broader full-channel training data. | KEY FINDING: Full-channel HURTS OSA — the main exception. [CODE FIX] Regenerate. |
 | saturation/saturation_cvd_binary_auroc_test.png | ⚠️ DROPPED. | Excluded. |
 | saturation/saturation_sleepiness_binary_auroc_test.png | ⚠️ DROPPED. | Excluded. |
 | saturation/saturation_psqi_binary_auroc_test.png | ⚠️ DROPPED. | Excluded. |
@@ -771,8 +798,8 @@ for each task:
 | Figure Name | Interpretation | Additional Comments |
 |---|---|---|
 | task_comparison/task_comparison_6A_scatter.png | Full-channel task scatter (difficulty vs context sensitivity). Pattern shifts: BMI moves upward (higher AUROC at short context in full-channel, higher gain), while apnea and sleep_efficiency shift downward (lower absolute AUROC). OSA shifts: Transformer still high gain, but LSTM is removed from consideration due to instability. Depression remains in the low-gain, low-difficulty quadrant. | [CODE FIX] Regenerate without dropped tasks. Overlay fast vs full-channel as two marker types (e.g., filled=full, open=fast). |
-| task_comparison/task_comparison_6B_bars.png | Full-channel grouped bars show the same task ranking as fast-channel, but with BMI notably higher and apnea/sleep_efficiency lower. The channel-dependent performance differences are most visible in this cross-task view. | [CODE FIX] Regenerate. Consider side-by-side fast vs full panels for this figure. |
-| task_comparison/task_comparison_6C_lstar.png | L* values in full-channel: sleep_efficiency L*>240m (same as fast-channel); apnea L* may increase slightly (harder to saturate when absolute AUROC is lower); BMI L* shortens (higher ceiling reached earlier). Depression L* undefined. | [CODE FIX] Regenerate. Show both fast-channel and full-channel L* side by side per task. |
+| task_comparison/task_comparison_6B_bars.png | Full-channel grouped bars show the same task ranking as fast-channel, but with BMI and apnea notably higher at long contexts, and OSA lower. The main cross-task finding: full-channel consistently helps except for OSA (and marginally depression LSTM). | [CODE FIX] Regenerate with mean_prob_auroc K=all. Consider side-by-side fast vs full panels. |
+| task_comparison/task_comparison_6C_lstar.png | L* values in full-channel: sleep_efficiency L*>240m (same as fast-channel, still not saturated); apnea L* similar to fast-channel (both near ~80–120m); BMI L* similar or slightly shorter; OSA full-channel L* higher or undefined for LSTM (reduced performance). Depression L* undefined. | [CODE FIX] Regenerate with mean_prob_auroc K=all. Show fast vs full L* side by side. |
 
 ---
 
@@ -784,11 +811,11 @@ for each task:
 | scaling_laws/sex_binary_1C_optimal_epoch.png | Non-monotonic pattern expected; full-channel may require more epochs. Supplementary. | Supplementary. |
 | scaling_laws/age_class_1B_compute_scaling.png | Full-channel impact on age scaling uncertain without direct comparison data. Monitor vs fast-channel. | Multi-panel. |
 | scaling_laws/age_class_1C_optimal_epoch.png | Non-monotonic; supplementary. | Supplementary. |
-| scaling_laws/apnea_binary_1B_compute_scaling.png | **Shallower power-law slope than fast-channel for apnea — full-channel is less compute-efficient. Adding compute does not recover the performance lost from including non-EEG channels.** | Note as evidence against full-channel for apnea. |
+| scaling_laws/apnea_binary_1B_compute_scaling.png | Steeper absolute AUROC ceiling than fast-channel for apnea (full-channel LSTM 87.1% vs fast 82.7% at 240m K=all). Power-law slope may be similar or steeper — full-channel provides more discriminative signal for apnea at all compute levels. | Note as evidence that full-channel helps apnea. |
 | scaling_laws/apnea_binary_1C_optimal_epoch.png | May require more epochs in full-channel due to added complexity. | Supplementary. |
 | scaling_laws/bmi_binary_1B_compute_scaling.png | **Steeper power-law slope than fast-channel for BMI — full-channel is more compute-efficient. More FLOPs translate to larger AUROC gains when multi-modal body-composition signals are available.** | Key contrast: BMI and apnea show opposite channel × compute interactions. |
 | scaling_laws/bmi_binary_1C_optimal_epoch.png | May show slightly more monotonic pattern if full-channel training is more stable for BMI. | Supplementary. |
-| scaling_laws/sleep_efficiency_binary_1B_compute_scaling.png | **Shallower slope than fast-channel. Full-channel hurts compute efficiency for sleep efficiency.** | |
+| scaling_laws/sleep_efficiency_binary_1B_compute_scaling.png | LSTM shows similar or slightly higher ceiling (81.0% full vs 78.8% fast). Transformer is essentially the same (82.5% vs 83.1%). Power-law slope broadly similar to fast-channel — full-channel is neutral for sleep efficiency at all compute levels. | |
 | scaling_laws/sleep_efficiency_binary_1C_optimal_epoch.png | Check for monotonicity — was more systematic in fast-channel. | Supplementary/key diagnostic. |
 | scaling_laws/depression_extreme_binary_1B_compute_scaling.png | **Slightly steeper than fast-channel (ceiling at ~0.73 vs ~0.70) but still essentially flat — depression remains compute-inefficient regardless of channel set.** | **[UNJUSTIFIABLE]** |
 | scaling_laws/depression_extreme_binary_1C_optimal_epoch.png | **Erratic. Exclude from paper.** | Exclude. |

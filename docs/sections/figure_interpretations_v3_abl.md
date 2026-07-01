@@ -3,6 +3,24 @@
 **How to use:** Fill in the *Interpretation* column with what you observe.
 Use *Additional Comments* for paper relevance, surprises, or follow-up notes.
 
+> **See `paper_figures.md` for the full paper figure plan.**
+
+---
+
+## Paper Figure Assignment Index (v3_abl → paper)
+
+The ablation contributes **one main figure** and **one main table** to the paper.
+All per-condition individual plots (window sweep, calibration, PR, K*, heatmap) are
+internal reference only — they are pending generation and will not appear in the paper.
+
+| Paper location | Named figure | Source |
+|---|---|---|
+| **Fig 4** (main) | Modality Contribution — 5-panel bar chart | `analysis.csv` from v3_abl + baselines from v3 + v3_full |
+| **Table V** (main) | Modality ablation ΔAUROC table | `results/tables/table6_modality.md` (EXISTS) |
+| **EXCLUDED** | All per-condition window sweep, calibration, PR, K*, heatmap | Internal reference; not in paper |
+
+---
+
 **Context:** All ablation experiments use the LSTM head only, at a single context
 length per task (120m for sex/apnea/sleep_efficiency/age; 40m for BMI).
 Five conditions per task: no_bas, no_resp, no_ekg, cardio_only, bas_only.
@@ -54,13 +72,17 @@ Design:
 - Annotate each bar with the Δ value
 
 Reference values:
-| Task | v3 fast baseline | v3_full ceiling |
-|---|---|---|
-| sex_binary @120m | 0.872 | 0.906 |
-| apnea_binary @120m | 0.832 | 0.882 (Transformer, use LSTM: 0.855) |
-| sleep_eff @120m | 0.778 | 0.775 (full-ch LSTM) |
-| age_class @120m | 0.893 | see v3_full |
-| bmi_binary @40m | 0.756 | 0.784 (LSTM) |
+| Task | v3 fast baseline (K=all) | v3_full (K=all) | Direction |
+|---|---|---|---|
+| sex_binary @120m | 0.872 (LSTM) / 0.905 (T) | 0.887 (LSTM) / 0.929 (T) | Full better |
+| apnea_binary @120m | 0.832 (LSTM) / 0.857 (T) | 0.874 (LSTM) / 0.900 (T) | Full better |
+| sleep_eff @120m | 0.778 (LSTM) / 0.815 (T) | 0.768 (LSTM) / 0.798 (T) | Neutral/slightly lower |
+| age_class @120m | 0.893 (LSTM) / 0.902 (T) | 0.901 (LSTM) / 0.908 (T) | Full slightly better |
+| bmi_binary @40m | 0.756 (LSTM) / 0.766 (T) | 0.799 (LSTM) / 0.812 (T) | Full better |
+
+> Note: All values from `analysis.csv` (mean_prob_auroc, k=all). Saturation figures currently
+> show K=1 segment-level metric and must be regenerated — see [CODE FIX] notes in
+> figure_interpretations_v3.md and figure_interpretations_v3_full.md saturation sections.
 
 > See `figure_interpretations_v3.md` Table 2 (Saturation Curves) and
 > `figure_interpretations_v3_full.md` Table 2 (Saturation Curves) for the updated
