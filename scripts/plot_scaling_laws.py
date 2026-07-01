@@ -287,7 +287,7 @@ def plot_scaling_law(df: pd.DataFrame, task: str, heads: list, out_dir: Path) ->
 
     ax.set_xscale("log")
     ax.set_xlabel("Total training FLOPs (log scale)", fontsize=10)
-    ax.set_ylabel("Test AUROC at best epoch", fontsize=10)
+    ax.set_ylabel("Segment AUROC at best epoch (training eval)", fontsize=10)
     ax.legend(fontsize=8, ncol=3, loc="lower right")
     fig.tight_layout()
 

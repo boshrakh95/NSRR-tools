@@ -105,9 +105,12 @@ def main():
     print(df_to_markdown(table))
 
     cap = (f"Head architecture comparison at task-specific saturation context L* "
-           f"(channel: {args.channel}). "
-           f"L* is derived from the {args.lstar_head} head (within {args.tolerance} of max AUROC). "
-           f"Temporal\\_adv = AUROC(lstm) − AUROC(mean\\_pool) at K=all.")
+           f"(channel: {args.channel}, split: test, K={args.k_deploy} and K=all). "
+           f"L* is the saturation context of the {args.lstar_head.upper()} head "
+           f"(smallest L within {args.tolerance:.3f} AUROC of its peak); all heads are "
+           f"evaluated at this same L*. Consequently, Transformer and MeanPool AUROC values "
+           f"here may be lower than their own-best-context peak reported in Table~I. "
+           f"Temporal\\_adv = AUROC(lstm) $-$ AUROC(mean\\_pool) at K=all.")
     tex = latex_table(table, cap, f"heads_{args.channel}")
 
     if args.latex:

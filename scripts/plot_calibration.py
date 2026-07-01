@@ -9,7 +9,8 @@ Reads per-window prediction parquets (from infer_subject_windows.py) and produce
       Shows whether predicted confidence matches actual outcome frequency.
 
   2B: ECE vs context length — Expected Calibration Error for each head,
-      at a fixed K (default: K=10 windows per subject).
+      at a fixed K (default: K=5 windows per subject, matching the paper's
+      deployment scenario).  Use --k to override.
 
   2C: ECE vs K — how calibration improves as more windows are aggregated,
       for each context length (fixed head).
@@ -340,8 +341,9 @@ def main() -> None:
                         dest="results_dir")
     parser.add_argument("--split",   default="test", choices=["train", "val", "test"])
     parser.add_argument("--run-tag", default="", dest="run_tag")
-    parser.add_argument("--k",       type=int, default=10,
-                        help="K for reliability diagram and ECE vs context (default: 10)")
+    parser.add_argument("--k",       type=int, default=5,
+                        help="K for reliability diagram and ECE vs context (default: 5, "
+                             "matching the paper's deployment scenario)")
     parser.add_argument("--k-values", nargs="+",
                         default=["1", "2", "3", "5", "8", "10", "15", "20", "30", "50", "all"],
                         dest="k_values",
