@@ -110,6 +110,8 @@ TASKS=(
 )
 
 V3_RESULTS="/scratch/boshra95/psg/unified/results/phase0_v3"
+V3_FULL_RESULTS="/scratch/boshra95/psg_full/unified/results/phase0_v3_full"
+V3_ABL_RESULTS="/scratch/boshra95/psg/unified/results/phase0_v3_abl"
 V3_COLLECTED="results/collected/phase0_v3"
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -260,7 +262,9 @@ else
 #        results/collected/phase0_v3_full/analysis.csv  (full-ch reference)
 # Output: /scratch/.../phase0_v3_abl/figures/phase0_v3_abl/modality_ablation_bar.{png,pdf}
 echo "── Step 11: Fig 4 — modality bar chart (plot_modality_bar.py) ──────────────"
-run_py scripts/plot_modality_bar.py --split "$SPLIT"
+run_py scripts/plot_modality_bar.py \
+    --split "$SPLIT" \
+    --repo-figures-dir results/figures/phase0_v3_abl
 
 # ── Step 12: Fast vs full channel comparison (S-Fig 2) ────────────────────────
 # Reads: results/collected/phase0_v3/analysis.csv       (fast-ch)
@@ -268,7 +272,9 @@ run_py scripts/plot_modality_bar.py --split "$SPLIT"
 # Output: /scratch/.../phase0_v3_full/figures/phase0_v3_full/channel_comparison.{png,pdf}
 echo ""
 echo "── Step 12: S-Fig 2 — channel comparison (plot_channel_comparison.py) ──────"
-run_py scripts/plot_channel_comparison.py --split "$SPLIT"
+run_py scripts/plot_channel_comparison.py \
+    --split "$SPLIT" \
+    --repo-figures-dir results/figures/phase0_v3_full
 
 # ── Step 13: Aggregate scaling law (S-Fig 12 / Fig 5 TBD) ────────────────────
 # Reads: results/collected/phase0_v3/analysis.csv
@@ -280,7 +286,8 @@ echo "── Step 13: S-Fig 12 / Fig 5 — aggregate scaling (plot_aggregate_sca
 run_py scripts/plot_aggregate_scaling.py \
     --collected-dir "$V3_COLLECTED" \
     --results-dir   "$V3_RESULTS"   \
-    --split "$SPLIT"
+    --split "$SPLIT" \
+    --repo-figures-dir results/figures/phase0_v3
 
 fi  # end skip-cross-round
 
@@ -308,24 +315,31 @@ else
 #         results/tables/table1_peak_auroc_full.{csv,md,tex}
 #         results/tables/table2_lstar_fast.{csv,md,tex}
 echo "── Step 14: Table 1 — peak AUROC fast-ch (make_table1_peak_auroc.py) ───────"
-run_py scripts/make_table1_peak_auroc.py --latex
+run_py scripts/make_table1_peak_auroc.py \
+    --results-dir "$V3_RESULTS" \
+    --latex
 
 echo ""
 echo "── Step 14b: Table 1 — peak AUROC full-ch ──────────────────────────────────"
 run_py scripts/make_table1_peak_auroc.py \
     --collected-dir results/collected/phase0_v3_full \
+    --results-dir "$V3_FULL_RESULTS" \
     --channel full \
     --latex
 
 echo ""
 echo "── Step 14c: Table 2 — L* saturation (make_table2_lstar.py) ────────────────"
-run_py scripts/make_table2_lstar.py --latex
+run_py scripts/make_table2_lstar.py \
+    --results-dir "$V3_RESULTS" \
+    --latex
 
 # ── Step 15: Table 4 — Context sensitivity ranking (supplementary) ────────────
 # Output: results/tables/table4_sensitivity_fast_lstm.{csv,md,tex}
 echo ""
 echo "── Step 15: Table 4 — sensitivity (make_table4_sensitivity.py) ─────────────"
-run_py scripts/make_table4_sensitivity.py --latex
+run_py scripts/make_table4_sensitivity.py \
+    --results-dir "$V3_RESULTS" \
+    --latex
 
 # ── Step 16: Table 9 — Per-cohort AUROC breakdown (supplementary) ─────────────
 # Reads inference parquets (not collected CSVs) at the L* context for each task.
@@ -335,7 +349,9 @@ echo ""
 echo "── Step 16: Table 9 — per-cohort AUROC (make_table9_cohort.py) ─────────────"
 for exp_id in "${TABLE9_EXPS[@]}"; do
     echo "   $exp_id"
-    run_py scripts/make_table9_cohort.py "$exp_id" --latex
+    run_py scripts/make_table9_cohort.py "$exp_id" \
+        --results-dir "$V3_RESULTS" \
+        --latex
 done
 
 # ── Step 17: Table 10 — Bootstrap CI summary (supplementary) ─────────────────
@@ -343,21 +359,27 @@ done
 # Output: results/tables/table10_ci_fast.{csv,md,tex}
 echo ""
 echo "── Step 17: Table 10 — bootstrap CIs (make_table10_ci.py) ──────────────────"
-run_py scripts/make_table10_ci.py --latex
+run_py scripts/make_table10_ci.py \
+    --results-dir "$V3_RESULTS" \
+    --latex
 
 # ── Step 18: Table 3 — K-grid supplementary table ─────────────────────────────
 # sex_binary_lstm is the standard supplementary example.
 # Output: results/tables/table3_kgrid_sex_binary_lstm_fast.{csv,md,tex}
 echo ""
 echo "── Step 18: Table 3 — K-grid (make_table3_kgrid.py sex_binary_lstm) ────────"
-run_py scripts/make_table3_kgrid.py sex_binary_lstm --latex
+run_py scripts/make_table3_kgrid.py sex_binary_lstm \
+    --results-dir "$V3_RESULTS" \
+    --latex
 
 # ── Step 19: Table 5 — Head architecture comparison at L* ─────────────────────
 # Reads: results/collected/phase0_v3/analysis.csv
 # Output: results/tables/table5_heads_fast.{csv,md,tex}
 echo ""
 echo "── Step 19: Table 5 — head comparison (make_table5_heads.py) ───────────────"
-run_py scripts/make_table5_heads.py --latex
+run_py scripts/make_table5_heads.py \
+    --results-dir "$V3_RESULTS" \
+    --latex
 
 # ── Step 20: Table 6 — Modality ablation ΔAUROC ───────────────────────────────
 # Reads: results/collected/phase0_v3/analysis.csv   (Full baseline)
@@ -365,7 +387,9 @@ run_py scripts/make_table5_heads.py --latex
 # Output: results/tables/table6_modality.{csv,md,tex}
 echo ""
 echo "── Step 20: Table 6 — modality ablation (make_table6_modality.py) ──────────"
-run_py scripts/make_table6_modality.py --latex
+run_py scripts/make_table6_modality.py \
+    --results-dir "$V3_ABL_RESULTS" \
+    --latex
 
 fi  # end skip-tables
 

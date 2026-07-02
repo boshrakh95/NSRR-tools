@@ -196,7 +196,7 @@ def main():
                         dest="full_dir")
     parser.add_argument("--out-dir",  type=Path,
                         default=Path(
-                            "/scratch/boshra95/psg/unified/results/"
+                            "/scratch/boshra95/psg_full/unified/results/"
                             "phase0_v3_full/figures/phase0_v3_full"),
                         dest="out_dir")
     parser.add_argument("--split",    default="test", choices=["val", "test"])
@@ -206,7 +206,7 @@ def main():
     args = parser.parse_args()
 
     results_dir = Path(
-        "/scratch/boshra95/psg/unified/results/phase0_v3_full")
+        "/scratch/boshra95/psg_full/unified/results/phase0_v3_full")
     configure_repo_figures(results_dir, args.repo_figures_dir)
 
     print(f"Fast-ch: {args.fast_dir}")
