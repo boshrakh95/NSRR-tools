@@ -1108,10 +1108,11 @@ bash scripts/run_figures.sh --skip-cross-round --skip-tables 2>&1 | tee figures_
 | 11 | `plot_modality_bar.py` | **Fig 4** | v3_abl + v3 + v3_full (cross-round) |
 | 12 | `plot_channel_comparison.py` | S-Fig 2 | v3 + v3_full (cross-round) |
 | 13 | `plot_aggregate_scaling.py` | S-Fig 12 / Fig 5 TBD | v3 only |
-| 14 | `make_table1_peak_auroc.py` | **paper Table II** — peak AUROC | v3 |
-| 14b | `make_table2_lstar.py` | **paper Table III** — L* per task | v3 |
+| 14 | `make_table1_peak_auroc.py` (fast-ch) | **paper Table II** — peak AUROC fast-ch cols | v3 |
+| 14b | `make_table1_peak_auroc.py` (full-ch) | **paper Table II** — peak AUROC full-ch cols | v3_full |
+| 14c | `make_table2_lstar.py` | **paper Table III** — L* per task | v3 |
 | 15 | `make_table4_sensitivity.py` | supp sensitivity ranking | v3 |
-| 16 | `make_table9_cohort.py` × 7 | supp cohort breakdown | v3 (reads parquets) |
+| 16 | `make_table9_cohort.py` × 3 | supp cohort breakdown (sex/bmi/apnea) | v3 (reads parquets) |
 | 17 | `make_table10_ci.py` | supp bootstrap CIs | v3 |
 | 18 | `make_table3_kgrid.py sex_binary_lstm` | supp K-grid | v3 |
 | 19 | `make_table5_heads.py` | **paper Table IV** — heads at L* | v3 |
@@ -1167,8 +1168,15 @@ cd /home/boshra95/NSRR-tools
 # ── Primary paper tables ─────────────────────────────────────────────────────
 
 # Table 1 script → paper Table II — Peak AUROC per task × head at best context
+# paper_figures.md: "Peak AUROC: fast-ch + full-ch columns" → run BOTH:
 python scripts/make_table1_peak_auroc.py --latex
 # Output: results/tables/table1_peak_auroc_fast.{csv,md,tex}
+
+python scripts/make_table1_peak_auroc.py \
+    --collected-dir results/collected/phase0_v3_full \
+    --channel full \
+    --latex
+# Output: results/tables/table1_peak_auroc_full.{csv,md,tex}
 
 # Table 2 script → paper Table III — L* saturation context + ΔAUROC from 30s
 python scripts/make_table2_lstar.py --latex
@@ -1195,9 +1203,8 @@ python scripts/make_table4_sensitivity.py --latex
 # Output: results/tables/table4_sensitivity_fast_lstm.{csv,md,tex}
 
 # Table 9 — Per-cohort AUROC breakdown at L* (reads inference parquets directly)
-for exp_id in sex_binary_lstm apnea_binary_lstm sleep_efficiency_binary_lstm \
-              bmi_binary_lstm age_class_lstm depression_extreme_binary_lstm \
-              osa_binary_apples_postqc_lstm; do
+# PAPER_TABLES.md: "representative tasks: sex_binary, bmi_binary, apnea_binary"
+for exp_id in sex_binary_lstm bmi_binary_lstm apnea_binary_lstm; do
     python scripts/make_table9_cohort.py "$exp_id" --latex
 done
 # Output: results/tables/table9_cohort_{exp_id}_fast.{csv,md,tex}

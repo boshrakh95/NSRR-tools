@@ -16,22 +16,27 @@
 #   --skip-iso            Skip iso-compute plots (slowest step; ~20 min total)
 #
 # Steps executed (in order):
-#   1.  iso-plots              per experiment (21 total)    → Fig 2 / S-Fig 3 inputs
-#   2.  saturation             per task (7 tasks)           → Fig 1
-#   3.  scaling-laws           per task (7 tasks, 1B only)  → S-Fig 8
-#   4.  calibration            per experiment               → S-Fig 4a / 4b
-#   5.  window-position        per experiment (lstm only)   → S-Fig 7
-#   6.  subject-consistency    per experiment (transformer) → S-Fig 6a / 6b
-#   7.  cohort-saturation      per experiment (lstm only)   → S-Fig 5
-#   8.  precision-recall       per experiment               → S-Fig 10
-#   9.  subject-kstar          per experiment (transformer) → S-Fig 9
-#  10.  task-comparison        all 7 tasks                  → Fig 3 (6A + 6C)
-#  11.  plot_modality_bar.py   cross-round (abl+v3+v3_full) → Fig 4
-#  12.  plot_channel_comparison.py  cross-round (v3+v3_full)→ S-Fig 2
-#  13.  plot_aggregate_scaling.py   v3 only                 → S-Fig 12 / Fig 5 (TBD)
-#  14.  make_table3_kgrid.py        sex_binary_lstm         → Table 3 (K-grid supp.)
-#  15.  make_table5_heads.py        fast-channel            → Table 5 (head comparison)
-#  16.  make_table6_modality.py     v3 + v3_abl             → Table 6 (modality ablation)
+#   1.   iso-plots                 per experiment (21 total)        → Fig 2 / S-Fig 3 inputs
+#   2.   saturation                per task (7 tasks)               → Fig 1
+#   3.   scaling-laws              per task (7 tasks, 1B only)      → S-Fig 8
+#   4.   calibration               per experiment                   → S-Fig 4a / 4b
+#   5.   window-position           per experiment (lstm only)       → S-Fig 7
+#   6.   subject-consistency       per experiment (transformer)     → S-Fig 6a / 6b
+#   7.   cohort-saturation         per experiment (lstm only)       → S-Fig 5
+#   8.   precision-recall          per experiment                   → S-Fig 10
+#   9.   subject-kstar             per experiment (transformer)     → S-Fig 9
+#  10.   task-comparison           all 7 tasks                      → Fig 3 (6A + 6C)
+#  11.   plot_modality_bar.py      cross-round (abl+v3+v3_full)     → Fig 4
+#  12.   plot_channel_comparison.py cross-round (v3+v3_full)        → S-Fig 2
+#  13.   plot_aggregate_scaling.py  v3 only                         → S-Fig 12 / Fig 5 (TBD)
+#  14.   make_table1_peak_auroc.py  fast-ch + full-ch               → paper Table II
+#  14b.  make_table2_lstar.py       fast-ch                         → paper Table III
+#  15.   make_table4_sensitivity.py fast-ch                         → supp Table 4
+#  16.   make_table9_cohort.py × 3  sex/bmi/apnea LSTM              → supp Table 9
+#  17.   make_table10_ci.py         fast-ch                         → supp Table 10
+#  18.   make_table3_kgrid.py       sex_binary_lstm                 → supp Table 3
+#  19.   make_table5_heads.py       fast-ch                         → paper Table IV
+#  20.   make_table6_modality.py    v3 + v3_abl                     → paper Table V
 #
 # Outputs:
 #   v3 per-experiment figures  → /scratch/boshra95/psg/unified/results/phase0_v3/figures/
@@ -296,13 +301,24 @@ if $SKIP_TABLES; then
 else
 
 # ── Step 14: Tables 1 + 2 — Primary paper tables (peak AUROC and L*) ─────────
+# Table 1 needs BOTH fast-ch and full-ch: paper Table II shows both as columns
+#   (paper_figures.md: "Peak AUROC: fast-ch + full-ch columns, K=5 & K=all at best L")
+# Table 2 (L*) is fast-ch only in the main paper.
 # Output: results/tables/table1_peak_auroc_fast.{csv,md,tex}
+#         results/tables/table1_peak_auroc_full.{csv,md,tex}
 #         results/tables/table2_lstar_fast.{csv,md,tex}
-echo "── Step 14: Table 1 — peak AUROC (make_table1_peak_auroc.py) ───────────────"
+echo "── Step 14: Table 1 — peak AUROC fast-ch (make_table1_peak_auroc.py) ───────"
 run_py scripts/make_table1_peak_auroc.py --latex
 
 echo ""
-echo "── Step 14b: Table 2 — L* saturation (make_table2_lstar.py) ────────────────"
+echo "── Step 14b: Table 1 — peak AUROC full-ch ──────────────────────────────────"
+run_py scripts/make_table1_peak_auroc.py \
+    --collected-dir results/collected/phase0_v3_full \
+    --channel full \
+    --latex
+
+echo ""
+echo "── Step 14c: Table 2 — L* saturation (make_table2_lstar.py) ────────────────"
 run_py scripts/make_table2_lstar.py --latex
 
 # ── Step 15: Table 4 — Context sensitivity ranking (supplementary) ────────────
@@ -313,10 +329,11 @@ run_py scripts/make_table4_sensitivity.py --latex
 
 # ── Step 16: Table 9 — Per-cohort AUROC breakdown (supplementary) ─────────────
 # Reads inference parquets (not collected CSVs) at the L* context for each task.
-# Run for all 7 LSTM experiments (primary head in paper tables).
+# PAPER_TABLES.md: "representative tasks: sex_binary, bmi_binary, apnea_binary"
+TABLE9_EXPS=(sex_binary_lstm bmi_binary_lstm apnea_binary_lstm)
 echo ""
 echo "── Step 16: Table 9 — per-cohort AUROC (make_table9_cohort.py) ─────────────"
-for exp_id in "${LSTM_EXPS[@]}"; do
+for exp_id in "${TABLE9_EXPS[@]}"; do
     echo "   $exp_id"
     run_py scripts/make_table9_cohort.py "$exp_id" --latex
 done
