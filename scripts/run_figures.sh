@@ -181,13 +181,22 @@ done
 
 # ── Step 4: Calibration (S-Fig 4a, 4b) ────────────────────────────────────────
 # Outputs: figures/{task}_{head}/{task}_{head}_calibration_2A_reliability.png
-#          figures/{task}_{head}/{task}_calibration_2B_ece_vs_context.png
-# 2C (ECE vs K) is blacklisted — explicitly excluded via --plots 2A 2B.
+#          figures/{task}_lstm/{task}_calibration_2B_ece_vs_context.png  (3 heads)
+# 2C (ECE vs K) is blacklisted — omitted.
+# 2B is multi-head (all 3 heads on one plot); run once per task via LSTM exp.
+# 2A is per-head; run for all experiments.
 echo ""
-echo "── Step 4: calibration (S-Fig 4a / 4b) ────────────────────────────────────"
+echo "── Step 4a: calibration 2A reliability (S-Fig 4b) — per head ──────────────"
 for exp_id in "${ALL_EXPS[@]}"; do
     echo "   $exp_id"
-    run_step "$(gen_cmd calibration "$exp_id" --split "$SPLIT" --plots 2A 2B)"
+    run_step "$(gen_cmd calibration "$exp_id" --split "$SPLIT" --plots 2A)"
+done
+
+echo ""
+echo "── Step 4b: calibration 2B ECE vs context (S-Fig 4a) — multi-head, LSTM only"
+for exp_id in "${LSTM_EXPS[@]}"; do
+    echo "   $exp_id"
+    run_step "$(gen_cmd calibration "$exp_id" --split "$SPLIT" --plots 2B --heads lstm transformer mean_pool)"
 done
 
 # ── Step 5: Window position profiles (S-Fig 7) ────────────────────────────────
@@ -224,14 +233,23 @@ for exp_id in "${LSTM_EXPS[@]}"; do
 done
 
 # ── Step 8: Precision-recall (S-Fig 10) ───────────────────────────────────────
-# Outputs: {task}_{head}_pr_8A_curves.{png,pdf}
-#          {task}_pr_8B_aucpr_vs_context.{png,pdf}
-# 8C (vote sweep) is blacklisted — explicitly excluded via --plots 8A 8B.
+# Outputs: {task}_{head}_pr_8A_curves.{png,pdf}        (per head)
+#          {task}_lstm/pr_8B_aucpr_vs_context.{png,pdf} (multi-head, 3 lines)
+# 8C (vote sweep) is blacklisted — omitted.
+# 8A is per-head; run for all experiments.
+# 8B is multi-head (all 3 heads on one plot); run once per task via LSTM exp.
 echo ""
-echo "── Step 8: precision-recall (S-Fig 10) ──────────────────────────────────────"
+echo "── Step 8a: precision-recall 8A PR curves (S-Fig 10a) — per head ───────────"
 for exp_id in "${ALL_EXPS[@]}"; do
     echo "   $exp_id"
-    run_step "$(gen_cmd precision-recall "$exp_id" --split "$SPLIT" --plots 8A 8B)"
+    run_step "$(gen_cmd precision-recall "$exp_id" --split "$SPLIT" --plots 8A)"
+done
+
+echo ""
+echo "── Step 8b: precision-recall 8B AUC-PR vs context (S-Fig 10b) — multi-head"
+for exp_id in "${LSTM_EXPS[@]}"; do
+    echo "   $exp_id"
+    run_step "$(gen_cmd precision-recall "$exp_id" --split "$SPLIT" --plots 8B --heads lstm transformer mean_pool)"
 done
 
 # ── Step 9: Subject K* histograms (S-Fig 9) ───────────────────────────────────
