@@ -280,30 +280,74 @@ run_py scripts/plot_aggregate_scaling.py \
 fi  # end skip-cross-round
 
 # ── Table regeneration ─────────────────────────────────────────────────────────
+# All scripts default to results/collected/phase0_v3/analysis.csv (v3 fast-channel).
+# Paper table mapping:
+#   Table 1 script → paper Table II  (peak AUROC per task × head)
+#   Table 2 script → paper Table III (L* saturation context per task)
+#   Table 3 script → supp K-grid     (K × context AUROC pivot, sex_binary_lstm example)
+#   Table 4 script → supp sensitivity (context-sensitivity ranking)
+#   Table 5 script → paper Table IV  (head comparison at LSTM's L*)
+#   Table 6 script → paper Table V   (modality ablation Δ, cross-round: v3 + v3_abl)
+#   Table 9 script → supp cohort     (per-dataset AUROC at L*, reads parquets)
+#   Table 10 script→ supp CI         (bootstrap 95% CIs; requires --bootstrap in analyze)
 echo ""
 if $SKIP_TABLES; then
-    echo "── Steps 14–16: table regeneration [SKIPPED via --skip-tables] ─────────────"
+    echo "── Steps 14–21: table regeneration [SKIPPED via --skip-tables] ─────────────"
 else
 
-# ── Step 14: Table 3 — K-grid supplementary table ─────────────────────────────
-# sex_binary_lstm is the standard example in the supplementary.
-# Run make_table3_kgrid.py for each task you want a K-grid table for.
-echo "── Step 14: Table 3 — K-grid (make_table3_kgrid.py sex_binary_lstm) ────────"
+# ── Step 14: Tables 1 + 2 — Primary paper tables (peak AUROC and L*) ─────────
+# Output: results/tables/table1_peak_auroc_fast.{csv,md,tex}
+#         results/tables/table2_lstar_fast.{csv,md,tex}
+echo "── Step 14: Table 1 — peak AUROC (make_table1_peak_auroc.py) ───────────────"
+run_py scripts/make_table1_peak_auroc.py --latex
+
+echo ""
+echo "── Step 14b: Table 2 — L* saturation (make_table2_lstar.py) ────────────────"
+run_py scripts/make_table2_lstar.py --latex
+
+# ── Step 15: Table 4 — Context sensitivity ranking (supplementary) ────────────
+# Output: results/tables/table4_sensitivity_fast_lstm.{csv,md,tex}
+echo ""
+echo "── Step 15: Table 4 — sensitivity (make_table4_sensitivity.py) ─────────────"
+run_py scripts/make_table4_sensitivity.py --latex
+
+# ── Step 16: Table 9 — Per-cohort AUROC breakdown (supplementary) ─────────────
+# Reads inference parquets (not collected CSVs) at the L* context for each task.
+# Run for all 7 LSTM experiments (primary head in paper tables).
+echo ""
+echo "── Step 16: Table 9 — per-cohort AUROC (make_table9_cohort.py) ─────────────"
+for exp_id in "${LSTM_EXPS[@]}"; do
+    echo "   $exp_id"
+    run_py scripts/make_table9_cohort.py "$exp_id" --latex
+done
+
+# ── Step 17: Table 10 — Bootstrap CI summary (supplementary) ─────────────────
+# Requires analysis.csv to have CI columns (from analyze_windows.py --bootstrap N).
+# Output: results/tables/table10_ci_fast.{csv,md,tex}
+echo ""
+echo "── Step 17: Table 10 — bootstrap CIs (make_table10_ci.py) ──────────────────"
+run_py scripts/make_table10_ci.py --latex
+
+# ── Step 18: Table 3 — K-grid supplementary table ─────────────────────────────
+# sex_binary_lstm is the standard supplementary example.
+# Output: results/tables/table3_kgrid_sex_binary_lstm_fast.{csv,md,tex}
+echo ""
+echo "── Step 18: Table 3 — K-grid (make_table3_kgrid.py sex_binary_lstm) ────────"
 run_py scripts/make_table3_kgrid.py sex_binary_lstm --latex
 
-# ── Step 15: Table 5 — Head architecture comparison at L* ─────────────────────
+# ── Step 19: Table 5 — Head architecture comparison at L* ─────────────────────
 # Reads: results/collected/phase0_v3/analysis.csv
 # Output: results/tables/table5_heads_fast.{csv,md,tex}
 echo ""
-echo "── Step 15: Table 5 — head comparison (make_table5_heads.py) ───────────────"
+echo "── Step 19: Table 5 — head comparison (make_table5_heads.py) ───────────────"
 run_py scripts/make_table5_heads.py --latex
 
-# ── Step 16: Table 6 — Modality ablation ΔAUROC ───────────────────────────────
+# ── Step 20: Table 6 — Modality ablation ΔAUROC ───────────────────────────────
 # Reads: results/collected/phase0_v3/analysis.csv   (Full baseline)
 #        results/collected/phase0_v3_abl/analysis.csv (ablation conditions)
 # Output: results/tables/table6_modality.{csv,md,tex}
 echo ""
-echo "── Step 16: Table 6 — modality ablation (make_table6_modality.py) ──────────"
+echo "── Step 20: Table 6 — modality ablation (make_table6_modality.py) ──────────"
 run_py scripts/make_table6_modality.py --latex
 
 fi  # end skip-tables

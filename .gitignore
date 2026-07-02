@@ -40,6 +40,7 @@ runs/
 **/*.parquet
 
 # Result PDFs are large and slow down git add; PNGs are kept for quick viewing.
+results/figures_style1_archive_20260701/**/*.pdf
 results/figures/**/*.pdf
 
 # Resized viewing variants (_sm = 1200px, _xs = 800px) created for API display limits.

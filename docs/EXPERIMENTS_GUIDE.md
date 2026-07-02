@@ -1093,7 +1093,7 @@ bash scripts/run_figures.sh --skip-cross-round --skip-tables 2>&1 | tee figures_
 
 #### What `run_figures.sh` does (step by step)
 
-| Step | Script / subcommand | Paper figure | Experiments |
+| Step | Script / subcommand | Paper location | Experiments |
 |---|---|---|---|
 | 1 | `gen_commands.py iso-plots` | Fig 2, S-Fig 3 | All 21 (7 tasks × 3 heads) |
 | 2 | `gen_commands.py saturation` | **Fig 1** | 7 tasks, all 3 heads |
@@ -1108,9 +1108,14 @@ bash scripts/run_figures.sh --skip-cross-round --skip-tables 2>&1 | tee figures_
 | 11 | `plot_modality_bar.py` | **Fig 4** | v3_abl + v3 + v3_full (cross-round) |
 | 12 | `plot_channel_comparison.py` | S-Fig 2 | v3 + v3_full (cross-round) |
 | 13 | `plot_aggregate_scaling.py` | S-Fig 12 / Fig 5 TBD | v3 only |
-| 14 | `make_table3_kgrid.py sex_binary_lstm` | Table 3 (K-grid) | v3 |
-| 15 | `make_table5_heads.py` | Table 5 (heads at L*) | v3 |
-| 16 | `make_table6_modality.py` | Table 6 (modality Δ) | v3 + v3_abl |
+| 14 | `make_table1_peak_auroc.py` | **paper Table II** — peak AUROC | v3 |
+| 14b | `make_table2_lstar.py` | **paper Table III** — L* per task | v3 |
+| 15 | `make_table4_sensitivity.py` | supp sensitivity ranking | v3 |
+| 16 | `make_table9_cohort.py` × 7 | supp cohort breakdown | v3 (reads parquets) |
+| 17 | `make_table10_ci.py` | supp bootstrap CIs | v3 |
+| 18 | `make_table3_kgrid.py sex_binary_lstm` | supp K-grid | v3 |
+| 19 | `make_table5_heads.py` | **paper Table IV** — heads at L* | v3 |
+| 20 | `make_table6_modality.py` | **paper Table V** — modality Δ | v3 + v3_abl |
 
 #### Cross-round figures — individual commands
 
@@ -1153,24 +1158,53 @@ python scripts/plot_aggregate_scaling.py \
 
 #### Table regeneration — individual commands
 
+All scripts default to `results/collected/phase0_v3/analysis.csv` (v3 fast-channel).
+
 ```bash
 source /home/boshra95/sleepfm_env/bin/activate
 cd /home/boshra95/NSRR-tools
 
-# Table 3 — K-grid supplementary (sex_binary_lstm as paper example)
-python scripts/make_table3_kgrid.py sex_binary_lstm --latex
-# Output: results/tables/table3_kgrid_sex_binary_lstm.{csv,md,tex}
+# ── Primary paper tables ─────────────────────────────────────────────────────
 
-# Table 5 — Head architecture comparison at L* (fast-channel, K=5 and K=all)
+# Table 1 script → paper Table II — Peak AUROC per task × head at best context
+python scripts/make_table1_peak_auroc.py --latex
+# Output: results/tables/table1_peak_auroc_fast.{csv,md,tex}
+
+# Table 2 script → paper Table III — L* saturation context + ΔAUROC from 30s
+python scripts/make_table2_lstar.py --latex
+# Output: results/tables/table2_lstar_fast.{csv,md,tex}
+
+# Table 5 script → paper Table IV — Head comparison at LSTM's L* (K=5 and K=all)
 python scripts/make_table5_heads.py --latex
 # Output: results/tables/table5_heads_fast.{csv,md,tex}
-# Note: Transformer/MeanPool AUROC here may be lower than Table I because all
-# heads are evaluated at the LSTM's L*, not each head's own best context.
+# Note: Transformer/MeanPool values may be lower than Table II — they're evaluated
+# at the LSTM's L*, not each head's own best context.
 
-# Table 6 — Modality ablation ΔAUROC (K=all, lstm head, test split)
+# Table 6 script → paper Table V — Modality ablation ΔAUROC (v3 + v3_abl)
 python scripts/make_table6_modality.py --latex
 # Output: results/tables/table6_modality.{csv,md,tex}
-# Use --k 5 for the K=5 deployment scenario table instead of K=all ceiling.
+
+# ── Supplementary tables ─────────────────────────────────────────────────────
+
+# Table 3 — K-grid (K × context AUROC pivot; sex_binary_lstm as paper example)
+python scripts/make_table3_kgrid.py sex_binary_lstm --latex
+# Output: results/tables/table3_kgrid_sex_binary_lstm_fast.{csv,md,tex}
+
+# Table 4 — Context sensitivity ranking (AUROC gain from 30s to best L)
+python scripts/make_table4_sensitivity.py --latex
+# Output: results/tables/table4_sensitivity_fast_lstm.{csv,md,tex}
+
+# Table 9 — Per-cohort AUROC breakdown at L* (reads inference parquets directly)
+for exp_id in sex_binary_lstm apnea_binary_lstm sleep_efficiency_binary_lstm \
+              bmi_binary_lstm age_class_lstm depression_extreme_binary_lstm \
+              osa_binary_apples_postqc_lstm; do
+    python scripts/make_table9_cohort.py "$exp_id" --latex
+done
+# Output: results/tables/table9_cohort_{exp_id}_fast.{csv,md,tex}
+
+# Table 10 — Bootstrap CI summary (requires --bootstrap N in analyze step)
+python scripts/make_table10_ci.py --latex
+# Output: results/tables/table10_ci_fast.{csv,md,tex}
 ```
 
 #### Blacklisted outputs (never include in paper)
