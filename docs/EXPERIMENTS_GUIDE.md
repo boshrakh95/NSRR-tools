@@ -1092,6 +1092,60 @@ bash scripts/run_figures.sh --skip-iso 2>&1 | tee figures_run.log
 bash scripts/run_figures.sh --skip-cross-round --skip-tables 2>&1 | tee figures_run.log
 ```
 
+---
+
+### Step X: Assemble composite paper figures
+
+After `run_figures.sh` completes, assemble all multi-panel composite figures for LaTeX inclusion.
+Run from the repo root on the cluster:
+
+```bash
+# Assemble all composite figures (Fig 1, 2, 3, all S-Figs) in one call:
+python scripts/assemble_figures.py \
+    --fig all \
+    --figures-dir results/figures/phase0_v3 \
+    --out-dir results/figures/assembled \
+    2>&1 | tee assemble_figures.log
+
+# Or assemble a single figure (e.g. just Fig 1 after re-running saturation):
+python scripts/assemble_figures.py \
+    --fig fig1 \
+    --figures-dir results/figures/phase0_v3 \
+    --out-dir results/figures/assembled
+
+# Available --fig values (one per composite paper figure):
+#   fig1    → results/figures/assembled/fig1_saturation.{pdf,png}
+#   fig2    → fig2_iso_compute.{pdf,png}
+#   fig3    → fig3_task_landscape.{pdf,png}
+#   sfig1   → sfig1_k_aggregation.{pdf,png}
+#   sfig3   → sfig3_iso_compute_full.{pdf,png}
+#   sfig4a  → sfig4a_ece_vs_context.{pdf,png}
+#   sfig4b  → sfig4b_reliability.{pdf,png}
+#   sfig5   → sfig5_cohort_saturation.{pdf,png}
+#   sfig6a  → sfig6a_variance_violins.{pdf,png}
+#   sfig6b  → sfig6b_hard_subjects.{pdf,png}
+#   sfig7   → sfig7_window_position.{pdf,png}
+#   sfig8   → sfig8_compute_scaling.{pdf,png}
+#   sfig9   → sfig9_kstar.{pdf,png}
+#   sfig10a → sfig10a_pr_curves.{pdf,png}
+#   sfig10b → sfig10b_aucpr_vs_context.{pdf,png}
+#   sfig11  → sfig11_ushape_training.{pdf,png}
+```
+
+**Not assembled by this script** (already single pre-assembled files):
+- **Fig 4**: `results/figures/phase0_v3_abl/phase0_v3_abl/modality_ablation_bar.png`
+- **S-Fig 2**: `results/figures/phase0_v3_full/phase0_v3_full/channel_comparison.png`
+- **S-Fig 12**: `results/figures/phase0_v3/aggregate/aggregate_scaling.png`
+
+These three can be included in LaTeX directly with `\includegraphics`.
+
+**LaTeX inclusion**: once assembled PDFs are in `results/figures/assembled/`, copy them to
+`TBME_submission/` and replace the `\fbox{...}` placeholders with:
+```latex
+\includegraphics[width=\textwidth]{fig1_saturation.pdf}   % for double-column (figure*)
+\includegraphics[width=\columnwidth]{fig3_task_landscape.pdf}  % for single-column (figure)
+```
+
 #### What `run_figures.sh` does (step by step)
 
 | Step | Script / subcommand | Paper location | Experiments |
@@ -1108,7 +1162,7 @@ bash scripts/run_figures.sh --skip-cross-round --skip-tables 2>&1 | tee figures_
 | 10 | `gen_commands.py task-comparison` | **Fig 3** | 7 tasks, LSTM head |
 | 11 | `plot_modality_bar.py` | **Fig 4** | v3_abl + v3 + v3_full (cross-round) |
 | 12 | `plot_channel_comparison.py` | S-Fig 2 | v3 + v3_full (cross-round) |
-| 13 | `plot_aggregate_scaling.py` | S-Fig 12 / Fig 5 TBD | v3 only |
+| 13 | `plot_aggregate_scaling.py` | S-Fig 12 (stays supplementary — wide inter-task std) | v3 only |
 | 14 | `make_table1_peak_auroc.py` (fast-ch) | **paper Table II** — peak AUROC fast-ch cols | v3 |
 | 14b | `make_table1_peak_auroc.py` (full-ch) | **paper Table II** — peak AUROC full-ch cols | v3_full |
 | 14c | `make_table2_lstar.py` | **paper Table III** — L* per task | v3 |

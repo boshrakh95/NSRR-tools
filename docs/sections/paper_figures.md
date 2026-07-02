@@ -169,8 +169,9 @@ python scripts/plot_modality_bar.py
 
 **Named:** *"Calibration: ECE vs Context Length"*  
 **Layout:** 2 rows × 3 cols (6 task panels, all 3 heads per panel)  
-**Content:** ECE vs context (2B) for all 6 retained tasks.  
-**Source:** `{task}_calibration_2B_ece_vs_context.png` ×6 (phase0_v3).  
+**Tasks (6):** sex_binary, age_class, apnea_binary, bmi_binary, sleep_efficiency_binary, osa_binary_apples_postqc. Depression excluded (non-interpretable calibration; ECE non-monotonic, near baseline).  
+**Content:** ECE vs context (2B, multi-head) stored in `{task}_lstm/` after `run_figures.sh` fix.  
+**Source:** `{task}_lstm/{task}_calibration_2B_ece_vs_context.png` ×6 (phase0_v3).  
 **Grouping rationale:** Same plot type across tasks. Separate from 2A because it answers a different question (trend) vs 2A (absolute calibration).
 
 ---
@@ -198,8 +199,8 @@ python scripts/plot_modality_bar.py
 ### S-Fig 6a — Prediction Variance Violins `[v3, 3 tasks, Transformer]`
 
 **Named:** *"Within-Subject Prediction Variance"*  
-**Layout:** 3 cols × 3 rows (3 tasks × 3 contexts: 30s, 120m, 240m)  
-**Content:** 5A violin plots (within-subject std(prob), correct vs incorrect) for sex_binary, apnea_binary, sleep_efficiency.  
+**Layout:** 1 row × 3 cols (one panel per task — each 5A PNG is already a multi-context composite)  
+**Content:** 5A violin plots (within-subject std(prob), correct vs incorrect) for sex_binary, apnea_binary, sleep_efficiency. The 5A PNG from `plot_subject_consistency.py` already embeds all context lengths in one composite figure per task, so the assembly is a 1×3 side-by-side.  
 **Source:** `{task}_transformer_subject_consistency_5A_variance.png` ×3 (phase0_v3).
 
 ---
@@ -217,13 +218,14 @@ python scripts/plot_modality_bar.py
 ### S-Fig 7 — Window Position Profiles `[v3, 2 tasks, LSTM]`
 
 **Named:** *"Prediction vs Night Position"*  
-**Layout:** 2 rows × 3 cols (task × {positive subjects | negative subjects | variance 4B})  
+**Layout:** 2 rows × 2 cols (task × {4A profiles | 4B variance})  
 **Content:** 4A position-probability profiles + 4B position variance for:
 - Row 1: sleep_efficiency_lstm (early-night elevation — biologically meaningful)
 - Row 2: sex_binary_lstm (flat — null control; confirms position-independence)
 
+**Note:** The 4A PNG from `plot_window_position.py` already embeds positive-subject and negative-subject profiles as sub-panels within one composite file. The assembly is therefore 2×2 (4 panels total: task × plot_type), not 2×3.  
 **Source:** `{task}_lstm_window_position_4A_profiles.png` + `{task}_lstm_window_position_4B_variance.png` (phase0_v3).  
-**Grouping rationale:** 4A and 4B together answer "does position matter?" — 4A shows the mean, 4B shows the variance. Natural pair within each task row.
+**Grouping rationale:** 4A and 4B together answer "does position matter?" — 4A shows the mean profiles, 4B shows the position variance. Natural pair within each task row.
 
 ---
 
@@ -266,38 +268,27 @@ python scripts/plot_modality_bar.py
 
 ---
 
-### S-Fig 12 (or Fig 5) — Aggregate Context-Length Scaling `[v3, all tasks × all heads]`
+### S-Fig 12 — Aggregate Context-Length Scaling `[v3, all tasks × all heads]`
 
 **Named:** *"General Context Scaling Law"*  
-**Layout:** 1 row × 3 panels, `figsize=(14, 4.5)`  
-**Script:** `scripts/plot_aggregate_scaling.py`  
-**Status:** Ready to generate (saturation code fix applied). Placement decided after viewing std bands.
-**Command:** `python scripts/plot_aggregate_scaling.py --collected-dir results/collected/phase0_v3 --results-dir /scratch/boshra95/psg/unified/results/phase0_v3`
+**Layout:** 1 row × 3 panels — **already a single pre-assembled PNG/PDF** (`aggregate/aggregate_scaling.png`)  
+**Script:** `scripts/plot_aggregate_scaling.py` (generates directly, no assembly needed)  
+**Status:** EXISTS. **CONFIRMED: stays as S-Fig 12** (not promoted to Fig 5).  
+Reason: inter-task std bands are >> ±2 pp (ΔAUROC range 0.006–0.103 across tasks → std ~0.033 at 240m). The per-task story in Fig 1 is the stronger primary finding.
 
 **Content:**
 
 | Panel | Type | Key question |
 |---|---|---|
 | (a) | ΔAUROC from 30s baseline vs context (log-x), one line per head ±1 std across tasks, faint individual task lines | Is there a consistent average gain curve? How variable is it across tasks? |
-| (b) | Normalised gain (0%=30s, 100%=240m) vs context, same structure | What fraction of total achievable gain is captured at each context, regardless of task sensitivity? |
-| (c) | Bar chart: log-linear slope b per head (pp per log₂ doubling), ±1 std across tasks, individual task dots overlaid | Is Transformer steeper than LSTM? Is the scaling rate consistent across tasks? |
+| (b) | Normalised gain (0%=30s, 100%=240m) vs context, same structure | What fraction of total achievable gain is captured at each context? |
+| (c) | Bar chart: log-linear slope b per head (pp per log₂ doubling), ±1 std across tasks, individual task dots | Is Transformer steeper than LSTM on average? |
 
-**Placement rationale:**
-- **Promote to main (Fig 5)** if: std bands in (a)/(b) are tight (< ±2 pp at 240m), meaning
-  the scaling law is universal; and panel (c) shows a clear head ranking.
-- **Keep as S-Fig 12** if: std bands are wide, showing the result is highly task-dependent
-  (interesting, but not a "law"); the per-task story in Fig 1 is then the stronger contribution.
-- Regardless of placement: panel (c) slope values are reportable in the main text as a
-  one-sentence quantitative summary.
-
-**Key parameters:**
-- Tasks: all 7 retained (use `--exclude-tasks depression_extreme_binary` to check robustness
-  without the non-monotonic outlier)
-- Heads: lstm, transformer, mean_pool
-- Metric: mean_prob_auroc (K=all, split=test)
-- x-axis: log scale, standard context labels (30s → 240m)
+**Key result**: Panel (c) slope values are reportable in main text as a one-sentence summary (e.g. "Transformer shows steeper average log-linear gain than LSTM: X pp per doubling vs Y pp").
 
 **Data source:** `phase0_v3/collected/analysis.csv`
+
+**No assembly script needed.** LaTeX: `\includegraphics[width=\textwidth]{aggregate_scaling.pdf}`
 
 ---
 
@@ -336,4 +327,6 @@ python scripts/plot_modality_bar.py
 | S-Fig 7 | Temporal Position Profiles | v3 | `figure_interpretations_v3.md` §window_position_4A rows |
 | S-Fig 8 | Compute Scaling | v3 | `figure_interpretations_v3.md` §Scaling Laws 1B rows |
 | S-Fig 9 | Min Windows K* | v3 | `figure_interpretations_v3.md` §kstar_9A rows |
-| S-Fig 12 / Fig 5 (TBD) | Aggregate Context Scaling | v3 | — (generate with `plot_aggregate_scaling.py`) |
+| S-Fig 10a/b | PR Curves | v3 | `figure_interpretations_v3.md` §precision_recall rows |
+| S-Fig 11 | U-Shape Training | v3 | `figure_interpretations_v3.md` §Scaling Laws 1A rows |
+| S-Fig 12 | Aggregate Context Scaling | v3 | `figure_interpretations_v3.md` §assignment index — already assembled, no composite script needed |
