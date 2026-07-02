@@ -153,7 +153,7 @@ if $SKIP_ISO; then
 else
     for exp_id in "${ALL_EXPS[@]}"; do
         echo "   $exp_id"
-        run_step "$(gen_cmd iso-plots "$exp_id" --split "$SPLIT")"
+        run_step "$(gen_cmd iso-plots "$exp_id" --split "$SPLIT" --metric auroc)"
     done
 fi
 
@@ -164,28 +164,30 @@ echo ""
 echo "── Step 2: saturation (Fig 1) ───────────────────────────────────────────────"
 for task in "${TASKS[@]}"; do
     echo "   $task"
-    run_step "$(gen_cmd saturation "$task" --heads lstm transformer mean_pool --split "$SPLIT")"
+    run_step "$(gen_cmd saturation "$task" --heads lstm transformer mean_pool --split "$SPLIT" --metric auroc)"
 done
 
-# ── Step 3: Scaling laws (S-Fig 8) ────────────────────────────────────────────
-# Outputs: figures/scaling_laws/{task}_1B_compute_scaling.{png,pdf}
-# Note: 1A uShape is PENDING (rerun with BA metric). 1C is blacklisted.
+# ── Step 3: Scaling laws (S-Fig 8 + S-Fig 11) ────────────────────────────────
+# Outputs: figures/scaling_laws/{task}_{head}_1A_uShape.{png,pdf}   (S-Fig 11)
+#          figures/scaling_laws/{task}_1B_compute_scaling.{png,pdf}  (S-Fig 8)
+# 1A code fixed 2026-07-01: y-axis now uses BA (train_bal_acc/val_bal_acc), not loss.
+# 1C (optimal epoch) is permanently blacklisted (non-monotonic).
 echo ""
-echo "── Step 3: scaling-laws 1B (S-Fig 8) ───────────────────────────────────────"
+echo "── Step 3: scaling-laws 1A+1B (S-Fig 11 + S-Fig 8) ────────────────────────"
 for task in "${TASKS[@]}"; do
     echo "   $task"
-    run_step "$(gen_cmd scaling-laws "$task" --heads lstm transformer mean_pool --plots 1B)"
+    run_step "$(gen_cmd scaling-laws "$task" --heads lstm transformer mean_pool --plots 1A 1B)"
 done
 
 # ── Step 4: Calibration (S-Fig 4a, 4b) ────────────────────────────────────────
 # Outputs: figures/{task}_{head}/{task}_{head}_calibration_2A_reliability.png
 #          figures/{task}_{head}/{task}_calibration_2B_ece_vs_context.png
-# 2C (ECE vs K) is blacklisted and excluded from default --plots.
+# 2C (ECE vs K) is blacklisted — explicitly excluded via --plots 2A 2B.
 echo ""
 echo "── Step 4: calibration (S-Fig 4a / 4b) ────────────────────────────────────"
 for exp_id in "${ALL_EXPS[@]}"; do
     echo "   $exp_id"
-    run_step "$(gen_cmd calibration "$exp_id" --split "$SPLIT")"
+    run_step "$(gen_cmd calibration "$exp_id" --split "$SPLIT" --plots 2A 2B)"
 done
 
 # ── Step 5: Window position profiles (S-Fig 7) ────────────────────────────────
@@ -202,44 +204,44 @@ done
 # ── Step 6: Subject consistency (S-Fig 6a / 6b) ───────────────────────────────
 # Outputs: {task}_transformer_subject_consistency_5A_variance.png  (5A: violins)
 #          {task}_transformer_subject_consistency_5C_hard_subjects.png (5C: bars)
-# 5B (variance vs K) is blacklisted.
+# 5B (variance vs K) is blacklisted — explicitly excluded via --plots 5A 5C.
 echo ""
 echo "── Step 6: subject-consistency (S-Fig 6a / 6b) ─────────────────────────────"
 for exp_id in "${TRANSFORMER_EXPS[@]}"; do
     echo "   $exp_id"
-    run_step "$(gen_cmd subject-consistency "$exp_id" --split "$SPLIT")"
+    run_step "$(gen_cmd subject-consistency "$exp_id" --split "$SPLIT" --plots 5A 5C)"
 done
 
 # ── Step 7: Cohort saturation (S-Fig 5) ───────────────────────────────────────
 # Outputs: {task}_lstm_cohort_saturation_7A.{png,pdf}
 # Paper uses: sex_binary, apnea_binary, sleep_efficiency_binary (LSTM)
-# 7B (N per cohort) is blacklisted.
+# 7B (N per cohort) is excluded — explicitly excluded via --plots 7A.
 echo ""
 echo "── Step 7: cohort-saturation (S-Fig 5) ─────────────────────────────────────"
 for exp_id in "${LSTM_EXPS[@]}"; do
     echo "   $exp_id"
-    run_step "$(gen_cmd cohort-saturation "$exp_id" --split "$SPLIT")"
+    run_step "$(gen_cmd cohort-saturation "$exp_id" --split "$SPLIT" --plots 7A)"
 done
 
 # ── Step 8: Precision-recall (S-Fig 10) ───────────────────────────────────────
 # Outputs: {task}_{head}_pr_8A_curves.{png,pdf}
 #          {task}_pr_8B_aucpr_vs_context.{png,pdf}
-# 8C (vote sweep) is blacklisted.
+# 8C (vote sweep) is blacklisted — explicitly excluded via --plots 8A 8B.
 echo ""
 echo "── Step 8: precision-recall (S-Fig 10) ──────────────────────────────────────"
 for exp_id in "${ALL_EXPS[@]}"; do
     echo "   $exp_id"
-    run_step "$(gen_cmd precision-recall "$exp_id" --split "$SPLIT")"
+    run_step "$(gen_cmd precision-recall "$exp_id" --split "$SPLIT" --plots 8A 8B)"
 done
 
 # ── Step 9: Subject K* histograms (S-Fig 9) ───────────────────────────────────
 # Outputs: {task}_transformer_kstar_9A_histogram.{png,pdf}
-# 9B (coverage) is blacklisted.
+# 9B (coverage) is blacklisted — explicitly excluded via --plots 9A.
 echo ""
 echo "── Step 9: subject-kstar (S-Fig 9) ─────────────────────────────────────────"
 for exp_id in "${TRANSFORMER_EXPS[@]}"; do
     echo "   $exp_id"
-    run_step "$(gen_cmd subject-kstar "$exp_id" --split "$SPLIT")"
+    run_step "$(gen_cmd subject-kstar "$exp_id" --split "$SPLIT" --plots 9A)"
 done
 
 # ── Step 10: Task comparison (Fig 3) ──────────────────────────────────────────
@@ -248,7 +250,7 @@ done
 # 6B (bars) is blacklisted.
 echo ""
 echo "── Step 10: task-comparison (Fig 3: 6A + 6C) ───────────────────────────────"
-run_step "$(gen_cmd task-comparison --tasks "${TASKS[@]}" --head lstm --split "$SPLIT")"
+run_step "$(gen_cmd task-comparison --tasks "${TASKS[@]}" --head lstm --split "$SPLIT" --plots 6A 6C)"
 
 # ── Cross-round figures ────────────────────────────────────────────────────────
 echo ""

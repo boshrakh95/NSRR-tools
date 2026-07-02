@@ -329,9 +329,10 @@ python scripts/gen_commands.py subject-kstar sex_binary_transformer | bash  # re
 python scripts/gen_commands.py saturation sex_binary \
     --heads lstm transformer mean_pool | bash   # repeat for all 7 tasks
 
-# S-Fig 8: compute scaling law — 1B FLOPs vs AUROC scatter (1C blacklisted)
+# S-Fig 8 + S-Fig 11: 1A BA uShape + 1B FLOPs vs AUROC scatter (1C blacklisted)
+# 1A code fixed 2026-07-01: y-axis now uses balanced accuracy, not loss
 python scripts/gen_commands.py scaling-laws sex_binary \
-    --heads lstm transformer mean_pool --plots 1B | bash   # repeat for all 7 tasks
+    --heads lstm transformer mean_pool --plots 1A 1B | bash   # repeat for all 7 tasks
 
 # ── Multi-task plot ──────────────────────────────────────────────────────────
 
@@ -1097,7 +1098,7 @@ bash scripts/run_figures.sh --skip-cross-round --skip-tables 2>&1 | tee figures_
 |---|---|---|---|
 | 1 | `gen_commands.py iso-plots` | Fig 2, S-Fig 3 | All 21 (7 tasks × 3 heads) |
 | 2 | `gen_commands.py saturation` | **Fig 1** | 7 tasks, all 3 heads |
-| 3 | `gen_commands.py scaling-laws --plots 1B` | S-Fig 8 | 7 tasks |
+| 3 | `gen_commands.py scaling-laws --plots 1A 1B` | S-Fig 11 (1A) + S-Fig 8 (1B) | 7 tasks, all 3 heads |
 | 4 | `gen_commands.py calibration` | S-Fig 4a, 4b | All 21 experiments |
 | 5 | `gen_commands.py window-position` | S-Fig 7 | 7 LSTM experiments |
 | 6 | `gen_commands.py subject-consistency` | S-Fig 6a, 6b | 7 Transformer experiments |
@@ -1234,7 +1235,7 @@ and must not appear in the paper:
 
 | Figure | Status | Blocker |
 |---|---|---|
-| S-Fig 11 (1A uShape) | PENDING | Requires rerun with balanced-accuracy metric |
+| S-Fig 12 / Fig 5 placement | TBD | Decide main vs. supp after viewing std bands |
 | S-Fig 12 / Fig 5 placement | TBD | Decide main vs. supp after viewing std bands |
 
 ---

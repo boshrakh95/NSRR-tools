@@ -473,7 +473,7 @@ def build_iso_plots_cmd(exp: dict, registry: dict, split: str = "test",
     results_dir = Path(registry["results_dir"])
     tag = exp.get("run_tag", "")
     python = registry.get("python_bin", "/home/boshra95/sleepfm_env/bin/python")
-    metrics = metrics or ["auroc", "balanced_accuracy"]
+    metrics = metrics or ["auroc"]
     cmd_parts = [
         f"{python} scripts/plot_iso_compute.py",
         f"--task {exp['task']}",
@@ -494,7 +494,7 @@ def build_saturation_cmd(task: str, heads: list, registry: dict,
                          run_tag: str = "") -> str:
     results_dir = Path(registry["results_dir"])
     python = registry.get("python_bin", "/home/boshra95/sleepfm_env/bin/python")
-    metrics = metrics or ["auroc", "balanced_accuracy"]
+    metrics = metrics or ["auroc"]
     cdir = str(results_dir / "collected")
     cmd_parts = [
         f"{python} scripts/plot_saturation.py",
@@ -679,7 +679,7 @@ def cmd_iso_plots(args, registry):
         sys.exit(1)
     exp     = experiments[args.exp_id]
     split   = getattr(args, "split", "test")
-    metrics = getattr(args, "metric", None) or ["auroc", "balanced_accuracy"]
+    metrics = getattr(args, "metric", None) or ["auroc"]
     budget  = getattr(args, "budget", 480.0)
     print(f"# Iso-compute plots (7 plots per metric) for: {args.exp_id}")
     print(f"# Prerequisite: run 'build-heatmap {args.exp_id}' first")
@@ -690,7 +690,7 @@ def cmd_iso_plots(args, registry):
 def cmd_saturation(args, registry):
     task         = args.task
     heads        = getattr(args, "heads", ["lstm", "transformer", "mean_pool"])
-    metrics      = getattr(args, "metric", None) or ["auroc", "balanced_accuracy"]
+    metrics      = getattr(args, "metric", None) or ["auroc"]
     split        = getattr(args, "split", "test")
     run_tag      = getattr(args, "run_tag", "")
     collected_dir = getattr(args, "collected_dir", "")
@@ -868,7 +868,7 @@ def build_scaling_laws_cmd(task: str, heads: list, registry: dict,
     python = registry.get("python_bin", "/home/boshra95/sleepfm_env/bin/python")
     results_dir = Path(registry["results_dir"])
     cdir = collected_dir or str(results_dir / "collected")
-    plots = plots or ["1A", "1B", "1C"]
+    plots = plots or ["1A", "1B"]
     cmd_parts = [
         f"{python} scripts/plot_scaling_laws.py",
         f"--task {task}",
@@ -886,7 +886,7 @@ def build_calibration_cmd(exp: dict, registry: dict, split: str = "test",
     python = registry.get("python_bin", "/home/boshra95/sleepfm_env/bin/python")
     results_dir = Path(registry["results_dir"])
     tag = exp.get("run_tag", "")
-    plots = plots or ["2A", "2B", "2C"]
+    plots = plots or ["2A", "2B"]
     cmd_parts = [
         f"{python} scripts/plot_calibration.py",
         f"--task {exp['task']}",
@@ -928,7 +928,7 @@ def build_subject_consistency_cmd(exp: dict, registry: dict, split: str = "test"
     python = registry.get("python_bin", "/home/boshra95/sleepfm_env/bin/python")
     results_dir = Path(registry["results_dir"])
     tag = exp.get("run_tag", "")
-    plots = plots or ["5A", "5B", "5C"]
+    plots = plots or ["5A", "5C"]
     cmd_parts = [
         f"{python} scripts/plot_subject_consistency.py",
         f"--task {exp['task']}",
@@ -949,7 +949,7 @@ def build_task_comparison_cmd(tasks: list, head: str, split: str,
     python = registry.get("python_bin", "/home/boshra95/sleepfm_env/bin/python")
     results_dir = Path(registry["results_dir"])
     cdir = collected_dir or str(results_dir / "collected")
-    plots = plots or ["6A", "6B", "6C"]
+    plots = plots or ["6A", "6C"]
     cmd_parts = [
         f"{python} scripts/plot_task_comparison.py",
         f"--head {head}",
@@ -970,7 +970,7 @@ def build_cohort_saturation_cmd(exp: dict, registry: dict, split: str = "test",
     results_dir = Path(registry["results_dir"])
     tag = exp.get("run_tag", "")
     datasets = datasets or ["apples", "shhs", "mros"]
-    plots = plots or ["7A", "7B"]
+    plots = plots or ["7A"]
     cmd_parts = [
         f"{python} scripts/plot_cohort_saturation.py",
         f"--task {exp['task']}",
@@ -992,7 +992,7 @@ def build_precision_recall_cmd(exp: dict, registry: dict, split: str = "test",
     python = registry.get("python_bin", "/home/boshra95/sleepfm_env/bin/python")
     results_dir = Path(registry["results_dir"])
     tag = exp.get("run_tag", "")
-    plots = plots or ["8A", "8B", "8C"]
+    plots = plots or ["8A", "8B"]
     cmd_parts = [
         f"{python} scripts/plot_precision_recall.py",
         f"--task {exp['task']}",
@@ -1015,7 +1015,7 @@ def build_subject_kstar_cmd(exp: dict, registry: dict, split: str = "test",
     python = registry.get("python_bin", "/home/boshra95/sleepfm_env/bin/python")
     results_dir = Path(registry["results_dir"])
     tag = exp.get("run_tag", "")
-    plots = plots or ["9A", "9B"]
+    plots = plots or ["9A"]
     cmd_parts = [
         f"{python} scripts/plot_subject_kstar.py",
         f"--task {exp['task']}",
@@ -1162,7 +1162,7 @@ def cmd_collect(args, registry):
 def cmd_scaling_laws(args, registry):
     task    = args.task
     heads   = getattr(args, "heads", ["lstm", "transformer", "mean_pool"])
-    plots   = getattr(args, "plots", ["1A", "1B", "1C"])
+    plots   = getattr(args, "plots", ["1A", "1B"])
     cdir    = getattr(args, "collected_dir", "")
     results_dir = Path(registry["results_dir"])
     cdir_display = cdir or str(results_dir / "collected")
@@ -1180,7 +1180,7 @@ def cmd_calibration(args, registry):
         sys.exit(1)
     exp   = experiments[args.exp_id]
     split = getattr(args, "split", "test")
-    plots = getattr(args, "plots", ["2A", "2B", "2C"])
+    plots = getattr(args, "plots", ["2A", "2B"])
     heads_extra = getattr(args, "heads", None)
     print(f"# Calibration plots (§2) for: {args.exp_id}  split={split}")
     print("# Prerequisite: inference parquets must exist")
@@ -1209,7 +1209,7 @@ def cmd_subject_consistency(args, registry):
         sys.exit(1)
     exp   = experiments[args.exp_id]
     split = getattr(args, "split", "test")
-    plots = getattr(args, "plots", ["5A", "5B", "5C"])
+    plots = getattr(args, "plots", ["5A", "5C"])
     print(f"# Subject consistency plots (§5) for: {args.exp_id}  split={split}")
     print("# Prerequisite: inference parquets must exist")
     print()
@@ -1220,7 +1220,7 @@ def cmd_task_comparison(args, registry):
     tasks   = getattr(args, "tasks", None) or []
     head    = getattr(args, "head", "lstm")
     split   = getattr(args, "split", "test")
-    plots   = getattr(args, "plots", ["6A", "6B", "6C"])
+    plots   = getattr(args, "plots", ["6A", "6C"])
     cdir    = getattr(args, "collected_dir", "")
     results_dir = Path(registry["results_dir"])
     cdir_display = cdir or str(results_dir / "collected")
@@ -1239,7 +1239,7 @@ def cmd_cohort_saturation(args, registry):
     exp      = experiments[args.exp_id]
     split    = getattr(args, "split", "test")
     datasets = getattr(args, "datasets", ["apples", "shhs", "mros"])
-    plots    = getattr(args, "plots", ["7A", "7B"])
+    plots    = getattr(args, "plots", ["7A"])
     print(f"# Cohort-stratified saturation plots (§7) for: {args.exp_id}  split={split}")
     print(f"# Datasets: {datasets}")
     print("# Prerequisite: inference parquets must exist and include 'dataset' column")
@@ -1254,7 +1254,7 @@ def cmd_precision_recall(args, registry):
         sys.exit(1)
     exp   = experiments[args.exp_id]
     split = getattr(args, "split", "test")
-    plots = getattr(args, "plots", ["8A", "8B", "8C"])
+    plots = getattr(args, "plots", ["8A", "8B"])
     heads_extra = getattr(args, "heads", None)
     print(f"# Precision-recall plots (§8) for: {args.exp_id}  split={split}")
     print("# Prerequisite: inference parquets must exist")
@@ -1271,7 +1271,7 @@ def cmd_subject_kstar(args, registry):
     split = getattr(args, "split", "test")
     k_max = getattr(args, "kmax", 30)
     reps  = getattr(args, "reps", 20)
-    plots = getattr(args, "plots", ["9A", "9B"])
+    plots = getattr(args, "plots", ["9A"])
     print(f"# Subject K* plots (§9) for: {args.exp_id}  split={split}")
     print(f"# kmax={k_max}  reps={reps}  (note: may be slow for large datasets)")
     print("# Prerequisite: inference parquets must exist")
@@ -1424,8 +1424,8 @@ def main():
                             help="Print plot_iso_compute.py command (Step 3 — 7 plots)")
     p_iso.add_argument("exp_id", help="Experiment ID from registry")
     p_iso.add_argument("--split",  default="test", choices=["train", "val", "test"])
-    p_iso.add_argument("--metric", nargs="+", default=["auroc", "balanced_accuracy"],
-                       help="Metric columns to plot (default: auroc balanced_accuracy)")
+    p_iso.add_argument("--metric", nargs="+", default=["auroc"],
+                       help="Metric columns to plot (default: auroc; balanced_accuracy excluded from paper)")
     p_iso.add_argument("--budget", type=float, default=480.0,
                        help="Max compute budget in minutes (default: 480)")
 
@@ -1435,8 +1435,8 @@ def main():
     p_sat.add_argument("--heads", nargs="+",
                        default=["lstm", "transformer", "mean_pool"],
                        help="Heads to compare (default: lstm transformer mean_pool)")
-    p_sat.add_argument("--metric", nargs="+", default=["auroc", "balanced_accuracy"],
-                       help="Metrics to plot (default: auroc balanced_accuracy)")
+    p_sat.add_argument("--metric", nargs="+", default=["auroc"],
+                       help="Metrics to plot (default: auroc; balanced_accuracy excluded from paper)")
     p_sat.add_argument("--split", default="test", choices=["val", "test"])
     p_sat.add_argument("--run-tag", default="", dest="run_tag")
     p_sat.add_argument("--collected-dir", default="", dest="collected_dir",
@@ -1456,7 +1456,8 @@ def main():
     p_sl.add_argument("task", help="Task name, e.g. sex_binary")
     p_sl.add_argument("--heads", nargs="+",
                       default=["lstm", "transformer", "mean_pool"])
-    p_sl.add_argument("--plots", nargs="+", default=["1A", "1B", "1C"])
+    p_sl.add_argument("--plots", nargs="+", default=["1A", "1B"],
+                      help="Plots to generate (1A=BA uShape, 1B=compute scaling; 1C excluded)")
     p_sl.add_argument("--collected-dir", default="", dest="collected_dir")
 
     p_cal = sub.add_parser("calibration",
@@ -1465,7 +1466,8 @@ def main():
     p_cal.add_argument("--split", default="test", choices=["train", "val", "test"])
     p_cal.add_argument("--heads", nargs="+", default=None,
                        help="Extra heads for 2B multi-head ECE comparison")
-    p_cal.add_argument("--plots", nargs="+", default=["2A", "2B", "2C"])
+    p_cal.add_argument("--plots", nargs="+", default=["2A", "2B"],
+                       help="Plots to generate (2A=reliability, 2B=ECE vs context; 2C blacklisted)")
 
     p_wp = sub.add_parser("window-position",
                            help="Print plot_window_position.py command (§4 position profiles)")
@@ -1477,7 +1479,8 @@ def main():
                            help="Print plot_subject_consistency.py command (§5 variance + hard subjects)")
     p_sc.add_argument("exp_id", help="Experiment ID from registry")
     p_sc.add_argument("--split", default="test", choices=["train", "val", "test"])
-    p_sc.add_argument("--plots", nargs="+", default=["5A", "5B", "5C"])
+    p_sc.add_argument("--plots", nargs="+", default=["5A", "5C"],
+                       help="Plots to generate (5A=variance violins, 5C=hard subjects; 5B blacklisted)")
 
     p_tc = sub.add_parser("task-comparison",
                            help="Print plot_task_comparison.py command (§6 sensitivity matrix)")
@@ -1485,7 +1488,8 @@ def main():
                       help="Task names to include (default: all in analysis.csv)")
     p_tc.add_argument("--head", default="lstm")
     p_tc.add_argument("--split", default="test", choices=["val", "test"])
-    p_tc.add_argument("--plots", nargs="+", default=["6A", "6B", "6C"])
+    p_tc.add_argument("--plots", nargs="+", default=["6A", "6C"],
+                      help="Plots to generate (6A=scatter, 6C=lollipop; 6B blacklisted)")
     p_tc.add_argument("--collected-dir", default="", dest="collected_dir")
 
     p_cs = sub.add_parser("cohort-saturation",
@@ -1493,7 +1497,8 @@ def main():
     p_cs.add_argument("exp_id", help="Experiment ID from registry")
     p_cs.add_argument("--split", default="test", choices=["train", "val", "test"])
     p_cs.add_argument("--datasets", nargs="+", default=["apples", "shhs", "mros"])
-    p_cs.add_argument("--plots", nargs="+", default=["7A", "7B"])
+    p_cs.add_argument("--plots", nargs="+", default=["7A"],
+                       help="Plots to generate (7A=cohort saturation; 7B excluded: N in methods)")
 
     p_pr = sub.add_parser("precision-recall",
                            help="Print plot_precision_recall.py command (§8 PR curves + vote sweep)")
@@ -1501,7 +1506,8 @@ def main():
     p_pr.add_argument("--split", default="test", choices=["train", "val", "test"])
     p_pr.add_argument("--heads", nargs="+", default=None,
                       help="Extra heads for 8B AUC-PR vs context comparison")
-    p_pr.add_argument("--plots", nargs="+", default=["8A", "8B", "8C"])
+    p_pr.add_argument("--plots", nargs="+", default=["8A", "8B"],
+                       help="Plots to generate (8A=PR curves, 8B=AUC-PR vs context; 8C blacklisted)")
 
     p_ks = sub.add_parser("subject-kstar",
                            help="Print plot_subject_kstar.py command (§9 K* distribution + coverage)")
@@ -1511,7 +1517,8 @@ def main():
                       help="Maximum K to evaluate (default: 30)")
     p_ks.add_argument("--reps", type=int, default=20,
                       help="Random draws per (subject, k) (default: 20)")
-    p_ks.add_argument("--plots", nargs="+", default=["9A", "9B"])
+    p_ks.add_argument("--plots", nargs="+", default=["9A"],
+                       help="Plots to generate (9A=K* histogram; 9B blacklisted)")
 
     # ── Paper table subcommands ────────────────────────────────────────────────
 

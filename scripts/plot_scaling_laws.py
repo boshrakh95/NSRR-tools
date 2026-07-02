@@ -5,8 +5,9 @@ plot_scaling_laws.py — §1 Overfitting Curves and Compute Scaling Laws
 Reads results/collected/training.csv (output of collect_results_v2.py) and
 produces three figures:
 
-  1A: U-shape curves — train_loss and val_loss vs epoch per context length.
-      Includes overfit epochs (is_overfit_epoch=True) to show the rising right arm.
+  1A: U-shape curves — train_bal_acc and val_bal_acc vs epoch per context length.
+      Uses balanced accuracy (the actual early-stopping criterion) instead of loss.
+      Includes overfit epochs (is_overfit_epoch=True) to show the post-peak decline.
       Best epoch marked with a dashed vertical line.
 
   1B: Compute scaling law — cumulative training FLOPs at best epoch vs test AUROC.
@@ -154,9 +155,9 @@ def plot_uShape(df: pd.DataFrame, task: str, head: str, out_dir: Path) -> None:
             ax_flat.set_visible(False)
             continue
 
-        epochs     = rows["epoch"].values
-        train_loss = rows["train_loss"].values
-        val_loss   = rows["val_loss"].values
+        epochs    = rows["epoch"].values
+        train_ba  = rows["train_bal_acc"].values
+        val_ba    = rows["val_bal_acc"].values
         is_overfit = rows.get("is_overfit_epoch", pd.Series([False] * len(rows))).values
         best_rows  = rows[rows.get("is_best_epoch", pd.Series([False] * len(rows))).values]
         best_epoch = int(best_rows["epoch"].iloc[0]) if not best_rows.empty else None
@@ -164,23 +165,23 @@ def plot_uShape(df: pd.DataFrame, task: str, head: str, out_dir: Path) -> None:
         normal_mask  = ~is_overfit
         overfit_mask = is_overfit
 
-        ax_flat.plot(epochs[normal_mask], train_loss[normal_mask],
-                     color="#1f77b4", lw=2, label="Train loss")
-        ax_flat.plot(epochs[normal_mask], val_loss[normal_mask],
-                     color="#d62728", lw=2, label="Val loss")
+        ax_flat.plot(epochs[normal_mask], train_ba[normal_mask],
+                     color="#1f77b4", lw=2, label="Train BA")
+        ax_flat.plot(epochs[normal_mask], val_ba[normal_mask],
+                     color="#d62728", lw=2, label="Val BA")
         if overfit_mask.any():
-            ax_flat.plot(epochs[overfit_mask], train_loss[overfit_mask],
+            ax_flat.plot(epochs[overfit_mask], train_ba[overfit_mask],
                          color="#1f77b4", lw=2, ls=":", alpha=0.7)
-            ax_flat.plot(epochs[overfit_mask], val_loss[overfit_mask],
+            ax_flat.plot(epochs[overfit_mask], val_ba[overfit_mask],
                          color="#d62728", lw=2, ls=":", alpha=0.7)
 
-        # Generalisation gap shading (overfit region)
+        # Generalisation gap shading (overfit region): train BA > val BA
         if overfit_mask.any():
-            tr_o = train_loss[overfit_mask]
-            vl_o = val_loss[overfit_mask]
+            tr_o = train_ba[overfit_mask]
+            vl_o = val_ba[overfit_mask]
             ep_o = epochs[overfit_mask]
             ax_flat.fill_between(ep_o, tr_o, vl_o,
-                                 where=vl_o > tr_o, alpha=0.15, color="red",
+                                 where=tr_o > vl_o, alpha=0.15, color="red",
                                  label="Generalisation gap")
 
         if best_epoch is not None:
@@ -189,7 +190,8 @@ def plot_uShape(df: pd.DataFrame, task: str, head: str, out_dir: Path) -> None:
 
         ctx_min = CONTEXT_TO_MIN.get(ctx)
         ax_flat.set_xlabel("Epoch", fontsize=10)
-        ax_flat.set_ylabel("Loss", fontsize=10)
+        ax_flat.set_ylabel("Balanced Accuracy", fontsize=10)
+        ax_flat.set_ylim(bottom=0.0)
         ax_flat.text(0.5, -0.18,
                      f"L = {ctx}" + (f"  ({ctx_min:.0f} min)" if ctx_min else ""),
                      transform=ax_flat.transAxes, ha="center", va="top",

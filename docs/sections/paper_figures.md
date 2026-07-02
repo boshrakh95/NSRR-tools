@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-07-01  
 **Status:** Ready for regeneration. Run `bash scripts/run_figures.sh` to produce all figures.
-Saturation code fix (P1) applied. S-Fig 11 (1A uShape) still pending BA-metric rerun.
+Saturation code fix (P1) applied. 1A uShape BA-metric fix applied 2026-07-01 (S-Fig 11 now ready).
 
 ---
 
@@ -262,7 +262,7 @@ python scripts/plot_modality_bar.py
 **Named:** *"Training Convergence"*  
 **Layout:** 2 rows × 4 cols (7 task panels)  
 **Content:** 1A BA vs epoch (after rerun with BA metric replacing CE loss). One panel per task, Transformer head.  
-**Status:** PENDING — rerun `plot_scaling_laws.py` with BA metric for 1A; 1B is available now.
+**Status:** Ready — BA-metric fix applied 2026-07-01. Run Step 3 of `run_figures.sh` (includes `--plots 1A 1B`).
 
 ---
 

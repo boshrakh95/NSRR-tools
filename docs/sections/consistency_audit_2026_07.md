@@ -345,6 +345,8 @@ The following TeX table entries were verified to match current `phase0_v3`
 | 9 | 🔵 Design | ✅ Fixed July 2026 | `make_table5_heads.py` generated caption | Caption did not warn Transformer@Table5 may < Transformer@Table1 | **Done**: caption now states all heads evaluated at LSTM L* and refers reader to Table I for peaks |
 | 10 | 🔵 Design | ✅ Fixed July 2026 | `make_table6_modality.py` generated caption | Caption did not state per-task context lengths or warn values differ from Table I | **Done**: caption now states "120m/40m per task; values differ from Table I best-context" |
 | 11 | 🔵 Internal | ⬜ No action needed | `heatmap_df_test.csv` | Column `auroc` = `mean_prob_auroc` but named differently from `analysis.csv` | Confirmed equivalent numerically; internal naming only, no reader impact |
+| 12 | 🟠 Bug | ✅ Fixed July 2026 | `plot_scaling_laws.py` 1A | Y-axis was CE loss; early-stopping criterion is BA — plot was showing wrong metric | **Done**: switched to `train_bal_acc`/`val_bal_acc`; fill-between condition flipped; y-label updated |
+| 13 | 🟠 Bug | ✅ Fixed July 2026 | `gen_commands.py` (all plot subcommands) | Old stale `--plots`/`--metric` defaults in gen_commands.py were overriding the correct plot-script defaults, causing blacklisted figures (2C, 5B, 6B, 7B, 8C, 9B, BA variants) to be generated silently | **Done**: updated all three layers (build_*, cmd_*, argparse) in gen_commands.py; also added explicit flags to run_figures.sh |
 
 ---
 
