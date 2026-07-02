@@ -16,6 +16,7 @@ This document is the definitive reference for running training, inference, and a
    - [Fast-channel run (v3 baseline)](#fast-channel-run-v3-baseline)
    - [Full-channel run (channel expansion)](#full-channel-run-channel-expansion)
    - [Modality ablation run (channel importance)](#modality-ablation-run-channel-importance)
+   - [**Figure Generation — All Paper Figures**](#figure-generation--all-paper-figures) ← figures only (analyze already done)
 3. [Pipeline Steps](#pipeline-steps)
 4. [Config Files](#config-files)
 5. [Experiment Registry and Command Generator](#experiment-registry-and-command-generator)
@@ -289,22 +290,69 @@ Collected CSVs: `results/collected/phase0_v3/analysis.csv` and `training.csv` (i
 
 #### Step 6 — Plotting (a la carte, local, no GPU)
 
-`run_analysis.sh` Step 1 above runs all plots automatically. Use individual commands below only
-to re-run a specific plot type.
+`run_analysis.sh` Step 1 above runs all plots automatically. Use individual commands below to
+re-run a specific plot type. For the full paper figure set, use `scripts/run_figures.sh` instead
+(see [Figure Generation — All Paper Figures](#figure-generation--all-paper-figures) below).
 
 ```bash
-# Iso-compute plots (7 plots per task/head/metric combination)
-python scripts/gen_commands.py iso-plots sex_binary_lstm | bash
+# ── Per-experiment plots (run for each task × head combination) ──────────────
 
-# Saturation curve: AUROC vs context length, one line per head
+# Fig 2 + S-Fig 3: iso-compute plots (heatmap, metric_vs_k, metric_vs_total, pareto,
+#   min_cost_frontier, marginal_gain) — double_tradeoff is blacklisted
+python scripts/gen_commands.py iso-plots sex_binary_transformer | bash
+python scripts/gen_commands.py iso-plots sex_binary_lstm | bash   # repeat for all 21 exps
+
+# S-Fig 4a + 4b: calibration — 2A reliability diagram, 2B ECE vs context
+#   2C (ECE vs K) is blacklisted from default --plots
+python scripts/gen_commands.py calibration sex_binary_lstm | bash  # repeat per exp
+
+# S-Fig 7: window position profiles (4A + 4B)
+python scripts/gen_commands.py window-position sleep_efficiency_binary_lstm | bash
+python scripts/gen_commands.py window-position sex_binary_lstm | bash
+
+# S-Fig 6a + 6b: subject consistency (5A variance violins, 5C hard-subject bars)
+#   5B (variance vs K) is blacklisted from default --plots; 5C redesigned (cumulative line)
+python scripts/gen_commands.py subject-consistency sex_binary_transformer | bash  # repeat per exp
+
+# S-Fig 5: per-cohort saturation (7A only; 7B is blacklisted)
+python scripts/gen_commands.py cohort-saturation sex_binary_lstm | bash  # repeat per exp
+
+# S-Fig 10: precision-recall (8A PR curves, 8B AUC-PR vs context; 8C vote sweep blacklisted)
+python scripts/gen_commands.py precision-recall sex_binary_lstm | bash  # repeat per exp
+
+# S-Fig 9: K* histograms (9A only; 9B is blacklisted)
+python scripts/gen_commands.py subject-kstar sex_binary_transformer | bash  # repeat per exp
+
+# ── Per-task plots ───────────────────────────────────────────────────────────
+
+# Fig 1: saturation curves — AUROC vs context length, 3 heads per panel
 python scripts/gen_commands.py saturation sex_binary \
-    --heads lstm transformer | bash
+    --heads lstm transformer mean_pool | bash   # repeat for all 7 tasks
 
-# Extended analyses (require collect to be run first)
-python scripts/gen_commands.py collect sex_binary_lstm sex_binary_transformer | bash
-python scripts/gen_commands.py scaling-laws sex_binary --heads lstm transformer | bash
-python scripts/gen_commands.py task-comparison --head lstm | bash
-python scripts/gen_commands.py calibration sex_binary_lstm | bash
+# S-Fig 8: compute scaling law — 1B FLOPs vs AUROC scatter (1C blacklisted)
+python scripts/gen_commands.py scaling-laws sex_binary \
+    --heads lstm transformer mean_pool --plots 1B | bash   # repeat for all 7 tasks
+
+# ── Multi-task plot ──────────────────────────────────────────────────────────
+
+# Fig 3: task landscape — 6A scatter + 6C L* lollipop (6B bars blacklisted)
+python scripts/gen_commands.py task-comparison \
+    --tasks sex_binary apnea_binary sleep_efficiency_binary bmi_binary age_class \
+            depression_extreme_binary osa_binary_apples_postqc \
+    --head lstm | bash
+
+# ── Cross-round figures (no gen_commands.py — direct script calls) ───────────
+
+# Fig 4: modality ablation bar chart (v3_abl + v3 baseline + v3_full reference)
+python scripts/plot_modality_bar.py
+
+# S-Fig 2: fast vs full channel saturation overlay (v3 + v3_full, Transformer)
+python scripts/plot_channel_comparison.py
+
+# S-Fig 12 / Fig 5 (TBD): aggregate context-length scaling analysis
+python scripts/plot_aggregate_scaling.py \
+    --collected-dir results/collected/phase0_v3 \
+    --results-dir /scratch/boshra95/psg/unified/results/phase0_v3
 ```
 
 Output: `/scratch/boshra95/psg/unified/results/phase0_v3/figures/`.
@@ -574,27 +622,29 @@ Collected CSVs: `results/collected/phase0_v3_full/analysis.csv` and `training.cs
 
 #### Step 6 — Plotting (a la carte, local, no GPU)
 
-`run_analysis.sh` Step 1 above runs all plots automatically. Use individual commands below only
-to re-run a specific plot type.
+`run_analysis.sh` Step 1 above runs all plots automatically. The v3_full run contributes one
+paper figure: **S-Fig 2** (fast vs full channel overlay), generated by `plot_channel_comparison.py`
+which reads both collected CSVs directly — no per-experiment steps are needed for that figure.
+Use the commands below only if you need to regenerate the full v3_full per-experiment plot set.
 
 ```bash
 REG="--registry experiments/v2_full_registry.yaml"
 
-# Iso-compute plots
+# Iso-compute plots (runs for v3_full inference outputs)
 python scripts/gen_commands.py $REG iso-plots sex_binary_lstm | bash
 
-# Saturation curve: AUROC vs context length, one line per head
+# Saturation curves (v3_full; useful for debugging full-channel L* estimates)
 python scripts/gen_commands.py $REG saturation sex_binary \
-    --heads lstm transformer | bash
+    --heads lstm transformer mean_pool | bash
 
 # Sleep staging saturation (kappa vs context)
 python scripts/gen_commands.py $REG saturation sleep_staging \
     --heads lstm transformer | bash
 
-# Extended analyses
-python scripts/gen_commands.py $REG collect sex_binary_lstm sex_binary_transformer | bash
-python scripts/gen_commands.py $REG scaling-laws sex_binary --heads lstm transformer | bash
-python scripts/gen_commands.py $REG task-comparison --head lstm | bash
+# S-Fig 2 (the only v3_full paper figure — no registry flag needed):
+python scripts/plot_channel_comparison.py
+# Output: /scratch/boshra95/psg_full/unified/results/phase0_v3_full/figures/
+#          phase0_v3_full/channel_comparison.{png,pdf}
 ```
 
 Output: `/scratch/boshra95/psg_full/unified/results/phase0_v3_full/figures/`.
@@ -1013,6 +1063,138 @@ to show a moderate drop too (sleep efficiency correlates with apnea). For `sex_b
 `age_class`, and `bmi_binary`: no strong prior on `abl_no_resp`/`abl_no_ekg` — these two
 conditions are genuinely exploratory for these three tasks (no task in our 5-task set is
 hypothesized to be EKG-dominant; that would be `cvd_binary`, which is not in the ablation set).
+
+---
+
+### Figure Generation — All Paper Figures
+
+This section covers the complete set of figure and table commands needed to regenerate
+every figure in the TBME paper (main + supplementary), after analyze/collect/build-heatmap
+have already been run. For the full pipeline in one command, use `scripts/run_figures.sh`.
+
+#### Quick start — full paper figure set
+
+```bash
+source /home/boshra95/sleepfm_env/bin/activate
+cd /home/boshra95/NSRR-tools
+
+# Dry-run first to review all commands:
+bash scripts/run_figures.sh --dry-run
+
+# Run everything (iso-plots + figures + cross-round + tables):
+bash scripts/run_figures.sh 2>&1 | tee figures_run.log
+
+# Skip the slow iso-compute step (if you only need saturation / task-comparison / etc.):
+bash scripts/run_figures.sh --skip-iso 2>&1 | tee figures_run.log
+
+# Skip cross-round figures and tables (v3 figures only):
+bash scripts/run_figures.sh --skip-cross-round --skip-tables 2>&1 | tee figures_run.log
+```
+
+#### What `run_figures.sh` does (step by step)
+
+| Step | Script / subcommand | Paper figure | Experiments |
+|---|---|---|---|
+| 1 | `gen_commands.py iso-plots` | Fig 2, S-Fig 3 | All 21 (7 tasks × 3 heads) |
+| 2 | `gen_commands.py saturation` | **Fig 1** | 7 tasks, all 3 heads |
+| 3 | `gen_commands.py scaling-laws --plots 1B` | S-Fig 8 | 7 tasks |
+| 4 | `gen_commands.py calibration` | S-Fig 4a, 4b | All 21 experiments |
+| 5 | `gen_commands.py window-position` | S-Fig 7 | 7 LSTM experiments |
+| 6 | `gen_commands.py subject-consistency` | S-Fig 6a, 6b | 7 Transformer experiments |
+| 7 | `gen_commands.py cohort-saturation` | S-Fig 5 | 7 LSTM experiments |
+| 8 | `gen_commands.py precision-recall` | S-Fig 10 | All 21 experiments |
+| 9 | `gen_commands.py subject-kstar` | S-Fig 9 | 7 Transformer experiments |
+| 10 | `gen_commands.py task-comparison` | **Fig 3** | 7 tasks, LSTM head |
+| 11 | `plot_modality_bar.py` | **Fig 4** | v3_abl + v3 + v3_full (cross-round) |
+| 12 | `plot_channel_comparison.py` | S-Fig 2 | v3 + v3_full (cross-round) |
+| 13 | `plot_aggregate_scaling.py` | S-Fig 12 / Fig 5 TBD | v3 only |
+| 14 | `make_table3_kgrid.py sex_binary_lstm` | Table 3 (K-grid) | v3 |
+| 15 | `make_table5_heads.py` | Table 5 (heads at L*) | v3 |
+| 16 | `make_table6_modality.py` | Table 6 (modality Δ) | v3 + v3_abl |
+
+#### Cross-round figures — individual commands
+
+These three scripts do not go through `gen_commands.py`; they read the collected CSVs
+directly and work across multiple rounds.
+
+```bash
+source /home/boshra95/sleepfm_env/bin/activate
+cd /home/boshra95/NSRR-tools
+
+# Fig 4 — Modality contribution bar chart
+#   Reads:  results/collected/phase0_v3_abl/analysis.csv  (ablation)
+#           results/collected/phase0_v3/analysis.csv       (fast-ch baseline)
+#           results/collected/phase0_v3_full/analysis.csv  (full-ch reference)
+#   Output: /scratch/boshra95/psg/unified/results/phase0_v3_abl/figures/
+#            phase0_v3_abl/modality_ablation_bar.{png,pdf}
+python scripts/plot_modality_bar.py
+
+# S-Fig 2 — Fast vs full channel saturation overlay (Transformer, 6 tasks)
+#   Reads:  results/collected/phase0_v3/analysis.csv
+#           results/collected/phase0_v3_full/analysis.csv
+#   Output: /scratch/boshra95/psg_full/unified/results/phase0_v3_full/figures/
+#            phase0_v3_full/channel_comparison.{png,pdf}
+python scripts/plot_channel_comparison.py
+
+# S-Fig 12 / Fig 5 (TBD) — Aggregate context-length scaling
+#   Reads:  results/collected/phase0_v3/analysis.csv
+#   Output: /scratch/boshra95/psg/unified/results/phase0_v3/figures/
+#            aggregate/aggregate_scaling.{png,pdf}
+python scripts/plot_aggregate_scaling.py \
+    --collected-dir results/collected/phase0_v3 \
+    --results-dir /scratch/boshra95/psg/unified/results/phase0_v3
+
+# Robustness check without non-monotonic outlier:
+python scripts/plot_aggregate_scaling.py \
+    --collected-dir results/collected/phase0_v3 \
+    --results-dir /scratch/boshra95/psg/unified/results/phase0_v3 \
+    --exclude-tasks depression_extreme_binary
+```
+
+#### Table regeneration — individual commands
+
+```bash
+source /home/boshra95/sleepfm_env/bin/activate
+cd /home/boshra95/NSRR-tools
+
+# Table 3 — K-grid supplementary (sex_binary_lstm as paper example)
+python scripts/make_table3_kgrid.py sex_binary_lstm --latex
+# Output: results/tables/table3_kgrid_sex_binary_lstm.{csv,md,tex}
+
+# Table 5 — Head architecture comparison at L* (fast-channel, K=5 and K=all)
+python scripts/make_table5_heads.py --latex
+# Output: results/tables/table5_heads_fast.{csv,md,tex}
+# Note: Transformer/MeanPool AUROC here may be lower than Table I because all
+# heads are evaluated at the LSTM's L*, not each head's own best context.
+
+# Table 6 — Modality ablation ΔAUROC (K=all, lstm head, test split)
+python scripts/make_table6_modality.py --latex
+# Output: results/tables/table6_modality.{csv,md,tex}
+# Use --k 5 for the K=5 deployment scenario table instead of K=all ceiling.
+```
+
+#### Blacklisted outputs (never include in paper)
+
+These plot functions exist in the scripts but are excluded from default `--plots`
+and must not appear in the paper:
+
+| Blacklisted output | Script | Reason |
+|---|---|---|
+| `*_calibration_2C_ece_vs_k` | `plot_calibration.py` | Excluded per design |
+| `*_subject_consistency_5B_variance_vs_k` | `plot_subject_consistency.py` | Excluded |
+| `task_comparison_6B_bars` | `plot_task_comparison.py` | Redundant with Fig 1 + Table II |
+| `*_pr_8C_vote_sweep` | `plot_precision_recall.py` | Majority-vote removed from paper |
+| `*_kstar_9B_coverage` | `plot_subject_kstar.py` | Excluded |
+| `*_cohort_saturation_7B_n` | `plot_cohort_saturation.py` | N in Methods only |
+| `double_tradeoff` | `plot_iso_compute.py` | Redundant with heatmap + pareto |
+| `*_1C_optimal_epoch` | `plot_scaling_laws.py` | Non-monotonic |
+
+#### Pending figures (not yet generated)
+
+| Figure | Status | Blocker |
+|---|---|---|
+| S-Fig 11 (1A uShape) | PENDING | Requires rerun with balanced-accuracy metric |
+| S-Fig 12 / Fig 5 placement | TBD | Decide main vs. supp after viewing std bands |
 
 ---
 

@@ -1,7 +1,8 @@
 # Paper Figure Plan — Phase 0 (TBME)
 
-**Last updated:** 2026-06-30  
-**Status:** Pending figure regeneration (saturation code fix + ablation figures not yet generated)
+**Last updated:** 2026-07-01  
+**Status:** Ready for regeneration. Run `bash scripts/run_figures.sh` to produce all figures.
+Saturation code fix (P1) applied. S-Fig 11 (1A uShape) still pending BA-metric rerun.
 
 ---
 
@@ -13,7 +14,7 @@
 - **TBME target:** 4–5 main figures + 5 main tables. No figure should duplicate information already in a table.
 - Dropped tasks (cvd_binary, sleepiness_binary, psqi_binary) are excluded from all paper figures.
 - **Primary metric throughout:** subject-level mean-pool AUROC at K=all (`mean_prob_auroc` from `analysis.csv`).  
-  [CODE FIX REQUIRED before any figures can be finalised — see `figure_interpretations_v3.md` §Saturation Curves]
+  Saturation code fix (P1) applied 2026-07 — `plot_saturation.py` now reads `mean_prob_auroc` K=all from `analysis.csv`.
 
 ---
 
@@ -50,8 +51,8 @@
 | (f) | depression_extreme | **Erratic / non-monotonic** → bold/hatched panel; negative result |
 | (g) | osa_binary_apples_postqc | Head divergence: LSTM saturates ~40m; Transformer/MeanPool rise to 240m |
 
-**Source plots (after code fix):**  
-`saturation/saturation_{task}_auroc_test.png` ×7 (phase0_v3)
+**Source plots:** `saturation/saturation_{task}_auroc_test.png` ×7 (phase0_v3)  
+**Command:** `bash scripts/run_figures.sh --skip-iso --skip-cross-round --skip-tables`
 
 **Code fix required:** `plot_saturation.py` must read `mean_prob_auroc` K=all from `analysis.csv` instead of `test_auroc` from `summary.csv`.
 
@@ -117,7 +118,10 @@ Log-scale x-axis on lollipop to match Fig 1.
 | (d) | age_class | BAS dominant (BAS-only −0.035); cardio-only worst (−0.069) |
 | (e) | bmi_binary | RESP removal gives +0.010 (bars LEFT of zero); cardio-only worst (−0.081) |
 
-**Status:** [PENDING — figure not yet generated. Generate from `analysis.csv` data.]
+**Status:** Awaiting v3_abl rerun completion (correct 128/1 architecture). Generate with:
+```bash
+python scripts/plot_modality_bar.py
+```
 
 ---
 
@@ -206,7 +210,7 @@ Log-scale x-axis on lollipop to match Fig 1.
 **Layout:** 2 rows × 4 cols (7 task panels)  
 **Content:** 5C bar charts — fraction of subjects correctly classified at 0, 1, 2, …, 6 of 6 context lengths. After redesign: plain English x-axis ("# context lengths correctly predicted"), cumulative or sorted bars.  
 **Source:** `{task}_transformer_subject_consistency_5C_hard_subjects.png` ×7 (phase0_v3).  
-**Note:** [REDESIGN NEEDED] before including. See interpretation files.
+**Note:** 5C redesigned (2026-07): x-axis now plain integer count, cumulative fraction line added on twin y-axis.
 
 ---
 
@@ -258,7 +262,7 @@ Log-scale x-axis on lollipop to match Fig 1.
 **Named:** *"Training Convergence"*  
 **Layout:** 2 rows × 4 cols (7 task panels)  
 **Content:** 1A BA vs epoch (after rerun with BA metric replacing CE loss). One panel per task, Transformer head.  
-**Status:** [PENDING — rerun 1A with BA metric first]
+**Status:** PENDING — rerun `plot_scaling_laws.py` with BA metric for 1A; 1B is available now.
 
 ---
 
@@ -267,8 +271,8 @@ Log-scale x-axis on lollipop to match Fig 1.
 **Named:** *"General Context Scaling Law"*  
 **Layout:** 1 row × 3 panels, `figsize=(14, 4.5)`  
 **Script:** `scripts/plot_aggregate_scaling.py`  
-**Status:** [PENDING — generate after saturation code fix; placement (main vs supplementary)
-decided based on whether std bands are tight enough to support a general-law claim]
+**Status:** Ready to generate (saturation code fix applied). Placement decided after viewing std bands.
+**Command:** `python scripts/plot_aggregate_scaling.py --collected-dir results/collected/phase0_v3 --results-dir /scratch/boshra95/psg/unified/results/phase0_v3`
 
 **Content:**
 
@@ -332,4 +336,4 @@ decided based on whether std bands are tight enough to support a general-law cla
 | S-Fig 7 | Temporal Position Profiles | v3 | `figure_interpretations_v3.md` §window_position_4A rows |
 | S-Fig 8 | Compute Scaling | v3 | `figure_interpretations_v3.md` §Scaling Laws 1B rows |
 | S-Fig 9 | Min Windows K* | v3 | `figure_interpretations_v3.md` §kstar_9A rows |
-| S-Fig 12 / Fig 5 (TBD) | Aggregate Context Scaling | v3 | — (new; interpret after generation) |
+| S-Fig 12 / Fig 5 (TBD) | Aggregate Context Scaling | v3 | — (generate with `plot_aggregate_scaling.py`) |
