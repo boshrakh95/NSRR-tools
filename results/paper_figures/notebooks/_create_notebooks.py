@@ -302,7 +302,7 @@ cells_fig4 = [
 HEAD    = "transformer"
 TASKS   = MAIN_TASKS
 METRIC  = "auroc"
-ROW_H   = 2.2   # inches per task row — increase for larger panels
+ROW_H   = 1.2   # inches per task row (5 rows × 1.2 = 6 in total → fits on a page)
 
 hmaps = {t: load_heatmap("phase0_v3", t, HEAD) for t in TASKS}
 print("Loaded:", {t: len(v) for t, v in hmaps.items()})\
@@ -354,7 +354,7 @@ TASKS  = MAIN_TASKS
 METRIC = "auroc"
 N_COLS = 3
 N_ROWS = (len(TASKS) + N_COLS - 1) // N_COLS
-ROW_H  = 2.2   # inches per row — increase for larger panels
+ROW_H  = 2.0   # inches per row
 
 hmaps = {t: load_heatmap("phase0_v3", t, HEAD) for t in TASKS}\
 """),
@@ -806,7 +806,7 @@ SPLIT  = "test"
 df = load_analysis("phase0_v3", split=SPLIT, k="all")\
 """),
     code("""\
-fig, axes = plt.subplots(1, 3, figsize=(FULL_W, 3.0))
+fig, axes = plt.subplots(1, 3, figsize=(FULL_W, 4.0))
 
 panels.delta_panel(axes[0], df, tasks=TASKS, heads=HEADS)
 add_panel_label(axes[0], "(a)")
