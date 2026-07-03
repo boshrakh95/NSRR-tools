@@ -1,0 +1,1214 @@
+"""Panel functions for paper figures.
+
+Each function takes an Axes object as its first argument and fills it with
+content.  All sizing is handled by the notebook; functions just draw.
+
+Conventions
+-----------
+* All metric values are passed/stored on the 0-1 scale and multiplied ×100
+  only for display (axis labels, annotations).
+* `analysis_df` is pre-filtered to split='test', k='all' before being passed
+  (except where multiple k values are needed).
+* `heatmap_df` has columns: context_length_min, context_label, k, auroc, ...
+"""
+
+from __future__ import annotations
+
+import warnings
+import numpy as np
+import pandas as pd
+import matplotlib.cm as cm
+import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
+import seaborn as sns
+
+from .style import (
+    HEAD_STYLE, TASK_LABEL, CONTEXT_TO_MIN, MIN_TO_CTX, CTX_ORDER,
+    ABL_CONDITIONS, ABL_CONTEXT, FONT_BASE, FONT_ANNOT, FONT_LABEL,
+)
+
+# ── Shared helpers ────────────────────────────────────────────────────────────
+
+_CTX_ORDER_MIN = [CONTEXT_TO_MIN[c] for c in CTX_ORDER]
+
+
+def _palette(n: int):
+    return sns.color_palette("viridis", max(n, 2))
+
+
+def _fmt_ctx(x: float) -> str:
+    return MIN_TO_CTX.get(float(x), f"{x:.0f}m")
+
+
+def _spine_clean(ax):
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+
+
+def _log_ctx_axis(ax, xs=None):
+    """Log x-axis with context-length tick labels."""
+    ax.set_xscale("log")
+    ticks = sorted(xs or _CTX_ORDER_MIN)
+    ax.set_xticks(ticks)
+    ax.set_xticklabels([_fmt_ctx(x) for x in ticks], fontsize=FONT_BASE)
+    ax.xaxis.set_minor_formatter(mticker.NullFormatter())
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# S-Fig 2 — Saturation curves (all heads overlaid)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def saturation_panel(ax, analysis_df: pd.DataFrame, task: str,
+                     heads: list[str] = ("lstm", "transformer", "mean_pool"),
+                     metric_col: str = "mean_prob_auroc",
+                     show_ci: bool = True,
+                     show_values: bool = True):
+    """AUROC vs context length, one line per head.
+
+    analysis_df must be pre-filtered to split='test', k='all'.
+    """
+    xs_seen = []
+    any_data = False
+
+    for head in heads:
+        sub = analysis_df[(analysis_df["task"] == task) &
+                          (analysis_df["head"] == head) &
+                          analysis_df[metric_col].notna()]
+        if sub.empty:
+            continue
+        sub = sub.sort_values("context_length_min")
+        xs = sub["context_length_min"].values
+        ys = sub[metric_col].values * 100
+        xs_seen.extend(xs.tolist())
+
+        sty = HEAD_STYLE.get(head, {"color": "gray", "marker": "o",
+                                    "ls": "-", "label": head})
+        ax.plot(xs, ys, color=sty["color"], marker=sty["marker"],
+                linestyle=sty["ls"], lw=1.5, ms=5, label=sty["label"])
+
+        if show_values:
+            for x, y in zip(xs, ys):
+                ax.annotate(f"{y:.1f}", (x, y),
+                            textcoords="offset points", xytext=(0, 5),
+                            fontsize=FONT_ANNOT, ha="center", color=sty["color"])
+
+        # CI bands
+        if show_ci:
+            ci_lo_col = metric_col + "_ci_lo"
+            ci_hi_col = metric_col + "_ci_hi"
+            if ci_lo_col in sub.columns and sub[ci_lo_col].notna().any():
+                lo = sub[ci_lo_col].values * 100
+                hi = sub[ci_hi_col].values * 100
+                ax.fill_between(xs, lo, hi, color=sty["color"], alpha=0.12)
+
+        any_data = True
+
+    if not any_data:
+        ax.text(0.5, 0.5, "no data", ha="center", va="center",
+                transform=ax.transAxes, fontsize=FONT_BASE, color="gray")
+        return
+
+    _log_ctx_axis(ax, sorted(set(xs_seen)))
+    ax.set_xlabel("Context length", fontsize=FONT_LABEL)
+    ax.set_ylabel("AUROC (%)", fontsize=FONT_LABEL)
+    ax.grid(True, which="major", alpha=0.25, lw=0.5)
+    _spine_clean(ax)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# S-Fig 1 — K-aggregation (AUROC vs K at fixed context)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def k_agg_panel(ax, analysis_df_full_k: pd.DataFrame, task: str,
+                heads: list[str] = ("lstm", "transformer"),
+                contexts: list[str] = ("40m", "120m", "240m")):
+    """AUROC vs K for selected context lengths.
+
+    analysis_df_full_k: analysis.csv WITHOUT k filter (all k values).
+    """
+    ctx_mins = {c: CONTEXT_TO_MIN[c] for c in contexts if c in CONTEXT_TO_MIN}
+    palette = _palette(len(ctx_mins))
+    ctx_color = dict(zip(ctx_mins.keys(), palette))
+
+    any_data = False
+    for head in heads:
+        sty = HEAD_STYLE.get(head, {"ls": "-", "label": head})
+        for ctx_label, ctx_min in ctx_mins.items():
+            sub = analysis_df_full_k[
+                (analysis_df_full_k["task"] == task) &
+                (analysis_df_full_k["head"] == head) &
+                (analysis_df_full_k["context_length_min"] == ctx_min) &
+                analysis_df_full_k["mean_prob_auroc"].notna()
+            ].copy()
+            if sub.empty:
+                continue
+
+            def _k_to_num(k):
+                try:
+                    return float(k)
+                except Exception:
+                    return np.nan
+
+            sub["k_num"] = sub["k"].apply(_k_to_num)
+            sub = sub.dropna(subset=["k_num"]).sort_values("k_num")
+            if sub.empty:
+                continue
+
+            label = f"{sty['label']}, {ctx_label}" if len(heads) > 1 else ctx_label
+            ax.plot(sub["k_num"].values, sub["mean_prob_auroc"].values * 100,
+                    color=ctx_color[ctx_label], ls=sty["ls"], lw=1.4, ms=3,
+                    marker="o", label=label, alpha=0.85)
+            any_data = True
+
+    if not any_data:
+        ax.text(0.5, 0.5, "no data", ha="center", va="center",
+                transform=ax.transAxes, fontsize=FONT_BASE, color="gray")
+        return
+
+    ax.set_xscale("log")
+    ax.set_xlabel("K (windows per subject)", fontsize=FONT_LABEL)
+    ax.set_ylabel("AUROC (%)", fontsize=FONT_LABEL)
+    ax.legend(fontsize=FONT_ANNOT, frameon=False)
+    ax.grid(True, which="major", alpha=0.25, lw=0.5)
+    _spine_clean(ax)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Main Fig 2 — AUROC vs K  (iso-compute, from heatmap_df)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+_ISO_BUDGETS = [10, 30, 60, 120, 240, 480]
+
+
+def _build_ctx_lookup(df: pd.DataFrame, col: str) -> dict:
+    lookup = {}
+    for ctx_min, grp in df.groupby("context_length_min"):
+        grp = grp.dropna(subset=[col]).sort_values("k")
+        if grp.empty:
+            continue
+        lookup[float(ctx_min)] = (grp["k"].values.astype(float),
+                                  grp[col].values.astype(float))
+    return lookup
+
+
+def _interp(lookup, ctx_min, k):
+    if ctx_min not in lookup:
+        return np.nan
+    ks, vs = lookup[ctx_min]
+    if k < ks[0] or k > ks[-1]:
+        return np.nan
+    return float(np.interp(k, ks, vs))
+
+
+def kvsk_panel(ax, heatmap_df: pd.DataFrame, col: str = "auroc",
+               budget: float = 480.0, show_iso: bool = True):
+    """AUROC vs K (log-x) with iso-compute lines."""
+    if heatmap_df.empty:
+        ax.text(0.5, 0.5, "no data", ha="center", va="center",
+                transform=ax.transAxes, fontsize=FONT_BASE, color="gray")
+        return
+
+    contexts = sorted(heatmap_df["context_length_min"].unique())
+    palette  = _palette(len(contexts))
+    lookup   = _build_ctx_lookup(heatmap_df, col)
+    ctx_lbl  = {ctx: heatmap_df[heatmap_df["context_length_min"] == ctx]
+                ["context_label"].iloc[0]
+                for ctx in contexts if not heatmap_df[
+                    heatmap_df["context_length_min"] == ctx].empty}
+
+    for i, ctx in enumerate(contexts):
+        if ctx not in lookup:
+            continue
+        ks, vs = lookup[ctx]
+        ax.plot(ks, vs * 100, color=palette[i], lw=1.4, label=ctx_lbl.get(ctx, ""),
+                marker="o", ms=2, markevery=max(1, len(ks) // 10))
+
+    if show_iso:
+        iso_colors = plt.cm.Greys(np.linspace(0.3, 0.7, len(_ISO_BUDGETS)))
+        for ic, cb in enumerate(_ISO_BUDGETS):
+            if cb > budget:
+                continue
+            pts = [(cb / ctx, _interp(lookup, ctx, cb / ctx)) for ctx in contexts]
+            pts = [(k, v) for k, v in pts if not np.isnan(v)]
+            if len(pts) >= 2:
+                pts.sort()
+                ks_iso, vs_iso = zip(*pts)
+                lt = f"{cb}m" if cb < 60 else f"{cb // 60}h"
+                ax.plot(ks_iso, [v * 100 for v in vs_iso],
+                        color=iso_colors[ic], lw=1.2, ls="--", alpha=0.75)
+                ax.annotate(lt, (ks_iso[-1], vs_iso[-1] * 100), fontsize=FONT_ANNOT,
+                            fontweight="bold", color=iso_colors[ic],
+                            ha="left", va="bottom", xytext=(2, 1),
+                            textcoords="offset points")
+
+    ax.set_xscale("log")
+    ax.set_xlabel("K (windows per subject)", fontsize=FONT_LABEL)
+    ax.set_ylabel("AUROC (%)", fontsize=FONT_LABEL)
+    ax.legend(title="Context", fontsize=FONT_ANNOT, title_fontsize=FONT_ANNOT,
+              frameon=False, loc="lower right")
+    ax.grid(True, alpha=0.25, lw=0.5)
+    _spine_clean(ax)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Main Fig 3 — Heatmap  (iso-compute)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def heatmap_panel(ax, heatmap_df: pd.DataFrame, col: str = "auroc",
+                  budget: float = 480.0):
+    """2-D context × K heatmap with iso-compute lines."""
+    if heatmap_df.empty:
+        ax.text(0.5, 0.5, "no data", ha="center", va="center",
+                transform=ax.transAxes, fontsize=FONT_BASE, color="gray")
+        return
+
+    contexts = sorted(heatmap_df["context_length_min"].unique())
+    ctx_lbl  = {ctx: heatmap_df[heatmap_df["context_length_min"] == ctx]
+                ["context_label"].iloc[0]
+                for ctx in contexts if not heatmap_df[
+                    heatmap_df["context_length_min"] == ctx].empty}
+
+    target_ks = [1, 2, 3, 5, 8, 10, 16, 20, 25, 30, 40, 50,
+                 60, 80, 100, 120, 160, 200, 250, 320, 400, 500]
+    all_ks = sorted(heatmap_df["k"].unique())
+    sub_ks = [k for k in target_ks if any(abs(k - ak) < 0.6 for ak in all_ks)]
+    if not sub_ks:
+        sub_ks = sorted(set(round(k) for k in all_ks))[:25]
+
+    matrix = np.full((len(contexts), len(sub_ks)), np.nan)
+    for i, ctx in enumerate(contexts):
+        grp = (heatmap_df[heatmap_df["context_length_min"] == ctx]
+               .dropna(subset=[col]).set_index("k")[col])
+        for j, k in enumerate(sub_ks):
+            near = grp.index.values
+            if len(near) == 0:
+                continue
+            idx = np.argmin(np.abs(near - k))
+            if abs(near[idx] - k) < 1:
+                matrix[i, j] = grp.iloc[idx]
+
+    valid = matrix[~np.isnan(matrix)] * 100
+    if valid.size == 0:
+        ax.text(0.5, 0.5, "no data", ha="center", va="center",
+                transform=ax.transAxes, fontsize=FONT_BASE, color="gray")
+        return
+
+    vmin = float(np.floor(valid.min() / 5) * 5)
+    vmax = float(np.ceil(valid.max() / 5) * 5)
+
+    sns.heatmap(
+        matrix * 100, ax=ax,
+        cmap=sns.color_palette("YlOrRd", as_cmap=True),
+        xticklabels=[str(k) for k in sub_ks],
+        yticklabels=[ctx_lbl.get(c, str(c)) for c in contexts],
+        cbar_kws={"label": "AUROC (%)", "shrink": 0.8},
+        linewidths=0.2, linecolor="white",
+        mask=np.isnan(matrix), vmin=vmin, vmax=vmax,
+        annot=False,
+    )
+    ax.set_xlabel("K (windows)", fontsize=FONT_LABEL)
+    ax.set_ylabel("Context length", fontsize=FONT_LABEL)
+    ax.tick_params(axis="both", labelsize=FONT_ANNOT)
+
+    # Iso-compute lines
+    iso_colors = plt.cm.cool(np.linspace(0.2, 0.9, len(_ISO_BUDGETS)))
+    for ic, cb in enumerate(_ISO_BUDGETS):
+        if cb > budget:
+            continue
+        xs, ys = [], []
+        for i, ctx in enumerate(contexts):
+            kn = cb / ctx
+            if kn < 1:
+                continue
+            for jj in range(len(sub_ks) - 1):
+                if sub_ks[jj] <= kn <= sub_ks[jj + 1]:
+                    frac = (kn - sub_ks[jj]) / (sub_ks[jj + 1] - sub_ks[jj])
+                    xs.append(jj + frac + 0.5)
+                    ys.append(i + 0.5)
+                    break
+        if len(xs) >= 2:
+            lt = f"{cb}m" if cb < 60 else f"{cb // 60}h"
+            ax.plot(xs, ys, color=iso_colors[ic], lw=1.8, ls="--", alpha=0.85)
+            ax.annotate(lt, (xs[0], ys[0]), fontsize=FONT_ANNOT,
+                        fontweight="bold", color=iso_colors[ic],
+                        ha="center", va="bottom", xytext=(0, -10),
+                        textcoords="offset points")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Main Fig 4 — iso-main: metric_vs_total + pareto
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def vs_total_panel(ax, heatmap_df: pd.DataFrame, col: str = "auroc"):
+    """AUROC vs total compute (context × K) — one line per context length."""
+    if heatmap_df.empty:
+        ax.text(0.5, 0.5, "no data", ha="center", va="center",
+                transform=ax.transAxes, fontsize=FONT_BASE, color="gray")
+        return
+
+    contexts = sorted(heatmap_df["context_length_min"].unique())
+    palette  = _palette(len(contexts))
+    lookup   = _build_ctx_lookup(heatmap_df, col)
+    ctx_lbl  = {ctx: heatmap_df[heatmap_df["context_length_min"] == ctx]
+                ["context_label"].iloc[0]
+                for ctx in contexts if not heatmap_df[
+                    heatmap_df["context_length_min"] == ctx].empty}
+
+    for i, ctx in enumerate(contexts):
+        if ctx not in lookup:
+            continue
+        ks, vs = lookup[ctx]
+        ax.plot(ks * ctx, vs * 100, color=palette[i], lw=1.4,
+                label=ctx_lbl.get(ctx, ""), marker="o", ms=2,
+                markevery=max(1, len(ks) // 10))
+
+    ax.set_xscale("log")
+    ax.set_xlabel("Total context (min) = L × K", fontsize=FONT_LABEL)
+    ax.set_ylabel("AUROC (%)", fontsize=FONT_LABEL)
+    ax.legend(title="Context L", fontsize=FONT_ANNOT, title_fontsize=FONT_ANNOT,
+              frameon=False)
+    ax.grid(True, alpha=0.25, lw=0.5)
+    _spine_clean(ax)
+
+
+def pareto_panel(ax, heatmap_df: pd.DataFrame, col: str = "auroc",
+                 budget: float = 480.0):
+    """Pareto-optimal (L, K) configurations vs total compute budget."""
+    if heatmap_df.empty:
+        ax.text(0.5, 0.5, "no data", ha="center", va="center",
+                transform=ax.transAxes, fontsize=FONT_BASE, color="gray")
+        return
+
+    contexts = sorted(heatmap_df["context_length_min"].unique())
+    palette  = _palette(len(contexts))
+    lookup   = _build_ctx_lookup(heatmap_df, col)
+    ctx_lbl  = {ctx: heatmap_df[heatmap_df["context_length_min"] == ctx]
+                ["context_label"].iloc[0]
+                for ctx in contexts if not heatmap_df[
+                    heatmap_df["context_length_min"] == ctx].empty}
+
+    budgets_sweep = np.unique(np.concatenate([
+        np.arange(0.5, 20, 0.5), np.arange(20, 100, 2),
+        np.arange(100, budget + 1, 5),
+    ]))
+
+    opt_b, opt_v, opt_c, opt_k = [], [], [], []
+    for b in budgets_sweep:
+        best_v, best_ctx, best_k_val = -1.0, None, None
+        for ctx in contexts:
+            if ctx not in lookup:
+                continue
+            ks, _ = lookup[ctx]
+            k_use = min(b / ctx, ks[-1])
+            if k_use < 1:
+                continue
+            v = _interp(lookup, ctx, k_use)
+            if not np.isnan(v) and v > best_v:
+                best_v, best_ctx, best_k_val = v, ctx, k_use
+        if best_ctx is not None:
+            opt_b.append(b); opt_v.append(best_v)
+            opt_c.append(best_ctx); opt_k.append(best_k_val)
+
+    if not opt_b:
+        ax.text(0.5, 0.5, "no data", ha="center", va="center",
+                transform=ax.transAxes, fontsize=FONT_BASE, color="gray")
+        return
+
+    ctx_to_color = {c: palette[i] for i, c in enumerate(contexts)}
+    segments, s = [], 0
+    for j in range(1, len(opt_b)):
+        if opt_c[j] != opt_c[j - 1]:
+            segments.append((s, j)); s = j
+    segments.append((s, len(opt_b)))
+
+    labeled = set()
+    for s, e in segments:
+        ctx = opt_c[s]
+        lbl = ctx_lbl.get(ctx, "") if ctx not in labeled else None
+        ax.plot(opt_b[s:e], [v * 100 for v in opt_v[s:e]],
+                color=ctx_to_color[ctx], lw=2.5, solid_capstyle="round", label=lbl)
+        labeled.add(ctx)
+        mid = (s + e) // 2
+        ax.annotate(f"{ctx_lbl.get(ctx, '')}\nk≈{opt_k[mid]:.0f}",
+                    (opt_b[mid], opt_v[mid] * 100), fontsize=FONT_ANNOT,
+                    fontweight="bold", color=ctx_to_color[ctx],
+                    ha="center", va="bottom", xytext=(0, 5),
+                    textcoords="offset points")
+
+    ax.set_xscale("log")
+    ax.set_xlabel("Total compute budget (min)", fontsize=FONT_LABEL)
+    ax.set_ylabel("Best AUROC (%)", fontsize=FONT_LABEL)
+    ax.legend(title="Optimal L", fontsize=FONT_ANNOT, title_fontsize=FONT_ANNOT,
+              frameon=False, loc="lower right")
+    ax.grid(True, alpha=0.25, lw=0.5)
+    _spine_clean(ax)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Main Fig 5 — Min-cost frontier
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def mincost_panel(ax, heatmap_df: pd.DataFrame, col: str = "auroc",
+                  budget: float = 480.0):
+    """Minimum compute cost to reach each target AUROC level."""
+    if heatmap_df.empty:
+        ax.text(0.5, 0.5, "no data", ha="center", va="center",
+                transform=ax.transAxes, fontsize=FONT_BASE, color="gray")
+        return
+
+    contexts = sorted(heatmap_df["context_length_min"].unique())
+    palette  = _palette(len(contexts))
+    lookup   = _build_ctx_lookup(heatmap_df, col)
+    ctx_lbl  = {ctx: heatmap_df[heatmap_df["context_length_min"] == ctx]
+                ["context_label"].iloc[0]
+                for ctx in contexts if not heatmap_df[
+                    heatmap_df["context_length_min"] == ctx].empty}
+
+    all_vals = [v for ks, vs in lookup.values() for v in vs if not np.isnan(v)]
+    if not all_vals:
+        return
+    val_min = float(np.floor(min(all_vals) * 20) / 20)
+    val_max = float(np.ceil(max(all_vals) * 20) / 20)
+    target_vals = np.arange(val_min, val_max + 0.002, 0.005)
+    annot_targets = [t for t in [0.55, 0.60, 0.65, 0.70, 0.75, 0.80, 0.85, 0.90]
+                     if val_min <= t <= val_max]
+
+    for i, ctx in enumerate(contexts):
+        if ctx not in lookup:
+            continue
+        ks, vals = lookup[ctx]
+        costs, tgts = [], []
+        for tgt in target_vals:
+            idx = np.searchsorted(vals, tgt)
+            if idx >= len(ks):
+                continue
+            costs.append(ctx * ks[idx])
+            tgts.append(tgt * 100)
+        if tgts:
+            ax.plot(tgts, costs, color=palette[i], lw=1.4,
+                    label=ctx_lbl.get(ctx, ""))
+
+    for tgt in annot_targets:
+        best_cost, best_i = float("inf"), None
+        for i, ctx in enumerate(contexts):
+            if ctx not in lookup:
+                continue
+            ks, vals = lookup[ctx]
+            idx = np.searchsorted(vals, tgt)
+            if idx >= len(ks):
+                continue
+            cost = ctx * ks[idx]
+            if cost < best_cost:
+                best_cost, best_i = cost, i
+        if best_i is not None and best_cost <= budget:
+            ax.plot(tgt * 100, best_cost, "o", color=palette[best_i],
+                    ms=5, zorder=5, markeredgecolor="black", markeredgewidth=0.5)
+
+    ax.set_yscale("log")
+    ax.set_xlabel(f"Target AUROC (%)", fontsize=FONT_LABEL)
+    ax.set_ylabel("Min total compute (min)", fontsize=FONT_LABEL)
+    ax.legend(title="Context L", fontsize=FONT_ANNOT, title_fontsize=FONT_ANNOT,
+              frameon=False, loc="upper left")
+    ax.axhline(y=budget, color="red", ls=":", lw=1.0, alpha=0.6)
+    ax.grid(True, alpha=0.25, lw=0.5)
+    _spine_clean(ax)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Main Fig 6 — PR curves (from parquets)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def pr_curves_panel(ax, parquets: dict[str, pd.DataFrame],
+                    contexts: list[str] = ("30s", "40m", "120m", "240m"),
+                    k: int | None = None,
+                    prob_col: str = "prob_class1"):
+    """PR curves at each context length (K=all mean-pool).
+
+    parquets: {context_label: DataFrame} from data.load_parquets()
+    """
+    try:
+        from sklearn.metrics import precision_recall_curve, average_precision_score
+    except ImportError:
+        ax.text(0.5, 0.5, "sklearn required", ha="center", va="center",
+                transform=ax.transAxes, fontsize=FONT_BASE, color="gray")
+        return
+
+    avail_ctx = [c for c in contexts if c in parquets and not parquets[c].empty]
+    if not avail_ctx:
+        ax.text(0.5, 0.5, "no data", ha="center", va="center",
+                transform=ax.transAxes, fontsize=FONT_BASE, color="gray")
+        return
+
+    cmap = cm.get_cmap("viridis_r", max(len(avail_ctx), 2))
+    ctx_color = {c: cmap(i / max(len(avail_ctx) - 1, 1))
+                 for i, c in enumerate(avail_ctx)}
+
+    for ctx in avail_ctx:
+        df = parquets[ctx]
+        if prob_col not in df.columns:
+            continue
+        sub = (df.groupby("subject_id")
+               .agg(mean_prob=(prob_col, "mean"), true_label=("true_label", "first"))
+               .reset_index())
+        if sub.empty or sub["true_label"].nunique() < 2:
+            continue
+        labels = sub["true_label"].values
+        scores = sub["mean_prob"].values
+        prec, rec, _ = precision_recall_curve(labels, scores)
+        ap = average_precision_score(labels, scores)
+        ax.plot(rec, prec, color=ctx_color[ctx], lw=1.4,
+                label=f"{ctx} (AP={ap:.2f})")
+
+    ax.set_xlabel("Recall", fontsize=FONT_LABEL)
+    ax.set_ylabel("Precision", fontsize=FONT_LABEL)
+    ax.legend(fontsize=FONT_ANNOT, frameon=False)
+    ax.set_xlim([0, 1]); ax.set_ylim([0, 1])
+    ax.grid(True, alpha=0.25, lw=0.5)
+    _spine_clean(ax)
+
+
+def aucpr_panel(ax, analysis_df: pd.DataFrame, task: str,
+                heads: list[str] = ("lstm", "transformer")):
+    """AUC-PR vs context length from analysis.csv (mean_prob_auroc proxy)."""
+    for head in heads:
+        sub = analysis_df[(analysis_df["task"] == task) &
+                          (analysis_df["head"] == head) &
+                          analysis_df["mean_prob_auroc"].notna()]
+        if sub.empty:
+            continue
+        sub = sub.sort_values("context_length_min")
+        sty = HEAD_STYLE.get(head, {"color": "gray", "marker": "o",
+                                    "ls": "-", "label": head})
+        ax.plot(sub["context_length_min"].values,
+                sub["mean_prob_auroc"].values * 100,
+                color=sty["color"], marker=sty["marker"],
+                ls=sty["ls"], lw=1.4, ms=4, label=sty["label"])
+
+    _log_ctx_axis(ax)
+    ax.set_xlabel("Context length", fontsize=FONT_LABEL)
+    ax.set_ylabel("AUROC (%)", fontsize=FONT_LABEL)
+    ax.legend(fontsize=FONT_ANNOT, frameon=False)
+    ax.grid(True, alpha=0.25, lw=0.5)
+    _spine_clean(ax)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# S-Fig 3 — Compute scaling (1B)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def compute_scaling_panel(ax, training_df: pd.DataFrame, task: str,
+                          heads: list[str] = ("lstm", "transformer"),
+                          split_col: str = "test_auroc"):
+    """Test AUROC vs cumulative training FLOPs (or total training steps as proxy)."""
+    for head in heads:
+        sub = training_df[(training_df["task"] == task) &
+                          (training_df["head"] == head)].copy()
+        if sub.empty or split_col not in sub.columns:
+            continue
+        sub = sub.dropna(subset=[split_col])
+        if sub.empty:
+            continue
+
+        # Use total_steps or flops if available, else epoch
+        x_col = "total_flops" if "total_flops" in sub.columns else \
+                "total_steps" if "total_steps" in sub.columns else "epoch"
+        if x_col not in sub.columns:
+            continue
+
+        sty = HEAD_STYLE.get(head, {"color": "gray", "marker": "o",
+                                    "ls": "-", "label": head})
+        # One point per context length (best val-epoch test AUROC)
+        for ctx_label, grp in sub.groupby("context_length"):
+            best = grp.loc[grp[split_col].idxmax()]
+            x_val = float(best[x_col])
+            y_val = float(best[split_col]) * 100
+            ax.scatter(x_val, y_val, color=sty["color"], s=30,
+                       marker=sty["marker"], zorder=3, alpha=0.85)
+            ax.annotate(ctx_label, (x_val, y_val), fontsize=FONT_ANNOT,
+                        xytext=(2, 2), textcoords="offset points",
+                        color=sty["color"])
+
+        # Dummy line for legend
+        ax.plot([], [], color=sty["color"], ls=sty["ls"],
+                marker=sty["marker"], ms=4, label=sty["label"])
+
+    ax.set_xscale("log")
+    ax.set_xlabel("Compute proxy", fontsize=FONT_LABEL)
+    ax.set_ylabel("Test AUROC (%)", fontsize=FONT_LABEL)
+    ax.legend(fontsize=FONT_ANNOT, frameon=False)
+    ax.grid(True, alpha=0.25, lw=0.5)
+    _spine_clean(ax)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# S-Fig 4 — Task landscape (6A scatter + 6C L* lollipop)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def task_scatter_panel(ax, analysis_df: pd.DataFrame,
+                       tasks: list[str], head: str = "lstm"):
+    """Scatter: task difficulty (1-AUROC@30s) vs context sensitivity (ΔAUROC)."""
+    sub = analysis_df[(analysis_df["head"] == head) &
+                      analysis_df["mean_prob_auroc"].notna()].copy()
+
+    task_colors = plt.cm.tab10(np.linspace(0, 1, len(tasks)))
+    tcolor = dict(zip(tasks, task_colors))
+
+    for task in tasks:
+        t_sub = sub[sub["task"] == task].sort_values("context_length_min")
+        if len(t_sub) < 2:
+            continue
+        baseline = t_sub["mean_prob_auroc"].iloc[0]
+        best     = t_sub["mean_prob_auroc"].max()
+        difficulty   = 1 - baseline
+        sensitivity  = best - baseline
+        label = TASK_LABEL.get(task, task)
+        ax.scatter(difficulty, sensitivity, color=tcolor[task], s=60, zorder=3)
+        ax.annotate(label, (difficulty, sensitivity), fontsize=FONT_ANNOT,
+                    xytext=(4, 2), textcoords="offset points",
+                    color=tcolor[task])
+
+    ax.axhline(0, color="gray", ls="--", lw=0.7, alpha=0.5)
+    ax.axvline(0.5, color="gray", ls="--", lw=0.7, alpha=0.5)
+    ax.set_xlabel("Task difficulty (1 – AUROC @ 30s)", fontsize=FONT_LABEL)
+    ax.set_ylabel("Context sensitivity (ΔAUROC 30s→best)", fontsize=FONT_LABEL)
+    ax.grid(True, alpha=0.25, lw=0.5)
+    _spine_clean(ax)
+
+
+def lstar_panel(ax, analysis_df: pd.DataFrame,
+                tasks: list[str], head: str = "lstm",
+                tol: float = 0.005):
+    """Horizontal lollipop: L* (saturation context) per task."""
+    sub = analysis_df[(analysis_df["head"] == head) &
+                      analysis_df["mean_prob_auroc"].notna()].copy()
+
+    task_colors = plt.cm.tab10(np.linspace(0, 1, len(tasks)))
+    lstar_vals, lstar_labels, lstar_colors = [], [], []
+
+    for i, task in enumerate(tasks):
+        t_sub = sub[sub["task"] == task].sort_values("context_length_min")
+        if t_sub.empty:
+            continue
+        best = t_sub["mean_prob_auroc"].max()
+        threshold = best - tol
+        sat = t_sub[t_sub["mean_prob_auroc"] >= threshold].iloc[0]
+        lstar_vals.append(sat["context_length_min"])
+        lstar_labels.append(TASK_LABEL.get(task, task))
+        lstar_colors.append(task_colors[i])
+
+    y_pos = np.arange(len(lstar_vals))
+    ax.barh(y_pos, lstar_vals, color=lstar_colors, height=0.5, alpha=0.85)
+    ax.set_yticks(y_pos)
+    ax.set_yticklabels(lstar_labels, fontsize=FONT_BASE)
+    ax.set_xscale("log")
+    ax.set_xticks(list(CONTEXT_TO_MIN.values()))
+    ax.set_xticklabels([_fmt_ctx(x) for x in CONTEXT_TO_MIN.values()],
+                       fontsize=FONT_BASE)
+    ax.xaxis.set_minor_formatter(mticker.NullFormatter())
+    ax.set_xlabel("Saturation context L* (min)", fontsize=FONT_LABEL)
+    ax.grid(True, which="major", alpha=0.25, lw=0.5, axis="x")
+    _spine_clean(ax)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# S-Fig 5 — Channel comparison (fast vs full)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def channel_comparison_panel(ax, fast_analysis: pd.DataFrame,
+                              full_analysis: pd.DataFrame,
+                              task: str, head: str = "transformer",
+                              metric_col: str = "mean_prob_auroc"):
+    """Overlay fast-channel (dashed) vs full-channel (solid) saturation."""
+    for df, ls, label in [(fast_analysis, "--", "Fast-ch"),
+                          (full_analysis, "-",  "Full-ch")]:
+        sub = df[(df["task"] == task) & (df["head"] == head) &
+                 df[metric_col].notna()].sort_values("context_length_min")
+        if sub.empty:
+            continue
+        xs = sub["context_length_min"].values
+        ys = sub[metric_col].values * 100
+        ax.plot(xs, ys, color="#E86A33", ls=ls, lw=1.5, ms=5,
+                marker="o" if ls == "--" else "s", label=label)
+        for x, y in zip(xs, ys):
+            ax.annotate(f"{y:.1f}", (x, y), textcoords="offset points",
+                        xytext=(0, 4), fontsize=FONT_ANNOT, ha="center",
+                        color="#E86A33", alpha=0.75)
+
+    # Annotate Δ at 240m
+    fast_240 = fast_analysis[(fast_analysis["task"] == task) &
+                              (fast_analysis["head"] == head) &
+                              (fast_analysis["context_length"] == "240m")][metric_col]
+    full_240 = full_analysis[(full_analysis["task"] == task) &
+                              (full_analysis["head"] == head) &
+                              (full_analysis["context_length"] == "240m")][metric_col]
+    if not fast_240.empty and not full_240.empty:
+        delta = (float(full_240.iloc[0]) - float(fast_240.iloc[0])) * 100
+        sign = "+" if delta >= 0 else ""
+        ax.text(0.97, 0.04, f"Δ240m: {sign}{delta:.1f} pp",
+                transform=ax.transAxes, ha="right", va="bottom",
+                fontsize=FONT_ANNOT, color="gray",
+                bbox=dict(fc="white", ec="none", alpha=0.7, pad=1))
+
+    _log_ctx_axis(ax)
+    ax.set_xlabel("Context length", fontsize=FONT_LABEL)
+    ax.set_ylabel("AUROC (%)", fontsize=FONT_LABEL)
+    ax.legend(fontsize=FONT_ANNOT, frameon=False)
+    ax.grid(True, which="major", alpha=0.25, lw=0.5)
+    _spine_clean(ax)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# S-Fig 6 — Modality ablation bar chart
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def modality_bar_panel(ax, abl_analysis: pd.DataFrame,
+                       fast_analysis: pd.DataFrame,
+                       full_analysis: pd.DataFrame,
+                       task: str, head: str = "lstm",
+                       split: str = "test"):
+    """Horizontal bars: ΔAUROC per ablation condition vs fast-ch baseline."""
+    ctx = ABL_CONTEXT.get(task, "120m")
+
+    def _get(df, run_tag=""):
+        mask = (
+            (df["task"] == task) & (df["head"] == head) &
+            (df["split"] == split) & (df["k"].astype(str) == "all") &
+            (df["context_length"].astype(str) == ctx)
+        )
+        if "run_tag" in df.columns:
+            mask &= (df["run_tag"].fillna("") == run_tag)
+        sub = df.loc[mask, "mean_prob_auroc"].dropna()
+        return float(sub.iloc[0]) if not sub.empty else None
+
+    fast_val = _get(fast_analysis)
+    full_val = _get(full_analysis)
+
+    if fast_val is None:
+        ax.text(0.5, 0.5, "no baseline", ha="center", va="center",
+                transform=ax.transAxes, fontsize=FONT_BASE, color="gray")
+        return
+
+    y_labels, deltas, colors = [], [], []
+    for run_tag, cond_label, color in ABL_CONDITIONS:
+        abl_val = _get(abl_analysis, run_tag)
+        deltas.append((abl_val - fast_val) if abl_val is not None else np.nan)
+        y_labels.append(cond_label)
+        colors.append(color)
+
+    y_pos = np.arange(len(y_labels))
+    for i, (delta, color) in enumerate(zip(deltas, colors)):
+        if not np.isnan(delta):
+            ax.barh(i, delta, color=color, height=0.5, edgecolor="white", lw=0.4)
+            sign = "+" if delta >= 0 else ""
+            ax.text(delta + (0.001 if delta >= 0 else -0.001), i,
+                    f"{sign}{delta:.3f}", va="center",
+                    ha="left" if delta >= 0 else "right",
+                    fontsize=FONT_ANNOT, color=color)
+
+    ax.axvline(0, color="black", lw=0.8, zorder=3)
+    if full_val is not None:
+        fd = full_val - fast_val
+        ax.axvline(fd, color="gray", lw=0.8, ls="--", zorder=2)
+        ax.text(fd, len(y_labels) - 0.5, "full-ch", fontsize=FONT_ANNOT,
+                color="gray", ha="center", va="bottom", rotation=90)
+
+    ax.set_yticks(y_pos)
+    ax.set_yticklabels(y_labels, fontsize=FONT_BASE)
+    ax.set_xlabel("ΔAUROC from baseline", fontsize=FONT_LABEL)
+    ax.invert_yaxis()
+
+    all_deltas = [d for d in deltas if not np.isnan(d)]
+    if full_val is not None:
+        all_deltas.append(full_val - fast_val)
+    if all_deltas:
+        xmax = max(0.04, max(abs(d) for d in all_deltas) + 0.015)
+        ax.set_xlim(-xmax, xmax)
+
+    _spine_clean(ax)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# S-Fig 7 — Aggregate scaling (delta, norm, slope)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _build_agg_curves(analysis_df: pd.DataFrame, tasks: list[str],
+                      heads: list[str]):
+    """Compute per-task per-head delta and norm curves."""
+    std_ctx = sorted(CONTEXT_TO_MIN.values())
+    curve_data = {h: {} for h in heads}
+
+    sub = analysis_df[analysis_df["mean_prob_auroc"].notna()]
+    for head in heads:
+        for task in tasks:
+            t_sub = sub[(sub["task"] == task) & (sub["head"] == head)]
+            t_sub = t_sub.sort_values("context_length_min").reset_index(drop=True)
+            if len(t_sub) < 2:
+                continue
+            ctx   = t_sub["context_length_min"].values
+            auroc = t_sub["mean_prob_auroc"].values
+            delta = auroc - auroc[0]
+            total = auroc[-1] - auroc[0]
+            norm  = delta / total if total > 0.005 else np.full_like(delta, np.nan)
+
+            valid = (ctx > 0) & ~np.isnan(delta)
+            slope = np.nan
+            if valid.sum() >= 3:
+                coeffs = np.polyfit(np.log2(ctx[valid]), delta[valid], deg=1)
+                slope = float(coeffs[0])
+
+            curve_data[head][task] = {
+                "ctx": ctx, "auroc": auroc, "delta": delta,
+                "norm": norm, "slope": slope,
+            }
+
+    agg = {}
+    for head in heads:
+        td = curve_data[head]
+        delta_at = {c: [] for c in std_ctx}
+        norm_at  = {c: [] for c in std_ctx}
+        for d in td.values():
+            for c in std_ctx:
+                idx = np.where(np.abs(d["ctx"] - c) < 0.05)[0]
+                if idx.size:
+                    delta_at[c].append(d["delta"][idx[0]])
+                    v = d["norm"][idx[0]]
+                    if not np.isnan(v):
+                        norm_at[c].append(v)
+        valid_ctx = [c for c in std_ctx if delta_at[c]]
+        if not valid_ctx:
+            continue
+        agg[head] = {
+            "ctx":        np.array(valid_ctx),
+            "mean_delta": np.array([np.mean(delta_at[c]) for c in valid_ctx]),
+            "std_delta":  np.array([np.std(delta_at[c], ddof=1) if len(delta_at[c]) > 1
+                                    else 0.0 for c in valid_ctx]),
+            "mean_norm":  np.array([np.mean(norm_at[c]) if norm_at[c] else np.nan
+                                    for c in valid_ctx]),
+            "std_norm":   np.array([np.std(norm_at[c], ddof=1) if len(norm_at[c]) > 1
+                                    else np.nan for c in valid_ctx]),
+        }
+
+    slopes = {}
+    for head in heads:
+        per_task = {t: d["slope"] for t, d in curve_data[head].items()
+                    if not np.isnan(d["slope"])}
+        if per_task:
+            vals = list(per_task.values())
+            slopes[head] = {"per_task": per_task, "mean": np.mean(vals),
+                            "std": np.std(vals, ddof=1) if len(vals) > 1 else 0.0}
+
+    return curve_data, agg, slopes
+
+
+def delta_panel(ax, analysis_df: pd.DataFrame, tasks: list[str],
+                heads: list[str] = ("lstm", "transformer", "mean_pool")):
+    """ΔAUROC from 30s baseline, mean ± std across tasks."""
+    curve_data, agg, _ = _build_agg_curves(analysis_df, tasks, heads)
+    for head in heads:
+        if head not in agg:
+            continue
+        sty = HEAD_STYLE.get(head, {"color": "gray", "marker": "o",
+                                    "ls": "-", "label": head})
+        d = agg[head]
+        for td in curve_data[head].values():
+            ax.plot(td["ctx"], td["delta"] * 100, color=sty["color"],
+                    lw=0.6, alpha=0.18)
+        ax.fill_between(d["ctx"],
+                        (d["mean_delta"] - d["std_delta"]) * 100,
+                        (d["mean_delta"] + d["std_delta"]) * 100,
+                        color=sty["color"], alpha=0.15)
+        ax.plot(d["ctx"], d["mean_delta"] * 100, color=sty["color"],
+                ls=sty["ls"], marker=sty["marker"], lw=1.8, ms=5,
+                label=sty["label"])
+
+    _log_ctx_axis(ax)
+    ax.axhline(0, color="gray", ls=":", lw=0.7, alpha=0.5)
+    ax.set_xlabel("Context length", fontsize=FONT_LABEL)
+    ax.set_ylabel("ΔAUROC from 30s (pp)", fontsize=FONT_LABEL)
+    ax.legend(fontsize=FONT_ANNOT, frameon=False)
+    ax.grid(True, alpha=0.25, lw=0.5)
+    _spine_clean(ax)
+
+
+def norm_panel(ax, analysis_df: pd.DataFrame, tasks: list[str],
+               heads: list[str] = ("lstm", "transformer", "mean_pool")):
+    """Normalised gain (0=30s, 100=240m), mean ± std across tasks."""
+    curve_data, agg, _ = _build_agg_curves(analysis_df, tasks, heads)
+    for head in heads:
+        if head not in agg:
+            continue
+        sty = HEAD_STYLE.get(head, {"color": "gray", "marker": "o",
+                                    "ls": "-", "label": head})
+        d = agg[head]
+        valid = ~np.isnan(d["mean_norm"])
+        if not valid.any():
+            continue
+        mn = d["mean_norm"][valid]
+        sn = np.where(np.isnan(d["std_norm"][valid]), 0.0, d["std_norm"][valid])
+        ax.fill_between(d["ctx"][valid], (mn - sn) * 100, (mn + sn) * 100,
+                        color=sty["color"], alpha=0.15)
+        ax.plot(d["ctx"][valid], mn * 100, color=sty["color"],
+                ls=sty["ls"], marker=sty["marker"], lw=1.8, ms=5,
+                label=sty["label"])
+
+    _log_ctx_axis(ax)
+    ax.axhline(0,   color="gray", ls=":", lw=0.7, alpha=0.5)
+    ax.axhline(100, color="gray", ls="--", lw=0.7, alpha=0.5)
+    ax.set_ylim(-20, 130)
+    ax.set_xlabel("Context length", fontsize=FONT_LABEL)
+    ax.set_ylabel("Normalised gain (%)\n(0 = 30s, 100 = 240m)", fontsize=FONT_LABEL)
+    ax.legend(fontsize=FONT_ANNOT, frameon=False)
+    ax.grid(True, alpha=0.25, lw=0.5)
+    _spine_clean(ax)
+
+
+def slope_bar_panel(ax, analysis_df: pd.DataFrame, tasks: list[str],
+                    heads: list[str] = ("lstm", "transformer", "mean_pool")):
+    """Bar chart: ΔAUROC per log₂ doubling of context (OLS slope)."""
+    _, _, slopes = _build_agg_curves(analysis_df, tasks, heads)
+    ordered = [h for h in heads if h in slopes]
+    x_pos  = np.arange(len(ordered))
+    colors = [HEAD_STYLE.get(h, {"color": "gray"})["color"] for h in ordered]
+    labels = [HEAD_STYLE.get(h, {"label": h})["label"] for h in ordered]
+    means  = [slopes[h]["mean"] * 100 for h in ordered]
+    stds   = [slopes[h]["std"]  * 100 for h in ordered]
+
+    for xi, head in zip(x_pos, ordered):
+        for sv in slopes[head]["per_task"].values():
+            ax.scatter(xi, sv * 100, color=colors[xi], alpha=0.35, s=15, zorder=3)
+
+    bars = ax.bar(x_pos, means, color=colors, edgecolor="white",
+                  width=0.45, alpha=0.85, zorder=2)
+    ax.errorbar(x_pos, means, yerr=stds, fmt="none",
+                color="black", capsize=3, lw=1.2, zorder=4)
+    for bar, val in zip(bars, means):
+        ax.text(bar.get_x() + bar.get_width() / 2, val + 0.05,
+                f"{val:.2f}", ha="center", va="bottom", fontsize=FONT_ANNOT)
+
+    ax.set_xticks(x_pos)
+    ax.set_xticklabels(labels, fontsize=FONT_BASE)
+    ax.set_ylabel("ΔAUROC per log₂ doubling (pp)", fontsize=FONT_LABEL)
+    ax.axhline(0, color="gray", ls=":", lw=0.7)
+    ax.grid(True, alpha=0.25, lw=0.5, axis="y")
+    _spine_clean(ax)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# S-Fig 8 — Variance violins (within-subject prediction std)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def variance_violin_panel(ax, parquets: dict[str, pd.DataFrame],
+                          contexts: list[str] = ("30s", "40m", "120m", "240m"),
+                          prob_col: str = "prob_class1"):
+    """Violin plots of within-subject prob std, by correct/incorrect classification."""
+    avail = [c for c in contexts if c in parquets and not parquets[c].empty]
+    if not avail:
+        ax.text(0.5, 0.5, "no data", ha="center", va="center",
+                transform=ax.transAxes, fontsize=FONT_BASE, color="gray")
+        return
+
+    records = []
+    for ctx in avail:
+        df = parquets[ctx]
+        if prob_col not in df.columns:
+            continue
+        stats = (
+            df.groupby("subject_id")
+            .agg(
+                mean_prob=(prob_col, "mean"),
+                std_prob=(prob_col, "std"),
+                true_label=("true_label", "first"),
+            )
+            .reset_index()
+        )
+        stats["correct"] = ((stats["mean_prob"] >= 0.5) == stats["true_label"].astype(bool))
+        stats["context"] = ctx
+        records.append(stats)
+
+    if not records:
+        return
+
+    combined = pd.concat(records, ignore_index=True)
+    combined["std_prob"] = combined["std_prob"].fillna(0)
+    combined["status"] = combined["correct"].map({True: "Correct", False: "Incorrect"})
+
+    palette = {"Correct": "#3A7EBF", "Incorrect": "#E86A33"}
+    x_pos = {ctx: i for i, ctx in enumerate(avail)}
+
+    for status, color in palette.items():
+        sub = combined[combined["status"] == status]
+        data_by_ctx = [sub[sub["context"] == ctx]["std_prob"].dropna().values
+                       for ctx in avail]
+        parts = ax.violinplot(data_by_ctx, positions=list(x_pos.values()),
+                              showmedians=True, widths=0.35)
+        for pc in parts["bodies"]:
+            pc.set_facecolor(color)
+            pc.set_alpha(0.6)
+        parts["cmedians"].set_color(color)
+        parts["cbars"].set_color(color)
+        parts["cmins"].set_color(color)
+        parts["cmaxes"].set_color(color)
+        ax.plot([], [], color=color, lw=3, label=status)
+
+    ax.set_xticks(list(x_pos.values()))
+    ax.set_xticklabels(avail, fontsize=FONT_BASE)
+    ax.set_xlabel("Context length", fontsize=FONT_LABEL)
+    ax.set_ylabel("Within-subject std(prob)", fontsize=FONT_LABEL)
+    ax.legend(fontsize=FONT_ANNOT, frameon=False)
+    ax.grid(True, alpha=0.25, lw=0.5, axis="y")
+    _spine_clean(ax)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# S-Fig 10 — Reliability / calibration
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def reliability_panel(ax, parquets: dict[str, pd.DataFrame],
+                      context: str = "240m",
+                      n_bins: int = 10,
+                      prob_col: str = "prob_class1"):
+    """Reliability diagram (calibration) at a specific context length."""
+    if context not in parquets or parquets[context].empty:
+        ax.text(0.5, 0.5, "no data", ha="center", va="center",
+                transform=ax.transAxes, fontsize=FONT_BASE, color="gray")
+        return
+
+    df = parquets[context]
+    if prob_col not in df.columns:
+        return
+
+    sub = (df.groupby("subject_id")
+           .agg(mean_prob=(prob_col, "mean"), true_label=("true_label", "first"))
+           .reset_index())
+
+    bins = np.linspace(0, 1, n_bins + 1)
+    bin_centers = (bins[:-1] + bins[1:]) / 2
+    bin_accs = []
+
+    for lo, hi in zip(bins[:-1], bins[1:]):
+        mask = (sub["mean_prob"] >= lo) & (sub["mean_prob"] < hi)
+        bin_sub = sub[mask]
+        if len(bin_sub) == 0:
+            bin_accs.append(np.nan)
+        else:
+            bin_accs.append(float(bin_sub["true_label"].mean()))
+
+    bin_accs = np.array(bin_accs)
+    valid = ~np.isnan(bin_accs)
+
+    ax.plot([0, 1], [0, 1], "k--", lw=0.8, alpha=0.6, label="Perfect")
+    ax.bar(bin_centers[valid], bin_accs[valid], width=(bins[1] - bins[0]) * 0.9,
+           color="#3A7EBF", alpha=0.65, edgecolor="white", lw=0.4)
+    ax.plot(bin_centers[valid], bin_accs[valid], "o", color="#3A7EBF",
+            ms=4, zorder=3)
+
+    # ECE
+    weights = np.array([((sub["mean_prob"] >= lo) & (sub["mean_prob"] < hi)).sum()
+                        for lo, hi in zip(bins[:-1], bins[1:])])
+    n_total = weights.sum()
+    if n_total > 0:
+        ece = float(np.nansum(np.abs(bin_accs - bin_centers) * weights / n_total))
+        ax.text(0.04, 0.95, f"ECE = {ece:.3f}",
+                transform=ax.transAxes, ha="left", va="top",
+                fontsize=FONT_ANNOT, color="gray")
+
+    ax.set_xlim([0, 1]); ax.set_ylim([0, 1])
+    ax.set_xlabel("Mean predicted probability", fontsize=FONT_LABEL)
+    ax.set_ylabel("Fraction positive", fontsize=FONT_LABEL)
+    ax.legend(fontsize=FONT_ANNOT, frameon=False)
+    ax.set_title(f"@ {context}", fontsize=FONT_BASE)
+    _spine_clean(ax)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# S-Fig 11 — Hard subjects (fraction correct across contexts)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def hard_subjects_panel(ax, parquets: dict[str, pd.DataFrame],
+                        contexts_ordered: list[str] | None = None,
+                        prob_col: str = "prob_class1"):
+    """Bar: fraction of subjects correct at 0, 1, 2, … all context lengths."""
+    avail_contexts = contexts_ordered or [c for c in CTX_ORDER if c in parquets]
+    avail_contexts = [c for c in avail_contexts if c in parquets and not parquets[c].empty]
+    if not avail_contexts:
+        ax.text(0.5, 0.5, "no data", ha="center", va="center",
+                transform=ax.transAxes, fontsize=FONT_BASE, color="gray")
+        return
+
+    subject_correct = {}
+    for ctx in avail_contexts:
+        df = parquets[ctx]
+        if prob_col not in df.columns:
+            continue
+        sub = (df.groupby("subject_id")
+               .agg(mean_prob=(prob_col, "mean"), true_label=("true_label", "first"))
+               .reset_index())
+        for _, row in sub.iterrows():
+            sid = row["subject_id"]
+            correct = int((row["mean_prob"] >= 0.5) == bool(row["true_label"]))
+            subject_correct.setdefault(sid, 0)
+            subject_correct[sid] += correct
+
+    counts = np.bincount(list(subject_correct.values()),
+                         minlength=len(avail_contexts) + 1)
+    n_total = sum(counts)
+    fracs   = counts / n_total if n_total > 0 else counts
+
+    x_pos = np.arange(len(avail_contexts) + 1)
+    ax.bar(x_pos, fracs, color="#3A7EBF", edgecolor="white", lw=0.4, alpha=0.85)
+    for x, f in zip(x_pos, fracs):
+        if f > 0.01:
+            ax.text(x, f + 0.005, f"{f:.0%}", ha="center", va="bottom",
+                    fontsize=FONT_ANNOT)
+
+    ax.set_xticks(x_pos)
+    ax.set_xticklabels([str(i) for i in x_pos], fontsize=FONT_BASE)
+    ax.set_xlabel("# context lengths correctly predicted", fontsize=FONT_LABEL)
+    ax.set_ylabel("Fraction of subjects", fontsize=FONT_LABEL)
+    ax.set_ylim(0, min(1.0, fracs.max() * 1.25))
+    ax.grid(True, alpha=0.25, lw=0.5, axis="y")
+    _spine_clean(ax)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# S-Fig 12 — Window position profiles
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def position_panel(ax, parquets: dict[str, pd.DataFrame],
+                   contexts: list[str] = ("30s", "120m", "240m"),
+                   n_bins: int = 20,
+                   prob_col: str = "prob_class1"):
+    """Mean predicted probability vs normalised window position."""
+    avail = [c for c in contexts if c in parquets and not parquets[c].empty]
+    if not avail:
+        ax.text(0.5, 0.5, "no data", ha="center", va="center",
+                transform=ax.transAxes, fontsize=FONT_BASE, color="gray")
+        return
+
+    ctx_colors = {c: _palette(len(avail))[i] for i, c in enumerate(avail)}
+    bins = np.linspace(0, 1, n_bins + 1)
+    bin_centers = (bins[:-1] + bins[1:]) / 2
+
+    for ctx in avail:
+        df = parquets[ctx]
+        if prob_col not in df.columns or "window_idx" not in df.columns:
+            continue
+        df = df.copy()
+        df["norm_pos"] = (df.groupby("subject_id")["window_idx"]
+                          .transform(lambda x: x / x.max().clip(lower=1)))
+        df["pos_bin"] = pd.cut(df["norm_pos"], bins=bins, labels=False,
+                               include_lowest=True)
+        binned = (df.groupby("pos_bin")[prob_col]
+                  .mean().reindex(range(n_bins)).values)
+        valid = ~np.isnan(binned)
+        ax.plot(bin_centers[valid], binned[valid] * 100,
+                color=ctx_colors[ctx], lw=1.4, label=ctx, marker="o",
+                ms=3, markevery=3)
+
+    ax.set_xlabel("Normalised window position (0=start, 1=end)", fontsize=FONT_LABEL)
+    ax.set_ylabel("Mean predicted prob (%)", fontsize=FONT_LABEL)
+    ax.set_xlim([0, 1])
+    ax.legend(title="Context", fontsize=FONT_ANNOT, title_fontsize=FONT_ANNOT,
+              frameon=False)
+    ax.grid(True, alpha=0.25, lw=0.5)
+    _spine_clean(ax)
