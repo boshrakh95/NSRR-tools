@@ -53,38 +53,68 @@ def code(src):
     }
 
 
+def save_cell(stem):
+    """Separate cell: run this only when you're happy with the figure."""
+    return code(f"""\
+# ── Run this cell when the figure looks good ─────────────────────────────────
+save_figure(fig, FINAL_OUT, "{stem}")
+print("Saved →", FINAL_OUT / "{stem}.pdf")\
+""")
+
+
+INLINE_MAGIC = """\
+%matplotlib inline
+%load_ext autoreload
+%autoreload 2\
+"""
+
 SETUP = """\
 import sys
 from pathlib import Path
 
-# ── Workspace root (parent of NSRR-tools/) ────────────────────────────────────
-WORKSPACE_ROOT = Path("../../../../..").resolve()   # adjust if notebook depth differs
+# ── Workspace root: auto-detect by looking for final_results/ ─────────────────
+def _find_workspace():
+    \"\"\"Walk up from CWD until we find a directory containing final_results/.\"\"\"
+    candidate = Path.cwd().resolve()
+    for _ in range(10):
+        if (candidate / "final_results").exists():
+            return candidate
+        if candidate.parent == candidate:
+            break
+        candidate = candidate.parent
+    # Explicit fallback (edit this if auto-detect fails)
+    return Path("/Users/boshra/NSRR-workspace").resolve()
+
+WORKSPACE_ROOT = _find_workspace()
 NSRR_TOOLS     = WORKSPACE_ROOT / "NSRR-tools"
 FINAL_RESULTS  = WORKSPACE_ROOT / "final_results"
 PAPER_FIGURES  = NSRR_TOOLS / "results" / "paper_figures"
 FINAL_OUT      = PAPER_FIGURES / "final"
 FINAL_OUT.mkdir(parents=True, exist_ok=True)
 
-# Add utils to path
-sys.path.insert(0, str(Path(".").resolve()))
+# Add utils to path (notebooks/utils/)
+_nb_dir = PAPER_FIGURES / "notebooks"
+sys.path.insert(0, str(_nb_dir))
 
 from utils.style import (
     apply_tbme_style, save_figure, FULL_W, HALF_W,
     MAIN_TASKS, SUPP_TASKS, ALL_TASKS, BINARY_MAIN,
-    HEAD_STYLE, TASK_LABEL,
+    HEAD_STYLE, TASK_LABEL, FONT_ANNOT, FONT_BASE, FONT_LABEL,
 )
 from utils.data import set_root, load_analysis, load_heatmap, load_parquets
 from utils import panels
 
-import matplotlib
-matplotlib.use("Agg")   # comment out in Jupyter to get inline plots
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
 set_root(WORKSPACE_ROOT)
 apply_tbme_style()
-print("Setup OK — workspace root:", WORKSPACE_ROOT)\
+
+# ── Confirm the workspace root is correct ─────────────────────────────────────
+_ok = (WORKSPACE_ROOT / "final_results").exists()
+print(f"WORKSPACE_ROOT : {WORKSPACE_ROOT}")
+print(f"final_results/ : {'✓ found' if _ok else '✗ NOT FOUND — edit _find_workspace() fallback'}")\
 """
 
 
@@ -148,17 +178,41 @@ hmaps = {t: load_heatmap("phase0_v3", t, HEAD) for t in TASKS}
 print({t: len(v) for t, v in hmaps.items()})\
 """),
     code("""\
-fig, axes = plt.subplots(N_ROWS, N_COLS, figsize=(FULL_W, N_ROWS * 2.1))
-axes_flat = axes.flatten()
+# ROW_H controls how tall each row is (inches).
+# Increase it to make panels bigger — try 2.5 or 3.0.
+ROW_H = 2.1
 
-for i, (ax, task) in enumerate(zip(axes_flat, TASKS)):
+# Build a subplot_mosaic layout so the last (incomplete) row is centred.
+# Each panel label is repeated across 2 virtual columns; "." = ignored cell.
+#
+# Example for 5 tasks, N_COLS=3 (6 virtual columns):
+#   a a b b c c
+#   . d d e e .
+labels  = [chr(97 + i) for i in range(len(TASKS))]
+n_last  = len(TASKS) % N_COLS or N_COLS   # panels in the last row
+n_full  = len(TASKS) // N_COLS
+
+mosaic = []
+for row in range(n_full):
+    row_labels = labels[row * N_COLS : (row + 1) * N_COLS]
+    mosaic.append([lbl for lbl in row_labels for _ in range(2)])
+
+if n_last < N_COLS:   # incomplete → centre it
+    last_labels = labels[n_full * N_COLS:]
+    pad = N_COLS - n_last          # ignored cells on each side
+    mosaic.append(
+        ["."] * pad +
+        [lbl for lbl in last_labels for _ in range(2)] +
+        ["."] * pad
+    )
+
+fig, axd = plt.subplot_mosaic(mosaic, figsize=(FULL_W, N_ROWS * ROW_H))
+
+for i, (lbl, task) in enumerate(zip(labels, TASKS)):
+    ax = axd[lbl]
     panels.kvsk_panel(ax, hmaps[task], col=METRIC)
     ax.set_title(TASK_LABEL[task], fontsize=8)
     add_panel_label(ax, f"({chr(97+i)})")
-
-# Hide unused axes
-for ax in axes_flat[len(TASKS):]:
-    ax.set_visible(False)
 
 fig.tight_layout(h_pad=1.5, w_pad=1.0)
 save_figure(fig, FINAL_OUT, "main_fig2_kvsk")
@@ -176,34 +230,56 @@ cells_fig3 = [
        "**Data**: `heatmap_df_test.csv`  \n"
        "**Tasks**: main 5  \n"
        "**Head**: Transformer  \n"
-       "**Layout**: 2×3  \n\n"
+       "**Layout**: 5 rows × 1 column (full 7-in width per heatmap)  \n\n"
        "Heatmap cell = AUROC (%) at that (context, K) combination.  "
-       "Dashed lines = iso-compute budgets."),
+       "Dashed lines = iso-compute budgets.\n\n"
+       "**Tip**: `ROW_H` controls row height. Increase for more vertical "
+       "breathing room, decrease for a more compact figure."),
     code(SETUP),
     _panel_label_cell(),
     code("""\
 HEAD   = "transformer"
-TASKS  = MAIN_TASKS
+TASKS  = MAIN_TASKS   # 5 tasks → 2-2-1 layout
 METRIC = "auroc"
-N_COLS = 3
-N_ROWS = (len(TASKS) + N_COLS - 1) // N_COLS
+ROW_H  = 2.0   # inches per row — increase for more vertical space
 
-hmaps = {t: load_heatmap("phase0_v3", t, HEAD) for t in TASKS}\
+hmaps = {t: load_heatmap("phase0_v3", t, HEAD) for t in TASKS}
+print("Loaded:", {t: len(v) for t, v in hmaps.items()})\
 """),
     code("""\
-# Each heatmap panel needs a bit more height than kvsk
-fig, axes = plt.subplots(N_ROWS, N_COLS, figsize=(FULL_W, N_ROWS * 2.4))
-axes_flat = axes.flatten()
+import matplotlib.gridspec as gridspec
+
+# 2-2-1 layout: rows 0-1 have 2 panels each, row 2 has 1 centred panel.
+fig = plt.figure(figsize=(FULL_W, 3 * ROW_H))
+gs  = gridspec.GridSpec(3, 4, figure=fig, hspace=0.8, wspace=0.4)
+
+axes_flat = [
+    fig.add_subplot(gs[0, 0:2]),   # (a) left
+    fig.add_subplot(gs[0, 2:4]),   # (b) right
+    fig.add_subplot(gs[1, 0:2]),   # (c) left
+    fig.add_subplot(gs[1, 2:4]),   # (d) right
+    fig.add_subplot(gs[2, 1:3]),   # (e) centred
+]
+
+# Per-panel flags: (show_ylabels, show_cbar_label)
+#   Left panels  → y-labels ✓, cbar visible but no text label
+#   Right panels → y-labels ✗, cbar visible with "AUROC (%)" label
+#   Centred lone → y-labels ✓, cbar with label
+panel_flags = [
+    (True,  False),   # (a) left
+    (False, True),    # (b) right
+    (True,  False),   # (c) left
+    (False, True),    # (d) right
+    (True,  True),    # (e) centred
+]
 
 for i, (ax, task) in enumerate(zip(axes_flat, TASKS)):
-    panels.heatmap_panel(ax, hmaps[task], col=METRIC)
-    ax.set_title(TASK_LABEL[task], fontsize=8)
+    show_y, show_cbar_lbl = panel_flags[i]
+    panels.heatmap_panel(ax, hmaps[task], col=METRIC,
+                         show_ylabels=show_y, show_cbar_label=show_cbar_lbl)
+    ax.set_title(TASK_LABEL[task], fontsize=8, pad=3)
     add_panel_label(ax, f"({chr(97+i)})")
 
-for ax in axes_flat[len(TASKS):]:
-    ax.set_visible(False)
-
-fig.tight_layout(h_pad=1.8, w_pad=0.8)
 save_figure(fig, FINAL_OUT, "main_fig3_heatmap")
 plt.show()\
 """),
@@ -216,42 +292,45 @@ plt.show()\
 
 cells_fig4 = [
     md("# Main Fig 4 — Iso-compute: vs-Total + Pareto\n\n"
-       "**Layout**: 2 rows × N_TASKS cols  \n"
-       "Row 1 = AUROC vs total compute (L×K); Row 2 = Pareto-optimal frontier."),
+       "**Layout**: N_TASKS rows × 2 cols  \n"
+       "Left col = AUROC vs total compute (L×K) with legend  \n"
+       "Right col = Pareto-optimal frontier (text annotations, no legend)\n\n"
+       "Each panel is FULL_W/2 = 3.5 in wide. Increase ROW_H for taller panels."),
     code(SETUP),
     _panel_label_cell(),
     code("""\
-HEAD   = "transformer"
-TASKS  = MAIN_TASKS
-METRIC = "auroc"
-N_TASKS = len(TASKS)
+HEAD    = "transformer"
+TASKS   = MAIN_TASKS
+METRIC  = "auroc"
+ROW_H   = 2.2   # inches per task row — increase for larger panels
 
-hmaps = {t: load_heatmap("phase0_v3", t, HEAD) for t in TASKS}\
+hmaps = {t: load_heatmap("phase0_v3", t, HEAD) for t in TASKS}
+print("Loaded:", {t: len(v) for t, v in hmaps.items()})\
 """),
     code("""\
-fig, axes = plt.subplots(2, N_TASKS, figsize=(FULL_W, 4.0))
+fig, axes = plt.subplots(len(TASKS), 2, figsize=(FULL_W, len(TASKS) * ROW_H))
 
-panel_idx = 0
-for col, task in enumerate(TASKS):
-    ax_top = axes[0, col]
-    ax_bot = axes[1, col]
+for row, task in enumerate(TASKS):
+    ax_left  = axes[row, 0]   # vs_total
+    ax_right = axes[row, 1]   # pareto
 
-    panels.vs_total_panel(ax_top, hmaps[task], col=METRIC)
-    ax_top.set_title(TASK_LABEL[task], fontsize=8)
-    add_panel_label(ax_top, f"({chr(97 + col)})")
+    panels.vs_total_panel(ax_left,  hmaps[task], col=METRIC)
+    panels.pareto_panel  (ax_right, hmaps[task], col=METRIC)
 
-    panels.pareto_panel(ax_bot, hmaps[task], col=METRIC)
-    add_panel_label(ax_bot, f"({chr(97 + N_TASKS + col)})")
+    # Title only on the left panel
+    ax_left.set_title(TASK_LABEL[task], fontsize=8)
 
-    # Only leftmost column gets y-labels
-    if col > 0:
-        ax_top.set_ylabel("")
-        ax_bot.set_ylabel("")
-    if col < N_TASKS - 1:
-        ax_top.get_legend().remove() if ax_top.get_legend() else None
-        ax_bot.get_legend().remove() if ax_bot.get_legend() else None
+    # Panel labels: a/b for row 0, c/d for row 1, …
+    add_panel_label(ax_left,  f"({chr(97 + row * 2)})")
+    add_panel_label(ax_right, f"({chr(97 + row * 2 + 1)})")
 
-fig.tight_layout(h_pad=1.5, w_pad=0.8)
+    # Legend: keep on left (vs_total) for first row only; suppress on pareto always
+    if row > 0 and ax_left.get_legend():
+        ax_left.get_legend().remove()
+    if ax_right.get_legend():
+        ax_right.get_legend().remove()
+
+fig.tight_layout(h_pad=1.2, w_pad=1.0)
 save_figure(fig, FINAL_OUT, "main_fig4_iso_main")
 plt.show()\
 """),
@@ -264,8 +343,9 @@ plt.show()\
 
 cells_fig5 = [
     md("# Main Fig 5 — Min-cost frontier\n\n"
-       "**Question**: what is the cheapest way to reach a given AUROC level?  \n"
-       "**Layout**: 1 row × 5 tasks (or 2×3 if preferred)"),
+       "**Layout**: 2 rows × 3 cols (mosaic), lower row centred  \n"
+       "Legend appears once, outside panel (e) on the right.  \n"
+       "Increase ROW_H for larger panels."),
     code(SETUP),
     _panel_label_cell(),
     code("""\
@@ -274,22 +354,61 @@ TASKS  = MAIN_TASKS
 METRIC = "auroc"
 N_COLS = 3
 N_ROWS = (len(TASKS) + N_COLS - 1) // N_COLS
+ROW_H  = 2.2   # inches per row — increase for larger panels
 
 hmaps = {t: load_heatmap("phase0_v3", t, HEAD) for t in TASKS}\
 """),
     code("""\
-fig, axes = plt.subplots(N_ROWS, N_COLS, figsize=(FULL_W, N_ROWS * 2.1))
-axes_flat = axes.flatten()
+# ── Mosaic: last row centred ──────────────────────────────────────────────────
+labels = [chr(97 + i) for i in range(len(TASKS))]
+n_last = len(TASKS) % N_COLS or N_COLS
+n_full = len(TASKS) // N_COLS
 
-for i, (ax, task) in enumerate(zip(axes_flat, TASKS)):
-    panels.mincost_panel(ax, hmaps[task], col=METRIC)
-    ax.set_title(TASK_LABEL[task], fontsize=8)
-    add_panel_label(ax, f"({chr(97+i)})")
+mosaic = []
+for row in range(n_full):
+    row_labels = labels[row * N_COLS : (row + 1) * N_COLS]
+    mosaic.append([lbl for lbl in row_labels for _ in range(2)])
+if n_last < N_COLS:
+    pad = N_COLS - n_last
+    last_labels = labels[n_full * N_COLS:]
+    mosaic.append(["."] * pad +
+                  [lbl for lbl in last_labels for _ in range(2)] +
+                  ["."] * pad)
 
-for ax in axes_flat[len(TASKS):]:
-    ax.set_visible(False)
+fig, axd = plt.subplot_mosaic(mosaic, figsize=(FULL_W, N_ROWS * ROW_H))
 
-fig.tight_layout(h_pad=1.5, w_pad=1.0)
+# ── Draw panels ───────────────────────────────────────────────────────────────
+for i, (lbl, task) in enumerate(zip(labels, TASKS)):
+    panels.mincost_panel(axd[lbl], hmaps[task], col=METRIC)
+    axd[lbl].set_title(TASK_LABEL[task], fontsize=8)
+    add_panel_label(axd[lbl], f"({chr(97 + i)})")
+
+# ── Collect legend handles BEFORE removing legends ────────────────────────────
+handles, leg_labels = axd[labels[0]].get_legend_handles_labels()
+for lbl in labels:
+    if axd[lbl].get_legend():
+        axd[lbl].get_legend().remove()
+
+# ── Strip x-labels from top row (shared by bottom row) ───────────────────────
+for lbl in labels[:N_COLS]:
+    axd[lbl].set_xlabel("")
+    axd[lbl].tick_params(labelbottom=False)
+
+# ── Strip y-labels from non-leftmost panels of each row ──────────────────────
+for i, lbl in enumerate(labels):
+    if i % N_COLS != 0:
+        axd[lbl].set_ylabel("")
+        axd[lbl].tick_params(labelleft=False)
+
+# ── Single legend outside bottom-right panel (e) ─────────────────────────────
+axd[labels[-1]].legend(
+    handles, leg_labels,
+    title="Context L", title_fontsize=FONT_ANNOT,
+    fontsize=FONT_ANNOT, frameon=False,
+    loc="center left", bbox_to_anchor=(1.02, 0.5),
+)
+
+fig.tight_layout(h_pad=1.2, w_pad=1.0)
 save_figure(fig, FINAL_OUT, "main_fig5_mincost")
 plt.show()\
 """),
@@ -345,43 +464,43 @@ plt.show()\
 
 cells_sfig1 = [
     md("# S-Fig 1 — K-Aggregation\n\n"
-       "AUROC vs K (number of windows aggregated), at representative context lengths.  \n"
+       "AUROC vs K at representative context lengths.  \n"
        "**Source**: analysis.csv (all k values)  \n"
-       "**Tasks**: all tasks"),
+       "**Tasks**: main + OSA (depression and CVD excluded)  \n"
+       "**Layout**: 3 rows × 2 cols. Increase ROW_H for larger panels."),
     code(SETUP),
     _panel_label_cell(),
     code("""\
-HEAD     = "transformer"
-TASKS    = ALL_TASKS
-CONTEXTS = ["40m", "120m", "240m"]   # show these context lengths per panel
+# Tasks: main 5 + OSA (exclude depression and CVD)
+TASKS    = MAIN_TASKS + ["osa_binary_apples_postqc"]
+CONTEXTS = ["40m", "120m", "240m"]   # context lengths shown per panel
 HEADS    = ["lstm", "transformer"]
-N_COLS   = 4
-N_ROWS   = (len(TASKS) + N_COLS - 1) // N_COLS
+N_COLS   = 2
+N_ROWS   = 3   # 6 tasks → 3 × 2, all rows full
+ROW_H    = 2.4   # inches per row — increase for larger panels
 
-# Load full analysis.csv (all k values, not just k='all')
 import pandas as pd
-from pathlib import Path
 _ana_path = WORKSPACE_ROOT / "final_results" / "phase0_v3" / "collected" / "analysis.csv"
 df_all_k = pd.read_csv(_ana_path)
 df_all_k["context_length_min"] = df_all_k["context_length"].map(
     lambda s: {"30s": 0.5, "10m": 10.0, "40m": 40.0,
                "80m": 80.0, "120m": 120.0, "240m": 240.0}.get(str(s).strip())
 )
+print("Tasks:", TASKS)
 print("Loaded:", df_all_k.shape, "rows")\
 """),
     code("""\
-fig, axes = plt.subplots(N_ROWS, N_COLS, figsize=(FULL_W, N_ROWS * 2.0))
+labels = [chr(97 + i) for i in range(len(TASKS))]
+
+fig, axes = plt.subplots(N_ROWS, N_COLS, figsize=(FULL_W, N_ROWS * ROW_H))
 axes_flat = axes.flatten()
 
 for i, (ax, task) in enumerate(zip(axes_flat, TASKS)):
     panels.k_agg_panel(ax, df_all_k, task, heads=HEADS, contexts=CONTEXTS)
     ax.set_title(TASK_LABEL.get(task, task), fontsize=8)
-    add_panel_label(ax, f"({chr(97+i)})")
+    add_panel_label(ax, f"({labels[i]})")
 
-for ax in axes_flat[len(TASKS):]:
-    ax.set_visible(False)
-
-fig.tight_layout(h_pad=1.5, w_pad=1.0)
+fig.tight_layout(h_pad=0.8, w_pad=1.0)
 save_figure(fig, FINAL_OUT, "sfig1_k_aggregation")
 plt.show()\
 """),
@@ -400,35 +519,43 @@ cells_sfig2 = [
     code(SETUP),
     _panel_label_cell(),
     code("""\
-TASKS  = MAIN_TASKS
+TASKS  = MAIN_TASKS   # 5 tasks → 2-2-1 layout
 HEADS  = ["lstm", "transformer", "mean_pool"]
 SPLIT  = "test"
-N_COLS = 3
-N_ROWS = (len(TASKS) + N_COLS - 1) // N_COLS
+FIG_W  = 10.0   # wider than TBME column — ok for supplementary/preview
+ROW_H  = 3.0    # inches per row — increase for even bigger panels
 
 df = load_analysis("phase0_v3", split=SPLIT, k="all")\
 """),
     code("""\
-fig, axes = plt.subplots(N_ROWS, N_COLS, figsize=(FULL_W, N_ROWS * 2.1))
-axes_flat = axes.flatten()
+# Mosaic 2-2-1: each label spans 2 virtual columns; "." = empty cell
+# a a b b
+# c c d d
+# . e e .
+mosaic = [
+    ["a", "a", "b", "b"],
+    ["c", "c", "d", "d"],
+    [".",  "e", "e", "."],
+]
+labels = ["a", "b", "c", "d", "e"]
 
-for i, (ax, task) in enumerate(zip(axes_flat, TASKS)):
-    panels.saturation_panel(ax, df, task, heads=HEADS, show_values=True)
-    ax.set_title(TASK_LABEL[task], fontsize=8)
-    add_panel_label(ax, f"({chr(97+i)})")
-    # Only first panel gets legend
-    if i > 0 and ax.get_legend():
-        ax.get_legend().remove()
+fig, axd = plt.subplot_mosaic(mosaic, figsize=(FIG_W, 3 * ROW_H))
 
-# Shared legend
-handles, labels = axes_flat[0].get_legend_handles_labels()
-fig.legend(handles, labels, loc="upper center", ncol=3, fontsize=7,
-           bbox_to_anchor=(0.5, 1.02), frameon=False)
+for i, (lbl, task) in enumerate(zip(labels, TASKS)):
+    panels.saturation_panel(axd[lbl], df, task, heads=HEADS, show_values=True)
+    axd[lbl].set_title(TASK_LABEL[task], fontsize=8)
+    add_panel_label(axd[lbl], f"({lbl})")
 
-for ax in axes_flat[len(TASKS):]:
-    ax.set_visible(False)
+# Shared legend above the figure
+handles, leg_labels = axd["a"].get_legend_handles_labels()
+for lbl in labels:
+    if axd[lbl].get_legend():
+        axd[lbl].get_legend().remove()
+fig.legend(handles, leg_labels, loc="upper center", ncol=3,
+           fontsize=FONT_ANNOT, bbox_to_anchor=(0.5, 1.02), frameon=False,
+           handlelength=3.5)
 
-fig.tight_layout(rect=[0, 0, 1, 0.98], h_pad=1.5, w_pad=1.0)
+fig.tight_layout(rect=[0, 0, 1, 0.97], h_pad=1.2, w_pad=1.0)
 save_figure(fig, FINAL_OUT, "sfig2_saturation")
 plt.show()\
 """),
@@ -441,35 +568,48 @@ plt.show()\
 
 cells_sfig3 = [
     md("# S-Fig 3 — Compute Scaling\n\n"
-       "Test AUROC at best epoch vs cumulative training compute, per context length.  \n"
+       "Test AUROC at best epoch vs total training FLOPs.  \n"
+       "Point colour = context length (viridis), marker shape = head architecture.  \n"
        "**Source**: training.csv  \n"
-       "**Tasks**: all tasks"),
+       "**Tasks**: main + OSA (depression and CVD excluded)  \n"
+       "Increase ROW_H for bigger panels."),
     code(SETUP),
     _panel_label_cell(),
     code("""\
 from utils.data import load_training
-TASKS  = ALL_TASKS
-HEADS  = ["lstm", "transformer"]
-N_COLS = 4
+TASKS  = MAIN_TASKS + ["osa_binary_apples_postqc"]   # exclude depression, cvd
+HEADS  = ["lstm", "transformer", "mean_pool"]
+N_COLS = 3
 N_ROWS = (len(TASKS) + N_COLS - 1) // N_COLS
+FIG_W  = 11.0   # wider than TBME column — ok for supplementary
+ROW_H  = 3.0    # inches per row
 
 df_train = load_training("phase0_v3")
-print("training.csv columns:", list(df_train.columns)[:15])
-print("tasks in training.csv:", sorted(df_train["task"].unique()) if "task" in df_train.columns else "no task col")\
+print("Tasks:", TASKS)
+print("training.csv shape:", df_train.shape)\
 """),
     code("""\
-fig, axes = plt.subplots(N_ROWS, N_COLS, figsize=(FULL_W, N_ROWS * 2.0))
-axes_flat = axes.flatten()
+labels  = [chr(97 + i) for i in range(len(TASKS))]
+n_last  = len(TASKS) % N_COLS or N_COLS
+n_full  = len(TASKS) // N_COLS
 
-for i, (ax, task) in enumerate(zip(axes_flat, TASKS)):
-    panels.compute_scaling_panel(ax, df_train, task, heads=HEADS)
-    ax.set_title(TASK_LABEL.get(task, task), fontsize=8)
-    add_panel_label(ax, f"({chr(97+i)})")
+mosaic = []
+for row in range(n_full):
+    rl = labels[row * N_COLS : (row + 1) * N_COLS]
+    mosaic.append([l for l in rl for _ in range(2)])
+if n_last < N_COLS:
+    pad = N_COLS - n_last
+    ll  = labels[n_full * N_COLS:]
+    mosaic.append(["."] * pad + [l for l in ll for _ in range(2)] + ["."] * pad)
 
-for ax in axes_flat[len(TASKS):]:
-    ax.set_visible(False)
+fig, axd = plt.subplot_mosaic(mosaic, figsize=(FIG_W, N_ROWS * ROW_H))
 
-fig.tight_layout(h_pad=1.5, w_pad=1.0)
+for i, (lbl, task) in enumerate(zip(labels, TASKS)):
+    panels.compute_scaling_panel(axd[lbl], df_train, task, heads=HEADS)
+    axd[lbl].set_title(TASK_LABEL.get(task, task), fontsize=8)
+    add_panel_label(axd[lbl], f"({lbl})")
+
+fig.tight_layout(h_pad=1.2, w_pad=1.0)
 save_figure(fig, FINAL_OUT, "sfig3_compute_scaling")
 plt.show()\
 """),
@@ -580,11 +720,13 @@ cells_sfig6 = [
     code(SETUP),
     _panel_label_cell(),
     code("""\
-HEAD   = "lstm"
+# NOTE: phase0_v3_abl was trained with LSTM only.
+# Changing HEAD to "transformer" or "mean_pool" will produce empty plots
+# because no ablation rows exist for those heads.
+HEAD   = "lstm"   # ← only valid option for this figure
 SPLIT  = "test"
 TASKS  = MAIN_TASKS    # ablation only covers main tasks
 
-# For ablation, do NOT filter by k — load raw then pass to function
 import pandas as pd
 from pathlib import Path
 
@@ -601,20 +743,43 @@ df_abl  = _load_raw("phase0_v3_abl")
 df_fast = _load_raw("phase0_v3")
 df_full = _load_raw("phase0_v3_full")
 
-print("Ablation run_tags:", sorted(df_abl["run_tag"].unique()))\
+abl_heads = sorted(df_abl["head"].unique())
+print(f"Ablation heads available: {abl_heads}")
+if HEAD not in abl_heads:
+    print(f"WARNING: HEAD='{HEAD}' not in ablation data → figure will be empty!")\
 """),
     code("""\
-N_COLS = 5   # one column per task side-by-side (classic modality bar layout)
-fig, axes = plt.subplots(1, N_COLS, figsize=(FULL_W, 2.8), sharey=False)
+N_COLS = 2
+N_ROWS = (len(TASKS) + N_COLS - 1) // N_COLS
+ROW_H  = 2.4   # inches per row
 
-for col, (ax, task) in enumerate(zip(axes, TASKS)):
+# Mosaic: 2-2-1 centred layout
+labels = [chr(97 + i) for i in range(len(TASKS))]
+n_last = len(TASKS) % N_COLS or N_COLS
+n_full = len(TASKS) // N_COLS
+
+mosaic = []
+for row in range(n_full):
+    rl = labels[row * N_COLS : (row + 1) * N_COLS]
+    mosaic.append([l for l in rl for _ in range(2)])
+if n_last < N_COLS:
+    pad = N_COLS - n_last
+    ll  = labels[n_full * N_COLS:]
+    mosaic.append(["."] * pad + [l for l in ll for _ in range(2)] + ["."] * pad)
+
+fig, axd = plt.subplot_mosaic(mosaic, figsize=(FULL_W, N_ROWS * ROW_H))
+
+for i, (lbl, task) in enumerate(zip(labels, TASKS)):
+    ax = axd[lbl]
+    col_idx = i % N_COLS   # 0 = left column, 1 = right column
     panels.modality_bar_panel(ax, df_abl, df_fast, df_full, task, head=HEAD, split=SPLIT)
     ax.set_title(TASK_LABEL[task], fontsize=8)
-    add_panel_label(ax, f"({chr(97+col)})")
-    if col > 0:
+    add_panel_label(ax, f"({lbl})")
+    # Hide y-tick labels on right-column panels (left column carries them)
+    if col_idx != 0:
         ax.set_yticklabels([])
 
-fig.tight_layout(w_pad=0.5)
+fig.tight_layout(h_pad=1.0, w_pad=0.8)
 save_figure(fig, FINAL_OUT, "sfig6_modality_ablation")
 plt.show()\
 """),
@@ -767,28 +932,40 @@ cells_sfig10 = [
     code(SETUP),
     _panel_label_cell(),
     code("""\
-HEAD    = "lstm"
-SPLIT   = "test"
-CONTEXT = "240m"   # show calibration at longest context
-TASKS   = MAIN_TASKS
-N_COLS  = 3
-N_ROWS  = (len(TASKS) + N_COLS - 1) // N_COLS
+HEAD     = "lstm"
+SPLIT    = "test"
+# 3 representative contexts overlaid per panel (30s shortest, 120m mid, 240m longest)
+CONTEXTS = ["30s", "120m", "240m"]
+K        = 5   # windows aggregated per subject (matches paper deployment)
+TASKS    = [t for t in MAIN_TASKS if t != "age_class"]   # age is 3-class, skip
+N_COLS   = 2
+N_ROWS   = (len(TASKS) + N_COLS - 1) // N_COLS
+ROW_H    = 2.6
 
-pqs = {t: load_parquets("phase0_v3", t, HEAD, SPLIT) for t in TASKS}\
+pqs = {t: load_parquets("phase0_v3", t, HEAD, SPLIT) for t in TASKS}
+print("Loaded tasks:", list(pqs.keys()))\
 """),
     code("""\
-fig, axes = plt.subplots(N_ROWS, N_COLS, figsize=(FULL_W, N_ROWS * 2.2))
-axes_flat = axes.flatten()
+labels = [chr(97 + i) for i in range(len(TASKS))]
+n_last = len(TASKS) % N_COLS or N_COLS
+n_full = len(TASKS) // N_COLS
 
-for i, (ax, task) in enumerate(zip(axes_flat, TASKS)):
-    panels.reliability_panel(ax, pqs[task], context=CONTEXT)
-    ax.set_title(TASK_LABEL.get(task, task), fontsize=8)
-    add_panel_label(ax, f"({chr(97+i)})")
+mosaic = []
+for row in range(n_full):
+    rl = labels[row * N_COLS : (row + 1) * N_COLS]
+    mosaic.append([l for l in rl for _ in range(2)])
+if n_last < N_COLS:
+    pad = N_COLS - n_last; ll = labels[n_full * N_COLS:]
+    mosaic.append(["."] * pad + [l for l in ll for _ in range(2)] + ["."] * pad)
 
-for ax in axes_flat[len(TASKS):]:
-    ax.set_visible(False)
+fig, axd = plt.subplot_mosaic(mosaic, figsize=(FULL_W, N_ROWS * ROW_H))
 
-fig.tight_layout(h_pad=1.5, w_pad=1.0)
+for i, (lbl, task) in enumerate(zip(labels, TASKS)):
+    panels.reliability_panel(axd[lbl], pqs[task], contexts=CONTEXTS, k=K)
+    axd[lbl].set_title(TASK_LABEL.get(task, task), fontsize=8)
+    add_panel_label(axd[lbl], f"({lbl})")
+
+fig.tight_layout(h_pad=1.2, w_pad=1.0)
 save_figure(fig, FINAL_OUT, "sfig10_reliability")
 plt.show()\
 """),
@@ -901,9 +1078,58 @@ NOTEBOOKS = {
     "sfig12_position_variance.ipynb": cells_sfig12,
 }
 
+import re as _re
+
+def postprocess(cells):
+    """Transform cells for interactive Jupyter use:
+
+    1. Inject ``%matplotlib inline`` as the first code cell (right after the
+       title markdown), so plt.show() displays figures inline.
+
+    2. For any code cell that calls save_figure(fig, FINAL_OUT, "STEM"):
+       - Remove that line from the draw cell (plt.show() stays → figure shown).
+       - Append a *separate* save cell that the user runs only when satisfied.
+    """
+    # Step 1: inject inline magic after the first markdown cell
+    result = []
+    injected = False
+    for cell in cells:
+        result.append(cell)
+        if not injected and cell["cell_type"] == "markdown":
+            result.append(code("%matplotlib inline"))
+            injected = True
+
+    # Step 2: split save_figure out of draw cells
+    pat = _re.compile(r'^save_figure\(fig, FINAL_OUT, "(.+?)"\)\s*$', _re.MULTILINE)
+    final = []
+    for cell in result:
+        if cell["cell_type"] != "code":
+            final.append(cell)
+            continue
+        src = cell["source"]
+        m = pat.search(src)
+        if not m:
+            final.append(cell)
+            continue
+        stem = m.group(1)
+        # Draw cell: drop the save_figure line
+        draw_src = "\n".join(
+            ln for ln in src.splitlines() if not ln.startswith("save_figure(")
+        ).rstrip()
+        final.append({**cell, "id": _id(), "source": draw_src})
+        # Save cell: separate, so user runs it deliberately
+        final.append(code(
+            f"# ── Run when figure looks good ──────────────────────────────────\n"
+            f'save_figure(fig, FINAL_OUT, "{stem}")\n'
+            f'print("Saved →", FINAL_OUT / "{stem}.pdf")'
+        ))
+
+    return final
+
+
 if __name__ == "__main__":
     for name, cells in NOTEBOOKS.items():
         out = HERE / name
-        out.write_text(json.dumps(nb(cells), indent=1, ensure_ascii=False))
+        out.write_text(json.dumps(nb(postprocess(cells)), indent=1, ensure_ascii=False))
         print(f"  wrote → {out.name}")
     print(f"\nDone.  {len(NOTEBOOKS)} notebooks written to {HERE}")

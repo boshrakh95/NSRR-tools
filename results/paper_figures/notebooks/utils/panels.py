@@ -168,7 +168,7 @@ def k_agg_panel(ax, analysis_df_full_k: pd.DataFrame, task: str,
     ax.set_xscale("log")
     ax.set_xlabel("K (windows per subject)", fontsize=FONT_LABEL)
     ax.set_ylabel("AUROC (%)", fontsize=FONT_LABEL)
-    ax.legend(fontsize=FONT_ANNOT, frameon=False)
+    ax.legend(fontsize=FONT_ANNOT, frameon=False, handlelength=3.5)
     ax.grid(True, which="major", alpha=0.25, lw=0.5)
     _spine_clean(ax)
 
@@ -255,8 +255,18 @@ def kvsk_panel(ax, heatmap_df: pd.DataFrame, col: str = "auroc",
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def heatmap_panel(ax, heatmap_df: pd.DataFrame, col: str = "auroc",
-                  budget: float = 480.0):
-    """2-D context × K heatmap with iso-compute lines."""
+                  budget: float = 480.0,
+                  show_ylabels: bool = True, show_cbar: bool = True,
+                  show_cbar_label: bool = True):
+    """2-D context × K heatmap with iso-compute lines.
+
+    show_ylabels  : show y-axis tick labels (context lengths) — False for
+                    right-hand panels in a multi-column row.
+    show_cbar     : always True; kept for API compatibility.
+    show_cbar_label : show the "AUROC (%)" text label on the colour bar —
+                    False for left-hand panels so the bar is visible but
+                    not labelled (the right neighbour carries the label).
+    """
     if heatmap_df.empty:
         ax.text(0.5, 0.5, "no data", ha="center", va="center",
                 transform=ax.transAxes, fontsize=FONT_BASE, color="gray")
@@ -268,12 +278,12 @@ def heatmap_panel(ax, heatmap_df: pd.DataFrame, col: str = "auroc",
                 for ctx in contexts if not heatmap_df[
                     heatmap_df["context_length_min"] == ctx].empty}
 
-    target_ks = [1, 2, 3, 5, 8, 10, 16, 20, 25, 30, 40, 50,
-                 60, 80, 100, 120, 160, 200, 250, 320, 400, 500]
+    # Keep ~10 log-spaced K values so labels remain readable even at narrow widths.
+    target_ks = [1, 2, 5, 10, 20, 50, 100, 200, 500]
     all_ks = sorted(heatmap_df["k"].unique())
     sub_ks = [k for k in target_ks if any(abs(k - ak) < 0.6 for ak in all_ks)]
     if not sub_ks:
-        sub_ks = sorted(set(round(k) for k in all_ks))[:25]
+        sub_ks = sorted(set(round(k) for k in all_ks))[:10]
 
     matrix = np.full((len(contexts), len(sub_ks)), np.nan)
     for i, ctx in enumerate(contexts):
@@ -296,19 +306,23 @@ def heatmap_panel(ax, heatmap_df: pd.DataFrame, col: str = "auroc",
     vmin = float(np.floor(valid.min() / 5) * 5)
     vmax = float(np.ceil(valid.max() / 5) * 5)
 
+    cbar_label = "AUROC (%)" if show_cbar_label else ""
+    ytick_labels = [ctx_lbl.get(c, str(c)) for c in contexts]
     sns.heatmap(
         matrix * 100, ax=ax,
         cmap=sns.color_palette("YlOrRd", as_cmap=True),
         xticklabels=[str(k) for k in sub_ks],
-        yticklabels=[ctx_lbl.get(c, str(c)) for c in contexts],
-        cbar_kws={"label": "AUROC (%)", "shrink": 0.8},
+        yticklabels=ytick_labels if show_ylabels else False,
+        cbar=True,
+        cbar_kws={"label": cbar_label, "shrink": 0.8},
         linewidths=0.2, linecolor="white",
         mask=np.isnan(matrix), vmin=vmin, vmax=vmax,
         annot=False,
     )
     ax.set_xlabel("K (windows)", fontsize=FONT_LABEL)
-    ax.set_ylabel("Context length", fontsize=FONT_LABEL)
-    ax.tick_params(axis="both", labelsize=FONT_ANNOT)
+    ax.set_ylabel("Context length" if show_ylabels else "", fontsize=FONT_LABEL)
+    ax.tick_params(axis="x", labelsize=FONT_ANNOT, rotation=45)
+    ax.tick_params(axis="y", labelsize=FONT_ANNOT, rotation=0)
 
     # Iso-compute lines
     iso_colors = plt.cm.cool(np.linspace(0.2, 0.9, len(_ISO_BUDGETS)))
@@ -510,6 +524,11 @@ def mincost_panel(ax, heatmap_df: pd.DataFrame, col: str = "auroc",
     ax.legend(title="Context L", fontsize=FONT_ANNOT, title_fontsize=FONT_ANNOT,
               frameon=False, loc="upper left")
     ax.axhline(y=budget, color="red", ls=":", lw=1.0, alpha=0.6)
+    # Use mixed transform: x in axes fraction (always visible), y in data space
+    ax.text(0.98, budget, f"{budget:.0f}m",
+            transform=ax.get_yaxis_transform(),
+            fontsize=FONT_ANNOT, color="red",
+            va="bottom", ha="right", clip_on=False)
     ax.grid(True, alpha=0.25, lw=0.5)
     _spine_clean(ax)
 
@@ -596,46 +615,137 @@ def aucpr_panel(ax, analysis_df: pd.DataFrame, task: str,
 # S-Fig 3 — Compute scaling (1B)
 # ═══════════════════════════════════════════════════════════════════════════════
 
+try:
+    from scipy.optimize import curve_fit as _curve_fit
+    _HAS_SCIPY = True
+except ImportError:
+    _HAS_SCIPY = False
+
+
+def _power_law(F, a, b, c):
+    return c - a * np.asarray(F, dtype=float) ** (-b)
+
+
+def _flops_per_step(head: str, seq_len, input_dim, hidden_dim) -> float:
+    """Analytical FLOPs per gradient step (forward + backward ≈ 3× forward)."""
+    try:
+        sl = int(seq_len); id_ = int(input_dim); hd = int(hidden_dim)
+    except (TypeError, ValueError):
+        return float("nan")
+    if sl <= 0:
+        return float("nan")
+    if head == "lstm":
+        return 3.0 * sl * 4 * hd * (id_ + hd)
+    elif head == "transformer":
+        return 3.0 * sl * (sl * hd + 4 * hd * hd)
+    elif "pool" in head or "mean" in head:
+        return 3.0 * sl * id_
+    return float("nan")
+
+
 def compute_scaling_panel(ax, training_df: pd.DataFrame, task: str,
-                          heads: list[str] = ("lstm", "transformer"),
-                          split_col: str = "test_auroc"):
-    """Test AUROC vs cumulative training FLOPs (or total training steps as proxy)."""
+                          heads: list[str] = ("lstm", "transformer", "mean_pool")):
+    """Compute scaling: test AUROC at best epoch vs total training FLOPs.
+
+    Matches plot_scaling_laws.py 1B style:
+      - point colour  = context length (viridis_r)
+      - point marker  = head architecture
+      - FLOPs computed analytically from seq_len × steps_per_epoch × epoch
+    """
+    CTX_ORDER_LOCAL = ["30s", "10m", "40m", "80m", "120m", "240m"]
+
+    # Filter to is_best_epoch rows, normalising the boolean column
+    df = training_df[training_df["task"] == task].copy()
+    if df.empty:
+        ax.text(0.5, 0.5, "no data", ha="center", va="center",
+                transform=ax.transAxes, fontsize=FONT_BASE, color="gray")
+        return
+
+    for col in ("is_best_epoch", "is_overfit_epoch"):
+        if col in df.columns:
+            df[col] = df[col].astype(str).str.lower().map(
+                {"true": True, "false": False, "1": True, "0": False}
+            ).fillna(False)
+
+    best = df[df.get("is_best_epoch", pd.Series([False]*len(df))).values].copy()
+    if best.empty:
+        ax.text(0.5, 0.5, "no best-epoch rows", ha="center", va="center",
+                transform=ax.transAxes, fontsize=FONT_BASE, color="gray")
+        return
+
+    required = {"seq_len", "steps_per_epoch", "input_dim", "hidden_dim", "test_auroc"}
+    if not required.issubset(best.columns):
+        ax.text(0.5, 0.5, "missing cols", ha="center", va="center",
+                transform=ax.transAxes, fontsize=FONT_BASE, color="gray")
+        return
+
+    best["total_flops"] = best.apply(
+        lambda r: _flops_per_step(r["head"], r["seq_len"],
+                                  r["input_dim"], r["hidden_dim"])
+                  * r["steps_per_epoch"] * r["epoch"],
+        axis=1,
+    )
+    best = best.dropna(subset=["total_flops", "test_auroc"])
+    if best.empty:
+        ax.text(0.5, 0.5, "FLOPs NaN", ha="center", va="center",
+                transform=ax.transAxes, fontsize=FONT_BASE, color="gray")
+        return
+
+    # Context colour map (viridis_r, same as original)
+    contexts = sorted(best["context_length"].dropna().unique(),
+                      key=lambda c: CTX_ORDER_LOCAL.index(c)
+                      if c in CTX_ORDER_LOCAL else 99)
+    n = max(len(contexts), 2)
+    cmap = plt.cm.get_cmap("viridis_r", n)
+    ctx_color = {c: cmap(i / (n - 1)) for i, c in enumerate(contexts)}
+
     for head in heads:
-        sub = training_df[(training_df["task"] == task) &
-                          (training_df["head"] == head)].copy()
-        if sub.empty or split_col not in sub.columns:
+        hsub = best[best["head"] == head]
+        if hsub.empty:
             continue
-        sub = sub.dropna(subset=[split_col])
-        if sub.empty:
-            continue
+        sty = HEAD_STYLE.get(head, {"color": "gray", "marker": "o", "label": head})
+        Fs, aucs = [], []
+        for _, row in hsub.iterrows():
+            ctx = str(row["context_length"])
+            ax.scatter(row["total_flops"], row["test_auroc"] * 100,
+                       color=ctx_color.get(ctx, "gray"),
+                       marker=sty["marker"], s=70, zorder=5,
+                       edgecolors=sty["color"], linewidths=1.5)
+            Fs.append(row["total_flops"])
+            aucs.append(row["test_auroc"] * 100)
 
-        # Use total_steps or flops if available, else epoch
-        x_col = "total_flops" if "total_flops" in sub.columns else \
-                "total_steps" if "total_steps" in sub.columns else "epoch"
-        if x_col not in sub.columns:
-            continue
+        # Power-law fit line per head (matches original plot_scaling_laws.py)
+        if _HAS_SCIPY and len(Fs) >= 3:
+            Fs_a  = np.array(Fs,  dtype=float)
+            auc_a = np.array(aucs, dtype=float)
+            try:
+                norm = Fs_a.min()
+                popt, _ = _curve_fit(
+                    _power_law, Fs_a / norm, auc_a,
+                    p0=[0.1, 0.2, auc_a.max()], maxfev=10000,
+                    bounds=([0, 1e-3, 0], [10, 2, 100]),
+                )
+                F_grid = np.linspace(Fs_a.min(), Fs_a.max(), 300)
+                fit    = _power_law(F_grid / norm, *popt)
+                ax.plot(F_grid, fit, color=sty["color"],
+                        lw=2, ls="--", alpha=0.7,
+                        label=f"{sty['label']} fit")
+            except Exception:
+                pass
 
-        sty = HEAD_STYLE.get(head, {"color": "gray", "marker": "o",
-                                    "ls": "-", "label": head})
-        # One point per context length (best val-epoch test AUROC)
-        for ctx_label, grp in sub.groupby("context_length"):
-            best = grp.loc[grp[split_col].idxmax()]
-            x_val = float(best[x_col])
-            y_val = float(best[split_col]) * 100
-            ax.scatter(x_val, y_val, color=sty["color"], s=30,
-                       marker=sty["marker"], zorder=3, alpha=0.85)
-            ax.annotate(ctx_label, (x_val, y_val), fontsize=FONT_ANNOT,
-                        xytext=(2, 2), textcoords="offset points",
-                        color=sty["color"])
-
-        # Dummy line for legend
-        ax.plot([], [], color=sty["color"], ls=sty["ls"],
-                marker=sty["marker"], ms=4, label=sty["label"])
+    # Context colour legend entries
+    for ctx in contexts:
+        ax.scatter([], [], color=ctx_color[ctx], s=40, label=f"L={ctx}")
+    # Head marker legend entries (only if no fit lines were drawn)
+    for head in heads:
+        sty = HEAD_STYLE.get(head, {"color": "gray", "marker": "o", "label": head})
+        ax.scatter([], [], color="gray", marker=sty["marker"],
+                   s=50, label=sty["label"])
 
     ax.set_xscale("log")
-    ax.set_xlabel("Compute proxy", fontsize=FONT_LABEL)
+    ax.set_xlabel("Total training FLOPs", fontsize=FONT_LABEL)
     ax.set_ylabel("Test AUROC (%)", fontsize=FONT_LABEL)
-    ax.legend(fontsize=FONT_ANNOT, frameon=False)
+    ax.legend(fontsize=FONT_ANNOT, frameon=False, handlelength=1.5, ncol=2)
     ax.grid(True, alpha=0.25, lw=0.5)
     _spine_clean(ax)
 
@@ -1063,60 +1173,101 @@ def variance_violin_panel(ax, parquets: dict[str, pd.DataFrame],
 # S-Fig 10 — Reliability / calibration
 # ═══════════════════════════════════════════════════════════════════════════════
 
+def _compute_ece(y_true, prob_pred, n_bins=10):
+    """ECE + calibration curve points. Matches plot_calibration.py."""
+    bins = np.linspace(0, 1, n_bins + 1)
+    ece, mids, fracs, weights = 0.0, [], [], []
+    for lo, hi in zip(bins[:-1], bins[1:]):
+        mask = (prob_pred >= lo) & (prob_pred < hi)
+        n = mask.sum()
+        if n < 2:
+            continue
+        conf = prob_pred[mask].mean()
+        acc  = y_true[mask].mean()
+        w    = n / len(y_true)
+        ece += w * abs(conf - acc)
+        mids.append(conf); fracs.append(acc); weights.append(w)
+    return ece, np.array(mids), np.array(fracs)
+
+
 def reliability_panel(ax, parquets: dict[str, pd.DataFrame],
-                      context: str = "240m",
+                      contexts: list[str] | None = None,
+                      k: int = 5,
                       n_bins: int = 10,
                       prob_col: str = "prob_class1"):
-    """Reliability diagram (calibration) at a specific context length."""
-    if context not in parquets or parquets[context].empty:
+    """Reliability diagram overlaying multiple context lengths.
+
+    Matches plot_calibration.py 2A style:
+      - bar chart + line + dots per context
+      - perfect-calibration diagonal (dashed)
+      - ECE annotated below each context's label in the legend
+      - colours from viridis_r by context length
+
+    contexts: list of context labels to show (default: 3 representatives).
+    k       : windows to aggregate per subject (default 5, matching paper).
+    """
+    avail = [c for c in (contexts or list(CONTEXT_TO_MIN.keys()))
+             if c in parquets and not parquets[c].empty]
+    if not avail:
         ax.text(0.5, 0.5, "no data", ha="center", va="center",
                 transform=ax.transAxes, fontsize=FONT_BASE, color="gray")
         return
 
-    df = parquets[context]
-    if prob_col not in df.columns:
-        return
+    # 3 representative contexts if not specified explicitly
+    if contexts is None:
+        show = [avail[0]]
+        if len(avail) > 2:
+            show.append(avail[len(avail) // 2])
+        show.append(avail[-1])
+        avail = list(dict.fromkeys(show))
 
-    sub = (df.groupby("subject_id")
-           .agg(mean_prob=(prob_col, "mean"), true_label=("true_label", "first"))
-           .reset_index())
+    n = max(len(avail), 2)
+    cmap = plt.cm.get_cmap("viridis_r", n)
+    ctx_color = {c: cmap(i / (n - 1)) for i, c in enumerate(avail)}
 
-    bins = np.linspace(0, 1, n_bins + 1)
-    bin_centers = (bins[:-1] + bins[1:]) / 2
-    bin_accs = []
+    ax.plot([0, 1], [0, 1], "k--", lw=0.8, alpha=0.5, zorder=0)
 
-    for lo, hi in zip(bins[:-1], bins[1:]):
-        mask = (sub["mean_prob"] >= lo) & (sub["mean_prob"] < hi)
-        bin_sub = sub[mask]
-        if len(bin_sub) == 0:
-            bin_accs.append(np.nan)
-        else:
-            bin_accs.append(float(bin_sub["true_label"].mean()))
+    for ctx in avail:
+        df = parquets[ctx]
+        if prob_col not in df.columns:
+            continue
 
-    bin_accs = np.array(bin_accs)
-    valid = ~np.isnan(bin_accs)
+        # Aggregate K evenly-spaced windows per subject
+        rows = []
+        for sid, grp in df.sort_values("window_idx").groupby("subject_id"):
+            if k == "all" or len(grp) <= k:
+                rows.append(grp)
+            else:
+                idx = np.linspace(0, len(grp) - 1, int(k), dtype=int)
+                rows.append(grp.iloc[idx])
+        selected = pd.concat(rows, ignore_index=True) if rows else df
+        sub = (selected.groupby("subject_id")
+               .agg(mean_prob=(prob_col, "mean"),
+                    true_label=("true_label", "first"))
+               .reset_index())
 
-    ax.plot([0, 1], [0, 1], "k--", lw=0.8, alpha=0.6, label="Perfect")
-    ax.bar(bin_centers[valid], bin_accs[valid], width=(bins[1] - bins[0]) * 0.9,
-           color="#3A7EBF", alpha=0.65, edgecolor="white", lw=0.4)
-    ax.plot(bin_centers[valid], bin_accs[valid], "o", color="#3A7EBF",
-            ms=4, zorder=3)
+        if sub.empty or sub["true_label"].nunique() < 2:
+            continue
 
-    # ECE
-    weights = np.array([((sub["mean_prob"] >= lo) & (sub["mean_prob"] < hi)).sum()
-                        for lo, hi in zip(bins[:-1], bins[1:])])
-    n_total = weights.sum()
-    if n_total > 0:
-        ece = float(np.nansum(np.abs(bin_accs - bin_centers) * weights / n_total))
-        ax.text(0.04, 0.95, f"ECE = {ece:.3f}",
-                transform=ax.transAxes, ha="left", va="top",
-                fontsize=FONT_ANNOT, color="gray")
+        ece, mids, fracs = _compute_ece(
+            sub["true_label"].values.astype(float),
+            sub["mean_prob"].values, n_bins=n_bins)
+
+        color = ctx_color[ctx]
+        ctx_min = CONTEXT_TO_MIN.get(ctx, "?")
+        lbl = f"{ctx}  ECE={ece:.3f}"
+
+        if len(mids):
+            ax.bar(mids, fracs, width=0.07, alpha=0.25, color=color,
+                   edgecolor="none")
+            ax.plot(mids, fracs, "o-", color=color, lw=1.4,
+                    ms=4, label=lbl, zorder=3)
 
     ax.set_xlim([0, 1]); ax.set_ylim([0, 1])
     ax.set_xlabel("Mean predicted probability", fontsize=FONT_LABEL)
-    ax.set_ylabel("Fraction positive", fontsize=FONT_LABEL)
-    ax.legend(fontsize=FONT_ANNOT, frameon=False)
-    ax.set_title(f"@ {context}", fontsize=FONT_BASE)
+    ax.set_ylabel("Fraction of positives", fontsize=FONT_LABEL)
+    ax.legend(fontsize=FONT_ANNOT, frameon=False, handlelength=2.5,
+              loc="lower right")
     _spine_clean(ax)
 
 
@@ -1195,7 +1346,7 @@ def position_panel(ax, parquets: dict[str, pd.DataFrame],
             continue
         df = df.copy()
         df["norm_pos"] = (df.groupby("subject_id")["window_idx"]
-                          .transform(lambda x: x / x.max().clip(lower=1)))
+                          .transform(lambda x: x / max(x.max(), 1)))
         df["pos_bin"] = pd.cut(df["norm_pos"], bins=bins, labels=False,
                                include_lowest=True)
         binned = (df.groupby("pos_bin")[prob_col]
