@@ -766,10 +766,13 @@ def waterfall_panel(ax, analysis_df: pd.DataFrame,
     """Waterfall: decompose AUROC gains into aggregation, context, architecture.
 
     Steps:
-      Start : MeanPool @ 30s, K=1
-      +Agg  : MeanPool @ 30s, K=5
-      +Ctx  : MeanPool @ 240m, K=5
-      +Arch : Transformer @ 240m, K=5
+      Start : MeanPool @ 30s, K=1     (single short window, no aggregation)
+      +Agg  : MeanPool @ 30s, K=all   (full-night aggregation, short context)
+      +Ctx  : MeanPool @ 240m, K=all  (longest context, full aggregation, no arch gain)
+      +Arch : Transformer @ 240m, K=all (architecture upgrade on top)
+
+    K=all is used for the post-aggregation steps because K=5 is not achievable at
+    240m context for most subjects (only ~2 non-overlapping windows fit in 8h recording).
     """
     def _get(head, ctx, k):
         k_str = str(k)
@@ -783,23 +786,17 @@ def waterfall_panel(ax, analysis_df: pd.DataFrame,
         return float(sub[metric].iloc[0]) if not sub.empty else np.nan
 
     v_start = _get("mean_pool", "30s", 1)
-    v_agg   = _get("mean_pool", "30s", 5)
-    v_ctx   = _get("mean_pool", "240m", 5)
-    v_arch  = _get("transformer", "240m", 5)
-
-    if any(np.isnan(v) for v in [v_start, v_agg, v_ctx, v_arch]):
-        # Fall back to K=all for aggregation step
-        v_agg_all = _get("mean_pool", "30s", "all")
-        if not np.isnan(v_agg_all):
-            v_agg = v_agg_all
+    v_agg   = _get("mean_pool", "30s", "all")   # K=all at short context
+    v_ctx   = _get("mean_pool", "240m", "all")  # K=all at long context
+    v_arch  = _get("transformer", "240m", "all")  # Transformer, K=all, long context
 
     # Compute increments
     deltas = {
-        "Base\n(MeanPool\n30s K=1)": (0, v_start),
-        "+Aggregation\n(K=1→5)":     (v_start, v_agg - v_start),
-        "+Context\n(30s→240m)":      (v_agg,   v_ctx  - v_agg),
-        "+Architecture\n(→Transf.)": (v_ctx,   v_arch - v_ctx),
-        "Final\n(Transf.\n240m K=5)": (0, v_arch),
+        "Base\n(MeanPool\n30s K=1)":  (0, v_start),
+        "+Aggregation\n(K=1→all)":    (v_start, v_agg - v_start),
+        "+Context\n(30s→240m)":       (v_agg,   v_ctx  - v_agg),
+        "+Architecture\n(→Transf.)":  (v_ctx,   v_arch - v_ctx),
+        "Final\n(Transf.\n240m K=all)": (0, v_arch),
     }
 
     is_final = [False, False, False, False, True]
