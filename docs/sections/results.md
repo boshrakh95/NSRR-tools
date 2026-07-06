@@ -54,13 +54,27 @@ Note: Channel expansion (fast vs full) is a clear finding but space is tight. Pr
 supplementary figure unless sleep staging is still pending at submission — in that case promote
 channel comparison to main Fig 5 and add sleep staging later.
 
+> **[RENAME NOTE — do before final submission]**
+> Inference K (post-hoc window count swept in results) and training K (=5, fixed in Methods)
+> both use the letter K, causing reader confusion. Resolution: rename training K to **W**
+> (or "w windows per subject per epoch" in prose). All figures/tables use K for inference —
+> do NOT rename those. Only rename the training count in Methods §III-F and any table caption
+> that says "training always used K=5 overlapping windows". Replace every such occurrence with
+> "training used w=5 windows per subject per epoch" or "Training sampled w=5 overlapping
+> windows per subject per epoch (Section III-F)."
+
 ### Main paper tables (Results section)
+
+> **[TABLE REDESIGN — see TABLES_PLAN.md for full spec]**
+> The table structure below reflects the NEW plan agreed 2026-07-04. See
+> `docs/TABLES_PLAN.md` for the authoritative spec of each table's columns,
+> numbers, placement, and supplementary counterparts.
 
 | # | Content | File | Status |
 |---|---|---|---|
-| Table II | Main performance: AUROC per task/head, K=5 and K=all at best L | `table1_peak_auroc_fast.{md,tex}` | EXISTS (regenerate after MeanPool) |
-| Table III | Saturation: L* per task/head + ΔAUROC from 30s | `table2_lstar_fast.{md,tex}` | EXISTS (regenerate after MeanPool) |
-| Table IV | Head comparison at L* — LSTM, Transformer, MeanPool | `table5_heads_fast.{md,tex}` | PARTIAL (needs MeanPool) |
+| Table II | Saturation + aggregation (H1+H3 unified) | NEW — see TABLES_PLAN.md | IMPLEMENTED |
+| Table III | L* per task + Δ from 30s baseline (H1 detail) | see TABLES_PLAN.md | IMPLEMENTED |
+| Table IV | Head comparison at LSTM L* (H4) | see TABLES_PLAN.md | IMPLEMENTED |
 | Table V | Modality ablation — AUROC per condition per task | `table6_modality.{md,tex}` | **EXISTS, complete** |
 
 Channel comparison (fast vs full): fold into Table II as extra columns or present inline in text.
