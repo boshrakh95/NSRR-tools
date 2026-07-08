@@ -1453,3 +1453,85 @@ def position_panel(ax, parquets: dict[str, pd.DataFrame],
               frameon=False)
     ax.grid(True, alpha=0.25, lw=0.5)
     _spine_clean(ax)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Main Fig 6 — Waterfall gain decomposition
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def waterfall_panel(ax, analysis_df: pd.DataFrame,
+                    task: str,
+                    metric: str = "mean_prob_auroc"):
+    """Waterfall: decompose AUROC gain into aggregation, context, architecture.
+
+    Steps (left → right):
+      Base     : MeanPool @ 30s, K=1      (minimal baseline)
+      +Agg     : MeanPool @ 30s, K=all    (inference aggregation gain)
+      +Context : MeanPool @ 240m, K=all   (training context gain)
+      +Arch    : Transformer @ 240m, K=all (architecture gain)
+      Final    : Transformer @ 240m, K=all (stacked total)
+
+    analysis_df must include all K values — load with load_analysis_all_k().
+    """
+    def _get(head, ctx, k):
+        sub = analysis_df[
+            (analysis_df["task"] == task) &
+            (analysis_df["head"] == head) &
+            (analysis_df["context_length"] == ctx) &
+            (analysis_df["k"].astype(str) == str(k)) &
+            analysis_df[metric].notna()
+        ]
+        return float(sub[metric].iloc[0]) if not sub.empty else np.nan
+
+    v_start = _get("mean_pool",    "30s",  1)
+    v_agg   = _get("mean_pool",    "30s",  "all")
+    v_ctx   = _get("mean_pool",    "240m", "all")
+    v_arch  = _get("transformer",  "240m", "all")
+
+    steps = {
+        "Base\n(MeanPool\n30s K=1)":       (0,       v_start),
+        "+Aggregation\n(K=1→all)":         (v_start, v_agg  - v_start),
+        "+Context\n(30s→240m)":            (v_agg,   v_ctx  - v_agg),
+        "+Architecture\n(→Transf.)":       (v_ctx,   v_arch - v_ctx),
+        "Final\n(Transf.\n240m K=all)":    (0,       v_arch),
+    }
+    is_final = [False, False, False, False, True]
+
+    _C_BASE  = "#3A7EBF"
+    _C_POS   = "#44A15E"
+    _C_NEG   = "#C94040"
+    _C_FINAL = "#E86A33"
+
+    bottoms, heights, colors = [], [], []
+    for i, (bot, dlt) in enumerate(steps.values()):
+        if is_final[i]:
+            bottoms.append(0);         heights.append(v_arch); colors.append(_C_FINAL)
+        else:
+            bottoms.append(bot);       heights.append(abs(dlt))
+            colors.append(_C_BASE if i == 0 else (_C_POS if dlt >= 0 else _C_NEG))
+
+    x = np.arange(len(steps))
+    bars = ax.bar(x, heights, bottom=bottoms, color=colors,
+                  edgecolor="white", linewidth=0.5, width=0.55)
+
+    for i, (bar, (lbl, (bot, dlt))) in enumerate(zip(bars, steps.items())):
+        top = v_arch if is_final[i] else (bot + dlt)
+        prefix = "+" if (not is_final[i] and i > 0 and dlt > 0) else ""
+        val_str = f"{v_arch:.3f}" if is_final[i] else f"{prefix}{dlt:.3f}"
+        ax.text(bar.get_x() + bar.get_width() / 2,
+                top + 0.004, val_str,
+                ha="center", va="bottom", fontsize=FONT_ANNOT,
+                fontweight="bold" if is_final[i] else "normal")
+
+    for i in range(len(steps) - 2):
+        bot, dlt = list(steps.values())[i]
+        ax.plot([x[i] + 0.275, x[i + 1] - 0.275], [bot + dlt, bot + dlt],
+                color="#888888", linewidth=0.8, linestyle=":")
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(list(steps.keys()), fontsize=FONT_BASE)
+    ax.set_ylabel("AUROC", fontsize=FONT_LABEL)
+    ax.set_ylim(max(0, min(v_start, v_agg, v_ctx, v_arch) - 0.06),
+                min(1.0, max(v_start, v_agg, v_ctx, v_arch) + 0.05))
+    ax.yaxis.set_major_formatter(mticker.FormatStrFormatter("%.2f"))
+    _spine_clean(ax)

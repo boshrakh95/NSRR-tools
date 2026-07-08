@@ -45,6 +45,12 @@ def load_analysis(experiment: str = "phase0_v3", split: str = "test",
     return df.reset_index(drop=True)
 
 
+def load_analysis_all_k(experiment: str = "phase0_v3",
+                        split: str = "test") -> pd.DataFrame:
+    """Load analysis.csv keeping all K values (needed for waterfall decomposition)."""
+    return load_analysis(experiment=experiment, split=split, k=None)
+
+
 def load_training(experiment: str = "phase0_v3") -> pd.DataFrame:
     p = _final(experiment) / "collected" / "training.csv"
     return pd.read_csv(p)
