@@ -201,8 +201,12 @@ def _interp(lookup, ctx_min, k):
 
 
 def kvsk_panel(ax, heatmap_df: pd.DataFrame, col: str = "auroc",
-               budget: float = 480.0, show_iso: bool = True):
-    """AUROC vs K (log-x) with iso-compute lines."""
+               budget: float = 480.0, show_iso: bool = True,
+               show_legend: bool = True):
+    """AUROC vs K (log-x) with iso-compute lines.
+
+    show_legend: set False when the caller will draw a single shared legend.
+    """
     if heatmap_df.empty:
         ax.text(0.5, 0.5, "no data", ha="center", va="center",
                 transform=ax.transAxes, fontsize=FONT_BASE, color="gray")
@@ -236,16 +240,19 @@ def kvsk_panel(ax, heatmap_df: pd.DataFrame, col: str = "auroc",
                 lt = f"{cb}m" if cb < 60 else f"{cb // 60}h"
                 ax.plot(ks_iso, [v * 100 for v in vs_iso],
                         color=iso_colors[ic], lw=1.2, ls="--", alpha=0.75)
-                ax.annotate(lt, (ks_iso[-1], vs_iso[-1] * 100), fontsize=FONT_ANNOT,
+                # Label at the LEFT end of the iso line (small K, where AUROC
+                # curves are most spread apart and text is readable).
+                ax.annotate(lt, (ks_iso[0], vs_iso[0] * 100), fontsize=FONT_ANNOT,
                             fontweight="bold", color=iso_colors[ic],
-                            ha="left", va="bottom", xytext=(2, 1),
+                            ha="left", va="bottom", xytext=(2, 2),
                             textcoords="offset points")
 
     ax.set_xscale("log")
     ax.set_xlabel("K (windows per subject)", fontsize=FONT_LABEL)
     ax.set_ylabel("AUROC (%)", fontsize=FONT_LABEL)
-    ax.legend(title="Context", fontsize=FONT_ANNOT, title_fontsize=FONT_ANNOT,
-              frameon=False, loc="lower right")
+    if show_legend:
+        ax.legend(title="Context", fontsize=FONT_ANNOT, title_fontsize=FONT_ANNOT,
+                  frameon=False, loc="lower right")
     ax.grid(True, alpha=0.25, lw=0.5)
     _spine_clean(ax)
 
@@ -454,6 +461,89 @@ def pareto_panel(ax, heatmap_df: pd.DataFrame, col: str = "auroc",
     ax.set_ylabel("Best AUROC (%)", fontsize=FONT_LABEL)
     ax.legend(title="Optimal L", fontsize=FONT_ANNOT, title_fontsize=FONT_ANNOT,
               frameon=False, loc="lower right")
+    ax.grid(True, alpha=0.25, lw=0.5)
+    _spine_clean(ax)
+
+
+def combined_iso_panel(ax, heatmap_df: pd.DataFrame, col: str = "auroc",
+                       alpha_bg: float = 0.20, budget: float = 480.0):
+    """Overlay of vs-total curves (semi-transparent) + Pareto frontier (opaque).
+
+    Background: all (L, K) configurations as faded lines, one colour per L.
+    Foreground: Pareto-optimal frontier, same colour scheme, full opacity,
+                annotated with the optimal L label at each segment midpoint.
+    No legend drawn — caller rebuilds handles at alpha=1 for a shared legend.
+    """
+    if heatmap_df.empty:
+        ax.text(0.5, 0.5, "no data", ha="center", va="center",
+                transform=ax.transAxes, fontsize=FONT_BASE, color="gray")
+        return
+
+    contexts = sorted(heatmap_df["context_length_min"].unique())
+    palette  = _palette(len(contexts))
+    lookup   = _build_ctx_lookup(heatmap_df, col)
+    ctx_lbl  = {ctx: heatmap_df[heatmap_df["context_length_min"] == ctx]
+                ["context_label"].iloc[0]
+                for ctx in contexts
+                if not heatmap_df[heatmap_df["context_length_min"] == ctx].empty}
+
+    # ── Background: all vs-total lines (faded) ───────────────────────────────
+    for i, ctx in enumerate(contexts):
+        if ctx not in lookup:
+            continue
+        ks, vs = lookup[ctx]
+        ax.plot(ks * ctx, vs * 100,
+                color=palette[i], lw=1.0, alpha=alpha_bg,
+                label=ctx_lbl.get(ctx, ""))
+
+    # ── Foreground: Pareto-optimal frontier ──────────────────────────────────
+    budgets_sweep = np.unique(np.concatenate([
+        np.arange(0.5, 20, 0.5), np.arange(20, 100, 2),
+        np.arange(100, budget + 1, 5),
+    ]))
+    opt_b, opt_v, opt_c, opt_k = [], [], [], []
+    for b in budgets_sweep:
+        best_v, best_ctx, best_k_val = -1.0, None, None
+        for ctx in contexts:
+            if ctx not in lookup:
+                continue
+            ks, _ = lookup[ctx]
+            k_use = min(b / ctx, ks[-1])
+            if k_use < 1:
+                continue
+            v = _interp(lookup, ctx, k_use)
+            if not np.isnan(v) and v > best_v:
+                best_v, best_ctx, best_k_val = v, ctx, k_use
+        if best_ctx is not None:
+            opt_b.append(b); opt_v.append(best_v)
+            opt_c.append(best_ctx); opt_k.append(best_k_val)
+
+    if not opt_b:
+        return
+
+    ctx_to_color = {c: palette[i] for i, c in enumerate(contexts)}
+    segments, s = [], 0
+    for j in range(1, len(opt_b)):
+        if opt_c[j] != opt_c[j - 1]:
+            segments.append((s, j)); s = j
+    segments.append((s, len(opt_b)))
+
+    for s, e in segments:
+        ctx = opt_c[s]
+        ax.plot(opt_b[s:e], [v * 100 for v in opt_v[s:e]],
+                color=ctx_to_color[ctx], lw=2.5, solid_capstyle="round",
+                alpha=1.0, zorder=3)
+        mid = (s + e) // 2
+        ax.annotate(ctx_lbl.get(ctx, ''),
+                    (opt_b[mid], opt_v[mid] * 100),
+                    fontsize=FONT_ANNOT, fontweight="bold",
+                    color=ctx_to_color[ctx],
+                    ha="center", va="bottom",
+                    xytext=(0, 4), textcoords="offset points")
+
+    ax.set_xscale("log")
+    ax.set_xlabel("Total context (min) = L × K", fontsize=FONT_LABEL)
+    ax.set_ylabel("AUROC (%)", fontsize=FONT_LABEL)
     ax.grid(True, alpha=0.25, lw=0.5)
     _spine_clean(ax)
 

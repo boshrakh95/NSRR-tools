@@ -1,5 +1,5 @@
 # TABLES_PLAN.md — Comprehensive Table Redesign
-*Agreed: 2026-07-04. Implements the restructured table set for TBME submission.*
+*Agreed: 2026-07-04. Revised: 2026-07-06 (full restructure implemented).*
 *See results.md → [RENAME NOTE] and methods.md → [RENAME NOTE] for the training-w rename.*
 
 ---
@@ -11,6 +11,7 @@
 3. **K unambiguously means inference-time aggregation count** throughout all tables. Training windows are described as w=5 in Methods, never K.
 4. **No table repeats another**; supplementary tables add at least one new dimension (more tasks, more K values, bootstrap CIs, per-cohort breakdown).
 5. **K_max at long contexts is small** (≈2–6 windows at 80–240m). Tables that show K=5 and K=K_max will appear nearly identical at these contexts, and a footnote or column header explains this rather than hiding it.
+6. **K_max shown explicitly** in each table where relevant (column header or explicit K_max column).
 
 ---
 
@@ -19,171 +20,123 @@
 | Symbol | Meaning |
 |--------|---------|
 | $L$ | Training context length (minutes) |
-| $L^*$ | Saturation threshold: smallest $L$ within 0.005 AUROC of peak |
+| $L^*$ | Saturation threshold: smallest $L$ within 0.005 AUROC of peak (defined at K=K_max) |
 | $K$ | Inference-time aggregation count (windows averaged per subject) |
 | $K_{\max}$ | Maximum $K$ available at context $L$ = $\lfloor T/N \rfloor$ |
 | $w$ | Training windows per subject per epoch (fixed at 5; *not* $K$) |
-| $\Delta$ | AUROC gain from 30s,K=1 baseline to peak (best L, K=K_max) |
+| $\Delta$ | AUROC gain (definition varies by table — see each caption) |
 
 ---
 
-## Main paper tables
+## Main paper tables (7 total)
 
-### Table I — Task Definitions (KEEP, minor caption update)
-*Current: tab:tasks. No structural change needed.*
-
-**Caption update:** Add footnote clarifying that $K$ throughout the paper refers to inference-time aggregation count, distinct from the training window count $w=5$ (Section~III-F).
+### Table I — Task Definitions (UNCHANGED)
+*Label: tab:tasks. No structural change needed.*
 
 ---
 
-### Table II — Saturation and Aggregation (NEW unified table; replaces current Tables II+III)
-*Answers H1 (context saturation) and H3 (aggregation saturation) together.*
+### Table II — Full Context-Length Sweep (NEW)
+*Answers H1+H3 together by showing the full 6L × 3K matrix.*
+*Label: tab:sweep*
+
+**What it shows:** LSTM, all 7 tasks, all 6 context lengths, K=1 / K=5 / K=K_max.
+**Bold entries** mark L* per task (L* defined at K=K_max; same bold across all 3 K-rows).
+**K_max ≈ (1062, 53, 13, 6, 4, 2)** shown in parentheses in the context header row.
+"---" entries: K=5 unavailable at 240m for most tasks (K_max≈2).
+
+**Columns:** Task | K | 30s | 10m | 40m | 80m | 120m | 240m
+
+**Key numbers (from analysis.csv):**
+- Sex (L*=120m): K=1: 0.687, 0.724, 0.750, 0.785, **0.807**, 0.844
+- Age (L*=80m): K=all: 0.865, 0.870, 0.887, **0.890**, 0.893, 0.885
+- Apnea (L*=120m): K=1: 0.614, 0.635, 0.645, 0.688, **0.727**, 0.787
+- BMI (L*=10m): K=all: 0.760, **0.762**, 0.756, 0.767, 0.756, 0.748
+- Sleep eff. (L*=240m): K=all: 0.697, 0.717, 0.731, 0.759, 0.778, **0.788**
+
+---
+
+### Table III — Saturation Context Comparison (REPLACES OLD TABLE II)
+*Answers H1 (context gain) and H3 (aggregation gain) in one compact table.*
 *Label: tab:saturation*
 
-**What it shows:** For LSTM head, each row is one task. Columns show:
-- AUROC@30s, K=1 — the absolute worst-case baseline (single 30s window, no aggregation)
-- L\* — saturation threshold
-- AUROC@L\*, K=1 — single-window deployment at the recommended context
-- AUROC@L\*, K=5 — 5-window deployment (practical scenario)
-- AUROC@L\*, K=K_max — full-night ceiling at L\*
-- Δ — peak AUROC minus AUROC@30s,K=1 (total gain)
+**What it shows:** For each task, AUROC at 30s (K=1, K=5, K=all) AND at L* (K=1, K=5, K=all).
+L* and K_max@L* are explicit columns.
+Δ = AUROC@L*,K=K_max − AUROC@30s,K=1 (total gain from worst to ceiling at L*).
 
-**Why this works:** A reader can read across one row to see:
-- Column 1→3: effect of training context alone (K=1 at both ends)
-- Column 3→4→5: effect of inference aggregation at fixed L\*
-- The K=5≈K_max near-equality at long contexts is *visible and expected*: K_max≈2–6 at 120–240m
+**Column spec:** Task | N_test | @30s K=1,5,all | L* | K_max@L* | @L* K=1,5,all | Δ
 
-**LaTeX structure:** `table*` (full width, two columns).
+**Why better than old Table II:** 
+- Old table only showed @30s K=1 and @L* K=1,5,all — incomplete 30s picture
+- L* was right next to @30s column, confusing readers about which baseline it belongs to
+- New table clearly separates the two blocks with a vertical line and explicit block headers
+- K_max@L* shown explicitly so reader understands why K=5≈K_max at long L*
 
-**Numbers (LSTM, fast-channel, test split):**
-
-| Task | N_test | AUROC@30s,K=1 | L\* | AUROC@L\*,K=1 | AUROC@L\*,K=5 | AUROC@L\*,K_max | K_max@L\* | Δ |
-|------|--------|---------------|-----|----------------|----------------|-----------------|----------|---|
-| Sex | 1430 | 0.687 | 120m | 0.807 | 0.872 | 0.872 | 4 | +0.047 |
-| Age group | 1859 | 0.798 | 80m | 0.843 | 0.890 | 0.890 | 6 | +0.028 |
-| Apnea | 2054 | 0.614 | 120m | 0.727 | 0.831 | 0.832 | 4 | +0.074 |
-| BMI | 1856 | 0.676 | 10m | 0.678 | 0.745 | 0.762 | 56 | +0.006 |
-| Sleep eff. | 2023 | 0.649 | 240m | 0.737 | 0.788 | 0.788 | 2 | +0.091 |
-| Depression† | 229 | 0.777 | 10m | 0.788 | 0.776 | 0.770 | 50 | +0.013 |
-| OSA-APPLES† | 161 | 0.555 | 40m | 0.641 | 0.792 | 0.834 | 12 | +0.064 |
-
-*†Supplementary tasks: small test set, interpret cautiously.*
-
-**Caption template:**
-> Saturation and aggregation results (LSTM, fast-channel, test split). Each row shows the
-> progression from the single-window 30s baseline (first context, K=1) to the saturation point
-> L\* (K=1, 5, K_max). K denotes the \emph{inference-time} aggregation count — number of
-> non-overlapping windows averaged per subject; training used w=5 overlapping windows per
-> subject per epoch (Section~III-F). K_max = floor(T/N) is small at long contexts (≈2–4
-> at L=120–240m), explaining why K=5 ≈ K_max there. Δ = peak AUROC − AUROC@30s,K=1.
-> Tasks marked † have small test sets (N<250); treat with caution.
-
-**Story the reader extracts:**
-- Going from 30s,K=1 to L\*,K=1: pure effect of training context (H1 — large for apnea, sleep eff.)
-- Going from L\*,K=1 to L\*,K=5: aggregation gain at the right context (H3 — large for BMI/OSA at short L\*, negligible at long L\*)
-- Going from L\*,K=5 to L\*,K_max: additional gain beyond 5 windows (negligible at long L\*)
+**Δ definition note:** Different from Table IV Δ (which uses K=K_max at both ends for a pure context comparison). Table III Δ shows total gain including aggregation benefit.
 
 ---
 
-### Table III — L\* and Context Gain per Head (replaces current Table III/tab:lstar)
-*Answers H1 for LSTM and Transformer side-by-side with explicit AUROC@30s.*
+### Table IV — L* and Context Gain per Head (UNCHANGED from old Table III)
 *Label: tab:lstar*
 
-**What it shows:** For each task and both heads, L\* and the absolute AUROC gain from baseline to best context.
-
-**Columns:** Task | LSTM L\* | LSTM AUROC@30s | LSTM best AUROC | LSTM Δ | Transformer L\* | Transformer AUROC@30s | Transformer best AUROC | Transformer Δ
-
-This is wide — consider two sub-tables or compressing. A compact version:
-
-| Task | LSTM L\* | LSTM Δ | Transformer L\* | Transformer Δ |
-|------|----------|--------|-----------------|----------------|
-| Sleep efficiency | 240m | +0.091 | 240m | +0.124 |
-| Apnea | 120m | +0.074 | 120m | +0.103 |
-| OSA-APPLES† | 40m | +0.064 | 80m | +0.098 |
-| Sex | 120m | +0.047 | 240m | +0.079 |
-| Age group | 80m | +0.028 | 120m | +0.051 |
-| Depression† | 10m | +0.013 | 30s | +0.000 |
-| BMI | 10m | +0.006 | 240m | +0.030 |
-
-**Caption template:**
-> Saturation context L\* and AUROC gain from 30-second baseline to best context (K=K_max).
-> Δ = best AUROC − AUROC@30s. Tasks sorted by LSTM Δ descending. Transformer Δ generally
-> exceeds LSTM Δ; both heads agree on task ordering. Tasks marked † have small test sets.
-
-**Note:** The Δ here is AUROC_peak − AUROC@30s (total gain, "peak gain" definition —
-consistent with supplementary sensitivity table and the IV-F/IV-G text). This is distinct
-from gain-to-L\* used in Table II.
+**Δ here** = best AUROC(K=K_max) − AUROC@30s(K=K_max) — pure context gain with K fixed.
+Tasks sorted by LSTM Δ descending. Transformer Δ > LSTM Δ for tasks with L*≥80m.
 
 ---
 
-### Table IV — Head Comparison at LSTM L\* (simplify current Table IV/tab:heads)
-*Answers H4: temporal heads vs MeanPool.*
+### Table V — Head Comparison Across All Contexts (REPLACES OLD TABLE IV)
+*Answers H4 fully, showing how temporal advantage grows with L.*
 *Label: tab:heads*
 
-**Columns:** Task | L\* | LSTM | Transformer | MeanPool | Temporal adv.
+**What it shows:** LSTM / Transformer / MeanPool at K=K_max, all 6 context lengths per task.
+Trans. adv. = Transformer − MeanPool (positive = temporal integration helps).
+**Bold rows** mark L* per task.
 
-All values at K=K_max (K_max at LSTM's L\*). Caption must note K_max is small at long L\*.
+**Column spec:** Task | L | LSTM | Transformer | MeanPool | Trans. adv.
 
-| Task | L\* | LSTM | Transformer | MeanPool | Temp. adv. |
-|------|-----|------|-------------|----------|------------|
-| Sex | 120m | 0.872 | 0.905 | 0.815 | +0.057 |
-| Age group | 80m | 0.890 | 0.900 | 0.843 | +0.047 |
-| Apnea | 120m | 0.832 | 0.857 | 0.764 | +0.068 |
-| BMI | 10m | 0.762 | 0.755 | 0.734 | +0.028 |
-| Sleep eff. | 240m | 0.788 | 0.831 | 0.760 | +0.028 |
+**Key findings visible in table:**
+- Trans. adv. grows with L for apnea (0.028@30s → 0.093@120m) and sex (0.052 → 0.090)
+- BMI: flat Trans. adv. (0.018–0.031) across all L → no temporal structure
+- Age at 30s: LSTM (0.865) > Transformer (0.854) — only task/context where LSTM leads
+- Sleep eff.: Trans. adv. rises from 0.013@30s to 0.071@240m (L*)
 
-All values from table5_heads_fast.csv (K=all at LSTM L\*). Temporal adv. = LSTM − MeanPool.
-
----
-
-### Table V — Modality Ablation (KEEP current Table V/tab:modality)
-*No structural changes needed. Numbers verified correct.*
-*Only change: add the comment about sleep efficiency using L=120m ≠ L\*=240m (already done as LaTeX comment).*
+**Change from old Table IV:**
+- Was single-row per task at L* only; now 6 rows per task (all contexts)
+- Temp. adv. was LSTM−MeanPool; now Transformer−MeanPool (more informative for H4)
+- Made table* (full width) for readability of 30-row table
 
 ---
 
-## Supplementary tables
+### Table VI — Iso-Compute Comparison, 5 Tasks (REPLACES OLD TABLE V)
+*Answers H2 with full task coverage.*
+*Label: tab:isocompute*
 
-### Supp Table S-I — Excluded Subjects (KEEP current tab:supp-excluded)
+**What it shows:** Best AUROC and optimal (L, K) at each budget for 5 tasks.
+Uses compact "Lm/K=N" notation. Table* (full width). Uses \footnotesize for fit.
 
-### Supp Table S-II — Per-Task Subject Counts (KEEP current tab:supp-task-n)
+**Tasks:** Sex, Apnea, Sleep efficiency, Age group, BMI
+**Budgets:** 40, 80, 120, 240, 480 min
 
-### Supp Table S-III — Bandpass Filter Parameters (KEEP current tab:supp-filters)
+**Key correction from old Table V:**
+- Apnea B=240: was (120m, K=2)→0.816; corrected to (80m, K=3)→0.822 (actual best)
 
-### Supp Table S-IV — K-Grid for Sex Classification (KEEP current tab:supp-kgrid)
-*This is the detailed K×L aggregation table. Already correct.*
+**Key new findings:**
+- Sleep efficiency at 40-80m: best is (30s, K=80/160)→0.707 = K_max ceiling → short context useless for this task
+- BMI: near-flat across all budgets (0.747–0.775) → context-insensitive
+- Age at B=120m: single 120m window (120m/K=1→0.874) matches 10m×12 windows → context efficient
 
-**Optionally extend:** Add a second row block for one more task (e.g., apnea or sleep eff.) to show the contrast between a task with high vs low context sensitivity.
+---
 
-### Supp Table S-V — Cross-Task Context Sensitivity (UPDATE to add AUROC@30s explicitly)
-*Current shows: AUROC@30s | Best AUROC | Δ | L\**
-*Keep as-is — the "Best AUROC" column is peak AUROC (same Δ convention as Table III in main).*
+### Table VII — Modality Group Ablation (UNCHANGED from old Table VI)
+*Label: tab:modality. Numbers verified correct.*
+*Note: Sleep efficiency evaluated at L=120m (not L*=240m) to preserve inference windows.*
 
-### Supp Table S-VI — Extended Performance with Bootstrap CIs (KEEP current tab:supp-ci)
+---
 
-### Supp Table S-VII — Per-Cohort AUROC Breakdown (KEEP current tab:supp-cohort)
+## Supplementary tables (all retained)
 
-### Supp Table S-VIII — Post-Hoc Threshold Tuning (KEEP current tab:supp-threshold)
-
-### Supp Table S-IX (NEW) — Aggregation Saturation Summary, All Tasks
-*Currently only sex classification is shown (S-IV). Extend to cover all 5 main tasks.*
-
-**What it shows:** For each of the 5 main tasks, AUROC at K=1, K=5, K=10, K_max at L\*.
-Illustrates H3 (aggregation saturation) across tasks consistently.
-
-| Task | L\* | K_max | K=1 | K=5 | K=10 | K=K_max |
-|------|-----|-------|-----|-----|------|---------|
-| Sex (LSTM) | 120m | 4 | 0.807 | 0.872 | — | 0.872 |
-| Age (LSTM) | 80m | 6 | 0.843 | 0.890 | 0.890 | 0.890 |
-| Apnea (LSTM) | 120m | 4 | 0.727 | 0.831 | — | 0.832 |
-| BMI (LSTM) | 10m | 56 | 0.678 | 0.745 | 0.762 | 0.762 |
-| Sleep eff. (LSTM) | 240m | 2 | 0.737 | 0.788† | — | 0.788 |
-
-*†At L=240m K_max=2, so K=5 is not available; the value shown is K=K_max=2.*
-
-Footnote: K=10 shown with "—" where K_max < 10 for that context.
-
-This table directly supports the claim "K=5 recovers >99% of K_max AUROC at L≥40m" with numbers.
+All supplementary table labels and content unchanged. Updated references:
+- "main paper Table~V" → "main paper Table~VII" (3 locations in supplementary.tex)
+- Supp Table S-IX (aggregation saturation, all tasks): still pending
 
 ---
 
@@ -191,27 +144,29 @@ This table directly supports the claim "K=5 recovers >99% of K_max AUROC at L≥
 
 | Hypothesis | Primary evidence | Table | Section |
 |------------|-----------------|-------|---------|
-| H1 Context saturation | AUROC rises with L, reaches L\* | Table II (K=1 col), Table III (Δ) | IV-A |
-| H2 Iso-compute (rejected) | Longer L wins at equal L×K | main_fig3 (heatmap) | IV-D |
-| H3 Aggregation saturates | K=5 ≈ K_max at L≥40m | Table II (K=5 vs K_max cols), Supp S-IV, Supp S-IX | IV-C |
-| H4 Temporal heads | LSTM/Transformer > MeanPool | Table IV (tab:heads) | IV-B |
-| Ablation | Modality contributions | Table V (tab:modality) | IV-I |
+| H1 Context saturation | Full sweep + L* per task | Table II (sweep) + III (saturation) + IV (lstar Δ) | IV-A |
+| H2 Iso-compute (partial reject) | Best (L,K) per budget, 5 tasks | Table VI (isocompute) + Fig.3 heatmap | IV-D |
+| H3 Aggregation saturates | K=1→5→all at L* | Table III (saturation) + Supp S-IX | IV-C |
+| H4 Temporal heads | Trans adv. grows with L | Table V (heads, all contexts) | IV-B |
+| Ablation | Modality contributions | Table VII (modality) | IV-I |
 
 ---
 
 ## Implementation checklist
 
-- [x] methods.md: training-K rename note added
-- [x] results.md: rename note + table redesign reference added
-- [x] generic-color.tex Methods: w=5 introduced, defined clearly
-- [x] generic-color.tex Table I caption: updated to use w=5
-- [ ] generic-color.tex: implement new Table II (unified saturation+aggregation)
-- [ ] generic-color.tex: update Table III (tab:lstar) caption to reflect "peak gain" definition
-- [ ] generic-color.tex: Table IV (tab:heads) — verify age transformer 0.900 already corrected ✓
-- [ ] generic-color.tex: add cross-reference sentences to results sections pointing to new Table II
-- [ ] supplementary.tex: add Supp Table S-IX (aggregation saturation, all tasks)
-- [ ] supplementary.tex: update S-IV caption to note K=5 unavailable at long L
-- [ ] Final review: all numbers cross-checked against collected CSV
+- [x] generic-color.tex: Table I caption — no change needed
+- [x] generic-color.tex: Table II (tab:sweep) — NEW full sweep table added
+- [x] generic-color.tex: Table III (tab:saturation) — new 30s+L* comparison
+- [x] generic-color.tex: Table IV (tab:lstar) — unchanged
+- [x] generic-color.tex: Table V (tab:heads) — all contexts, Trans-MP temp. adv.
+- [x] generic-color.tex: Table VI (tab:isocompute) — 5 tasks, table*, apnea B=240 corrected
+- [x] generic-color.tex: Table VII (tab:modality) — unchanged content, auto-renumbered
+- [x] generic-color.tex Section IV-A text — references new Tables II+III+IV
+- [x] generic-color.tex Section IV-B text — updated for expanded head comparison
+- [x] generic-color.tex Section IV-D text — updated for 5-task iso-compute
+- [x] supplementary.tex — Table~V → Table~VII (3 locations)
+- [ ] supplementary.tex: add Supp Table S-IX (aggregation saturation, all tasks) — PENDING
+- [ ] Final review: compile both documents, check all numbers vs CSV
 
 ---
 
@@ -219,8 +174,8 @@ This table directly supports the claim "K=5 recovers >99% of K_max AUROC at L≥
 
 All numbers from:
 - `results/collected/phase0_v3/analysis.csv` (fast-channel LSTM/Transformer/MeanPool)
-- `results/tables/table5_heads_fast.csv` (Table IV values)
-- `results/tables/table6_modality.csv` (Table V values)
-- `results/tables/table2_lstar_fast.csv` (Table III Δ values)
+- `results/tables/table5_heads_fast.csv` (secondary check for Table V values)
+- `results/tables/table2_lstar_fast.csv` (secondary check for Table IV Δ values)
+- `results/tables/table6_modality.csv` (Table VII values)
 
 Do NOT use numbers from supplementary figures directly — always verify against CSV.
