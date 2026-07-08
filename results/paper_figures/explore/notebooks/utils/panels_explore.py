@@ -19,27 +19,14 @@ import seaborn as sns
 from scipy.cluster.hierarchy import linkage, dendrogram, leaves_list
 from scipy.spatial.distance import pdist
 
-from .data_explore import CONTEXT_TO_MIN, CTX_ORDER, MIN_TO_CTX
+# Import shared style constants so all figures use identical labels/fonts/colours
+from utils.style import (
+    CONTEXT_TO_MIN, CTX_ORDER, MIN_TO_CTX,
+    FONT_BASE, FONT_ANNOT, FONT_LABEL,
+    TASK_LABEL, MAIN_TASKS,
+)
 
-# ── shared constants ──────────────────────────────────────────────────────────
-
-FONT_BASE  = 8
-FONT_ANNOT = 6
-FONT_LABEL = 7
-
-TASK_LABEL = {
-    "sex_binary":                "Sex",
-    "age_class":                 "Age",
-    "apnea_binary":              "Apnea",
-    "bmi_binary":                "BMI",
-    "sleep_efficiency_binary":   "Sleep Eff.",
-    "depression_extreme_binary": "Depression",
-    "osa_binary_apples_postqc":  "OSA (APPLES)",
-    "cvd_binary":                "CVD",
-}
-
-MAIN_TASKS = ["sex_binary", "bmi_binary", "age_class",
-              "sleep_efficiency_binary", "apnea_binary"]
+# ── explore-only constants ────────────────────────────────────────────────────
 
 CTX_MIN_ORDER = [CONTEXT_TO_MIN[c] for c in CTX_ORDER]
 
@@ -360,7 +347,7 @@ def pick_representative_subjects(parquets: dict[str, pd.DataFrame],
     Returns dict with keys: 'always_correct', 'always_wrong',
     'context_sensitive_pos', 'context_sensitive_neg'.
     """
-    from .data_explore import subject_correctness_matrix
+    from data_explore import subject_correctness_matrix
     mat = subject_correctness_matrix(parquets, prob_col=prob_col)
     if mat.empty:
         return {}
@@ -491,11 +478,13 @@ def task_clustermap(analysis_df: pd.DataFrame,
                     tasks: list[str],
                     head: str = "lstm",
                     metric: str = "mean_prob_auroc",
-                    figsize: tuple[float, float] = (7.0, 4.0)):
+                    figsize: tuple[float, float] = (7.0, 4.0),
+                    show_title: bool = False):
     """Return a seaborn ClusterGrid.
 
     Rows = tasks, columns = context lengths; values = AUROC.
     Dendrogram clusters tasks with similar saturation curve shapes.
+    Colorbar is rendered horizontal above the heatmap.
     """
     sub = analysis_df[
         (analysis_df["head"] == head) &
@@ -513,16 +502,21 @@ def task_clustermap(analysis_df: pd.DataFrame,
 
     pivot = pivot.dropna(how="all").fillna(pivot.mean())
 
+    # Fix colour scale to data range so it matches any side-by-side comparison
+    _vmin = float(pivot.min().min())
+    _vmax = float(pivot.max().max())
+
     g = sns.clustermap(
         pivot,
         cmap="YlOrRd",
+        vmin=_vmin, vmax=_vmax,
         figsize=figsize,
         linewidths=0.4,
         linecolor="#dddddd",
         annot=True,
         fmt=".2f",
         annot_kws={"size": FONT_ANNOT},
-        cbar_pos=(0.02, 0.85, 0.03, 0.12),
+        cbar_pos=None,   # add colorbar manually so we can make it horizontal
         row_cluster=True,
         col_cluster=False,   # keep context lengths in temporal order
         yticklabels=True,
@@ -530,9 +524,41 @@ def task_clustermap(analysis_df: pd.DataFrame,
     )
     g.ax_heatmap.set_xlabel("Context length", fontsize=FONT_LABEL)
     g.ax_heatmap.set_ylabel("")
-    g.cax.tick_params(labelsize=FONT_ANNOT)
-    g.fig.suptitle(f"Task similarity by saturation curve ({head.upper()})",
-                   fontsize=FONT_BASE, y=1.01)
+    if show_title:
+        g.fig.suptitle(f"Task similarity by saturation curve ({head.upper()})",
+                       fontsize=FONT_BASE, y=1.01)
+
+    # ── Scale all axes down to carve out room for colorbar at top ────────────
+    _CBAR_H   = 0.04   # colorbar height in figure fraction
+    _CBAR_GAP = 0.015  # gap between heatmap top and colorbar
+    _TOP_PAD  = 0.01   # margin above colorbar
+    _needed   = _CBAR_H + _CBAR_GAP + _TOP_PAD  # total reserved at top
+
+    _all_ax = g.fig.get_axes()
+    _min_y0 = min(ax.get_position().y0 for ax in _all_ax)
+    _max_y1 = max(ax.get_position().y1 for ax in _all_ax)
+    _new_top = 1.0 - _needed
+    _scale   = (_new_top - _min_y0) / max(_max_y1 - _min_y0, 1e-6)
+    for _ax in _all_ax:
+        _p = _ax.get_position()
+        _new_y0 = _min_y0 + (_p.y0 - _min_y0) * _scale
+        _ax.set_position([_p.x0, _new_y0, _p.width, _p.height * _scale])
+
+    # ── Horizontal colorbar centred above heatmap ─────────────────────────────
+    _hm_p   = g.ax_heatmap.get_position()
+    _cbar_w = _hm_p.width * 0.7
+    _cbar_ax = g.fig.add_axes([
+        _hm_p.x0 + (_hm_p.width - _cbar_w) / 2,   # centred over heatmap
+        _hm_p.y1 + _CBAR_GAP,
+        _cbar_w, _CBAR_H,
+    ])
+    g.fig.colorbar(g.ax_heatmap.collections[0], cax=_cbar_ax,
+                   orientation='horizontal')
+    _cbar_ax.xaxis.set_label_position('top')
+    _cbar_ax.xaxis.tick_top()
+    _cbar_ax.set_xlabel("AUROC", fontsize=FONT_ANNOT, labelpad=2)
+    _cbar_ax.tick_params(labelsize=FONT_ANNOT, length=2, pad=1)
+
     return g
 
 

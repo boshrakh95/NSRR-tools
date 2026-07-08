@@ -734,7 +734,8 @@ def _flops_per_step(head: str, seq_len, input_dim, hidden_dim) -> float:
 
 
 def compute_scaling_panel(ax, training_df: pd.DataFrame, task: str,
-                          heads: list[str] = ("lstm", "transformer", "mean_pool")):
+                          heads: list[str] = ("lstm", "transformer", "mean_pool"),
+                          legend: bool = True):
     """Compute scaling: test AUROC at best epoch vs total training FLOPs.
 
     Matches plot_scaling_laws.py 1B style:
@@ -804,24 +805,15 @@ def compute_scaling_panel(ax, training_df: pd.DataFrame, task: str,
             Fs.append(row["total_flops"])
             aucs.append(row["test_auroc"] * 100)
 
-        # Power-law fit line per head (matches original plot_scaling_laws.py)
-        if _HAS_SCIPY and len(Fs) >= 3:
+        # Log-linear fit: AUROC = a·log10(FLOPs) + b → straight line on log x-axis
+        if len(Fs) >= 2:
             Fs_a  = np.array(Fs,  dtype=float)
             auc_a = np.array(aucs, dtype=float)
-            try:
-                norm = Fs_a.min()
-                popt, _ = _curve_fit(
-                    _power_law, Fs_a / norm, auc_a,
-                    p0=[0.1, 0.2, auc_a.max()], maxfev=10000,
-                    bounds=([0, 1e-3, 0], [10, 2, 100]),
-                )
-                F_grid = np.linspace(Fs_a.min(), Fs_a.max(), 300)
-                fit    = _power_law(F_grid / norm, *popt)
-                ax.plot(F_grid, fit, color=sty["color"],
-                        lw=2, ls="--", alpha=0.7,
-                        label=f"{sty['label']} fit")
-            except Exception:
-                pass
+            coeffs = np.polyfit(np.log10(Fs_a), auc_a, 1)
+            log_grid = np.linspace(np.log10(Fs_a.min()), np.log10(Fs_a.max()), 50)
+            ax.plot(10**log_grid, np.polyval(coeffs, log_grid),
+                    color=sty["color"], lw=2, ls="--", alpha=0.7,
+                    label=f"{sty['label']} fit")
 
     # Context colour legend entries
     for ctx in contexts:
@@ -835,7 +827,8 @@ def compute_scaling_panel(ax, training_df: pd.DataFrame, task: str,
     ax.set_xscale("log")
     ax.set_xlabel("Total training FLOPs", fontsize=FONT_LABEL)
     ax.set_ylabel("Test AUROC (%)", fontsize=FONT_LABEL)
-    ax.legend(fontsize=FONT_ANNOT, frameon=False, handlelength=1.5, ncol=2)
+    if legend:
+        ax.legend(fontsize=FONT_ANNOT, frameon=False, handlelength=1.5, ncol=2)
     ax.grid(True, alpha=0.25, lw=0.5)
     _spine_clean(ax)
 

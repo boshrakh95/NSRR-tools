@@ -30,7 +30,7 @@ TASK_LABEL = {
     "sleep_efficiency_binary":     "Sleep Eff.",
     "depression_extreme_binary":   "Depression",
     "osa_binary_apples_postqc":    "OSA (APPLES)",
-    "cvd_binary":                  "CVD",
+    # "cvd_binary":                  "CVD",
 }
 
 TASK_LABEL_LONG = {
@@ -41,14 +41,14 @@ TASK_LABEL_LONG = {
     "sleep_efficiency_binary":     "Sleep efficiency",
     "depression_extreme_binary":   "Depression (extreme)",
     "osa_binary_apples_postqc":    "OSA (APPLES only)",
-    "cvd_binary":                  "CVD",
+    # "cvd_binary":                  "CVD",
 }
 
 # ── Task lists ────────────────────────────────────────────────────────────────
 MAIN_TASKS = ["sex_binary", "bmi_binary", "age_class",
               "sleep_efficiency_binary", "apnea_binary"]
 
-SUPP_TASKS = ["depression_extreme_binary", "osa_binary_apples_postqc", "cvd_binary"]
+SUPP_TASKS = ["depression_extreme_binary", "osa_binary_apples_postqc"] #, "cvd_binary"]
 
 ALL_TASKS  = MAIN_TASKS + SUPP_TASKS
 
