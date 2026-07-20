@@ -1454,7 +1454,8 @@ def position_panel(ax, parquets: dict[str, pd.DataFrame],
 
 def waterfall_panel(ax, analysis_df: pd.DataFrame,
                     task: str,
-                    metric: str = "mean_prob_auroc"):
+                    metric: str = "mean_prob_auroc",
+                    show_xlabels: bool = True):
     """Waterfall: decompose AUROC gain into aggregation, context, architecture.
 
     Steps (left → right):
@@ -1482,11 +1483,11 @@ def waterfall_panel(ax, analysis_df: pd.DataFrame,
     v_arch  = _get("transformer",  "240m", "all")
 
     steps = {
-        "Base\n(MeanPool\n30s K=1)":       (0,       v_start),
-        "+Aggregation\n(K=1→all)":         (v_start, v_agg  - v_start),
-        "+Context\n(30s→240m)":            (v_agg,   v_ctx  - v_agg),
-        "+Architecture\n(→Transf.)":       (v_ctx,   v_arch - v_ctx),
-        "Final\n(Transf.\n240m K=all)":    (0,       v_arch),
+        "Base\n(MPool,30s,K=1)":   (0,       v_start),
+        "+Aggregation\n(K=1→Kmax)": (v_start, v_agg  - v_start),
+        "+Context\n(30s→240m)":    (v_agg,   v_ctx  - v_agg),
+        "+Architecture\n(→Transf.)": (v_ctx,   v_arch - v_ctx),
+        "Final\n(Transf.,240m)":   (0,       v_arch),
     }
     is_final = [False, False, False, False, True]
 
@@ -1510,10 +1511,11 @@ def waterfall_panel(ax, analysis_df: pd.DataFrame,
     for i, (bar, (lbl, (bot, dlt))) in enumerate(zip(bars, steps.items())):
         top = v_arch if is_final[i] else (bot + dlt)
         prefix = "+" if (not is_final[i] and i > 0 and dlt > 0) else ""
-        val_str = f"{v_arch:.3f}" if is_final[i] else f"{prefix}{dlt:.3f}"
+        val_str = f"{v_arch:.2f}" if is_final[i] else f"{prefix}{dlt:.2f}"
         ax.text(bar.get_x() + bar.get_width() / 2,
                 top + 0.004, val_str,
-                ha="center", va="bottom", fontsize=FONT_ANNOT,
+                ha="center", va="bottom", rotation=90,
+                fontsize=FONT_BASE+2,
                 fontweight="bold" if is_final[i] else "normal")
 
     for i in range(len(steps) - 2):
@@ -1522,8 +1524,13 @@ def waterfall_panel(ax, analysis_df: pd.DataFrame,
                 color="#888888", linewidth=0.8, linestyle=":")
 
     ax.set_xticks(x)
-    ax.set_xticklabels(list(steps.keys()), fontsize=FONT_BASE)
-    ax.set_ylabel("AUROC", fontsize=FONT_LABEL)
+    if show_xlabels:
+        ax.set_xticklabels(list(steps.keys()), fontsize=FONT_BASE+2,
+                           rotation=60, ha="right", rotation_mode="anchor")
+    else:
+        ax.set_xticklabels([])
+    ax.set_ylabel("AUROC", fontsize=FONT_BASE+2)
+    ax.tick_params(axis="y", labelsize=FONT_BASE+2)
     ax.set_ylim(max(0, min(v_start, v_agg, v_ctx, v_arch) - 0.06),
                 min(1.0, max(v_start, v_agg, v_ctx, v_arch) + 0.05))
     ax.yaxis.set_major_formatter(mticker.FormatStrFormatter("%.2f"))
