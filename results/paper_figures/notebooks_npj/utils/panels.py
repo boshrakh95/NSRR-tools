@@ -752,7 +752,7 @@ def compute_scaling_panel(ax, training_df: pd.DataFrame, task: str,
     df = training_df[training_df["task"] == task].copy()
     if df.empty:
         ax.text(0.5, 0.5, "no data", ha="center", va="center",
-                transform=ax.transAxes, fontsize=FONT_BASE, color="gray")
+                transform=ax.transAxes, fontsize=FONT_BASE+1, color="gray")
         return
 
     for col in ("is_best_epoch", "is_overfit_epoch"):
@@ -764,13 +764,13 @@ def compute_scaling_panel(ax, training_df: pd.DataFrame, task: str,
     best = df[df.get("is_best_epoch", pd.Series([False]*len(df))).values].copy()
     if best.empty:
         ax.text(0.5, 0.5, "no best-epoch rows", ha="center", va="center",
-                transform=ax.transAxes, fontsize=FONT_BASE, color="gray")
+                transform=ax.transAxes, fontsize=FONT_BASE+1, color="gray")
         return
 
     required = {"seq_len", "steps_per_epoch", "input_dim", "hidden_dim", "test_auroc"}
     if not required.issubset(best.columns):
         ax.text(0.5, 0.5, "missing cols", ha="center", va="center",
-                transform=ax.transAxes, fontsize=FONT_BASE, color="gray")
+                transform=ax.transAxes, fontsize=FONT_BASE+1, color="gray")
         return
 
     best["total_flops"] = best.apply(
@@ -782,7 +782,7 @@ def compute_scaling_panel(ax, training_df: pd.DataFrame, task: str,
     best = best.dropna(subset=["total_flops", "test_auroc"])
     if best.empty:
         ax.text(0.5, 0.5, "FLOPs NaN", ha="center", va="center",
-                transform=ax.transAxes, fontsize=FONT_BASE, color="gray")
+                transform=ax.transAxes, fontsize=FONT_BASE+1, color="gray")
         return
 
     # Context colour map (viridis_r, same as original)
@@ -828,10 +828,10 @@ def compute_scaling_panel(ax, training_df: pd.DataFrame, task: str,
                    s=50, label=sty["label"])
 
     ax.set_xscale("log")
-    ax.set_xlabel("Total training FLOPs", fontsize=FONT_LABEL)
-    ax.set_ylabel("Test AUROC (%)", fontsize=FONT_LABEL)
+    ax.set_xlabel("Total training FLOPs", fontsize=FONT_LABEL+1)
+    ax.set_ylabel("Test AUROC (%)", fontsize=FONT_LABEL+1)
     if legend:
-        ax.legend(fontsize=FONT_ANNOT, frameon=False, handlelength=1.5, ncol=2)
+        ax.legend(fontsize=FONT_ANNOT+1, frameon=False, handlelength=1.5, ncol=2)
     ax.grid(True, alpha=0.25, lw=0.5)
     _spine_clean(ax)
 
