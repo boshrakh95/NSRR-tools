@@ -32,7 +32,7 @@ TASK_LABEL = {
     "age_class":                   "Age",
     "apnea_binary":                "Apnea (AHI≥15)",
     "bmi_binary":                  "BMI",
-    "sleep_efficiency_binary":     "Sleep Eff.",
+    "sleep_efficiency_binary":     "Sleep Efficiency",
     "depression_extreme_binary":   "Depression",
     "osa_binary_apples_postqc":    "OSA (APPLES)",
     # "cvd_binary":                  "CVD",
