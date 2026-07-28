@@ -9,10 +9,15 @@ HALF_W  = 3.5    # single-column width (inches)
 DPI_OUT = 300    # output DPI (PDF is vector; PNG preview uses this)
 
 # ── Typography ─────────────────────────────────────────────────────────────────
+# FONT_BASE  = 8    # axes tick/label baseline
+# FONT_TITLE = 8    # panel title
+# FONT_ANNOT = 6    # small annotations
+# FONT_LABEL = 7    # x/y axis labels
+
 FONT_BASE  = 8    # axes tick/label baseline
 FONT_TITLE = 8    # panel title
-FONT_ANNOT = 6    # small annotations
-FONT_LABEL = 7    # x/y axis labels
+FONT_ANNOT = 8    # small annotations
+FONT_LABEL = 8    # x/y axis labels
 
 # ── Head colour/marker scheme ─────────────────────────────────────────────────
 HEAD_STYLE = {

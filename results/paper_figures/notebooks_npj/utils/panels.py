@@ -121,10 +121,12 @@ def saturation_panel(ax, analysis_df: pd.DataFrame, task: str,
 
 def k_agg_panel(ax, analysis_df_full_k: pd.DataFrame, task: str,
                 heads: list[str] = ("lstm", "transformer"),
-                contexts: list[str] = ("40m", "120m", "240m")):
+                contexts: list[str] = ("40m", "120m", "240m"),
+                show_legend: bool = True):
     """AUROC vs K for selected context lengths.
 
     analysis_df_full_k: analysis.csv WITHOUT k filter (all k values).
+    show_legend: set False when the caller will draw a single shared legend.
     """
     ctx_mins = {c: CONTEXT_TO_MIN[c] for c in contexts if c in CONTEXT_TO_MIN}
     palette = _palette(len(ctx_mins))
@@ -168,7 +170,8 @@ def k_agg_panel(ax, analysis_df_full_k: pd.DataFrame, task: str,
     ax.set_xscale("log")
     ax.set_xlabel("K (windows per subject)", fontsize=FONT_LABEL)
     ax.set_ylabel("AUROC (%)", fontsize=FONT_LABEL)
-    ax.legend(fontsize=FONT_ANNOT, frameon=False, handlelength=3.5)
+    if show_legend:
+        ax.legend(fontsize=FONT_ANNOT, frameon=False, handlelength=3.5)
     ax.grid(True, which="major", alpha=0.25, lw=0.5)
     _spine_clean(ax)
 
