@@ -19,9 +19,16 @@ produces three figures:
       val loss is minimised (= early stopping point) per head and context.
 
 FLOPs formulas (per gradient step, forward + backward ≈ 3× forward):
-  LSTM:        3 × seq_len × 4 × hidden_dim × (input_dim + hidden_dim)
-  Transformer: 3 × seq_len × (seq_len × hidden_dim + 4 × hidden_dim²)
+  LSTM:        3 × seq_len × 2 × 4 × hidden_dim × (input_dim + hidden_dim)
+               (×2 for bidirectionality — LSTMHead is a BiLSTM)
+  Transformer: 3 × seq_len × (seq_len × hidden_dim + 12 × hidden_dim² + input_dim × hidden_dim)
+               (12×hd² = attention QKVO 4hd² + feedforward 8hd²; +id×hd for
+               input_proj, since input_dim != hidden_dim)
   MeanPool:    3 × seq_len × input_dim
+
+Verified against real per-run parameter counts logged in training.csv
+(n_trainable_params): LSTM 657,922, Transformer 264,322, MeanPool 1,026
+(input_dim=512, hidden_dim=128). See sequence_head.py for architectures.
 
 Usage:
   python scripts/plot_scaling_laws.py \\
@@ -92,9 +99,9 @@ def compute_flops_per_step(head: str, seq_len, input_dim, hidden_dim) -> float:
     if sl <= 0:
         return float("nan")
     if head == "lstm":
-        return 3.0 * sl * 4 * hd * (id_ + hd)
+        return 3.0 * sl * 2 * 4 * hd * (id_ + hd)
     elif head == "transformer":
-        return 3.0 * sl * (sl * hd + 4 * hd * hd)
+        return 3.0 * sl * (sl * hd + 12 * hd * hd + id_ * hd)
     elif "pool" in head or "mean" in head:
         return 3.0 * sl * id_
     return float("nan")

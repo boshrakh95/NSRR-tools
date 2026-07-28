@@ -720,7 +720,28 @@ def _power_law(F, a, b, c):
 
 
 def _flops_per_step(head: str, seq_len, input_dim, hidden_dim) -> float:
-    """Analytical FLOPs per gradient step (forward + backward ≈ 3× forward)."""
+    """Analytical FLOPs per gradient step (forward + backward ≈ 3× forward).
+
+    Verified against real per-run parameter counts logged in training.csv
+    (n_trainable_params): LSTM 657,922 (bidirectional), Transformer 264,322,
+    MeanPool 1,026 — for input_dim=512, hidden_dim=128.
+
+    LSTM: BiLSTM (sequence_head.py LSTMHead, bidirectional=True) — 4 gates,
+    each a linear map of the concatenated [input; hidden], run in BOTH
+    directions, so the per-token cost is 2x (not 1x) the single-direction
+    gate cost 4*hd*(id+hd).
+
+    Transformer (sequence_head.py TransformerHead): per-token linear-layer
+    cost = input_proj (id*hd, since input_dim != hidden_dim) + attention
+    QKVO projections (4*hd^2) + feedforward block (2 layers of hd<->4*hd,
+    i.e. 8*hd^2) = id*hd + 12*hd^2. Plus the O(seq_len^2 * hd) self-attention
+    score computation (QK^T / softmax / AV), approximated as seq_len*hd per
+    token (so seq_len^2*hd total).
+
+    MeanPool: masked mean over time, ~seq_len*input_dim elementwise ops
+    (the classifier itself is a single id*num_classes matmul applied once
+    per window, negligible next to the O(seq_len*id) pooling pass).
+    """
     try:
         sl = int(seq_len); id_ = int(input_dim); hd = int(hidden_dim)
     except (TypeError, ValueError):
@@ -728,9 +749,9 @@ def _flops_per_step(head: str, seq_len, input_dim, hidden_dim) -> float:
     if sl <= 0:
         return float("nan")
     if head == "lstm":
-        return 3.0 * sl * 4 * hd * (id_ + hd)
+        return 3.0 * sl * 2 * 4 * hd * (id_ + hd)
     elif head == "transformer":
-        return 3.0 * sl * (sl * hd + 4 * hd * hd)
+        return 3.0 * sl * (sl * hd + 12 * hd * hd + id_ * hd)
     elif "pool" in head or "mean" in head:
         return 3.0 * sl * id_
     return float("nan")
