@@ -54,8 +54,9 @@ CONTEXT_TO_MIN = {
 CTX_ORDER = {c: i for i, c in enumerate(CONTEXT_TO_MIN)}
 
 plt.rcParams.update({
-    "figure.dpi": 150, "savefig.bbox": "tight",
-    "axes.spines.top": False, "axes.spines.right": False, "font.size": 10,
+    "figure.dpi": 300, "savefig.bbox": "tight",
+    "axes.spines.top": False, "axes.spines.right": False,
+    "font.family": "serif", "font.size": 9,
 })
 
 
@@ -129,14 +130,8 @@ def plot_variance_distribution(parquets: dict, task: str, head: str,
     fig, axes = plt.subplots(1, n, figsize=(5.5 * n, 5), sharey=False)
     if n == 1:
         axes = [axes]
-    fig.suptitle(
-        f"Within-Subject Prediction Variance — {task}  ({head.upper()})\n"
-        "std(prob_class1) across all windows for each subject",
-        fontsize=11,
-    )
-
     any_data = False
-    for ax, ctx in zip(axes, show):
+    for i, (ax, ctx) in enumerate(zip(axes, show)):
         df    = parquets[ctx]
         stats = subject_stats(df)
         if stats.empty:
@@ -152,12 +147,10 @@ def plot_variance_distribution(parquets: dict, task: str, head: str,
         vp["bodies"][1].set_facecolor("#DD8452"); vp["bodies"][1].set_alpha(0.7)
         ax.set_xticks([0, 1])
         ax.set_xticklabels(["Correct", "Incorrect"])
-        ax.set_title(
-            f"L = {ctx}" + (f"  ({CONTEXT_TO_MIN[ctx]:.0f} min)"
-                            if ctx in CONTEXT_TO_MIN else ""),
-            fontsize=10,
-        )
-        ax.set_ylabel("std(prob_class1)")
+        ax.set_ylabel("std(prob_class1)", fontsize=10)
+        ctx_str = f"L={ctx}" + (f" ({CONTEXT_TO_MIN[ctx]:.0f} min)" if ctx in CONTEXT_TO_MIN else "")
+        ax.text(0.5, -0.18, ctx_str, transform=ax.transAxes,
+                ha="center", va="top", fontsize=8, fontfamily="serif")
         any_data = True
 
     if not any_data:
@@ -213,13 +206,8 @@ def plot_variance_vs_k(parquets: dict, task: str, head: str, out_dir: Path) -> N
         print("  [5B] No data")
         return
 
-    ax.set_xlabel("K (windows aggregated per subject)", fontsize=11)
-    ax.set_ylabel("Std of per-subject mean(prob_class1)", fontsize=11)
-    ax.set_title(
-        f"Prediction Variance vs K — {task}  ({head.upper()})\n"
-        "Aggregation stabilises predictions (lower std = more consistent)",
-        fontsize=11,
-    )
+    ax.set_xlabel("K (windows per subject)", fontsize=10)
+    ax.set_ylabel("Std of per-subject mean(Predicted probability)", fontsize=10)
     ax.legend(title="Context", fontsize=8, title_fontsize=9, ncol=2)
     fig.tight_layout()
 
@@ -261,26 +249,34 @@ def plot_hard_subject_analysis(parquets: dict, task: str, head: str,
     ])
 
     n_subj = len(correct_counts)
-    n = cm.get_cmap("viridis_r", n_ctx + 1)
-    colors = [n(i / n_ctx) for i in range(n_ctx + 1)]
+    n_cmap = cm.get_cmap("viridis_r", n_ctx + 1)
+    colors = [n_cmap(i / n_ctx) for i in range(n_ctx + 1)]
 
     fig, ax = plt.subplots(figsize=(max(8, n_ctx * 1.5), 5))
+    fracs = []
     for i in range(n_ctx + 1):
         frac = (correct_counts == i).sum() / n_subj * 100
-        bar  = ax.bar(i, frac, color=colors[i], edgecolor="white", width=0.7)
+        fracs.append(frac)
+        ax.bar(i, frac, color=colors[i], edgecolor="white", width=0.7)
         if frac > 1:
             ax.text(i, frac + 0.3, f"{frac:.1f}%",
-                    ha="center", va="bottom", fontsize=9)
+                    ha="center", va="bottom", fontsize=8)
+
+    # Cumulative line (fraction classified correctly at ≥ i contexts)
+    cumulative = [sum((correct_counts >= i).astype(float)) / n_subj * 100
+                  for i in range(n_ctx + 1)]
+    ax2 = ax.twinx()
+    ax2.plot(range(n_ctx + 1), cumulative, color="black", lw=1.5,
+             ls="--", marker="o", ms=4, label="Cumulative ≥i")
+    ax2.set_ylabel("Cumulative fraction (%)", fontsize=9)
+    ax2.set_ylim(0, 105)
+    ax2.spines["top"].set_visible(False)
+    ax2.tick_params(labelsize=8)
 
     ax.set_xticks(range(n_ctx + 1))
-    ax.set_xticklabels([f"{i}/{n_ctx}" for i in range(n_ctx + 1)], fontsize=10)
-    ax.set_xlabel("Number of context lengths at which subject is correctly predicted", fontsize=11)
-    ax.set_ylabel("Fraction of subjects (%)", fontsize=11)
-    ax.set_title(
-        f"Hard-Subject Analysis — {task}  ({head.upper()})\n"
-        f"N = {n_subj} subjects · 0/{n_ctx} = never correct (irreducible hard cases)",
-        fontsize=11,
-    )
+    ax.set_xticklabels([str(i) for i in range(n_ctx + 1)], fontsize=9)
+    ax.set_xlabel(f"Number of context lengths correctly predicted (out of {n_ctx})", fontsize=10)
+    ax.set_ylabel("Fraction of subjects (%)", fontsize=10)
     fig.tight_layout()
 
     stem = f"{task}_{head}_subject_consistency_5C_hard_subjects"
@@ -301,7 +297,7 @@ def main() -> None:
                         dest="results_dir")
     parser.add_argument("--split",   default="test", choices=["train", "val", "test"])
     parser.add_argument("--run-tag", default="", dest="run_tag")
-    parser.add_argument("--plots",   nargs="+", default=["5A", "5B", "5C"])
+    parser.add_argument("--plots",   nargs="+", default=["5A", "5C"])
     parser.add_argument("--repo-figures-dir", type=Path, default=None,
                         dest="repo_figures_dir",
                         help="Also mirror PNGs into this repo dir (e.g. "

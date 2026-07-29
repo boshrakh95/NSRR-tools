@@ -9,7 +9,8 @@ Reads per-window prediction parquets (from infer_subject_windows.py) and produce
       Shows whether predicted confidence matches actual outcome frequency.
 
   2B: ECE vs context length — Expected Calibration Error for each head,
-      at a fixed K (default: K=10 windows per subject).
+      at a fixed K (default: K=5 windows per subject, matching the paper's
+      deployment scenario).  Use --k to override.
 
   2C: ECE vs K — how calibration improves as more windows are aggregated,
       for each context length (fixed head).
@@ -62,14 +63,15 @@ CONTEXT_TO_MIN = {
 CTX_ORDER = {c: i for i, c in enumerate(CONTEXT_TO_MIN)}
 
 HEAD_STYLE = {
-    "lstm":       {"color": "#4C72B0", "marker": "o", "ls": "-",  "label": "LSTM"},
-    "transformer":{"color": "#DD8452", "marker": "s", "ls": "--", "label": "Transformer"},
-    "mean_pool":  {"color": "#55A868", "marker": "^", "ls": ":",  "label": "Mean Pool"},
+    "lstm":        {"color": "#3A7EBF", "marker": "o", "ls": "-",  "label": "LSTM"},
+    "transformer": {"color": "#E86A33", "marker": "s", "ls": "--", "label": "Transformer"},
+    "mean_pool":   {"color": "#44A15E", "marker": "^", "ls": ":",  "label": "Mean Pool"},
 }
 
 plt.rcParams.update({
-    "figure.dpi": 150, "savefig.bbox": "tight",
-    "axes.spines.top": False, "axes.spines.right": False, "font.size": 10,
+    "figure.dpi": 300, "savefig.bbox": "tight",
+    "axes.spines.top": False, "axes.spines.right": False,
+    "font.family": "serif", "font.size": 9,
 })
 
 
@@ -182,11 +184,6 @@ def plot_reliability_diagrams(parquets: dict, task: str, head: str,
     fig, axes = plt.subplots(1, len(show), figsize=(5.5 * len(show), 5), sharey=True)
     if len(show) == 1:
         axes = [axes]
-    fig.suptitle(
-        f"Reliability Diagrams — {task}  ({head.upper()},  K={k})\n"
-        "Diagonal = perfect calibration",
-        fontsize=11,
-    )
 
     for ax, ctx in zip(axes, show):
         df  = parquets[ctx]
@@ -204,14 +201,13 @@ def plot_reliability_diagrams(parquets: dict, task: str, head: str,
                    label="Fraction positive")
             ax.plot(mids, fracs, "o-", color="#4C72B0", lw=2, ms=6)
         ax.fill_between([0, 1], [0, 1], [0, 1], alpha=0.04, color="gray")
-        ax.set_title(
-            f"L = {ctx}" +
-            (f"  ({CONTEXT_TO_MIN[ctx]:.0f} min)" if ctx in CONTEXT_TO_MIN else "") +
-            f"\nECE = {ece:.4f}",
-            fontsize=10,
-        )
-        ax.set_xlabel("Mean predicted probability")
-        ax.set_ylabel("Fraction of positives")
+        ax.set_xlabel("Predicted probability", fontsize=10)
+        ax.set_ylabel("Fraction of positives", fontsize=10)
+        ax.text(0.5, -0.22,
+                f"L={ctx}" + (f" ({CONTEXT_TO_MIN[ctx]:.0f} min)" if ctx in CONTEXT_TO_MIN else "") +
+                f"  ECE={ece:.3f}",
+                transform=ax.transAxes, ha="center", va="top", fontsize=8,
+                fontfamily="serif")
         ax.set_xlim(0, 1); ax.set_ylim(0, 1)
         ax.legend(fontsize=8)
 
@@ -263,13 +259,8 @@ def plot_ece_vs_context(all_parquets: dict, task: str, heads: list,
         fontsize=9,
     )
     ax.xaxis.set_minor_formatter(matplotlib.ticker.NullFormatter())
-    ax.set_xlabel("Context Length", fontsize=11)
-    ax.set_ylabel("Expected Calibration Error (ECE)", fontsize=11)
-    ax.set_title(
-        f"ECE vs Context Length — {task}  (K={k})\n"
-        "Lower is better; longer context should improve calibration",
-        fontsize=11,
-    )
+    ax.set_xlabel("Context length (minutes)", fontsize=10)
+    ax.set_ylabel("Expected Calibration Error (ECE)", fontsize=10)
     ax.legend()
     fig.tight_layout()
 
@@ -319,13 +310,8 @@ def plot_ece_vs_k(parquets: dict, task: str, head: str,
         print("  [2C] No data")
         return
 
-    ax.set_xlabel("K (windows per subject at inference)", fontsize=11)
-    ax.set_ylabel("Expected Calibration Error (ECE)", fontsize=11)
-    ax.set_title(
-        f"ECE vs K — {task}  ({head.upper()})\n"
-        "Aggregating more windows reduces calibration error",
-        fontsize=11,
-    )
+    ax.set_xlabel("K (windows per subject)", fontsize=10)
+    ax.set_ylabel("Expected Calibration Error (ECE)", fontsize=10)
     ax.legend(title="Context", fontsize=8, title_fontsize=9)
     fig.tight_layout()
 
@@ -355,13 +341,14 @@ def main() -> None:
                         dest="results_dir")
     parser.add_argument("--split",   default="test", choices=["train", "val", "test"])
     parser.add_argument("--run-tag", default="", dest="run_tag")
-    parser.add_argument("--k",       type=int, default=10,
-                        help="K for reliability diagram and ECE vs context (default: 10)")
+    parser.add_argument("--k",       type=int, default=5,
+                        help="K for reliability diagram and ECE vs context (default: 5, "
+                             "matching the paper's deployment scenario)")
     parser.add_argument("--k-values", nargs="+",
                         default=["1", "2", "3", "5", "8", "10", "15", "20", "30", "50", "all"],
                         dest="k_values",
                         help="K values for ECE vs K plot (default: 1 2 3 5 8 10 15 20 30 50 all)")
-    parser.add_argument("--plots",   nargs="+", default=["2A", "2B", "2C"])
+    parser.add_argument("--plots",   nargs="+", default=["2A", "2B"])
     parser.add_argument("--repo-figures-dir", type=Path, default=None,
                         dest="repo_figures_dir",
                         help="Also mirror PNGs into this repo dir (e.g. "

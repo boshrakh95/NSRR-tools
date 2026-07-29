@@ -113,12 +113,12 @@ Content (sex_binary/LSTM, fast-channel, test split):
 
 | Context L | K=1 | K=5 | K=10 | K=20 | K=50 | K=all |
 |---|---|---|---|---|---|---|
-| 30s | 0.701 | 0.805 | 0.815 | 0.821 | 0.823 | 0.824 |
-| 10m | 0.720 | 0.823 | 0.836 | 0.840 | 0.842 | 0.842 |
-| 40m | 0.760 | 0.853 | 0.862 | 0.866 | — | 0.866 |
-| 80m | 0.798 | 0.866 | 0.868 | — | — | 0.868 |
-| 120m | 0.822 | 0.855 | — | — | — | 0.855 |
-| 240m | 0.791 | — | — | — | — | 0.812 |
+| 30s | 0.687 | 0.801 | 0.817 | 0.822 | 0.825 | 0.825 |
+| 10m | 0.724 | 0.831 | 0.842 | 0.850 | 0.850 | 0.850 |
+| 40m | 0.750 | 0.838 | 0.843 | 0.845 | — | 0.845 |
+| 80m | 0.785 | 0.859 | 0.861 | — | — | 0.861 |
+| 120m | 0.807 | 0.872 | — | — | — | 0.872 |
+| 240m | 0.844 | — | — | — | — | 0.857 |
 
 Caption note: "—" indicates fewer than K non-overlapping windows available for typical subjects
 at that context length. All values are AUROC (mean-probability aggregation, test split).
@@ -156,11 +156,11 @@ Full table (LSTM, fast-channel, K=all):
 
 | Task | AUROC@30s | Best AUROC | ΔAUROC | L* | Category |
 |---|---|---|---|---|---|
-| sleep_efficiency_binary | 0.697 | 0.799 | +0.102 | 240m | Sleep quality |
+| sleep_efficiency_binary | 0.697 | 0.788 | +0.091 | 240m | Sleep quality |
 | apnea_binary | 0.758 | 0.832 | +0.074 | 120m | Respiratory |
 | osa_binary_apples_postqc | 0.769 | 0.834 | +0.065 | 40m | Respiratory |
-| sex_binary | 0.825 | 0.872 | +0.047 | 80m | Demographics |
-| age_class | 0.865 | 0.893 | +0.028 | 40m | Demographics |
+| sex_binary | 0.825 | 0.872 | +0.047 | 120m | Demographics |
+| age_class | 0.865 | 0.893 | +0.028 | 80m | Demographics |
 | depression_extreme_binary | 0.757 | 0.770 | +0.013 | 10m | Mental health |
 | bmi_binary | 0.760 | 0.767 | +0.006 | 10m | Metabolic |
 
@@ -187,7 +187,7 @@ Content when CIs are fully computed (run `analyze --bootstrap 1000` for all task
 
 | Task | Head | L* | AUROC@K=all [95% CI] | AUROC@K=5 [95% CI] |
 |---|---|---|---|---|
-| sex_binary | LSTM | 80m | 0.872 [CI pending] | 0.872 [CI pending] |
+| sex_binary | LSTM | 120m | 0.872 [CI pending] | 0.872 [CI pending] |
 | sex_binary | Transformer | 240m | 0.910 [0.894–0.925] | 0.905 [CI pending] |
 | apnea_binary | LSTM | 120m | 0.832 [CI pending] | 0.831 [CI pending] |
 | … | | | | |
@@ -208,9 +208,9 @@ Source: `results/tables/table9_cohort_sex_binary_lstm_fast.{csv,md,tex}` (sex_bi
 Current data:
 | Task | Head | Context | Dataset | N | AUROC |
 |---|---|---|---|---|---|
-| sex_binary | LSTM | 80m | Overall | 1430 | 0.861 |
-| sex_binary | LSTM | 80m | APPLES | 166 | 0.782 |
-| sex_binary | LSTM | 80m | SHHS | 1264 | 0.868 |
+| sex_binary | LSTM | 120m | Overall | 1430 | 0.872 |
+| sex_binary | LSTM | 120m | APPLES | 166 | 0.782 |
+| sex_binary | LSTM | 120m | SHHS | 1264 | 0.876 |
 
 When additional per-cohort tables are generated: add sex_binary_transformer, apnea_binary_lstm,
 apnea_binary_transformer (apnea is the most clinically important; cohort breakdown is most

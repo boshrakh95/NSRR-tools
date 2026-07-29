@@ -57,8 +57,9 @@ CTX_ORDER = {c: i for i, c in enumerate(CONTEXT_TO_MIN)}
 N_BINS = 20  # position bins
 
 plt.rcParams.update({
-    "figure.dpi": 150, "savefig.bbox": "tight",
-    "axes.spines.top": False, "axes.spines.right": False, "font.size": 10,
+    "figure.dpi": 300, "savefig.bbox": "tight",
+    "axes.spines.top": False, "axes.spines.right": False,
+    "font.family": "serif", "font.size": 9,
 })
 
 
@@ -193,23 +194,20 @@ def plot_position_profiles(parquets: dict, task: str, head: str, out_dir: Path) 
         print("  [4A] No valid data")
         return
 
-    for ax, title in [
+    for i, (ax, sublabel) in enumerate([
         (ax_pos, "Positive subjects (true label = 1)"),
         (ax_neg, "Negative subjects (true label = 0)"),
-    ]:
+    ]):
         ax.axvline(0.5, color="gray", ls=":", lw=1, alpha=0.5)
         ax.set_xlabel("Normalised window position\n(0 = start, 1 = end of night)", fontsize=10)
         ax.set_ylabel("Mean prob_class1 (±1 SD)", fontsize=10)
-        ax.set_title(title, fontsize=10)
         ax.set_xlim(0, 1)
         ax.set_ylim(bottom=0)
         ax.legend(title="Context", fontsize=8, title_fontsize=9, ncol=2)
+        ax.text(0.5, -0.22, f"({chr(97+i)}) {sublabel}",
+                transform=ax.transAxes, ha="center", va="top",
+                fontsize=8, fontfamily="serif")
 
-    fig.suptitle(
-        f"Window Position Profiles — {task}  ({head.upper()})\n"
-        "Does predicted probability depend on where in the night the window falls?",
-        fontsize=11,
-    )
     fig.tight_layout()
 
     stem = f"{task}_{head}_window_position_4A_profiles"
@@ -247,13 +245,8 @@ def plot_variance_vs_position(parquets: dict, task: str, head: str, out_dir: Pat
         return
 
     ax.axvline(0.5, color="gray", ls=":", lw=1, alpha=0.5)
-    ax.set_xlabel("Normalised window position (0 = start, 1 = end)", fontsize=11)
-    ax.set_ylabel("Mean std(prob_class1) per position bin", fontsize=11)
-    ax.set_title(
-        f"Prediction Variance vs Night Position — {task}  ({head.upper()})\n"
-        "Lower variance = position-independent predictions (longer context may flatten this)",
-        fontsize=11,
-    )
+    ax.set_xlabel("Normalised window position (0 = start, 1 = end)", fontsize=10)
+    ax.set_ylabel("Mean std(prob_class1) per position bin", fontsize=10)
     ax.legend(title="Context", fontsize=8, title_fontsize=9, ncol=2)
     ax.set_xlim(0, 1)
     fig.tight_layout()

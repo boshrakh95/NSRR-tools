@@ -1,7 +1,8 @@
 # Paper Figure Plan — Phase 0 (TBME)
 
-**Last updated:** 2026-06-30  
-**Status:** Pending figure regeneration (saturation code fix + ablation figures not yet generated)
+**Last updated:** 2026-07-01  
+**Status:** Ready for regeneration. Run `bash scripts/run_figures.sh` to produce all figures.
+Saturation code fix (P1) applied. 1A uShape BA-metric fix applied 2026-07-01 (S-Fig 11 now ready).
 
 ---
 
@@ -13,7 +14,7 @@
 - **TBME target:** 4–5 main figures + 5 main tables. No figure should duplicate information already in a table.
 - Dropped tasks (cvd_binary, sleepiness_binary, psqi_binary) are excluded from all paper figures.
 - **Primary metric throughout:** subject-level mean-pool AUROC at K=all (`mean_prob_auroc` from `analysis.csv`).  
-  [CODE FIX REQUIRED before any figures can be finalised — see `figure_interpretations_v3.md` §Saturation Curves]
+  Saturation code fix (P1) applied 2026-07 — `plot_saturation.py` now reads `mean_prob_auroc` K=all from `analysis.csv`.
 
 ---
 
@@ -50,8 +51,8 @@
 | (f) | depression_extreme | **Erratic / non-monotonic** → bold/hatched panel; negative result |
 | (g) | osa_binary_apples_postqc | Head divergence: LSTM saturates ~40m; Transformer/MeanPool rise to 240m |
 
-**Source plots (after code fix):**  
-`saturation/saturation_{task}_auroc_test.png` ×7 (phase0_v3)
+**Source plots:** `saturation/saturation_{task}_auroc_test.png` ×7 (phase0_v3)  
+**Command:** `bash scripts/run_figures.sh --skip-iso --skip-cross-round --skip-tables`
 
 **Code fix required:** `plot_saturation.py` must read `mean_prob_auroc` K=all from `analysis.csv` instead of `test_auroc` from `summary.csv`.
 
@@ -117,7 +118,10 @@ Log-scale x-axis on lollipop to match Fig 1.
 | (d) | age_class | BAS dominant (BAS-only −0.035); cardio-only worst (−0.069) |
 | (e) | bmi_binary | RESP removal gives +0.010 (bars LEFT of zero); cardio-only worst (−0.081) |
 
-**Status:** [PENDING — figure not yet generated. Generate from `analysis.csv` data.]
+**Status:** Awaiting v3_abl rerun completion (correct 128/1 architecture). Generate with:
+```bash
+python scripts/plot_modality_bar.py
+```
 
 ---
 
@@ -165,8 +169,9 @@ Log-scale x-axis on lollipop to match Fig 1.
 
 **Named:** *"Calibration: ECE vs Context Length"*  
 **Layout:** 2 rows × 3 cols (6 task panels, all 3 heads per panel)  
-**Content:** ECE vs context (2B) for all 6 retained tasks.  
-**Source:** `{task}_calibration_2B_ece_vs_context.png` ×6 (phase0_v3).  
+**Tasks (6):** sex_binary, age_class, apnea_binary, bmi_binary, sleep_efficiency_binary, osa_binary_apples_postqc. Depression excluded (non-interpretable calibration; ECE non-monotonic, near baseline).  
+**Content:** ECE vs context (2B, multi-head) stored in `{task}_lstm/` after `run_figures.sh` fix.  
+**Source:** `{task}_lstm/{task}_calibration_2B_ece_vs_context.png` ×6 (phase0_v3).  
 **Grouping rationale:** Same plot type across tasks. Separate from 2A because it answers a different question (trend) vs 2A (absolute calibration).
 
 ---
@@ -194,8 +199,8 @@ Log-scale x-axis on lollipop to match Fig 1.
 ### S-Fig 6a — Prediction Variance Violins `[v3, 3 tasks, Transformer]`
 
 **Named:** *"Within-Subject Prediction Variance"*  
-**Layout:** 3 cols × 3 rows (3 tasks × 3 contexts: 30s, 120m, 240m)  
-**Content:** 5A violin plots (within-subject std(prob), correct vs incorrect) for sex_binary, apnea_binary, sleep_efficiency.  
+**Layout:** 1 row × 3 cols (one panel per task — each 5A PNG is already a multi-context composite)  
+**Content:** 5A violin plots (within-subject std(prob), correct vs incorrect) for sex_binary, apnea_binary, sleep_efficiency. The 5A PNG from `plot_subject_consistency.py` already embeds all context lengths in one composite figure per task, so the assembly is a 1×3 side-by-side.  
 **Source:** `{task}_transformer_subject_consistency_5A_variance.png` ×3 (phase0_v3).
 
 ---
@@ -206,20 +211,21 @@ Log-scale x-axis on lollipop to match Fig 1.
 **Layout:** 2 rows × 4 cols (7 task panels)  
 **Content:** 5C bar charts — fraction of subjects correctly classified at 0, 1, 2, …, 6 of 6 context lengths. After redesign: plain English x-axis ("# context lengths correctly predicted"), cumulative or sorted bars.  
 **Source:** `{task}_transformer_subject_consistency_5C_hard_subjects.png` ×7 (phase0_v3).  
-**Note:** [REDESIGN NEEDED] before including. See interpretation files.
+**Note:** 5C redesigned (2026-07): x-axis now plain integer count, cumulative fraction line added on twin y-axis.
 
 ---
 
 ### S-Fig 7 — Window Position Profiles `[v3, 2 tasks, LSTM]`
 
 **Named:** *"Prediction vs Night Position"*  
-**Layout:** 2 rows × 3 cols (task × {positive subjects | negative subjects | variance 4B})  
+**Layout:** 2 rows × 2 cols (task × {4A profiles | 4B variance})  
 **Content:** 4A position-probability profiles + 4B position variance for:
 - Row 1: sleep_efficiency_lstm (early-night elevation — biologically meaningful)
 - Row 2: sex_binary_lstm (flat — null control; confirms position-independence)
 
+**Note:** The 4A PNG from `plot_window_position.py` already embeds positive-subject and negative-subject profiles as sub-panels within one composite file. The assembly is therefore 2×2 (4 panels total: task × plot_type), not 2×3.  
 **Source:** `{task}_lstm_window_position_4A_profiles.png` + `{task}_lstm_window_position_4B_variance.png` (phase0_v3).  
-**Grouping rationale:** 4A and 4B together answer "does position matter?" — 4A shows the mean, 4B shows the variance. Natural pair within each task row.
+**Grouping rationale:** 4A and 4B together answer "does position matter?" — 4A shows the mean profiles, 4B shows the position variance. Natural pair within each task row.
 
 ---
 
@@ -258,7 +264,31 @@ Log-scale x-axis on lollipop to match Fig 1.
 **Named:** *"Training Convergence"*  
 **Layout:** 2 rows × 4 cols (7 task panels)  
 **Content:** 1A BA vs epoch (after rerun with BA metric replacing CE loss). One panel per task, Transformer head.  
-**Status:** [PENDING — rerun 1A with BA metric first]
+**Status:** Ready — BA-metric fix applied 2026-07-01. Run Step 3 of `run_figures.sh` (includes `--plots 1A 1B`).
+
+---
+
+### S-Fig 12 — Aggregate Context-Length Scaling `[v3, all tasks × all heads]`
+
+**Named:** *"General Context Scaling Law"*  
+**Layout:** 1 row × 3 panels — **already a single pre-assembled PNG/PDF** (`aggregate/aggregate_scaling.png`)  
+**Script:** `scripts/plot_aggregate_scaling.py` (generates directly, no assembly needed)  
+**Status:** EXISTS. **CONFIRMED: stays as S-Fig 12** (not promoted to Fig 5).  
+Reason: inter-task std bands are >> ±2 pp (ΔAUROC range 0.006–0.103 across tasks → std ~0.033 at 240m). The per-task story in Fig 1 is the stronger primary finding.
+
+**Content:**
+
+| Panel | Type | Key question |
+|---|---|---|
+| (a) | ΔAUROC from 30s baseline vs context (log-x), one line per head ±1 std across tasks, faint individual task lines | Is there a consistent average gain curve? How variable is it across tasks? |
+| (b) | Normalised gain (0%=30s, 100%=240m) vs context, same structure | What fraction of total achievable gain is captured at each context? |
+| (c) | Bar chart: log-linear slope b per head (pp per log₂ doubling), ±1 std across tasks, individual task dots | Is Transformer steeper than LSTM on average? |
+
+**Key result**: Panel (c) slope values are reportable in main text as a one-sentence summary (e.g. "Transformer shows steeper average log-linear gain than LSTM: X pp per doubling vs Y pp").
+
+**Data source:** `phase0_v3/collected/analysis.csv`
+
+**No assembly script needed.** LaTeX: `\includegraphics[width=\textwidth]{aggregate_scaling.pdf}`
 
 ---
 
@@ -297,3 +327,6 @@ Log-scale x-axis on lollipop to match Fig 1.
 | S-Fig 7 | Temporal Position Profiles | v3 | `figure_interpretations_v3.md` §window_position_4A rows |
 | S-Fig 8 | Compute Scaling | v3 | `figure_interpretations_v3.md` §Scaling Laws 1B rows |
 | S-Fig 9 | Min Windows K* | v3 | `figure_interpretations_v3.md` §kstar_9A rows |
+| S-Fig 10a/b | PR Curves | v3 | `figure_interpretations_v3.md` §precision_recall rows |
+| S-Fig 11 | U-Shape Training | v3 | `figure_interpretations_v3.md` §Scaling Laws 1A rows |
+| S-Fig 12 | Aggregate Context Scaling | v3 | `figure_interpretations_v3.md` §assignment index — already assembled, no composite script needed |

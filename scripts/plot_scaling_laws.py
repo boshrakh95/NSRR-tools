@@ -5,8 +5,9 @@ plot_scaling_laws.py — §1 Overfitting Curves and Compute Scaling Laws
 Reads results/collected/training.csv (output of collect_results_v2.py) and
 produces three figures:
 
-  1A: U-shape curves — train_loss and val_loss vs epoch per context length.
-      Includes overfit epochs (is_overfit_epoch=True) to show the rising right arm.
+  1A: U-shape curves — train_bal_acc and val_bal_acc vs epoch per context length.
+      Uses balanced accuracy (the actual early-stopping criterion) instead of loss.
+      Includes overfit epochs (is_overfit_epoch=True) to show the post-peak decline.
       Best epoch marked with a dashed vertical line.
 
   1B: Compute scaling law — cumulative training FLOPs at best epoch vs test AUROC.
@@ -18,9 +19,16 @@ produces three figures:
       val loss is minimised (= early stopping point) per head and context.
 
 FLOPs formulas (per gradient step, forward + backward ≈ 3× forward):
-  LSTM:        3 × seq_len × 4 × hidden_dim × (input_dim + hidden_dim)
-  Transformer: 3 × seq_len × (seq_len × hidden_dim + 4 × hidden_dim²)
+  LSTM:        3 × seq_len × 2 × 4 × hidden_dim × (input_dim + hidden_dim)
+               (×2 for bidirectionality — LSTMHead is a BiLSTM)
+  Transformer: 3 × seq_len × (seq_len × hidden_dim + 12 × hidden_dim² + input_dim × hidden_dim)
+               (12×hd² = attention QKVO 4hd² + feedforward 8hd²; +id×hd for
+               input_proj, since input_dim != hidden_dim)
   MeanPool:    3 × seq_len × input_dim
+
+Verified against real per-run parameter counts logged in training.csv
+(n_trainable_params): LSTM 657,922, Transformer 264,322, MeanPool 1,026
+(input_dim=512, hidden_dim=128). See sequence_head.py for architectures.
 
 Usage:
   python scripts/plot_scaling_laws.py \\
@@ -66,17 +74,15 @@ CONTEXT_TO_MIN = {
 CTX_ORDER = {c: i for i, c in enumerate(CONTEXT_TO_MIN)}
 
 HEAD_STYLE = {
-    "lstm":       {"color": "#4C72B0", "marker": "o", "ls": "-",  "label": "LSTM"},
-    "transformer":{"color": "#DD8452", "marker": "s", "ls": "--", "label": "Transformer"},
-    "mean_pool":  {"color": "#55A868", "marker": "^", "ls": ":",  "label": "Mean Pool"},
+    "lstm":        {"color": "#3A7EBF", "marker": "o", "ls": "-",  "label": "LSTM"},
+    "transformer": {"color": "#E86A33", "marker": "s", "ls": "--", "label": "Transformer"},
+    "mean_pool":   {"color": "#44A15E", "marker": "^", "ls": ":",  "label": "Mean Pool"},
 }
 
 plt.rcParams.update({
-    "figure.dpi": 150,
-    "savefig.bbox": "tight",
-    "axes.spines.top": False,
-    "axes.spines.right": False,
-    "font.size": 10,
+    "figure.dpi": 300, "savefig.bbox": "tight",
+    "axes.spines.top": False, "axes.spines.right": False,
+    "font.family": "serif", "font.size": 9,
 })
 
 
@@ -93,9 +99,9 @@ def compute_flops_per_step(head: str, seq_len, input_dim, hidden_dim) -> float:
     if sl <= 0:
         return float("nan")
     if head == "lstm":
-        return 3.0 * sl * 4 * hd * (id_ + hd)
+        return 3.0 * sl * 2 * 4 * hd * (id_ + hd)
     elif head == "transformer":
-        return 3.0 * sl * (sl * hd + 4 * hd * hd)
+        return 3.0 * sl * (sl * hd + 12 * hd * hd + id_ * hd)
     elif "pool" in head or "mean" in head:
         return 3.0 * sl * id_
     return float("nan")
@@ -150,21 +156,15 @@ def plot_uShape(df: pd.DataFrame, task: str, head: str, out_dir: Path) -> None:
     fig, axes = plt.subplots(nrows, ncols,
                              figsize=(5 * ncols, 4 * nrows),
                              sharey=False, squeeze=False)
-    fig.suptitle(
-        f"U-Shape Overfitting Curves — {task}  ({head.upper()})\n"
-        "Shaded region = generalisation gap after early stopping",
-        fontsize=11, y=1.01,
-    )
-
     for ax_flat, ctx in zip(axes.flat, contexts):
         rows = sub[sub["context_length"] == ctx].sort_values("epoch")
         if rows.empty:
             ax_flat.set_visible(False)
             continue
 
-        epochs     = rows["epoch"].values
-        train_loss = rows["train_loss"].values
-        val_loss   = rows["val_loss"].values
+        epochs    = rows["epoch"].values
+        train_ba  = rows["train_bal_acc"].values
+        val_ba    = rows["val_bal_acc"].values
         is_overfit = rows.get("is_overfit_epoch", pd.Series([False] * len(rows))).values
         best_rows  = rows[rows.get("is_best_epoch", pd.Series([False] * len(rows))).values]
         best_epoch = int(best_rows["epoch"].iloc[0]) if not best_rows.empty else None
@@ -172,23 +172,23 @@ def plot_uShape(df: pd.DataFrame, task: str, head: str, out_dir: Path) -> None:
         normal_mask  = ~is_overfit
         overfit_mask = is_overfit
 
-        ax_flat.plot(epochs[normal_mask], train_loss[normal_mask],
-                     color="#1f77b4", lw=2, label="Train loss")
-        ax_flat.plot(epochs[normal_mask], val_loss[normal_mask],
-                     color="#d62728", lw=2, label="Val loss")
+        ax_flat.plot(epochs[normal_mask], train_ba[normal_mask],
+                     color="#1f77b4", lw=2, label="Train BA")
+        ax_flat.plot(epochs[normal_mask], val_ba[normal_mask],
+                     color="#d62728", lw=2, label="Val BA")
         if overfit_mask.any():
-            ax_flat.plot(epochs[overfit_mask], train_loss[overfit_mask],
+            ax_flat.plot(epochs[overfit_mask], train_ba[overfit_mask],
                          color="#1f77b4", lw=2, ls=":", alpha=0.7)
-            ax_flat.plot(epochs[overfit_mask], val_loss[overfit_mask],
+            ax_flat.plot(epochs[overfit_mask], val_ba[overfit_mask],
                          color="#d62728", lw=2, ls=":", alpha=0.7)
 
-        # Generalisation gap shading (overfit region)
+        # Generalisation gap shading (overfit region): train BA > val BA
         if overfit_mask.any():
-            tr_o = train_loss[overfit_mask]
-            vl_o = val_loss[overfit_mask]
+            tr_o = train_ba[overfit_mask]
+            vl_o = val_ba[overfit_mask]
             ep_o = epochs[overfit_mask]
             ax_flat.fill_between(ep_o, tr_o, vl_o,
-                                 where=vl_o > tr_o, alpha=0.15, color="red",
+                                 where=tr_o > vl_o, alpha=0.15, color="red",
                                  label="Generalisation gap")
 
         if best_epoch is not None:
@@ -196,12 +196,13 @@ def plot_uShape(df: pd.DataFrame, task: str, head: str, out_dir: Path) -> None:
                             label=f"Best epoch ({best_epoch})")
 
         ctx_min = CONTEXT_TO_MIN.get(ctx)
-        ax_flat.set_title(
-            f"L = {ctx}" + (f"  ({ctx_min:.0f} min)" if ctx_min else ""),
-            fontsize=10,
-        )
-        ax_flat.set_xlabel("Epoch")
-        ax_flat.set_ylabel("Loss")
+        ax_flat.set_xlabel("Epoch", fontsize=10)
+        ax_flat.set_ylabel("Balanced Accuracy", fontsize=10)
+        ax_flat.set_ylim(bottom=0.0)
+        ax_flat.text(0.5, -0.18,
+                     f"L = {ctx}" + (f"  ({ctx_min:.0f} min)" if ctx_min else ""),
+                     transform=ax_flat.transAxes, ha="center", va="top",
+                     fontsize=8, fontfamily="serif")
         ax_flat.set_xlim(left=1)
 
     axes.flat[0].legend(fontsize=8, loc="upper right")
@@ -294,13 +295,8 @@ def plot_scaling_law(df: pd.DataFrame, task: str, heads: list, out_dir: Path) ->
         ax.scatter([], [], color="gray", marker=hs["marker"], s=70, label=hs["label"])
 
     ax.set_xscale("log")
-    ax.set_xlabel("Total Training FLOPs (log scale)", fontsize=11)
-    ax.set_ylabel("Test AUROC at best epoch", fontsize=11)
-    ax.set_title(
-        f"Compute Scaling Law — {task}\n"
-        "Color = context length · Marker = head · Dashed = power-law fit",
-        fontsize=11,
-    )
+    ax.set_xlabel("Total training FLOPs (log scale)", fontsize=10)
+    ax.set_ylabel("Segment AUROC at best epoch (training eval)", fontsize=10)
     ax.legend(fontsize=8, ncol=3, loc="lower right")
     fig.tight_layout()
 
@@ -350,15 +346,10 @@ def plot_optimal_epoch(df: pd.DataFrame, task: str, heads: list, out_dir: Path) 
         plotted += 1
 
     ax.set_xticks(x)
-    ax.set_xticklabels(contexts, fontsize=10)
-    ax.set_xlabel("Context Length", fontsize=11)
-    ax.set_ylabel("Optimal Epoch (val-loss minimum)", fontsize=11)
-    ax.set_title(
-        f"Optimal Epoch vs Context Length — {task}\n"
-        "Longer context may require more epochs to converge",
-        fontsize=11,
-    )
-    ax.legend()
+    ax.set_xticklabels(contexts, fontsize=9)
+    ax.set_xlabel("Context length", fontsize=10)
+    ax.set_ylabel("Optimal epoch (val-loss minimum)", fontsize=10)
+    ax.legend(fontsize=9)
     fig.tight_layout()
 
     stem = f"{task}_1C_optimal_epoch"
@@ -386,8 +377,8 @@ def main() -> None:
                         default=Path("/scratch/boshra95/psg/unified/results/phase0_v2"),
                         dest="results_dir")
     parser.add_argument("--plots", nargs="+",
-                        default=["1A", "1B", "1C"],
-                        help="Which plots to generate (1A 1B 1C, default: all)")
+                        default=["1A", "1B"],
+                        help="Which plots to generate (1A 1B 1C, default: 1A 1B)")
     parser.add_argument("--repo-figures-dir", type=Path, default=None,
                         dest="repo_figures_dir",
                         help="Also mirror PNGs into this repo dir (e.g. "

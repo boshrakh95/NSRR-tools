@@ -510,6 +510,16 @@ parameters — the original config comment stating "~1M" was incorrect.
 
 ### Training K (windows per subject per epoch)
 
+> **[RENAME NOTE — do before final submission]**
+> The paper currently uses the letter K for both (a) inference-time aggregation count (swept
+> post-hoc; appears in all figures, tables, and results text) and (b) the training window count
+> per epoch (fixed at 5; appears only in Methods). This creates reader confusion.
+> Decision: rename the **training** window count from K to **W** (or just write "w windows per
+> subject per epoch" in prose). Do NOT rename inference K — it is embedded in every figure,
+> table, and results paragraph and changing it would require touching everything. The training
+> count appears only in III-F/III-G and a few table captions, so renaming it is low-risk.
+> Search targets: "K_train", "training.*K=5", "K=5.*overlapping.*windows.*epoch" in the LaTeX.
+
 K_train = 5 windows per subject per epoch, fixed across all context lengths.
 
 **Justification (two-column table for paper):**

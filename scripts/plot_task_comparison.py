@@ -78,8 +78,9 @@ TASK_COLORS = [
 ]
 
 plt.rcParams.update({
-    "figure.dpi": 150, "savefig.bbox": "tight",
-    "axes.spines.top": False, "axes.spines.right": False, "font.size": 10,
+    "figure.dpi": 300, "savefig.bbox": "tight",
+    "axes.spines.top": False, "axes.spines.right": False,
+    "font.family": "serif", "font.size": 9,
 })
 
 
@@ -172,13 +173,8 @@ def plot_sensitivity_scatter(summary: pd.DataFrame, out_dir: Path) -> None:
     median_diff = float(summary["difficulty"].median())
     ax.axvline(median_diff, color="gray", ls=":", lw=1, alpha=0.5)
 
-    ax.set_xlabel("Baseline difficulty  (1 − AUROC at shortest context, K=all)", fontsize=11)
-    ax.set_ylabel("Context sensitivity  (ΔAUROC from shortest → best context)", fontsize=11)
-    ax.set_title(
-        "Task × Context Sensitivity\n"
-        "Upper-right = hard tasks that benefit most from longer context",
-        fontsize=12,
-    )
+    ax.set_xlabel("Baseline difficulty  (1 − AUROC at shortest context, K=all)", fontsize=10)
+    ax.set_ylabel("Context sensitivity  (ΔAUROC from shortest → best context)", fontsize=10)
     ax.legend(fontsize=9)
     fig.tight_layout()
 
@@ -232,12 +228,7 @@ def plot_sensitivity_bars(summary: pd.DataFrame, df_all: pd.DataFrame,
         [TASK_LABELS.get(t, t) for t in tasks_sorted],
         rotation=20, ha="right", fontsize=9,
     )
-    ax.set_ylabel("Test AUROC  (K=all)", fontsize=11)
-    ax.set_title(
-        f"AUROC by Context Length per Task — {head.upper()}  (sorted by context sensitivity)\n"
-        "Rightmost tasks benefit most from longer context",
-        fontsize=11,
-    )
+    ax.set_ylabel("AUROC (%)  K=all", fontsize=10)
     ax.legend(title="Context", fontsize=8, title_fontsize=9, ncol=3,
               loc="upper left")
     ax.set_ylim(bottom=max(0.45, float(sub["mean_prob_auroc"].min()) - 0.05))
@@ -279,12 +270,17 @@ def plot_lstar(summary: pd.DataFrame, out_dir: Path) -> None:
         fontsize=9,
     )
     ax.xaxis.set_minor_formatter(mticker.NullFormatter())
-    ax.set_xlabel("L* — context length at which AUROC saturates (minutes)", fontsize=11)
-    ax.set_title(
-        "Task-Specific Saturation Context (L*)\n"
-        "Minimum context to reach near-ceiling AUROC (within 0.5% of maximum)",
-        fontsize=11,
-    )
+    ax.set_xlabel("L* — saturation context length (minutes)", fontsize=10)
+
+    # Arrow annotation for sleep_efficiency (L* > 240m — not saturated)
+    se_row = summary[summary["task"] == "sleep_efficiency_binary"]
+    if not se_row.empty:
+        se_y = tasks_sorted.index("sleep_efficiency_binary")
+        se_x = float(se_row["lstar_min"].iloc[0])
+        ax.annotate(">240m", (se_x, se_y),
+                    xytext=(se_x * 1.15, se_y),
+                    arrowprops=dict(arrowstyle="->", color="black", lw=1),
+                    fontsize=8, va="center")
     fig.tight_layout()
 
     stem = "task_comparison_6C_lstar"
@@ -309,7 +305,7 @@ def main() -> None:
     parser.add_argument("--results-dir", type=Path,
                         default=Path("/scratch/boshra95/psg/unified/results/phase0_v2"),
                         dest="results_dir")
-    parser.add_argument("--plots", nargs="+", default=["6A", "6B", "6C"])
+    parser.add_argument("--plots", nargs="+", default=["6A", "6C"])
     parser.add_argument("--repo-figures-dir", type=Path, default=None,
                         dest="repo_figures_dir",
                         help="Also mirror PNGs into this repo dir (e.g. "

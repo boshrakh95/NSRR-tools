@@ -1,6 +1,6 @@
 \begin{table}[ht]
 \centering
-\caption{Modality group ablation (training-time zeroing). Full = all four SleepFM modality groups active (baseline, fast-channel). No BAS = EEG/EOG zeroed (RESP+EKG+EMG active). Cardio only = BAS+EMG zeroed (RESP+EKG active; SleepFounder comparison). BAS only = RESP+EKG+EMG zeroed (BAS active). $\Delta$ = condition AUROC minus Full AUROC. Head: lstm. K=all.}
+\caption{Modality group ablation (training-time zeroing, fast-channel, head: lstm, K=all, test split). Context lengths are fixed at the ablation training context per task (Sex/Apnea/Sleep-eff/Age: 120 min; BMI: 40 min); values therefore differ from Table~I which reports each head's best context. Full = all four SleepFM modality groups active (baseline). No BAS = EEG/EOG zeroed (RESP+EKG+EMG active). Cardio only = BAS+EMG zeroed (RESP+EKG active). BAS only = RESP+EKG+EMG zeroed. $\Delta$ = condition AUROC $-$ Full AUROC.}
 \label{tab:modality_ablation}
 \begin{tabular}{lrrrrrrrrrrrrr}
 \toprule

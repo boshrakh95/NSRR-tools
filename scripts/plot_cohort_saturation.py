@@ -62,8 +62,9 @@ DATASET_STYLE = {
 }
 
 plt.rcParams.update({
-    "figure.dpi": 150, "savefig.bbox": "tight",
-    "axes.spines.top": False, "axes.spines.right": False, "font.size": 10,
+    "figure.dpi": 300, "savefig.bbox": "tight",
+    "axes.spines.top": False, "axes.spines.right": False,
+    "font.family": "serif", "font.size": 9,
 })
 
 
@@ -166,14 +167,9 @@ def plot_cohort_saturation(parquets: dict, task: str, head: str,
         fontsize=9,
     )
     ax.xaxis.set_minor_formatter(mticker.NullFormatter())
-    ax.set_xlabel("Context Length (log scale)", fontsize=11)
-    ax.set_ylabel(f"Test AUROC  (K=all)", fontsize=11)
-    ax.set_title(
-        f"Cohort-Stratified Saturation — {task}  ({head.upper()})\n"
-        "Does the context saturation result hold across each dataset independently?",
-        fontsize=11,
-    )
-    ax.legend(title="Dataset", fontsize=10)
+    ax.set_xlabel("Context length (minutes)", fontsize=10)
+    ax.set_ylabel("AUROC  (K=all)", fontsize=10)
+    ax.legend(title="Dataset", fontsize=9, title_fontsize=9)
     ax.grid(True, which="major", alpha=0.3)
     fig.tight_layout()
 
@@ -210,14 +206,9 @@ def plot_cohort_n(parquets: dict, task: str, head: str,
 
     ax.set_xticks(x)
     ax.set_xticklabels(contexts, fontsize=10)
-    ax.set_xlabel("Context Length", fontsize=11)
-    ax.set_ylabel("Number of subjects in test set", fontsize=11)
-    ax.set_title(
-        f"Test-Set Subject Count per Dataset — {task}  ({head.upper()})\n"
-        "Subject count may drop at longer contexts (fewer qualifying windows)",
-        fontsize=11,
-    )
-    ax.legend(title="Dataset")
+    ax.set_xlabel("Context length", fontsize=10)
+    ax.set_ylabel("Number of subjects in test set", fontsize=10)
+    ax.legend(title="Dataset", fontsize=9, title_fontsize=9)
     fig.tight_layout()
 
     stem = f"{task}_{head}_cohort_saturation_7B_n"
@@ -244,7 +235,7 @@ def main() -> None:
     parser.add_argument("--metric",  default="auroc",
                         choices=["auroc"],
                         help="Metric (currently only auroc supported, default: auroc)")
-    parser.add_argument("--plots",   nargs="+", default=["7A", "7B"])
+    parser.add_argument("--plots",   nargs="+", default=["7A"])
     parser.add_argument("--repo-figures-dir", type=Path, default=None,
                         dest="repo_figures_dir",
                         help="Also mirror PNGs into this repo dir (e.g. "

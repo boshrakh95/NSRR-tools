@@ -54,13 +54,27 @@ Note: Channel expansion (fast vs full) is a clear finding but space is tight. Pr
 supplementary figure unless sleep staging is still pending at submission — in that case promote
 channel comparison to main Fig 5 and add sleep staging later.
 
+> **[RENAME NOTE — do before final submission]**
+> Inference K (post-hoc window count swept in results) and training K (=5, fixed in Methods)
+> both use the letter K, causing reader confusion. Resolution: rename training K to **W**
+> (or "w windows per subject per epoch" in prose). All figures/tables use K for inference —
+> do NOT rename those. Only rename the training count in Methods §III-F and any table caption
+> that says "training always used K=5 overlapping windows". Replace every such occurrence with
+> "training used w=5 windows per subject per epoch" or "Training sampled w=5 overlapping
+> windows per subject per epoch (Section III-F)."
+
 ### Main paper tables (Results section)
+
+> **[TABLE REDESIGN — see TABLES_PLAN.md for full spec]**
+> The table structure below reflects the NEW plan agreed 2026-07-04. See
+> `docs/TABLES_PLAN.md` for the authoritative spec of each table's columns,
+> numbers, placement, and supplementary counterparts.
 
 | # | Content | File | Status |
 |---|---|---|---|
-| Table II | Main performance: AUROC per task/head, K=5 and K=all at best L | `table1_peak_auroc_fast.{md,tex}` | EXISTS (regenerate after MeanPool) |
-| Table III | Saturation: L* per task/head + ΔAUROC from 30s | `table2_lstar_fast.{md,tex}` | EXISTS (regenerate after MeanPool) |
-| Table IV | Head comparison at L* — LSTM, Transformer, MeanPool | `table5_heads_fast.{md,tex}` | PARTIAL (needs MeanPool) |
+| Table II | Saturation + aggregation (H1+H3 unified) | NEW — see TABLES_PLAN.md | IMPLEMENTED |
+| Table III | L* per task + Δ from 30s baseline (H1 detail) | see TABLES_PLAN.md | IMPLEMENTED |
+| Table IV | Head comparison at LSTM L* (H4) | see TABLES_PLAN.md | IMPLEMENTED |
 | Table V | Modality ablation — AUROC per condition per task | `table6_modality.{md,tex}` | **EXISTS, complete** |
 
 Channel comparison (fast vs full): fold into Table II as extra columns or present inline in text.
@@ -103,10 +117,10 @@ are lower priority; include only if page budget allows.
 ### Narrative
 All six clinical prediction tasks show some improvement with longer context, but the magnitude
 and the point of saturation vary substantially across tasks. Sleep efficiency prediction benefits
-most from long context (L*=240m, ΔAUROC=+0.102 for LSTM, +0.124 for Transformer), consistent
+most from long context (L*=240m, ΔAUROC=+0.091 for LSTM, +0.124 for Transformer), consistent
 with sleep efficiency encoding information distributed across the full night. Apnea prediction
 requires up to 120 minutes (ΔAUROC=+0.074 LSTM, +0.104 Transformer). Sex and age classification
-saturate earlier (LSTM L*=80m and 40m respectively). BMI shows minimal context benefit
+saturate earlier (LSTM L*=120m and 80m respectively). BMI shows minimal context benefit
 (ΔAUROC=+0.006 LSTM). This heterogeneity supports task-specific context requirements rather
 than a single universal temporal scale.
 
@@ -131,7 +145,7 @@ Numbers: K=5 (clinical deployment, matching training) and K=all (full-night ceil
 | bmi_binary | 1856 | LSTM | 80m | 0.763 | 0.767 |
 | bmi_binary | 1856 | Transformer | 80m | 0.767 | 0.777 |
 | bmi_binary | 1856 | MeanPool | — | PENDING | PENDING |
-| sleep_efficiency_binary | 2023 | LSTM | 240m | 0.799 | 0.799 |
+| sleep_efficiency_binary | 2023 | LSTM | 240m | 0.788 | 0.788 |
 | sleep_efficiency_binary | 2023 | Transformer | 240m | 0.831 | 0.831 |
 | sleep_efficiency_binary | 2023 | MeanPool | — | PENDING | PENDING |
 | sleep_staging | ~15000 | LSTM | — | PENDING (κ) | PENDING |
@@ -149,11 +163,11 @@ footnote if space is tight. Full-channel best AUROCs for key tasks:
 
 | Task | LSTM L* | LSTM ΔAUROC | Transformer L* | Transformer ΔAUROC |
 |---|---|---|---|---|
-| sex_binary | 80m | +0.047 | 240m | +0.078 |
-| age_class | 40m | +0.028 | 120m | +0.051 |
+| sex_binary | 120m | +0.047 | 240m | +0.078 |
+| age_class | 80m | +0.028 | 120m | +0.051 |
 | apnea_binary | 120m | +0.074 | 120m | +0.104 |
 | bmi_binary | 10m | +0.006 | 240m | +0.030 |
-| sleep_efficiency_binary | 240m | +0.102 | 240m | +0.124 |
+| sleep_efficiency_binary | 240m | +0.091 | 240m | +0.124 |
 | depression_extreme_binary | 10m | +0.013 | — | — |
 | osa_binary_apples_postqc | 40m | +0.065 | — | — |
 | sleep_staging | PENDING | — | PENDING | — |
@@ -204,7 +218,7 @@ Write subsection now with LSTM/Transformer; add MeanPool placeholder.
 | age_class | 120m | 0.893 | 0.902 | PENDING | +0.009 |
 | apnea_binary | 120m | 0.831 | 0.856 | PENDING | +0.025 |
 | bmi_binary | 80m | 0.763 | 0.767 | PENDING | +0.004 |
-| sleep_efficiency | 240m | 0.799 | 0.831 | PENDING | +0.032 |
+| sleep_efficiency | 240m | 0.788 | 0.831 | PENDING | +0.043 |
 | sleep_staging | — | PENDING κ | PENDING κ | PENDING κ | — |
 
 †Transformer minus LSTM at the same context. MeanPool comparison needed for full H4 test.
@@ -223,13 +237,15 @@ Data available for sex_binary_lstm (S-Table IV):
 
 | L | K=1 | K=5 | K=10 | K=20 | K=all |
 |---|---|---|---|---|---|
-| 30s | 0.701 | 0.805 | 0.815 | 0.821 | 0.824 |
-| 10m | 0.720 | 0.823 | 0.836 | 0.840 | 0.842 |
-| 40m | 0.760 | 0.853 | 0.862 | 0.866 | 0.866 |
-| 80m | 0.798 | 0.866 | 0.868 | — | 0.868 |
+| 30s | 0.687 | 0.801 | 0.817 | 0.822 | 0.825 |
+| 10m | 0.724 | 0.831 | 0.842 | 0.850 | 0.850 |
+| 40m | 0.750 | 0.838 | 0.843 | 0.845 | 0.845 |
+| 80m | 0.785 | 0.859 | 0.861 | — | 0.861 |
+| 120m | 0.807 | 0.872 | — | — | 0.872 |
+| 240m | 0.844 | — | — | — | 0.857 |
 
 At medium-to-long contexts (≥40m), K=5 captures ≥99% of K=all benefit. At short contexts (30s),
-even K=all (0.824) does not reach K=5 at 80m (0.866), demonstrating that aggregation cannot
+even K=all (0.825) does not reach K=5 at 80m (0.859), demonstrating that aggregation cannot
 substitute for longer context beyond a ceiling.
 
 ### Iso-compute analysis (H2 — aggregation substitution)

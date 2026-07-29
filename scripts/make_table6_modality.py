@@ -143,11 +143,17 @@ def main():
         print("Check status with:")
         print("  python scripts/gen_commands.py --registry experiments/v2_ablation_registry.yaml status")
 
-    cap = (f"Modality group ablation (training-time zeroing). Full = all four SleepFM "
-           f"modality groups active (baseline, fast-channel). No BAS = EEG/EOG zeroed "
-           f"(RESP+EKG+EMG active). Cardio only = BAS+EMG zeroed (RESP+EKG active; "
-           f"SleepFounder comparison). BAS only = RESP+EKG+EMG zeroed (BAS active). "
-           f"$\\Delta$ = condition AUROC minus Full AUROC. Head: {args.head}. K={args.k}.")
+    ctx_note = "Sex/Apnea/Sleep-eff/Age: 120 min; BMI: 40 min"
+    cap = (f"Modality group ablation (training-time zeroing, fast-channel, head: {args.head}, "
+           f"K={args.k}, test split). "
+           f"Context lengths are fixed at the ablation training context per task "
+           f"({ctx_note}); values therefore differ from Table~I which reports each "
+           f"head's best context. "
+           f"Full = all four SleepFM modality groups active (baseline). "
+           f"No BAS = EEG/EOG zeroed (RESP+EKG+EMG active). "
+           f"Cardio only = BAS+EMG zeroed (RESP+EKG active). "
+           f"BAS only = RESP+EKG+EMG zeroed. "
+           f"$\\Delta$ = condition AUROC $-$ Full AUROC.")
     tex = latex_table(table, cap, "modality_ablation")
 
     if args.latex:

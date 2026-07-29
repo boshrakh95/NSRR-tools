@@ -69,14 +69,15 @@ CONTEXT_TO_MIN = {
 CTX_ORDER = {c: i for i, c in enumerate(CONTEXT_TO_MIN)}
 
 HEAD_STYLE = {
-    "lstm":        {"color": "#4C72B0", "marker": "o", "ls": "-",  "label": "LSTM"},
-    "transformer": {"color": "#DD8452", "marker": "s", "ls": "--", "label": "Transformer"},
-    "mean_pool":   {"color": "#55A868", "marker": "^", "ls": ":",  "label": "Mean Pool"},
+    "lstm":        {"color": "#3A7EBF", "marker": "o", "ls": "-",  "label": "LSTM"},
+    "transformer": {"color": "#E86A33", "marker": "s", "ls": "--", "label": "Transformer"},
+    "mean_pool":   {"color": "#44A15E", "marker": "^", "ls": ":",  "label": "Mean Pool"},
 }
 
 plt.rcParams.update({
-    "figure.dpi": 150, "savefig.bbox": "tight",
-    "axes.spines.top": False, "axes.spines.right": False, "font.size": 10,
+    "figure.dpi": 300, "savefig.bbox": "tight",
+    "axes.spines.top": False, "axes.spines.right": False,
+    "font.family": "serif", "font.size": 9,
 })
 
 
@@ -178,13 +179,8 @@ def plot_pr_curves(parquets: dict, task: str, head: str, out_dir: Path) -> None:
         print("  [8A] No valid data for PR curves")
         return
 
-    ax.set_xlabel("Recall", fontsize=11)
-    ax.set_ylabel("Precision", fontsize=11)
-    ax.set_title(
-        f"Precision-Recall Curves — {task}  ({head.upper()})  K=all\n"
-        "Each curve: subject-level mean probability aggregated across all windows",
-        fontsize=11,
-    )
+    ax.set_xlabel("Recall", fontsize=10)
+    ax.set_ylabel("Precision", fontsize=10)
     ax.legend(title="Context", fontsize=8, title_fontsize=9, ncol=2,
               loc="upper right")
     ax.set_xlim(0, 1); ax.set_ylim(0, 1)
@@ -253,13 +249,8 @@ def plot_aucpr_vs_context(results_dir: Path, task: str, heads: list,
         fontsize=9,
     )
     ax.xaxis.set_minor_formatter(mticker.NullFormatter())
-    ax.set_xlabel("Context Length (log scale)", fontsize=11)
-    ax.set_ylabel("AUC-PR (Average Precision)  K=all", fontsize=11)
-    ax.set_title(
-        f"AUC-PR vs Context Length — {task}\n"
-        "Does precision-recall performance saturate like AUROC?",
-        fontsize=11,
-    )
+    ax.set_xlabel("Context length (minutes)", fontsize=10)
+    ax.set_ylabel("AUC-PR (Average Precision)  K=all", fontsize=10)
     ax.legend(title="Head", fontsize=10)
     ax.grid(True, which="major", alpha=0.3)
     fig.tight_layout()
@@ -346,13 +337,8 @@ def plot_vote_sweep(parquets: dict, task: str, head: str,
         print("  [8C] No valid data for vote sweep")
         return
 
-    ax.set_xlabel("Recall", fontsize=11)
-    ax.set_ylabel("Precision", fontsize=11)
-    ax.set_title(
-        f"Majority-Vote Threshold Sweep — {task}  ({head.upper()})\n"
-        "t = min windows that must vote positive; higher t → higher precision, lower recall",
-        fontsize=11,
-    )
+    ax.set_xlabel("Recall", fontsize=10)
+    ax.set_ylabel("Precision", fontsize=10)
     ax.legend(title="Context", fontsize=9, title_fontsize=10)
     ax.set_xlim(0, 1); ax.set_ylim(0, 1)
     fig.tight_layout()
@@ -381,7 +367,7 @@ def main() -> None:
     parser.add_argument("--contexts-show", nargs="+", default=None,
                         dest="contexts_show",
                         help="Restrict 8C vote sweep to these context labels")
-    parser.add_argument("--plots",   nargs="+", default=["8A", "8B", "8C"])
+    parser.add_argument("--plots",   nargs="+", default=["8A", "8B"])
     parser.add_argument("--repo-figures-dir", type=Path, default=None,
                         dest="repo_figures_dir",
                         help="Also mirror PNGs into this repo dir (e.g. "

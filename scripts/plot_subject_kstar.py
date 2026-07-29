@@ -69,8 +69,9 @@ K_MAX_DEFAULT = 30   # maximum K to evaluate
 REPS_DEFAULT  = 20   # random draws per (subject, k)
 
 plt.rcParams.update({
-    "figure.dpi": 150, "savefig.bbox": "tight",
-    "axes.spines.top": False, "axes.spines.right": False, "font.size": 10,
+    "figure.dpi": 300, "savefig.bbox": "tight",
+    "axes.spines.top": False, "axes.spines.right": False,
+    "font.family": "serif", "font.size": 9,
 })
 
 
@@ -154,20 +155,14 @@ def plot_kstar_histogram(parquets: dict, task: str, head: str,
     fig, axes = plt.subplots(1, n, figsize=(5.5 * n, 5), sharey=False)
     if n == 1:
         axes = [axes]
-    fig.suptitle(
-        f"K* Distribution — {task}  ({head.upper()})\n"
-        f"K* = minimum windows for correct classification (reps={reps})",
-        fontsize=11,
-    )
-
     rng = np.random.default_rng(42)
     any_data = False
 
-    for ax, ctx in zip(axes, show):
+    for i, (ax, ctx) in enumerate(zip(axes, show)):
         df    = parquets[ctx]
         kstar = estimate_kstar(df, k_max, reps, rng=rng)
         if kstar.empty:
-            ax.set_title(f"L={ctx}\n(no data)"); continue
+            continue
 
         finite_mask = np.isfinite(kstar.values)
         finite_vals = kstar.values[finite_mask]
@@ -175,23 +170,23 @@ def plot_kstar_histogram(parquets: dict, task: str, head: str,
         n_total     = len(kstar)
 
         bins = np.arange(0.5, k_max + 1.5, 1)
-        ax.hist(finite_vals, bins=bins, color="#4C72B0", edgecolor="white",
+        ax.hist(finite_vals, bins=bins, color="#3A7EBF", edgecolor="white",
                 alpha=0.85, rwidth=0.8)
 
-        # Annotate never-correct fraction
         if n_inf > 0:
             ax.text(0.97, 0.97, f"Never correct:\n{n_inf}/{n_total} ({100*n_inf/n_total:.1f}%)",
                     transform=ax.transAxes, ha="right", va="top",
-                    fontsize=8, color="#DD8452",
-                    bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="#DD8452", alpha=0.8))
+                    fontsize=8, color="#E86A33",
+                    bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="#E86A33", alpha=0.8))
 
-        ctx_label = f"L={ctx}"
+        ctx_label = f"({chr(97+i)}) L={ctx}"
         if ctx in CONTEXT_TO_MIN:
             ctx_label += f" ({CONTEXT_TO_MIN[ctx]:.0f} min)"
-        ax.set_title(ctx_label, fontsize=10)
-        ax.set_xlabel("K*")
-        ax.set_ylabel("Number of subjects")
+        ax.set_xlabel("K*", fontsize=10)
+        ax.set_ylabel("Number of subjects", fontsize=10)
         ax.set_xlim(0.5, k_max + 0.5)
+        ax.text(0.5, -0.18, ctx_label, transform=ax.transAxes,
+                ha="center", va="top", fontsize=8, fontfamily="serif")
         any_data = True
 
     if not any_data:
@@ -238,13 +233,8 @@ def plot_coverage_curves(parquets: dict, task: str, head: str,
     if not any_data:
         plt.close(fig); print("  [9B] No data"); return
 
-    ax.set_xlabel("K  (maximum windows used per subject)", fontsize=11)
-    ax.set_ylabel("Subjects correctly classified (%)", fontsize=11)
-    ax.set_title(
-        f"Coverage Curves — {task}  ({head.upper()})\n"
-        f"Fraction of subjects correctly classified using ≤K windows (reps={reps})",
-        fontsize=11,
-    )
+    ax.set_xlabel("K (maximum windows used per subject)", fontsize=10)
+    ax.set_ylabel("Subjects correctly classified (%)", fontsize=10)
     ax.legend(title="Context", fontsize=8, title_fontsize=9, ncol=2,
               loc="lower right")
     ax.set_xlim(1, k_max)
@@ -277,7 +267,7 @@ def main() -> None:
                         help=f"Maximum K to evaluate (default: {K_MAX_DEFAULT})")
     parser.add_argument("--reps",    type=int, default=REPS_DEFAULT,
                         help=f"Random draws per (subject, k) (default: {REPS_DEFAULT})")
-    parser.add_argument("--plots",   nargs="+", default=["9A", "9B"])
+    parser.add_argument("--plots",   nargs="+", default=["9A"])
     parser.add_argument("--repo-figures-dir", type=Path, default=None,
                         dest="repo_figures_dir",
                         help="Also mirror PNGs into this repo dir (e.g. "

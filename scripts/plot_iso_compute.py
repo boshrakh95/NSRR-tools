@@ -38,6 +38,15 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 
+plt.rcParams.update({
+    "figure.dpi": 300,
+    "savefig.bbox": "tight",
+    "axes.spines.top": False,
+    "axes.spines.right": False,
+    "font.family": "serif",
+    "font.size": 9,
+})
+
 sys.path.insert(0, str(Path(__file__).parent))
 from repo_sync import configure_repo_figures, save_figure
 
@@ -159,10 +168,8 @@ def plot_heatmap(df: pd.DataFrame, col: str, task: str, head: str,
         linewidths=0.3, linecolor="white",
         mask=np.isnan(matrix), vmin=vmin, vmax=vmax,
     )
-    ax.set_xlabel("k (windows per subject)", fontsize=12)
-    ax.set_ylabel("Context Length", fontsize=12)
-    ax.set_title(f"{task} · {head}  —  Iso-Compute Heatmap: {_metric_label(col)}",
-                 fontsize=13)
+    ax.set_xlabel("K (windows per subject)", fontsize=10)
+    ax.set_ylabel("Context length (minutes)", fontsize=10)
 
     # Iso-compute lines
     iso_colors = plt.cm.cool(np.linspace(0.2, 0.9, len(ISO_BUDGETS)))
@@ -230,9 +237,8 @@ def plot_vs_k(df: pd.DataFrame, col: str, task: str, head: str, out_dir: Path):
                                   ec=iso_colors[ic], alpha=0.8))
 
     ax.set_xscale("log")
-    ax.set_xlabel("k (windows per subject)", fontsize=12)
-    ax.set_ylabel(_metric_label(col), fontsize=12)
-    ax.set_title(f"{task} · {head}  —  {_metric_label(col)} vs k", fontsize=13)
+    ax.set_xlabel("K (windows per subject)", fontsize=10)
+    ax.set_ylabel(_metric_label(col), fontsize=10)
     ax.legend(title="Context Length", fontsize=9, title_fontsize=10)
     ax.grid(True, alpha=0.3)
     plt.tight_layout()
@@ -259,10 +265,8 @@ def plot_vs_total(df: pd.DataFrame, col: str, task: str, head: str, out_dir: Pat
                 markevery=max(1, len(ks) // 12))
 
     ax.set_xscale("log")
-    ax.set_xlabel("Total context (minutes) = context_length × k", fontsize=12)
-    ax.set_ylabel(_metric_label(col), fontsize=12)
-    ax.set_title(f"{task} · {head}  —  {_metric_label(col)} vs Total Context",
-                 fontsize=13)
+    ax.set_xlabel("Total context (minutes) = context length × K", fontsize=10)
+    ax.set_ylabel(_metric_label(col), fontsize=10)
     ax.legend(title="Context Length", fontsize=9, title_fontsize=10)
     ax.grid(True, alpha=0.3)
     plt.tight_layout()
@@ -344,10 +348,8 @@ def plot_pareto(df: pd.DataFrame, col: str, task: str, head: str,
                     color=ctx_to_color[opt_c[s]], markersize=7, zorder=5)
 
     ax.set_xscale("log")
-    ax.set_xlabel("Total compute budget (minutes)", fontsize=12)
-    ax.set_ylabel(f"Best achievable {_metric_label(col)}", fontsize=12)
-    ax.set_title(f"{task} · {head}  —  Pareto Front: {_metric_label(col)}",
-                 fontsize=13)
+    ax.set_xlabel("Total compute budget (minutes)", fontsize=10)
+    ax.set_ylabel(f"Best achievable {_metric_label(col)}", fontsize=10)
     ax.legend(title="Optimal context", fontsize=9, title_fontsize=10,
               loc="lower right")
     ax.grid(True, alpha=0.3)
@@ -417,10 +419,8 @@ def plot_min_cost(df: pd.DataFrame, col: str, task: str, head: str,
                           ec=palette[best_i], alpha=0.85))
 
     ax.set_yscale("log")
-    ax.set_xlabel(f"Target {_metric_label(col)}", fontsize=12)
-    ax.set_ylabel("Minimum total compute (minutes)", fontsize=12)
-    ax.set_title(f"{task} · {head}  —  Cheapest Way to Reach Target "
-                 f"{_metric_label(col)}", fontsize=13)
+    ax.set_xlabel(f"Target {_metric_label(col)}", fontsize=10)
+    ax.set_ylabel("Minimum total compute (minutes)", fontsize=10)
     ax.legend(title="Context Length", fontsize=9, title_fontsize=10)
     ax.grid(True, alpha=0.3)
     ax.axhline(y=budget, color="red", linestyle=":", linewidth=1.5, alpha=0.7)
@@ -471,10 +471,8 @@ def plot_marginal(df: pd.DataFrame, col: str, task: str, head: str,
         return
 
     ax.set_xscale("log"); ax.set_yscale("log")
-    ax.set_xlabel("k (windows per subject)", fontsize=12)
-    ax.set_ylabel(f"Marginal {_metric_label(col)} gain per vote", fontsize=12)
-    ax.set_title(f"{task} · {head}  —  Diminishing Returns: Marginal Gain per Vote",
-                 fontsize=13)
+    ax.set_xlabel("K (windows per subject)", fontsize=10)
+    ax.set_ylabel(f"Marginal {_metric_label(col)} gain per window", fontsize=10)
     ax.legend(title="Context Length", fontsize=9, title_fontsize=10)
     ax.grid(True, alpha=0.3)
     plt.tight_layout()
@@ -565,9 +563,7 @@ def plot_double(df: pd.DataFrame, col: str, task: str, head: str,
     for idx in range(len(ctx_pairs), len(axes_flat)):
         axes_flat[idx].set_visible(False)
 
-    fig.supylabel(f"{_metric_label(col)} gain from doubling", fontsize=12, x=0.02)
-    fig.suptitle(f"{task} · {head}  —  Double Context vs Double k?",
-                 fontsize=13, y=0.98)
+    fig.supylabel(f"{_metric_label(col)} gain from doubling", fontsize=10, x=0.02)
     plt.tight_layout(rect=[0.03, 0, 1, 0.96])
     _save(fig, out_dir, f"double_tradeoff_{col}")
 
@@ -623,8 +619,9 @@ def main():
         plot_pareto(df, col, args.task, args.head, out_dir, args.budget)
         plot_min_cost(df, col, args.task, args.head, out_dir, args.budget)
         plot_marginal(df, col, args.task, args.head, out_dir)
-        plot_double(df, col, args.task, args.head, out_dir)
-        print(f"  All 7 plots → {out_dir}")
+        # double_tradeoff excluded from paper (redundant with heatmap+pareto)
+        # plot_double(df, col, args.task, args.head, out_dir)
+        print(f"  6 plots → {out_dir}")
 
 
 if __name__ == "__main__":
