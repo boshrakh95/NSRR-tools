@@ -85,6 +85,22 @@ ABL_CONTEXT = {
     "bmi_binary":              "40m",
 }
 
+# ── Cohort colour scheme (per-dataset breakdowns) ─────────────────────────────
+COHORT_COLOR = {
+    "apples": "#3A7EBF", "stages": "#E86A33", "mros": "#44A15E", "shhs": "#7B5EA7",
+}
+
+# ── Number of classes per task (for multi-class AUROC aggregation) ───────────
+NUM_CLASSES = {
+    "age_class":                   3,
+    "apnea_binary":                2,
+    "sleep_efficiency_binary":     2,
+    "bmi_binary":                  2,
+    "sex_binary":                  2,
+    "depression_extreme_binary":   2,
+    "osa_binary_apples_postqc":    2,
+}
+
 
 def apply_tbme_style():
     """Apply global rcParams for TBME-style figures."""

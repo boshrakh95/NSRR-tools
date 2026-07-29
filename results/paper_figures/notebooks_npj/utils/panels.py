@@ -24,7 +24,7 @@ import seaborn as sns
 
 from .style import (
     HEAD_STYLE, TASK_LABEL, CONTEXT_TO_MIN, MIN_TO_CTX, CTX_ORDER,
-    ABL_CONDITIONS, ABL_CONTEXT, FONT_BASE, FONT_ANNOT, FONT_LABEL,
+    ABL_CONDITIONS, ABL_CONTEXT, COHORT_COLOR, FONT_BASE, FONT_ANNOT, FONT_LABEL,
 )
 
 # ── Shared helpers ────────────────────────────────────────────────────────────
@@ -1559,3 +1559,135 @@ def waterfall_panel(ax, analysis_df: pd.DataFrame,
                 min(1.0, max(v_start, v_agg, v_ctx, v_arch) + 0.05))
     ax.yaxis.set_major_formatter(mticker.FormatStrFormatter("%.2f"))
     _spine_clean(ax)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# S-Fig 1 — Cross-cohort replication check (scaling_law_ideas/idea_a)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def cross_cohort_panel(ax, cohort_df: pd.DataFrame, task: str,
+                       cohorts: list[str] = ("apples", "stages", "mros", "shhs"),
+                       show_pooled: bool = True, legend: bool = True):
+    """AUROC vs context length, one line per cohort + a pooled reference line.
+
+    cohort_df: output of utils.data.cohort_auroc_table (optionally concatenated
+    across tasks; this filters to `task` internally). Columns: task, context,
+    context_length_min, dataset ('POOLED' or a cohort name), n_subjects, auroc.
+    """
+    sub_all = cohort_df[cohort_df["task"] == task]
+    if sub_all.empty:
+        ax.text(0.5, 0.5, "no data", ha="center", va="center",
+                transform=ax.transAxes, fontsize=FONT_BASE, color="gray")
+        return
+
+    xs_seen = []
+    for dset in cohorts:
+        sub = sub_all[(sub_all["dataset"] == dset) & sub_all["auroc"].notna()]
+        if sub.empty:
+            continue
+        sub = sub.sort_values("context_length_min")
+        xs = sub["context_length_min"].values
+        ys = sub["auroc"].values * 100
+        xs_seen.extend(xs.tolist())
+        n_med = int(sub["n_subjects"].median())
+        ax.plot(xs, ys, marker="o", ms=4, lw=1.5,
+                color=COHORT_COLOR.get(dset, "gray"),
+                label=f"{dset} (n≈{n_med})")
+
+    if show_pooled:
+        pooled = sub_all[(sub_all["dataset"] == "POOLED") &
+                         sub_all["auroc"].notna()].sort_values("context_length_min")
+        if not pooled.empty:
+            xs_seen.extend(pooled["context_length_min"].values.tolist())
+            ax.plot(pooled["context_length_min"], pooled["auroc"] * 100,
+                    color="black", ls="--", lw=1.2, label="pooled (all cohorts)")
+
+    if not xs_seen:
+        ax.text(0.5, 0.5, "no data", ha="center", va="center",
+                transform=ax.transAxes, fontsize=FONT_BASE, color="gray")
+        return
+
+    _log_ctx_axis(ax, sorted(set(xs_seen)))
+    ax.set_xlabel("Context length", fontsize=FONT_LABEL)
+    ax.set_ylabel("AUROC (%)", fontsize=FONT_LABEL)
+    if legend:
+        ax.legend(fontsize=FONT_ANNOT, frameon=False)
+    ax.grid(True, alpha=0.25, lw=0.5)
+    _spine_clean(ax)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# S-Fig 3 — Held-out context-length extrapolation (scaling_law_ideas/idea_b)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def context_extrapolation_panel(ax, analysis_df: pd.DataFrame, task: str,
+                                head: str = "transformer",
+                                cheap_contexts: tuple = ("30s", "10m", "40m", "80m"),
+                                held_out_contexts: tuple = ("120m", "240m"),
+                                metric_col: str = "mean_prob_auroc",
+                                legend: bool = True):
+    """Fit a saturating power law on cheap context lengths only, and check
+    whether it extrapolates to the held-out expensive ones.
+
+    analysis_df must be pre-filtered to split='test', k='all' (this filters
+    to `task` and `head` internally). Returns a dict {context: predicted -
+    actual AUROC (points)} for the held-out contexts, or {} if no fit.
+    """
+    sub = analysis_df[(analysis_df["task"] == task) &
+                      (analysis_df["head"] == head) &
+                      analysis_df[metric_col].notna()]
+    all_ctx = list(cheap_contexts) + list(held_out_contexts)
+    g = sub.set_index("context_length").reindex(all_ctx)
+    if g[metric_col].isna().all() or not _HAS_SCIPY:
+        ax.text(0.5, 0.5, "no data", ha="center", va="center",
+                transform=ax.transAxes, fontsize=FONT_BASE, color="gray")
+        return {}
+
+    L_cheap = g.loc[list(cheap_contexts), "context_length_min"].values
+    y_cheap = g.loc[list(cheap_contexts), metric_col].values
+    L_all = g["context_length_min"].values
+    y_all = g[metric_col].values
+
+    def _fit(L, y):
+        mask = ~pd.isna(y)
+        if mask.sum() < 3:
+            return None
+        try:
+            popt, _ = _curve_fit(_power_law, L[mask].astype(float), y[mask].astype(float),
+                                 p0=[1.0, 0.3, y[mask].max()],
+                                 bounds=([0, 0, 0], [np.inf, 5, 1.5]), maxfev=20000)
+            return popt
+        except Exception:
+            return None
+
+    popt_cheap = _fit(L_cheap, y_cheap)
+    popt_full = _fit(L_all, y_all)
+
+    ax.scatter(L_cheap, y_cheap * 100, color="#3A7EBF", zorder=5,
+              label=f"used for fit (≤{cheap_contexts[-1]})")
+    held = g.loc[list(held_out_contexts)]
+    ax.scatter(held["context_length_min"], held[metric_col] * 100,
+              color="#E86A33", marker="s", zorder=5, label="held out")
+
+    Lgrid = np.logspace(np.log10(0.4), np.log10(300), 200)
+    errors = {}
+    if popt_cheap is not None:
+        ax.plot(Lgrid, _power_law(Lgrid, *popt_cheap) * 100, color="#3A7EBF",
+                ls="--", lw=1.2, label="fit on cheap only")
+        for ctx in held_out_contexts:
+            actual = g.loc[ctx, metric_col]
+            if pd.notna(actual):
+                pred = _power_law(g.loc[ctx, "context_length_min"], *popt_cheap)
+                errors[ctx] = float(pred - actual)
+    if popt_full is not None:
+        ax.plot(Lgrid, _power_law(Lgrid, *popt_full) * 100, color="gray",
+                ls=":", lw=1.0, label="fit on all (reference)")
+
+    _log_ctx_axis(ax, sorted(CONTEXT_TO_MIN[c] for c in all_ctx if c in CONTEXT_TO_MIN))
+    ax.set_xlabel("Context length", fontsize=FONT_LABEL)
+    ax.set_ylabel("AUROC (%)", fontsize=FONT_LABEL)
+    if legend:
+        ax.legend(fontsize=FONT_ANNOT, frameon=False, loc="lower right")
+    ax.grid(alpha=0.25, lw=0.5)
+    _spine_clean(ax)
+    return errors
