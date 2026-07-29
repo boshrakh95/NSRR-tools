@@ -126,11 +126,12 @@ def main():
         ax.grid(alpha=0.25)
 
     axes_flat[-1].set_visible(False)
-    fig.suptitle("Idea B: power-law fit on cheap contexts (≤80m) only, extrapolated to 120m/240m (held out)")
     fig.tight_layout()
     out_png = OUT_DIR / "idea_b_context_extrapolation.png"
+    out_pdf = OUT_DIR / "idea_b_context_extrapolation.pdf"
     fig.savefig(out_png, dpi=150, bbox_inches="tight")
-    print(f"Saved plot -> {out_png}")
+    fig.savefig(out_pdf, bbox_inches="tight")
+    print(f"Saved plot -> {out_png}  and  {out_pdf}")
 
     results = pd.DataFrame(records)
     results.to_csv(OUT_DIR / "idea_b_extrapolation_errors.csv", index=False)

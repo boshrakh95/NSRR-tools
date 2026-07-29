@@ -185,11 +185,12 @@ def main():
         ax.grid(alpha=0.25)
     for j in range(len(tasks_to_plot), len(axes_flat)):
         axes_flat[j].set_visible(False)
-    fig.suptitle("Idea A: AUROC vs context length, stratified by cohort (Transformer, test split)")
     fig.tight_layout()
     out_png = OUT_DIR / "idea_a_cross_cohort.png"
+    out_pdf = OUT_DIR / "idea_a_cross_cohort.pdf"
     fig.savefig(out_png, dpi=150, bbox_inches="tight")
-    print(f"Saved plot -> {out_png}")
+    fig.savefig(out_pdf, bbox_inches="tight")
+    print(f"Saved plot -> {out_png}  and  {out_pdf}")
 
 
 if __name__ == "__main__":
