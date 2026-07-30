@@ -19,6 +19,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.cm as cm
 import matplotlib.pyplot as plt
+import matplotlib.patheffects as pe
 import matplotlib.ticker as mticker
 import seaborn as sns
 
@@ -336,6 +337,7 @@ def heatmap_panel(ax, heatmap_df: pd.DataFrame, col: str = "auroc",
 
     # Iso-compute lines
     iso_colors = plt.cm.cool(np.linspace(0.2, 0.9, len(_ISO_BUDGETS)))
+    _iso_row_seen = {}  # context row -> labels already placed there
     for ic, cb in enumerate(_ISO_BUDGETS):
         if cb > budget:
             continue
@@ -353,10 +355,22 @@ def heatmap_panel(ax, heatmap_df: pd.DataFrame, col: str = "auroc",
         if len(xs) >= 2:
             lt = f"{cb}m" if cb < 60 else f"{cb // 60}h"
             ax.plot(xs, ys, color=iso_colors[ic], lw=1.8, ls="--", alpha=0.85)
-            ax.annotate(lt, (xs[0], ys[0]), fontsize=FONT_ANNOT,
+            # Annotate just left of the low-K/long-context end of each curve,
+            # where the iso-lines fan out onto distinct context rows, instead of
+            # the short-context/high-K end where they bunch together. A small
+            # font and a thin white glyph-halo keep the labels legible without an
+            # opaque box that would hide the underlying heatmap cells.
+            # When two budgets terminate on the same context row, lift the
+            # later label upward so the pair separates diagonally.
+            _row = int(round(ys[-1]))
+            _n = _iso_row_seen.get(_row, 0)
+            _iso_row_seen[_row] = _n + 1
+            ax.annotate(lt, (xs[-1], ys[-1]), fontsize=FONT_ANNOT - 3,
                         fontweight="bold", color=iso_colors[ic],
-                        ha="center", va="bottom", xytext=(0, -10),
-                        textcoords="offset points")
+                        ha="center", va="bottom", xytext=(0, 2 + _n * 6),
+                        textcoords="offset points", clip_on=False,
+                        path_effects=[pe.withStroke(linewidth=1.2,
+                                                    foreground="white")])
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

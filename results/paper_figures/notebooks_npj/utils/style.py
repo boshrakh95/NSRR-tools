@@ -14,10 +14,10 @@ DPI_OUT = 300    # output DPI (PDF is vector; PNG preview uses this)
 # FONT_ANNOT = 6    # small annotations
 # FONT_LABEL = 7    # x/y axis labels
 
-FONT_BASE  = 10    # axes tick/label baseline
-FONT_TITLE = 10    # panel title
-FONT_ANNOT = 10    # small annotations
-FONT_LABEL = 10    # x/y axis labels
+FONT_BASE  = 11    # axes tick/label baseline
+FONT_TITLE = 11    # panel title
+FONT_ANNOT = 11    # small annotations
+FONT_LABEL = 11    # x/y axis labels
 
 # ── Head colour/marker scheme ─────────────────────────────────────────────────
 HEAD_STYLE = {
