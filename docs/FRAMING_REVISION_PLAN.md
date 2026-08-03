@@ -1169,3 +1169,197 @@ for the base reframe. `npj_main.tex` recompiles cleanly (39 pages, two pdflatex
 passes, no undefined references, no new warnings beyond pre-existing benign ones).
 Only `npj_main.tex` changed; `npj_supplementary.tex` was read for verification but
 not edited, since every fix landed in the main text.
+
+**Update on item 10 above:** the scaling-laws sentence marked "not done this round"
+was picked up and substantially expanded in Round 2 (§12 below) — it's no longer an
+open item.
+
+---
+
+## 12. Round 2 (2026-08-03) — clarity, tone, and scaling-laws emphasis
+
+### Trigger
+
+Two independent signals prompted this round:
+1. Several people the user asked to read the round-1 abstract (§10.1's shipped
+   150-word version) said it was **unclear and vague**.
+2. This echoes, rather than contradicts, the supervisor's original complaint
+   (§10 above): a short, heavily compressed abstract built mostly from
+   meta-language ("cost-performance frontier," "task-specific design variable")
+   can satisfy "sounds advanced" while still failing "is understandable," because
+   there isn't enough room left for concrete, graspable specifics. The fix for
+   both complaints turned out to be the same direction: more concrete content, not
+   less — just organized so it doesn't read as a bare comparison.
+
+The user's instructions for this round: rewrite the abstract starting from the
+**pre-round-1 "longer but better" draft** (restored as a comment in the file
+between rounds — see the note in `npj_main.tex`'s abstract block), explicitly
+allowing it to exceed the 150-word limit for now ("later I will shorten it");
+review the Introduction for overclaiming and stiff/bureaucratic phrasing
+(specifically flagged: "address" and words like it), aiming for a lighter,
+more investigative tone; and substantially increase the visibility of the
+context-length extrapolation analysis (§10.1/§5's "cheap-predicts-expensive"
+finding) across Introduction, Methods, *and* Results — not just Results — framed
+explicitly as adapting scaling-law methodology from the LLM domain to this one,
+in professional language, rather than left implicit.
+
+### 12.1 Abstract — rewritten again, this time optimized for clarity over brevity
+
+**Diagnosis of why the round-1 abstract read as vague despite being accurate:**
+it led with meta-claims ("temporal context... remains uncharacterized," "an
+unexamined computational commitment") before any concrete finding appeared, and
+by the time it got to findings, the 150-word budget had already forced maximal
+compression (e.g., "negligible benefit beyond a few minutes for body-mass index"
+with no other task examples, apnea/age-group dropped entirely to make room for
+the extrapolation clause). A reader skimming it gets the *register* of an
+important-sounding paper without enough *content* to know what was actually
+found.
+
+**Implemented:** rebuilt the abstract using the restored pre-round-1 draft's
+concrete, enumerated structure ("Four consistent patterns emerge. First...
+Second... Third... Finally...") as the skeleton, keeping the practical-stakes
+opening from round 1 (compute/memory cost framing) but restoring the specific
+per-task examples (BMI, apnea, age-group, sleep efficiency, sex) and the
+temporal-head-advantage finding that the 150-word version had cut, and adding a
+new fourth finding for the scaling-law extrapolation result, explicitly framed as
+"borrowing an approach common in large language model research." Deliberately
+left over the word limit (currently ~350 words) per the user's explicit
+instruction; a code comment above the abstract in `npj_main.tex` flags this and
+says to trim before final submission. Shipped text is in `npj_main.tex`'s
+`\abstract{...}` block (lines ~74–99 as of this round); not reproduced in full
+here since it will keep changing, but every sentence maps onto a specific,
+already-verified number elsewhere in this document or the paper itself.
+
+### 12.2 Introduction — tone and overclaiming pass
+
+**"Address" and words like it:** searched the full document for "address" as a
+verb describing what *this paper* does (not describing what *prior work failed
+to do*, which is a different, accurate use). Found and fixed:
+- "We address these two open questions by using the frozen SleepFM encoder..."
+  → "We explore these two questions using the frozen SleepFM encoder..."
+- "Results address H1–H4 in order; full experimental formalisations are in
+  Methods" (end of Introduction) → "Results work through H1–H4 in turn; full
+  experimental formalisations are in Methods"
+- "Results address H1–H4 in order, followed by secondary analyses." (start of
+  Results) → "We work through H1–H4 in turn below, followed by secondary
+  analyses." (deliberately varied from the Introduction's phrasing so the two
+  don't read as a copy-pasted repeat of each other, which was its own minor
+  flatness problem)
+- Discussion: "...questions the field has not previously addressed in a
+  controlled, multi-task setting." → "...questions the field has not previously
+  examined in a controlled, multi-task setting." (not in the Introduction, but
+  the same word/pattern, fixed for consistency since it's the same issue)
+
+**Overclaiming pass:** the clearest instance found was **"first"** stacking up
+across the Abstract and the Introduction's contributions paragraph — "the first
+systematic characterization" (abstract) and "the first systematic, cross-task
+characterization" (contributions item 1) — an absolute primacy claim repeated
+twice in close proximity, which is exactly the kind of thing a skeptical reader
+(or reviewer aware of adjacent work) can push back on. Fixed by dropping "the
+first" from the contributions item ("a systematic, cross-task characterization"),
+letting the existing, already-hedged "To our knowledge, no study asks..." (kept
+as-is, appropriately qualified) carry the novelty claim instead of an
+unqualified "first." Did **not** find other significant overclaiming beyond this
+— checked "establish," "demonstrate," "confirm," "novel," and "groundbreaking"-
+adjacent language; remaining instances (e.g., "H1 is confirmed") are tied to the
+paper's own pre-registered-hypothesis convention (`CLAUDE.md`) and are accurate,
+formal confirmations against a stated criterion, not rhetorical overclaiming, so
+left unchanged.
+
+### 12.3 Scaling-laws emphasis — Introduction, Methods, and Results
+
+**The ask:** don't let the context-length extrapolation analysis live only as a
+sentence or two in Results; make it a visible thread through the paper, framed
+explicitly as bringing scaling-law thinking from the LLM domain into PSG/clinical
+prediction for (as far as this study can tell) the first time, phrased with
+curiosity rather than as a settled claim.
+
+**Literature grounding used** (from `markdown/SCALING_LAW_ANALYSIS_IDEAS.md`,
+Part 2, verified with fresh author-list lookups before citing, since that file
+only had "et al." shorthand): Hoffmann, J. et al., *Training Compute-Optimal
+Large Language Models* (Chinchilla), NeurIPS 35 (2022) — the canonical
+small-scale-predicts-large-scale result; Montgomery, K. et al., *Predicting Task
+Performance with Context-aware Scaling Laws*, arXiv:2510.14919 (2025) — the
+closest existing precedent, jointly modeling context length and compute for
+LLMs; and, for an honest contrast rather than an inflated novelty claim, Zhang,
+S. et al., *Exploring Scaling Laws for EHR Foundation Models*, arXiv:2505.22964
+(2025), cited to acknowledge that scaling-law thinking is already being explored
+for *other* clinical data modalities, so the paper's claim is narrowly scoped to
+*context length specifically*, not "scaling laws in healthcare" broadly. All
+three added to `npj_main.tex`'s bibliography (keys `chinchilla`, `montgomery2025`,
+`ehrscaling`), positioned after the cohort citations (`stages`) to roughly match
+where they're first cited in reading order.
+
+**Introduction:** added a new paragraph, between the H1–H4 paragraph and the
+contributions paragraph, that motivates the extrapolation analysis explicitly as
+a scaling-laws import: states that expensive context lengths are also the most
+costly to train, that LLM research has shown performance follows fittable
+compute/context relationships, notes the EHR-scaling contrast above, and states
+plainly "to our knowledge, [this is] untested for physiological or clinical
+prediction models," then poses it as a question ("We were curious whether it
+would [hold]...") rather than a settled finding. The contributions paragraph's
+third item was reworded from a bare statement of the numeric result into "an
+early test of whether scaling-law-style extrapolation, adapted from large
+language model research, transfers to this setting," so the framing is present
+at the point of first mention, not just in a later methods/results callback.
+
+**Methods:** added a new subsubsection, "Context-Length Extrapolation
+(Scaling-Law Analysis)," in `sec:evaluation` (Evaluation Protocol), between
+"Saturation Threshold $L^*$" and "Confidence Intervals." States the LLM-research
+motivation with the same two citations, gives the power-law functional form as a
+numbered equation (`\eqref{eq:powerlaw}`, $\text{AUROC}(L) = c - aL^{-b}$),
+describes the four-cheap-points-predict-two-expensive-points held-out design, and
+points to the sensitivity check (three-point and two-point refits) and full
+results in Supplementary Section S-XVIII.A rather than duplicating the
+supplementary's numbers. This methodology previously existed only in the
+supplementary; the main text now describes it as its own procedure rather than
+leaving a reader to infer it from a single Results sentence.
+
+**Results:** split the extrapolation finding out of the paragraph it was fused
+into (a cross-cohort robustness check, an unrelated analysis it happened to sit
+next to) and gave it its own paragraph with an explicit framing sentence: "We
+then asked a different kind of question, closer in spirit to scaling-law studies
+of large language models than to a standard robustness check..." The paragraph
+now cross-references the new Methods equation (`Methods~\eqref{eq:powerlaw}`)
+and closes with an interpretive sentence ("an encouraging early sign for
+extending scaling-law-style reasoning beyond language models") instead of
+dropping straight into "H1 is confirmed" with no acknowledgment that a
+qualitatively different kind of claim was just made.
+
+**Discussion (not explicitly requested, done as a low-risk extension):** the
+existing deployment-guidance paragraph (added in round 1, §7.2/§7.3) already
+described the extrapolation result in practical terms; added one closing
+sentence there naming the LLM-scaling-law parallel explicitly with the same two
+citations, so a reader who only reads Discussion (skipping Methods/Results)
+still encounters the framing once. This is the "scaling-laws sentence" item that
+round 1's §8.3 had flagged as optional and deferred — now done, substantially
+expanded beyond a single sentence.
+
+### 12.4 What was deliberately not done this round
+
+- **Abstract not trimmed to 150 words** — explicit user instruction to leave it
+  long for now; flagged in a code comment in `npj_main.tex` as a pre-submission
+  TODO.
+- **No new experiments** — the extrapolation analysis, its numbers, and its
+  sensitivity results were already computed and validated in round 1 and earlier
+  sessions (`scaling_law_ideas/idea_b_context_extrapolation.py` in NSRR-tools);
+  this round is entirely a presentation/framing change, consistent with the
+  original diagnosis in §1 that this is a positioning problem, not a results
+  problem.
+- **Supplementary (`npj_supplementary.tex`) not edited** — Section S-XVIII.A
+  already contains the full extrapolation results and sensitivity analysis
+  accurately; the main text now references it more prominently rather than
+  duplicating its content.
+- **Did not soften "H1 is confirmed" or similar hypothesis-confirmation
+  language** — judged accurate and convention-bound (`CLAUDE.md`'s hypothesis
+  framing rules), not overclaiming, per §12.2's assessment above.
+
+### 12.5 Verification
+
+`npj_main.tex` recompiled cleanly after each of the four edits in this round
+(abstract; introduction; methods+results+discussion; this document), two
+pdflatex passes each time, no undefined references, no new warnings beyond the
+pre-existing benign hyperref ones. Four separate commits were made in the
+`npj_digital_medicine_submission` repo, one per edit, per the user's "commit
+after each step" instruction; this document was updated and committed
+separately in this repo (`NSRR-tools`) as the fifth and final step.
