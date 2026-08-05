@@ -21,6 +21,12 @@ list and pretraining corpus are not fully documented in its README/abstract).
 Treat unconfirmed items as "verify once we clone the repo," not as settled
 facts.
 
+**Revision note (same day):** the first pass of this document undersold
+TimesFM's and Chronos-2's LoRA/PEFT maturity — a closer check found both have
+native, first-party LoRA support in their official repos (§2.4, §2.5), which
+changes their integration-effort ranking. Corrected below rather than
+silently patched; see the two entries for what changed and why.
+
 ---
 
 ## 0. What "integration difficulty" means for our pipeline, concretely
@@ -70,9 +76,11 @@ If picking only 2-3 to start, in priority order:
    checkpoint sizes, and has a documented multichannel-classification API and
    a PEFT/LoRA ECG tutorial already in its own repo.
 
-If you want a fourth, add **Chronos-2** specifically because your supervisor
-named it — even though MOMENT is the better technical fit, having a direct
-answer to "did you try Chronos" is likely worth the extra run.
+If you want a fourth and fifth: **Chronos-2** answers the supervisor's named
+example directly, and **TimesFM** turned out to have the most mature
+first-party LoRA support of anything on this list (§2.4-2.5) — both are
+now stronger picks than the first draft of this document gave them credit
+for.
 
 For the single-modality + majority-vote plan (Plan B), **CBraMod** (EEG) and
 **ECG-FM** (ECG) are the cleanest picks — both MIT-licensed, both have a
@@ -217,17 +225,62 @@ favorable precedent among general TSFMs.
   as a baseline on UCR classification benchmarks) and training a separate
   classification head on top, i.e. exactly our existing LSTM/Transformer/
   MeanPool head pattern, just swapping the frozen backbone.
+- **LoRA/PEFT — corrected from the first draft of this document.** This is
+  *not* undocumented. `ChronosPipeline`/`Chronos2Pipeline` has built-in PEFT
+  support: it auto-detects and merges LoRA adapters, ships a documented
+  default `target_modules` list (`self_attention.q`, `.k`, `.v`, `.o`,
+  `output_patch_embedding.output_layer`), automatically falls back to full
+  fine-tuning with a warning if `peft` isn't installed, and the repo has an
+  official quick-start LoRA notebook. This infrastructure is for adapting
+  the *forecasting* objective to new data, not classification directly — but
+  the LoRA plumbing itself is mature and first-party, which was understated
+  in the first version of this section.
 - **License and checkpoint:** Amazon Science, `amazon-science/chronos-forecasting`
   on GitHub; check the specific license terms before use in a paper (Amazon
   models have historically used Apache-2.0 for Chronos-1; verify Chronos-2's
   license explicitly when cloning, don't assume it carried over).
 
-**Integration effort: moderate.** Not classification-native, so this
-effectively becomes "SleepFM-style frozen embedding + our own sequence head"
-regardless of context length, i.e. it cannot deliver the user's Plan A
-(native long context, no sequence head) — only Plan B/C style usage. Include
-it specifically because it answers the supervisor's named example directly,
-not because it's the best technical fit.
+**Integration effort: low-moderate for LoRA plumbing (already built), moderate
+for classification (head is not first-party, needs the staged procedure in
+§6).** Not classification-native, so this becomes "SleepFM-style frozen
+embedding + our own sequence head" for the classification objective
+regardless of context length — it cannot deliver the user's Plan A (native
+long context, no sequence head) — only Plan B/C style usage.
+
+### 2.5 TimesFM
+
+- **Family:** Google Research, decoder-only patch transformer (~200M params,
+  TimesFM-2.5), pretrained on large-scale forecasting corpora.
+- **Context length:** TimesFM-2.0: 2,048 timesteps; TimesFM-2.5: 4,096.
+- **HuggingFace integration:** TimesFM is now wrapped in the standard
+  `transformers` library (`docs/transformers/model_doc/timesfm` and
+  `timesfm2_5`), which matters practically: it means the whole HF ecosystem
+  (`Trainer`, `peft`, standard checkpoint loading) applies to it more
+  directly than to a bespoke research repo.
+- **LoRA/PEFT — the strongest first-party support found on this whole list.**
+  Google's own repo added official LoRA **and DoRA** fine-tuning via
+  HuggingFace Transformers + PEFT (merged into `google-research/timesfm`
+  around April 2026), with example scripts under
+  `timesfm-forecasting/examples/finetuning/`. There is also a public
+  community project, `PartAI/FlaMinGo-timesfm`, that specifically extends
+  TimesFM with a classification head (for Persian financial time series) —
+  direct, working precedent that "TimesFM + classification head" is a solved
+  pattern in practice, not just hypothetical.
+- **Classification usage:** same situation as Chronos-2 — no first-party
+  classification head, but the standard pattern (replace the pretraining
+  head with a randomly-initialized classification head, fine-tune) is
+  explicitly described in Google's own fine-tuning documentation, just
+  aimed at forecasting heads by default.
+- **License:** Google Research; verify the exact license on the repo at
+  clone time (historically Apache-2.0 for similar Google Research releases,
+  but confirm — don't assume).
+
+**Integration effort: low-moderate.** Of the general-purpose TSFMs, this now
+looks like the *easiest* to get a LoRA experiment running on, precisely
+because the fine-tuning harness already exists and is officially maintained
+by the model's own authors, not a third party. The remaining work is the
+same as every other candidate: build the classification head and the
+adapter code from our HDF5 pipeline to whatever input shape TimesFM expects.
 
 ---
 
@@ -271,7 +324,7 @@ rather than inventing a new fusion rule.
 | **SleepMaMi** | Already documented in `docs/SOTA_COMPARISON_AND_ABLATIONS.md`. No confirmed public code/checkpoint as of that review — cannot be used as a runnable baseline, only cited qualitatively. |
 | **SleepFounder** | Same file, same issue: code/checkpoint availability "unclear," medRxiv preprint only. Cardiorespiratory-only by design (no EEG) also makes it a narrower comparison than OSF or PhysioOmni. |
 | **Mantis** | Classification-native, lightweight (8M params), real checkpoint (`paris-noah/Mantis-8M`) — genuinely easy to integrate. Deprioritized because it is pretrained **exclusively on synthetic data** via contrastive learning, not on real physiological (or even real-world) signals, so it carries no physiological prior — closer to a strong generic classifier architecture than a "foundation model" in the sense your supervisor's question is really asking about. Worth a footnote mention, not a headline comparison. |
-| **TimesFM, Moirai-2** | Same structural issue as Chronos-2 (§2.4): forecasting-native, context length in the low thousands of *tokens*, not classification-native. Chronos-2 is the more prominent/citable representative of this family and is already included; adding both would be redundant unless reviewers specifically ask for it. |
+| **Moirai-2** | Same structural issue as Chronos-2/TimesFM: forecasting-native, context length in the low thousands of *tokens*, not classification-native. Unlike Chronos-2 and TimesFM (promoted to §2.4/§2.5 after re-checking their LoRA support), Moirai-2's LoRA/classification-head story is weaker evidence: it is loadable via `MoiraiModule.from_pretrained()` on the HuggingFace Hub, but no confirmed classification or LoRA tutorial/example was found for it in this search. Revisit only if Chronos-2 and TimesFM both turn out to be blocked in practice. |
 | **PPG foundation model (arXiv:2606.07365)**, **QualityFM** | Both very recent (mid-2026), both use respiratory signal as auxiliary/contrastive supervision (conceptually interesting), but **no confirmed public checkpoint found** for either as of this search. Worth re-checking closer to submission — flagged as a watch-list item, not a current candidate. |
 
 ---
@@ -283,7 +336,8 @@ rather than inventing a new fusion rule.
 | OSF | Sleep-PSG FM | 12-ch PSG (EEG/EOG/EMG/ECG/RESP/snore) | ✓ HF `yang-ai-lab/OSF-Base` | MIT | 30s (per-epoch design; full-night = many epochs) | Epoch-level, not sequence-level | ✗ (full FT only) | Moderate (64Hz/30s vs. our 128Hz/5s; needs full-channel config) |
 | PhysioOmni | Multimodal physio FM | EEG/ECG/EOG/EMG (RESP unconfirmed) | Referenced, exact HF repo TBD | Unconfirmed | Unconfirmed | Unconfirmed | Unconfirmed | Unknown pending doc verification |
 | MOMENT | General TSFM | Any (channel-count is a constructor arg) | ✓ HF `AutonLab/MOMENT-1-{small,base,large}` | MIT | Low thousands of timesteps (TBD exact) | ✓ | ✓ (own ECG PEFT tutorial) | Low-moderate |
-| Chronos-2 | General TSFM (forecaster) | Multivariate (generic) | ✓ `amazon-science/chronos-forecasting` | Verify at clone time | 8,192 tokens | ✗ (embeddings + external head) | Not documented for classification | Moderate |
+| Chronos-2 | General TSFM (forecaster) | Multivariate (generic) | ✓ `amazon-science/chronos-forecasting` | Verify at clone time | 8,192 tokens | ✗ (embeddings + external head) | ✓ native, built into `Chronos2Pipeline` (forecasting adapters, not classification-native) | Low-moderate for LoRA, moderate for classification head |
+| TimesFM | General TSFM (forecaster) | Multivariate (generic) | ✓ HF `google/timesfm-2.5` (via `transformers`) | Verify at clone time | 2,048 (2.0) / 4,096 (2.5) tokens | ✗ (embeddings + external head) | ✓ native LoRA/DoRA, official `examples/finetuning/` scripts; community classification-head precedent (`FlaMinGo-timesfm`) | Low-moderate |
 | CBraMod | EEG FM | EEG (up to 19ch, 10-20) | ✓ HF `weighting666/CBraMod` | MIT | Patch-based; max ctx. TBD | Via frozen-embedding + head | Not documented (easy to add) | Low-moderate |
 | LaBraM | EEG FM | EEG (up to 137ch) | ✓ GitHub direct `.pth` | Verify | TBD | Via frozen-embedding + head | Not documented | Moderate |
 | BIOT | EEG FM (cross-dataset) | EEG, variable channels | ✓ HF `braindecode/BIOT` | Verify | TBD (200Hz internal resample) | Via frozen-embedding + head | Not documented | Low-moderate (braindecode ecosystem) |
@@ -297,7 +351,50 @@ scoping the next phase.
 
 ---
 
-## 6. Suggested next step
+## 6. Training procedure: head and LoRA, staged not simultaneous
+
+This applies to every backbone above that isn't classification-native
+(Chronos-2, TimesFM, and, if used purely as embeddings, MOMENT/PhysioOmni
+too) — anywhere we attach a new randomly-initialized classification head to
+a frozen pretrained backbone and also want a LoRA condition.
+
+**Recommendation: two stages, not one joint run.**
+
+- **Stage 1 — frozen backbone + head only.** Freeze all backbone weights,
+  train only the new classification head (same LSTM/Transformer/MeanPool
+  head architecture already used for SleepFM) until convergence. This *is*
+  the "without any fine-tuning" condition the user asked for — no extra
+  work, it's already one of the two requested experimental arms.
+- **Stage 2 — inject LoRA, continue training LoRA + head together.** Starting
+  from Stage 1's trained head (not a fresh random one), wrap the backbone
+  with `peft.get_peft_model(model, LoraConfig(target_modules=[...],
+  modules_to_save=["classifier"]))` and continue training. `modules_to_save`
+  tells PEFT to keep training the head at full rank (not low-rank) while the
+  backbone gets LoRA adapters — this is the standard, documented mechanism
+  for combining "new head" with "adapt the backbone" in one call, and it's
+  exactly what Chronos-2's and TimesFM's own LoRA infra expects to be paired
+  with. This is the "with LoRA" condition.
+
+**Why staged and not joint end-to-end from scratch:** training a randomly-
+initialized head jointly with LoRA-adapted (or fully fine-tuned) backbone
+weights from the start risks the head's large, noisy early gradients
+back-propagating into the backbone and distorting pretrained features before
+the head has learned anything useful — the same failure mode documented for
+full fine-tuning by Kumar et al. (2022, ICLR, "Fine-Tuning can Distort
+Pretrained Features and Underperform Out-of-Distribution"), whose fix
+(linear-probe first, then fine-tune — "LP-FT") is structurally identical to
+the two-stage plan above. Warm-starting the head in Stage 1 avoids that
+failure mode and is also strictly cheaper: Stage 2 only has to adapt LoRA's
+small number of parameters, not relearn the head from noise.
+
+**One dependency note:** `peft` is not currently installed anywhere in
+NSRR-tools (`grep -rli "peft\|lora"` across requirements/pyproject/
+environment files returns nothing) — it will need to be added when this
+phase starts.
+
+---
+
+## 7. Suggested next step
 
 Pick 2-3 from §1's shortlist (or override with your own priorities from the
 tables above). For each chosen model, the next pass will: clone the repo,
@@ -307,4 +404,4 @@ pipeline, confirm LoRA/PEFT feasibility (via `peft` library compatibility or
 a documented native path), and produce a concrete experiment plan mirroring
 the existing context-length sweep design (which context lengths are even
 reachable per model, given each one's real max sequence length once verified
-in code).
+in code), following the staged head-then-LoRA procedure in §6.
