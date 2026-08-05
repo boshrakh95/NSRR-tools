@@ -27,6 +27,23 @@ native, first-party LoRA support in their official repos (§2.4, §2.5), which
 changes their integration-effort ranking. Corrected below rather than
 silently patched; see the two entries for what changed and why.
 
+**Revision note (second round, same day):** did a second, broader sweep —
+explicitly including HuggingFace-hosted models and Lag-Llama, per request.
+Net changes: added **UniShape** (§2.6), the first genuinely
+classification-native *general-purpose* TSFM found in either search round
+— worth attention precisely because it doesn't share the
+forecasting-adapted-to-classification compromise every other general TSFM
+on this list has. Added **Lag-Llama** (§2.7) with an honest negative
+assessment — real physiological-domain LoRA precedent exists, but the model
+is too small and forecasting-only for a headline comparison. Added two more
+EEG entries (EEGPT, Brant-2, §3.1) and a new PPG subsection (§3.3) with a
+caveat grounded in our own channel config, not the literature: we don't
+currently preserve a clean raw-PPG channel, so PPG foundation models aren't
+a drop-in candidate today. Also swept several more general TSFMs (Sundial,
+Toto 2.0, Timer-XL, TTM) into §4, deprioritized for the same reason as
+Moirai-2 — no distinguishing advantage over MOMENT/Chronos-2/TimesFM already
+covered.
+
 ---
 
 ## 0. What "integration difficulty" means for our pipeline, concretely
@@ -82,10 +99,29 @@ first-party LoRA support of anything on this list (§2.4-2.5) — both are
 now stronger picks than the first draft of this document gave them credit
 for.
 
+**A sixth worth real consideration: UniShape (§2.6).** Everything else
+general-purpose on this list (MOMENT partly excepted) is a *forecaster*
+repurposed for classification. UniShape is pretrained specifically to
+classify — if its checkpoint turns out to be genuinely public (unconfirmed,
+see §2.6), it's arguably a fairer "best general-purpose classifier" opponent
+for SleepFM than Chronos-2/TimesFM are, since it isn't fighting an
+objective mismatch on top of a domain mismatch.
+
+**Lag-Llama (§2.7), evaluated on request: not recommended as a primary
+pick.** It's real, has a genuine physiological-domain LoRA precedent (ICU
+vitals forecasting), and LoRA is cheap to try given how tiny the model is —
+but at 2.45M parameters with no classification precedent found anywhere, it
+reads as a toy-scale ablation, not a fair SleepFM competitor. Worth a
+footnote run only if you want a "does model scale even matter here" data
+point.
+
 For the single-modality + majority-vote plan (Plan B), **CBraMod** (EEG) and
 **ECG-FM** (ECG) are the cleanest picks — both MIT-licensed, both have a
 documented frozen-embedding extraction path, both trained on real clinical
-data at meaningful scale.
+data at meaningful scale. **EEGPT** (§3.1) is worth a mention too since it's
+now wrapped in `braindecode`, which could make it the lowest-plumbing EEG
+option if the `braindecode` ecosystem fits our pipeline better than a
+bespoke repo would.
 
 ---
 
@@ -282,6 +318,78 @@ by the model's own authors, not a third party. The remaining work is the
 same as every other candidate: build the classification head and the
 adapter code from our HDF5 pipeline to whatever input shape TimesFM expects.
 
+### 2.6 UniShape (found in second research round)
+
+- **Paper:** "A Unified Shape-Aware Foundation Model for Time Series
+  Classification." arXiv:2601.06429 (dated 2026-01 — very recent).
+- **Code:** https://github.com/qianlima-lab/UniShape (public repo, includes a
+  `unishape_finetune.py` script and references a `pretrained_model_ckpt`
+  folder).
+- **Why it's different from everything else on this list:** it is
+  **classification-native by design**, not a forecaster repurposed for
+  classification. It pretrains a "shape-aware adapter" that aggregates
+  multiscale discriminative subsequences into class tokens, plus a
+  prototype-based pretraining objective, specifically to learn
+  classification-relevant structure — this is the design gap every other
+  general-purpose TSFM on this list (Chronos-2, TimesFM, MOMENT partly
+  excepted) has to work around via an external head.
+- **Pretraining scale:** 1.89M samples, multi-domain (not physiological-
+  specific — general time-series classification corpora, likely UCR/UEA-
+  adjacent). Evaluated on 128 UCR + 30 additional datasets, reports SOTA
+  classification results there.
+- **Checkpoint availability — not fully confirmed.** The repo references a
+  pretrained checkpoint folder and a working fine-tune script, which is a
+  good sign, but a direct public download link was not resolved from the
+  README alone (unlike OSF/MOMENT/CBraMod, where the checkpoint URL is
+  explicit). **Needs verification by cloning the repo before this can move
+  from "promising" to "confirmed usable."**
+- **License: not stated** in the fetched README — check at clone time.
+- **Multichannel/physiological-signal fit: unconfirmed.** UCR/UEA-style
+  classification benchmarks are typically univariate or low-channel-count;
+  whether the architecture scales cleanly to our 4-modality-group,
+  multi-channel PSG input is untested and not addressed in the abstract.
+
+**Integration effort: unknown, pending checkpoint/license verification —
+but architecturally the most interesting general-purpose candidate found in
+either research pass**, precisely because "classification-native" is the
+one property nothing else on this list has natively.
+
+### 2.7 Lag-Llama (evaluated on request)
+
+- **Paper:** "Lag-Llama: Towards Foundation Models for Probabilistic Time
+  Series Forecasting." arXiv:2310.08278.
+- **Code:** https://github.com/time-series-foundation-models/lag-llama
+- **Scale: 2.45M parameters total** — by a wide margin the smallest model on
+  this entire list (MOMENT-small and Mantis-8M are both roughly 3-4x
+  larger). Decoder-only, uses lagged-value features rather than raw patch
+  tokenization.
+- **Design: forecasting-only, probabilistic.** No classification precedent
+  was found anywhere in this search — not in the paper, not in follow-up
+  work. Every other candidate on this list at least has *some* documented
+  or inferable classification path (frozen embedding + head, at minimum);
+  Lag-Llama has none found.
+- **LoRA precedent — the one genuinely interesting finding here.** A
+  third-party technical write-up (tsfm.ai) applied LoRA (rank r=2, ~16K
+  trainable params, 0.66% of the model) to Lag-Llama on **eICU clinical
+  vitals data (heart rate and blood pressure forecasting)** — i.e. real
+  physiological time series, a domain absent from Lag-Llama's own
+  pretraining corpus. Result: LoRA beat full fine-tuning on heart-rate MSE
+  (10.39 vs. 16.60) and was competitive on blood pressure, with the
+  write-up noting full fine-tuning overfit on the small clinical dataset
+  while LoRA didn't. This is a real, if narrow, existence proof that
+  LoRA-adapting a tiny TSFM to physiological data can work — just not yet
+  demonstrated for classification.
+- **Context length:** short — lag-feature-based, not built for long native
+  context; not a Plan A candidate regardless of classification status.
+- **License:** check repo at clone time.
+
+**Integration effort: low (it's tiny and simple), but effort isn't the
+constraint here — capability is.** At this scale and with zero
+classification precedent, Lag-Llama is realistically a curiosity/ablation
+("how much does backbone scale matter") rather than a fair SleepFM
+comparison point. Not on the recommended shortlist; include only if a
+small-model data point is independently useful to the paper's narrative.
+
 ---
 
 ## 3. Tier 2 — single-modality fallbacks (for the fine-tune-per-modality + majority-vote plan)
@@ -300,6 +408,8 @@ truth even under the multi-backbone plan.
 | **LaBraM** | GitHub `935963004/LaBraM` (checkpoint `labram-base.pth` linked directly) | check repo | ~2,500 hrs, ~20 datasets, up to 137 channels | First EEG FM (broadly cited baseline in the field); very flexible channel count, useful if we want to feed more than the reduced 4-channel BAS set. |
 | **BIOT** | GitHub `ycq091044/BIOT`, HuggingFace `braindecode/BIOT` | check repo | resamples to 200 Hz internally; handles variable channel count/missing values by design | Also integrated into the `braindecode` library, which could simplify plugging into an existing PyTorch pipeline. |
 | **NeuroLM** | GitHub `935963004/NeuroLM` | check repo | 25,000 hrs | ICLR 2025. Treats EEG as a "foreign language" fed into an LLM backbone — most architecturally novel, but likely the highest integration effort of the four (LLM tokenization/prompting machinery on top of the signal encoder). |
+| **EEGPT** (found in second round) | Also wrapped as `braindecode.models.EEGPT` | check repo | Mask-based dual self-supervised pretraining (NeurIPS 2024) | Encoder-only at inference (predictor/reconstructor modules are pretraining-only and can be dropped when loading downstream). Being in `braindecode` alongside BIOT means both could share one integration path if we adopt that library. |
+| **Brant-2** (found in second round) | HuggingFace-hostable (push/pull support confirmed) | check repo | **1B+ params**, ~4TB mixed brain-signal data (2.3TB iEEG from 26 subjects + 1.6TB EEG from ~15,000 subjects) | Largest EEG-family model found in either search pass by a wide margin. Compute cost is a real concern for a context-length sweep specifically — a 1B+ param backbone run at many context lengths × many tasks × 4 cohorts is a materially bigger compute ask than any other Tier 2 entry. Consider only if EEG-specific scale is a point you want to make. |
 
 ### 3.2 ECG
 
@@ -315,6 +425,37 @@ averaging — directly reusing the MP/MV convention already established
 in the main study (Supplementary Section on Inference-Time Aggregation)
 rather than inventing a new fusion rule.
 
+### 3.3 PPG (found in second round — flagged, not currently actionable)
+
+Two real, checkpointed PPG foundation models exist:
+
+- **PaPaGei** — ICLR 2025, ResNet-style 18-block convolutional encoder
+  (~5M params for the PaPaGei-S variant), pretrained on 57,000+ hours /
+  ~20M unlabeled PPG segments, public code at
+  `Nokia-Bell-Labs/papagei-foundation-model` (GitHub).
+- **Pulse-PPG** — open-source, field-trained (lab + real-world wearable
+  data), positioned specifically for cross-setting generalization.
+- (SiamQuality was also checked again — still **no public checkpoint**,
+  matches the prior assessment in `docs/SOTA_COMPARISON_AND_ABLATIONS.md`;
+  still not usable.)
+
+**Why this is flagged rather than added as a candidate: we checked our own
+channel config, and we don't have a clean raw-PPG input today.**
+`configs/channel_definitions.yaml`'s `HR` alias group (used by the RESP
+modality group) merges genuine raw PPG/pleth channels (`PPG`, `Finger PPG`,
+`TcPPG`, `SentecPPG`) together with pre-computed scalar pulse-rate channels
+(`Pulse Rate`, `PulseRate`, `HRate`) under one undifferentiated `HR` slot —
+whichever alias happens to be present in a given cohort's recording gets
+mapped there, with no distinction preserved between "raw waveform" and
+"already-computed rate." PaPaGei and Pulse-PPG both expect a real PPG
+waveform at a specific sampling rate with PPG-specific preprocessing
+(bandpass filtering, fixed-length windows), which our current pipeline does
+not guarantee is what ends up in the `HR` channel for any given cohort.
+Using either model would require going back to raw per-cohort NSRR data to
+build a dedicated, verified PPG channel — a real preprocessing project, not
+a drop-in adapter. Worth revisiting if PPG becomes its own line of work, not
+as part of this comparison round.
+
 ---
 
 ## 4. Considered and deprioritized (with reasons, not silently dropped)
@@ -324,8 +465,12 @@ rather than inventing a new fusion rule.
 | **SleepMaMi** | Already documented in `docs/SOTA_COMPARISON_AND_ABLATIONS.md`. No confirmed public code/checkpoint as of that review — cannot be used as a runnable baseline, only cited qualitatively. |
 | **SleepFounder** | Same file, same issue: code/checkpoint availability "unclear," medRxiv preprint only. Cardiorespiratory-only by design (no EEG) also makes it a narrower comparison than OSF or PhysioOmni. |
 | **Mantis** | Classification-native, lightweight (8M params), real checkpoint (`paris-noah/Mantis-8M`) — genuinely easy to integrate. Deprioritized because it is pretrained **exclusively on synthetic data** via contrastive learning, not on real physiological (or even real-world) signals, so it carries no physiological prior — closer to a strong generic classifier architecture than a "foundation model" in the sense your supervisor's question is really asking about. Worth a footnote mention, not a headline comparison. |
-| **Moirai-2** | Same structural issue as Chronos-2/TimesFM: forecasting-native, context length in the low thousands of *tokens*, not classification-native. Unlike Chronos-2 and TimesFM (promoted to §2.4/§2.5 after re-checking their LoRA support), Moirai-2's LoRA/classification-head story is weaker evidence: it is loadable via `MoiraiModule.from_pretrained()` on the HuggingFace Hub, but no confirmed classification or LoRA tutorial/example was found for it in this search. Revisit only if Chronos-2 and TimesFM both turn out to be blocked in practice. |
+| **Moirai-2** | Same structural issue as Chronos-2/TimesFM: forecasting-native, context length in the low thousands of *tokens*, not classification-native. Unlike Chronos-2 and TimesFM (promoted to §2.4/§2.5 after re-checking their LoRA support), Moirai-2's LoRA/classification-head story is weaker evidence: it is loadable via `MoiraiModule.from_pretrained()` on the HuggingFace Hub (`Salesforce/moirai-2.0-R-small`), but no confirmed classification or LoRA tutorial/example was found for it in this search. Revisit only if Chronos-2 and TimesFM both turn out to be blocked in practice. |
 | **PPG foundation model (arXiv:2606.07365)**, **QualityFM** | Both very recent (mid-2026), both use respiratory signal as auxiliary/contrastive supervision (conceptually interesting), but **no confirmed public checkpoint found** for either as of this search. Worth re-checking closer to submission — flagged as a watch-list item, not a current candidate. |
+| **Sundial** (Tsinghua, ICML 2025 Oral, found in second round) | Real HF checkpoint (`thuml/sundial-base-128m`), pretrained on ~1 trillion time points, novel flow-matching training objective (no discretization). Deprioritized for the same reason as the rest of this table: forecasting-native, no classification precedent found, and no advantage over MOMENT/Chronos-2/TimesFM already covered — would be a redundant addition unless a reviewer specifically asks for it. |
+| **Timer-XL** (Tsinghua, ICLR 2025, found in second round) | Real HF checkpoint (`thuml/timer-base-84m`), decoder-only, pretrained on 260B time points, explicitly markets long-context forecasting (up to 2,880 patches). Interesting for the "native long context" framing in principle, but same gap as Chronos-2/TimesFM (forecasting-native, no classification precedent) plus a smaller/less-established LoRA story — TimesFM already covers this niche better. |
+| **Toto 2.0** (Datadog, found in second round) | Real HF checkpoints (4M-2.5B params), strong observability-domain forecasting benchmarks. Deprioritized on two counts: pretrained on infrastructure/metrics data (no physiological-domain relevance, unlike the sleep/clinical-adjacent precedent behind several other picks), and fine-tuning support was inconsistently described across sources (one Datadog blog post describes a fine-tuning tutorial, official docs elsewhere describe fine-tuning as not yet fully released) — needs its own verification pass before it could be trusted, and nothing here suggests it would outperform TimesFM/Chronos-2 if it were confirmed. |
+| **TTM / Tiny Time Mixers** (IBM Granite, found in second round) | Confirmed via HF model card: **forecasting only, no classification support**, MLP-Mixer (not Transformer) architecture, <1M params (805K for TTM-R2). Genuinely interesting as a compute-floor reference (tiniest model on this whole list, Apache-2.0) but ruled out outright — not classification-native and no documented path to make it so, unlike even Lag-Llama (§2.7) which at least has a plausible frozen-embedding route. |
 
 ---
 
@@ -338,12 +483,17 @@ rather than inventing a new fusion rule.
 | MOMENT | General TSFM | Any (channel-count is a constructor arg) | ✓ HF `AutonLab/MOMENT-1-{small,base,large}` | MIT | Low thousands of timesteps (TBD exact) | ✓ | ✓ (own ECG PEFT tutorial) | Low-moderate |
 | Chronos-2 | General TSFM (forecaster) | Multivariate (generic) | ✓ `amazon-science/chronos-forecasting` | Verify at clone time | 8,192 tokens | ✗ (embeddings + external head) | ✓ native, built into `Chronos2Pipeline` (forecasting adapters, not classification-native) | Low-moderate for LoRA, moderate for classification head |
 | TimesFM | General TSFM (forecaster) | Multivariate (generic) | ✓ HF `google/timesfm-2.5` (via `transformers`) | Verify at clone time | 2,048 (2.0) / 4,096 (2.5) tokens | ✗ (embeddings + external head) | ✓ native LoRA/DoRA, official `examples/finetuning/` scripts; community classification-head precedent (`FlaMinGo-timesfm`) | Low-moderate |
+| UniShape | General TSFM (classification-native) | Any (UCR/UEA-style; multichannel PSG fit unconfirmed) | Unconfirmed — repo references a ckpt folder, no direct link resolved | Unconfirmed | N/A (classification-native, not sequence-length-native in the TSFM sense) | ✓ (only general-purpose model on this list built for it) | Via its own `unishape_finetune.py` (not confirmed as LoRA specifically) | Unknown pending checkpoint verification |
+| Lag-Llama | General TSFM (forecaster, tiny) | Univariate/generic | ✓ GitHub | Verify | Short (lag-feature-based) | ✗ (no precedent found) | ✓ third-party LoRA precedent on clinical vitals (not first-party) | Low effort, but not a fair comparison at this scale |
 | CBraMod | EEG FM | EEG (up to 19ch, 10-20) | ✓ HF `weighting666/CBraMod` | MIT | Patch-based; max ctx. TBD | Via frozen-embedding + head | Not documented (easy to add) | Low-moderate |
 | LaBraM | EEG FM | EEG (up to 137ch) | ✓ GitHub direct `.pth` | Verify | TBD | Via frozen-embedding + head | Not documented | Moderate |
 | BIOT | EEG FM (cross-dataset) | EEG, variable channels | ✓ HF `braindecode/BIOT` | Verify | TBD (200Hz internal resample) | Via frozen-embedding + head | Not documented | Low-moderate (braindecode ecosystem) |
 | NeuroLM | EEG-as-language FM | EEG | ✓ GitHub | Verify | TBD | Via LLM prompting | Not documented | High (LLM tokenization layer) |
+| EEGPT | EEG FM | EEG | ✓ GitHub, also `braindecode.models.EEGPT` | Verify | TBD | Via frozen-embedding + head | Not documented | Low-moderate (braindecode ecosystem) |
+| Brant-2 | EEG/iEEG FM | EEG + iEEG, 1B+ params | ✓ HF-hostable | Verify | TBD | Via frozen-embedding + head | Not documented | High (compute cost, largest model on this list) |
 | ECG-FM | ECG FM | ECG (12-lead trained) | ✓ HF, 2 checkpoints | MIT | TBD | Via frozen-embedding + head | Not documented | Moderate (fairseq_signals ecosystem) |
 | HuBERT-ECG | ECG FM | ECG (12-lead trained, single-lead tolerant per benchmarks) | ✓ HF `Edoardo-BS/*` | Verify | TBD | Via frozen-embedding + head | Not documented | Moderate |
+| PaPaGei | PPG FM | PPG only | ✓ GitHub `Nokia-Bell-Labs/papagei-foundation-model` | Verify | TBD | Via frozen-embedding + head | Not documented | Blocked — no clean raw-PPG channel in our current pipeline (§3.3) |
 
 "TBD"/"Unconfirmed"/"Verify" entries are exactly that — not yet checked
 against the actual code, and should not be treated as known quantities when
