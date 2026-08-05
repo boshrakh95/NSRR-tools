@@ -44,6 +44,27 @@ Toto 2.0, Timer-XL, TTM) into §4, deprioritized for the same reason as
 Moirai-2 — no distinguishing advantage over MOMENT/Chronos-2/TimesFM already
 covered.
 
+**Revision note (third round, same week): all three §1-shortlisted models
+(OSF, PhysioOmni, MOMENT) cloned locally and code-verified, §2.1-2.3
+rewritten.** The single biggest finding: **none of the three support Plan A
+(native long-context, no sequence head) as released** — OSF is strictly
+per-30s-epoch (no cross-epoch attention anywhere in the code), PhysioOmni
+has a hard ~512-second positional-embedding ceiling with bidirectional
+(non-causal) attention, and MOMENT's context is **512 timesteps ≈ 4 seconds
+at 128 Hz**, not the "low thousands" the first pass assumed. All three are
+**Plan B only** (short-segment embedder + our own sequence head) — this
+should be treated as settled going into the implementation plan, not
+re-litigated per model. Other major corrections: PhysioOmni has
+**definitively no respiratory pathway** (four independent code
+confirmations) — apnea must be excluded from that comparison, not worked
+around. OSF's contamination picture is more nuanced than first assumed —
+MrOS was only in OSF's downstream/eval split, not pretraining (lower risk
+than SHHS, which is confirmed in pretraining); STAGES is very likely also
+in pretraining (needs one more ID-cross-check to confirm). MOMENT's own
+reference LoRA tutorial is missing `modules_to_save` for the classification
+head — a real gap we have to fix, not a validated recipe to copy as-is. See
+§2.1-2.3 for full detail.
+
 ---
 
 ## 0. What "integration difficulty" means for our pipeline, concretely
@@ -75,23 +96,32 @@ flagged per-model below where it matters most.
 
 ## 1. Recommended shortlist (read this first)
 
-If picking only 2-3 to start, in priority order:
+If picking only 2-3 to start, in priority order. **All three below are
+cloned locally and code-verified (§2.1-2.3) — none support Plan A
+(native long context); all three are Plan B only (short-segment embedder +
+our own sequence head), exactly like SleepFM's own usage pattern.**
 
 1. **OSF** — required by your supervisor's framing (only other sleep-PSG FM
-   with a public checkpoint), multimodal, but has a real contamination risk
-   (see §2.1) that must be handled honestly in the paper regardless of
-   whether it "wins."
+   with a public checkpoint), multimodal, strictly per-30s-epoch (confirmed
+   from code — no cross-epoch attention exists). Contamination risk is real
+   but more nuanced than first assumed: SHHS is confirmed in OSF's
+   pretraining set (high risk), STAGES very likely is too (pending final ID
+   check), but MrOS turned out to be downstream/eval-only, not pretraining
+   (lower risk) — see §2.1 for the full breakdown.
 2. **PhysioOmni** — the strongest genuinely-multimodal *general physiological*
    (not sleep-specific) FM found, explicitly designed for missing-modality
    robustness, which conceptually parallels our own reduced/full-channel
-   framing. Weakest point: undocumented respiratory-channel support (a real
-   problem for the apnea task specifically) and undocumented pretraining
-   corpus — needs verification once cloned.
+   framing. **Confirmed (not just suspected): no respiratory pathway at
+   all** — apnea must be excluded from this comparison, not worked around.
+   Also has no LICENSE file anywhere in the repo — flag before any
+   redistribution/derivative claim. ~512-second native context ceiling.
 3. **MOMENT** — the strongest *general-purpose* TSFM for this use case, not
    Chronos. It is classification-native (Chronos/TimesFM/Moirai are
    forecasting-native and would need more adaptation), MIT-licensed, ships 3
-   checkpoint sizes, and has a documented multichannel-classification API and
-   a PEFT/LoRA ECG tutorial already in its own repo.
+   checkpoint sizes, and has a documented multichannel-classification API.
+   Its own PEFT/LoRA ECG tutorial is real but has a bug we'll need to fix
+   (missing `modules_to_save` for the head — see §2.3). Native context is
+   512 timesteps (≈4s at 128 Hz), not "low thousands" as first assumed.
 
 If you want a fourth and fifth: **Chronos-2** answers the supervisor's named
 example directly, and **TimesFM** turned out to have the most mature
@@ -130,45 +160,113 @@ bespoke repo would.
 ### 2.1 OSF (On Pre-training and Scaling of Sleep Foundation Models)
 
 - **Paper:** ICML 2026. arXiv:2603.00190.
-- **Code:** https://github.com/yang-ai-lab/OSF-Open-Sleep-FM (public)
+- **Code:** https://github.com/yang-ai-lab/OSF-Open-Sleep-FM (public, cloned
+  locally at `/Users/boshra/NSRR-workspace/OSF-Open-Sleep-FM`).
 - **Checkpoint:** `yang-ai-lab/OSF-Base` on HuggingFace (12-channel ViT-Base).
-- **License:** MIT.
-- **Input format (confirmed from repo):** exactly 12 PSG channels at 64 Hz,
-  30-second epochs (1,920 samples/channel), input shape `[B, 12, 1920]`.
-  Required channels: `ECG, EMG_Chin, EMG_LLeg, EMG_RLeg, ABD, THX, NP, SN,
-  EOG_E1_A2, EOG_E2_A1, EEG_C3_A2, EEG_C4_A1` (NP = nasal pressure/airflow,
-  SN = snore).
-- **Embedding extraction:** documented — `backbone.forward_encoding(x,
-  return_sequence=False)` returns a 768-dim global (`cls`) embedding and
-  patch-level embeddings.
-- **Fine-tuning:** full fine-tuning script (`main_finetune.py`) is in the
-  repo; **no LoRA/PEFT example documented**. The paper's core claim (channel
-  masking during pretraining makes the model robust to missing channels at
-  inference) is not demonstrated in the top-level README's basic usage
-  example, which shows all 12 channels — whether there's a documented
-  partial-channel inference path needs checking in the code directly, not
-  assumed from the paper's abstract.
+  **Not yet downloaded** — `pretrained_weights/` in the cloned repo is empty
+  except a `readme.md` pointing at the HF link. **Filename mismatch found
+  between docs:** the root README's quick-start snippet expects
+  `pretrained_weights/osf_backbone.pth`, but `demo.ipynb` instead loads
+  `pretrained_weights/dino_vit_base_backbone.pth` — verify the actual
+  filename once downloaded, don't assume either name.
+- **License:** confirmed MIT (`LICENSE`, copyright Health Intelligence Lab
+  @ UCLA, 2026).
+- **Input format (confirmed from repo, `config.py`/`train_config.py`):**
+  exactly 12 PSG channels at 64 Hz, 30-second epochs (1,920 samples/channel),
+  input shape `[B, 12, 1920]`, exact channel order (`TRAIN_EDF_COLS_UNI_ENC`,
+  `train_config.py:5-8`): `ECG, EMG_Chin, EMG_LLeg, EMG_RLeg, ABD, THX, NP,
+  SN, EOG_E1_A2, EOG_E2_A1, EEG_C3_A2, EEG_C4_A1` (NP = nasal
+  pressure/airflow, SN = snore). Native per-channel sampling rates before
+  OSF's own resampling differ (e.g. ECG at 128 Hz, respiratory channels at
+  8 Hz) — `config.py:141-198`; `demo.ipynb` cell 5 shows the resample +
+  zero-fill-missing-channel preprocessing utility.
+- **Embedding extraction — code-verified.** Class `ViT`
+  (`osf/backbone/vit1d_cls.py:145-267`), factory `vit_base(num_leads,
+  seq_len, patch_size, lead_wise, patch_size_ch, **kw)` (line 326). Method
+  `forward_encoding(series, return_sequence=False)` returns
+  `(cls[B,768], patches[B,90,768])` (lines 232-249); `return_sequence=True`
+  returns the full `[B,91,768]` CLS+patch token sequence. Also exposes
+  `forward_avg_pool` (mean-pool over patches, lines 263-266) and
+  `reset_head(num_classes)` to attach a linear classification head
+  (lines 268-270) — a real, usable classification-head API, not just an
+  embedding extractor.
+- **Native context length — confirmed strictly per-epoch, Plan A is NOT
+  available.** The positional-embedding table is sized to exactly one 30s
+  window (`N_max = Lr*Nt`, `vit1d_cls.py:174-187`); there is no
+  cross-epoch/whole-night attention or aggregation mechanism anywhere in
+  `osf/backbone/`, `osf/models/`, or `main_pipelines/` (grepped for
+  `hierarchical|long_sequence|full_night|multi_epoch|sequence_model` —
+  zero hits). `main_finetune.py:129` hardcodes `window_size=30`. **This
+  means OSF can only be used in Plan B (short-segment embedder + our own
+  sequence head)** — structurally identical to how SleepFM is already used
+  throughout the paper, which is a clean, defensible comparison to make,
+  just not a "native long context" one.
+- **Classification head / fine-tuning — code-verified.**
+  `main_finetune.py` (260 lines) loads a `DINOCLSModel` checkpoint,
+  extracts `.encoders["all"].backbone` (line 181), wraps it in
+  `SSLFineTuner`/`SSLVitalSignsRegressor`
+  (`osf/models/ssl_finetuner.py:56-412` — real classification head:
+  `nn.Linear(width, num_classes)` at line 143-146). Supports
+  `--finetune_backbone` (full FT vs. linear probe) and `--use_mean_pool`
+  (mean-pool vs. CLS token features).
+- **Partial/missing-channel inference — real, but narrower than the paper's
+  framing suggests.** `--monitor_type {main,type3,type4}` selects between
+  three **fixed channel-count presets** (12/5/3 channels,
+  `main_finetune.py:199-201`, `train_config.py:9-22`) — this is the only
+  documented partial-channel path, and it's fixed presets, not arbitrary
+  per-sample missing-channel handling. Channel-dropout *augmentation*
+  during pretraining is real (`osf/datasets/augmentations.py:55`,
+  `osf/datasets/simclr_aug_registry.py:23-25`, consistent with the paper's
+  channel-invariance claim), but there's no inference-time missing-channel
+  imputation beyond zero-fill (as shown in `demo.ipynb`'s preprocessing).
+  If a fair comparison against our own reduced/full-channel ablation is
+  planned, OSF's granularity here is coarser (3 presets) than ours
+  (per-channel-group ablation).
+- **LoRA/PEFT: dependency present, unused.** `requirements.txt:104` lists
+  `peft==0.14.0`, but grepping the entire repo (`osf/`, `main_pipelines/`,
+  `demo.ipynb`) for `peft|lora` returns **zero usages**. So the "no
+  LoRA/PEFT example documented" assessment stands, but note the environment
+  already has the dependency installed — we'd be writing our own PEFT
+  wrapper around the ViT, not adding a new dependency.
 
-**Integration effort: moderate.** Two real mismatches with our pipeline:
-(a) 64 Hz / 30-second epochs vs. our 128 Hz / 5-second patches — needs a
-resampling + re-chunking adapter, not a simple slice; (b) OSF wants snore
-(`SN`) and full thoracic+abdominal+airflow (`THX`,`ABD`,`NP`), which our
-**reduced**-channel configuration does not carry (reduced RESP = airflow
+**Integration effort: moderate, Plan B only.** Two real mismatches with our
+pipeline: (a) 64 Hz / 30-second epochs vs. our 128 Hz / 5-second patches —
+needs a resampling + re-chunking adapter, not a simple slice; (b) OSF wants
+snore (`SN`) and full thoracic+abdominal+airflow (`THX`,`ABD`,`NP`), which
+our **reduced**-channel configuration does not carry (reduced RESP = airflow
 only). Our **full**-channel configuration should cover it (RESP priority
 list already includes Thor, ABD, SpO2, Snore), so OSF experiments would need
 to run against the full-channel preprocessed data, not the fast/reduced
 path used for the paper's primary results.
 
-**The contamination caveat (already flagged in
-`docs/SOTA_COMPARISON_AND_ABLATIONS.md`, repeating here because it's
-critical for this specific use):** OSF's pretraining data includes SHHS and
-MrOS, which are two of our four test cohorts. Any AUROC comparison against
-SleepFM on SHHS/MrOS-derived test subjects would not be a fair backbone
-comparison — OSF has plausibly seen these exact recordings (or close
-neighbors from the same cohort) during pretraining. This needs to be stated
-explicitly in the paper if OSF is included, and ideally the comparison
-should be restricted to, or at least reported separately for, APPLES and
-STAGES (cohorts OSF was not pretrained on).
+**The contamination caveat — revised after reading OSF's actual shipped
+train/valid/test patient-ID splits** (`osf/splits/patient_{pretrain,
+downstream}_{train,valid,test}_ids.csv`, 21,488 rows total; this is a
+materially more precise picture than the abstract/README alone gave):
+- **Pretrain split** (high contamination risk): **SHHS** (8,276 IDs
+  confirmed), **WSC** (1,773), **CCSHS** (515), **CFS** (329), plus 3,889
+  numeric-format IDs (`"digits_digits"`) that match no other dataset's
+  prefix and are very likely **STAGES** (STAGES's `subject_code` convention
+  is numeric per our own prior findings) — needs one more confirmation step
+  (cross-check a handful of numeric IDs against our local STAGES
+  `subject_code` list) before treating as certain.
+- **Downstream/eval-only split** (used by OSF's own authors for fine-tuning
+  benchmarks, not pretraining): `chat`, `mesa`, **MrOS** (3,867 IDs), `sof`.
+  **This revises the original assessment** — MrOS was NOT part of OSF's
+  pretraining set, only its downstream fine-tune/eval set. Contamination
+  risk for MrOS is lower than initially assumed (SleepFM never "saw" MrOS
+  labels/recordings during pretraining), but OSF's own authors already
+  benchmarked on it, which is still worth disclosing.
+- **APPLES: no mention anywhere** in the README, `config.py`, or the
+  shipped splits — clean, no contamination risk.
+- **Net effect on the paper's framing:** SHHS is confirmed-contaminated
+  (high risk, exclude or caveat heavily). STAGES is very-likely-contaminated
+  pending final confirmation. MrOS is lower-risk than previously stated —
+  downstream-only, not pretraining. APPLES is clean. The safest reporting
+  strategy is still to report APPLES (and, once STAGES status is confirmed,
+  possibly STAGES) results separately from the SHHS/MrOS numbers, but the
+  MrOS correction means the paper doesn't need to treat all four cohorts as
+  equally compromised.
 
 ### 2.2 PhysioOmni
 
@@ -176,76 +274,213 @@ STAGES (cohorts OSF was not pretrained on).
   Handling Arbitrary Missing Modalities." arXiv:2504.19596 (latest v3 dated
   2026-03).
 - **Code:** https://github.com/935963004/PhysioOmni (same author group as
-  NeuroLM, below; code and weights are released, not just promised).
-- **Checkpoint:** referenced as available via a HuggingFace org
-  ("Weibang"/related) — exact checkpoint name not resolved from the README
-  alone; needs a direct HuggingFace search once we commit to this model.
-- **Modalities (confirmed from abstract/search):** EEG, ECG, EOG, EMG.
-  **Not confirmed: respiratory/airflow support.** This is a real gap for our
-  purposes — our own modality ablation shows apnea detection is the task
-  most dependent on the RESP channel group, and if PhysioOmni has no
-  respiratory pathway, it cannot be a fair backbone comparison for that task
-  specifically without a workaround (e.g. feeding a derived respiratory
-  feature stream through whichever generic channel slot it exposes, if any).
-- **Architecture:** decoupled multimodal tokenizer, masked pretraining with
-  modality-invariant and modality-specific objectives, "resilient
-  fine-tuning with prototype alignment" for adapting to incomplete modality
-  combinations at downstream time — this last part is exactly the
-  missing-modality-robustness property that would make it a natural
-  comparison point for our own channel-ablation results.
-- **Downstream tasks reported in the paper:** emotion recognition, sleep
-  stage classification, motor prediction, mental workload detection. Sleep
-  staging specifically being one of their four validated downstream tasks is
-  a good sign for relevance, though it does not confirm PSG-scale (full
-  night) pretraining data was used — could be epoch-level EEG-sleep data
-  from a BCI-style dataset rather than NSRR-style PSG.
-- **Pretraining corpus size, exact sampling rate/segment length, and license:
-  not documented** in the README or abstract as fetched. **Needs verification
-  from the full paper PDF or HuggingFace model card before scoping
-  integration effort precisely** — flagging this rather than guessing.
+  NeuroLM, below; code and weights are released, not just promised; cloned
+  locally at `/Users/boshra/NSRR-workspace/PhysioOmni`).
+- **Checkpoint:** README confirms the exact HF repo —
+  `https://huggingface.co/Weibang/PhysioOmni`. Not yet downloaded;
+  `train_finetune.py:289` expects a local file named
+  `checkpoints/MSM/ckpt-49.pt` under `--pretrained_dir`, implying that's
+  the filename once pulled from HF (unverified against actual HF repo
+  contents — check after downloading).
+- **Respiratory/airflow support — DEFINITIVE NO, confirmed by four
+  independent code locations.** This resolves the single biggest open
+  question flagged in the first pass of this document:
+  1. `dataset.yaml` — every pretraining source (TUH1-4, CAP0-10, Sleep-EDF,
+     DEAP, an unlabeled "GX" set) declares only `contain_EEG/EOG/ECG/EMG`
+     booleans. No RESP/SpO2 field exists in the config schema at all.
+  2. `dataset.py` (`PickleLoader`, `DownstreamLoader`) only ever reads
+     `sample["EEG"|"EOG"|"ECG"|"EMG"]` keys — no fifth-modality branch
+     anywhere.
+  3. `prepare_dataset/prepare_tuh.py:35-37` — the `drop_channels` list
+     **explicitly discards** `'EEG RESP1-REF', 'EEG RESP2-REF', 'RESP
+     ABDOMEN-REF', 'PULSE RATE', 'RESP THORAX-REF'` from raw TUH EDFs
+     before any processing.
+  4. `prepare_dataset/prepare_HMC_downstream.py:8-11` — HMC is a real PSG
+     dataset with SpO2/airflow channels available in the source EDF, but
+     the prep script only defines EEG/EOG/ECG/EMG channel lists —
+     respiratory/SpO2 channels in HMC are never touched, even though
+     they're right there in the source data.
 
-**Integration effort: unknown, likely moderate-to-high until the above gaps
-are resolved.** The missing-modality-robust design is architecturally the
-best conceptual fit of anything on this list to our own reduced/full-channel
-story, which is why it's ranked highly despite the documentation gaps — but
-those gaps need to close before committing engineering time.
+  `model/FT.py` (`forward`, line 207+) hard-codes exactly 4 encoder
+  branches (`EEG_encoder/EOG_encoder/ECG_encoder/EMG_encoder`) — there is
+  no generic N-modality loop a 5th channel group could be slotted into.
+  **Conclusion: apnea (which our own modality ablation shows is the task
+  most dependent on the RESP channel group) cannot be fairly compared using
+  PhysioOmni as released.** Adding a respiratory pathway would require a
+  new tokenizer branch plus retraining the VQ/MSM pretraining stage — a
+  pretraining-scale change, not a fine-tuning adapter. **Recommendation:
+  exclude apnea from the PhysioOmni comparison with a stated reason, rather
+  than attempting a workaround.**
+- **Architecture — code-verified.** Tokenizer: `NeuralTransformer`
+  (`model/neural_transformer.py:61`) — one instance **per modality**, each
+  with its own dims: EEG `n_embd=200, patch_size=200` (200 Hz, 1-second
+  patches); EOG/ECG/EMG `n_embd=100, patch_size=100` (100 Hz, 1-second
+  patches) — set in `train_finetune.py:267-274`. **Native max context ≈512
+  seconds (~8.5 min) per modality stream**: `pos_embed = nn.Embedding(256,
+  n_embd)` (channel-position id) and `time_embed = nn.Embedding(512,
+  n_embd)` (max 512 one-second time-patches) — `neural_transformer.py:74-75`
+  — indexing beyond 512 patches hard-errors, no interpolation/extrapolation
+  code exists. Attention is **bidirectional, not causal**
+  (`scaled_dot_product_attention(..., is_causal=False)`,
+  `model/transformer.py:55,120`) — masked-pretraining style, not built for
+  autoregressive long-context generation. **Plan A (native long raw
+  sequence) is not supported — Plan B only, same as OSF and MOMENT.**
+- **Decoupled tokenizer, concretely.** `VQ.py:11-60` — separate
+  `EEG/EOG/ECG/EMG_quantize` codebooks (modality-specific) plus one
+  `shared_quantize` codebook (modality-invariant), joined by cross-attention
+  modules (`EOG_crsatt`, `ECG_crsatt`, `EMG_crsatt`, `EEG2EOG_crsatt`,
+  etc.) — this is the paper's "decoupled multimodal tokenizer," concretely
+  implemented as private+shared VQ codebooks per modality.
+- **Missing-modality / prototype-alignment mechanism — found and
+  concrete.** `model/FT.py:207-274`: each modality branch guarded by
+  `if X is not None`; per-modality logits averaged (`feature /=
+  num_modality`, line 272); per-modality auxiliary loss (`specific_loss`)
+  plus one shared `alignment_loss` from `AlignmentModule` (lines 12-77)
+  that pulls each modality's pooled 128-d embedding toward a learned
+  class-conditional (or k-means-cluster, for regression) prototype vector.
+  This *is* "resilient fine-tuning with prototype alignment" — a real,
+  usable mechanism, naturally supporting arbitrary subsets of
+  {EEG,EOG,ECG,EMG} (any can be `None`), but scoped to exactly these 4
+  named branches, not a generic list — our RESP/EKG/EMG grouping would need
+  remapping onto this exact 4-branch scheme (EKG → their ECG, our EMG →
+  their EMG, our BAS → split into their EEG+EOG; RESP has nowhere to go).
+- **LoRA/PEFT: none anywhere.** `grep -rniE "peft|lora"` across all `.py`
+  files returns zero hits. Fine-tuning is full-parameter
+  (`configure_optimizers`, `FT.py:307`, decays all `requires_grad` params,
+  no adapter injection). We would need to add LoRA integration from
+  scratch (the encoders are standard `nn.Linear`/`nn.Embedding`/attention
+  modules, so LoRA-compatible in principle).
+- **Downstream tasks reported in the paper:** emotion recognition (SEED-VII,
+  FBM), sleep stage classification (HMC), motor prediction (EEGMAT). Sleep
+  staging being one of the validated downstream tasks is a good relevance
+  signal, though the pretraining corpus (TUH, CAP, Sleep-EDF, DEAP) is
+  BCI/clinical-EEG-scale, not full NSRR-style overnight PSG at our volume.
+- **Adapter effort to reach our data (`prepare_dataset/` scripts, all
+  read):** MNE-read EDF → per-modality bandpass+notch filter → resample to
+  fixed rate → segment → dump one `.pkl` per window/subject. To adapt our
+  HDF5 pipeline: (a) resample BAS/EKG/EMG to PhysioOmni's per-modality
+  rates (200/100/100 Hz); (b) un-z-score — the code expects raw-unit
+  signals scaled by `/100` (`dataset.py:66,88,107,126`), not z-scored
+  input; (c) split our combined BAS group into separate EEG and EOG channel
+  lists mapped onto PhysioOmni's fixed `standard_1020` channel-name
+  vocabulary (`dataset.py:8-23`, exact-match required or `.index()` raises
+  `ValueError`); (d) drop RESP entirely; (e) write per-file pickles
+  matching the exact key schema. **Real but mechanical — moderate effort,
+  for the 3 usable modalities (EEG/EOG merged from BAS, ECG from EKG, EMG)
+  only, not 4** (RESP is out).
+- **Pretraining corpus size, exact subject counts, and license: still not
+  documented.** `dataset.yaml` gives dataset *names* (TUH×4 configs,
+  CAP×11, Sleep-EDF, DEAP, GX) but no subject counts or hours. **License:
+  confirmed ABSENT** — no `LICENSE`/`COPYING` file anywhere in the repo
+  tree. This is a real open question to flag before any redistribution or
+  derivative-use claim in the paper.
+
+**Integration effort: moderate for Plan B (EEG/EOG/ECG/EMG only, RESP/apnea
+excluded), blocked for Plan A** (512-second positional-embedding ceiling,
+bidirectional non-autoregressive transformer, no long-context variant in
+this repo). Still architecturally the best conceptual fit to our own
+reduced/full-channel story for the tasks it *can* support, but the apnea
+exclusion and missing license need to be stated plainly in the paper if
+PhysioOmni is included.
 
 ### 2.3 MOMENT (A Family of Open Time-series Foundation Models)
 
 - **Paper:** ICML 2024.
 - **Code:** https://github.com/moment-timeseries-foundation-model/moment
+  (cloned locally at `/Users/boshra/NSRR-workspace/moment`).
 - **Checkpoints:** `AutonLab/MOMENT-1-small`, `-base`, `-large` on
-  HuggingFace (three sizes, pick based on compute budget).
-- **License:** MIT.
-- **Classification support:** native and multichannel — the repo explicitly
-  notes multi-channel classification was fixed/supported, with a documented
-  API:
+  HuggingFace. Exact parameter counts (~40M/125M/385M in the paper) are
+  **not stated anywhere in this repo's code/README** — would need pulling
+  the actual `config.json` from each HF checkpoint to code-verify.
+- **License:** confirmed MIT (`LICENSE`: "Copyright (c) 2024 Auton Lab,
+  Carnegie Mellon University").
+- **Max context length — corrected, this is the single most important
+  number in this whole document to get right, and the first pass had it
+  wrong.** **T=512 timesteps, hard-fixed** — not "low thousands." Confirmed
+  from five independent places in the code: `PatchEmbedding.__init__(...,
+  seq_len: int = 512, patch_len: int = 8, stride: int = 8, ...)`
+  (`momentfm/models/layers/embed.py:185`); `classification_dataset.py:16`
+  hardcodes `self.seq_len = 512` and pads/truncates every input to it;
+  `tutorials/finetune_demo/classification.py:334` argparse default
+  `--seq_len 512` with help text *"currently only support 512 for MOMENT"*;
+  every tutorial notebook states *"An input time series of length T=512
+  timesteps"*; `tests/test_inference.py` uses seq_len 512 throughout.
+  Patch length 8, stride 8 (non-overlapping) → 64 patches per 512-length
+  input. **At 128 Hz, 512 samples ≈ 4 seconds** — shorter than even our own
+  5-second (640-sample) SleepFM patches, let alone anything resembling long
+  context. **This kills Plan A outright and rules out any framing of
+  MOMENT as tested beyond ~4-second windows without real code
+  modification** (the backbone is a `T5EncoderModel` with relative-position
+  attention, so a different `seq_len` wouldn't necessarily error at the
+  tensor-shape level, but zero tutorial/script/test in the repo exercises
+  anything other than 512 — treat longer sequences as unverified, not
+  "should work").
+- **Classification API — confirmed exactly as documented, with one
+  important clarification.** `MOMENTPipeline`
+  (`momentfm/models/moment.py:594-624`) requires `.init()` after
+  `from_pretrained()` to swap in the task head. **`n_channels` is NOT
+  checkpoint-locked** — the backbone patch-tokenizes each channel
+  independently and reshapes to `(batch*n_channels, n_patches, d_model)`
+  before the shared encoder (`classify()`, lines 536-546), so pretrained
+  weights never see a channel dimension. `n_channels` only sizes the
+  freshly-initialized `ClassificationHead`: `reduction="concat"` (default)
+  gives `nn.Linear(n_channels * d_model, n_classes)`; `reduction="mean"`
+  gives `nn.Linear(d_model, n_classes)`. README confirms: *"We fixed an
+  issue with Classification where MOMENT was unable to handle multi-channel
+  inputs."* — good news for wiring up our 4 modality groups, no
+  architectural barrier, just a newly-trained head either way.
+- **LoRA/PEFT — exact config found, plus a real gap to fix ourselves.**
+  `tutorials/finetune_demo/classification.py:66-74`:
   ```python
-  from momentfm import MOMENTPipeline
-  model = MOMENTPipeline.from_pretrained(
-      "AutonLab/MOMENT-1-large",
-      model_kwargs={"task_name": "classification", "n_channels": 1, "num_class": 2},
-  )
+  lora_config = LoraConfig(r=64, lora_alpha=32, target_modules=["q", "v"], lora_dropout=0.05)
+  self.model = get_peft_model(self.model, lora_config)
   ```
-  (channel count is a constructor argument, so wiring up our 4 modality
-  groups or a flattened multichannel input is plausible without deep
-  surgery).
-- **PEFT/LoRA:** the repo includes an ECG classification tutorial
-  specifically demonstrating parameter-efficient fine-tuning — i.e. this is
-  a documented, not hypothetical, usage path for exactly the LoRA experiment
-  the supervisor asked about.
-- **Max context length: not confirmed from available documentation** (the
-  paper uses patch-based tokenization; exact max input length needs checking
-  in code once cloned). Given MOMENT's general design lineage (patch length
-  ~8, comparable to PatchTST-family models), expect a context in the
-  low-thousands of timesteps, which — per §0 — is on the order of tens of
-  seconds at 128 Hz, not hours, unless fed pre-extracted patch embeddings.
+  wraps the **entire** `MOMENTPipeline` (encoder + head). **Gap: no
+  `modules_to_save=["head"]` (or equivalent) is passed** — standard PEFT
+  behavior freezes all non-LoRA base-model parameters when
+  `get_peft_model()` is called, so the classification head is likely frozen
+  too unless something elsewhere compensates (checked `ptbxl_classification
+  .ipynb` for `modules_to_save` — zero hits). **This reads as a real bug or
+  omission in MOMENT's own reference tutorial, not a validated recipe** —
+  we need to add `modules_to_save=["head"]` ourselves, exactly the pattern
+  already recommended in §6 of this document for Chronos-2/TimesFM. LoRA
+  targets `q`/`v` projections of the T5 encoder only. The tutorial also
+  warns LoRA doesn't work well with DeepSpeed ZeRO-3 — use ZeRO-2 if
+  distributing training.
+- **`peft`/`accelerate` are NOT declared package dependencies** —
+  `requirements.txt`/`pyproject.toml` list only `huggingface-hub`, `numpy`,
+  `torch>=2.0.1`, `transformers>=4.54.1`. Both are imported ad hoc in the
+  tutorial script only. We need to pin `peft`/`accelerate` ourselves when
+  adding this to our environment (also: check our SleepFM env's
+  `transformers` pin doesn't conflict with MOMENT's `>=4.54.1` requirement).
+- **No long-context/pooled-embedding mode exists for Plan C either.**
+  `embed()` (`TASKS.EMBED`, `moment.py:229-294`) uses the identical
+  512-timestep, patch-length-8 pipeline as classification — same
+  `PatchEmbedding(seq_len=512, ...)`. Feeding SleepFM's own pre-extracted
+  per-patch embeddings into MOMENT (our Plan C) is **not a documented
+  feature** — MOMENT's `Patching`/`TokenEmbedding` expects raw scalar
+  amplitude values per timestep with its own RevIN per-channel
+  normalization, not pre-embedded vectors. Treating each SleepFM embedding
+  dimension as a separate MOMENT "channel" is architecturally awkward and
+  would require bypassing MOMENT's built-in patch/value embedding, reusing
+  only its T5 encoder + positional stack — a nontrivial adaptation, not a
+  drop-in usage.
+- **Other implementation notes:** `enable_gradient_checkpointing` defaults
+  to `True` (`moment.py:220`) — must be manually disabled for frozen-
+  encoder/linear-probe runs. RevIN normalization is applied automatically
+  per-channel inside `embed`/`classify`/`reconstruction`
+  (`RevIN(num_features=1, ...)`, lines 105-107), so our pipeline's
+  pre-z-scoring is redundant but shouldn't cause problems.
 
-**Integration effort: low-to-moderate.** This is the most "just call the
-API" option of the general-purpose TSFMs: pip-installable, HuggingFace
-checkpoints, explicit classification + multichannel + PEFT support already
-demonstrated by the authors on a biosignal (ECG) task, which is unusually
-favorable precedent among general TSFMs.
+**Integration effort: moderate (revised up from low-to-moderate).** Two
+concrete reasons for the revision: (a) the missing `modules_to_save` in
+MOMENT's own reference LoRA recipe means the "documented PEFT path" isn't
+actually usable as-is — we have to fix it ourselves; (b) `peft`/
+`accelerate` aren't declared dependencies, so there's real environment work
+beyond `pip install momentfm`. Still Plan-B-only like OSF and PhysioOmni
+(512 timesteps ≈ 4s at 128 Hz kills Plan A), and Plan C (pre-extracted
+embeddings as input) is undocumented/unsupported rather than just "TBD" as
+originally stated.
 
 ### 2.4 Chronos-2 (named explicitly by the supervisor)
 
@@ -478,9 +713,9 @@ as part of this comparison round.
 
 | Model | Type | Modalities | Checkpoint | License | Native ctx. (raw sec @128Hz equiv.) | Classification-native | LoRA/PEFT documented | Integration effort |
 |---|---|---|---|---|---|---|---|---|
-| OSF | Sleep-PSG FM | 12-ch PSG (EEG/EOG/EMG/ECG/RESP/snore) | ✓ HF `yang-ai-lab/OSF-Base` | MIT | 30s (per-epoch design; full-night = many epochs) | Epoch-level, not sequence-level | ✗ (full FT only) | Moderate (64Hz/30s vs. our 128Hz/5s; needs full-channel config) |
-| PhysioOmni | Multimodal physio FM | EEG/ECG/EOG/EMG (RESP unconfirmed) | Referenced, exact HF repo TBD | Unconfirmed | Unconfirmed | Unconfirmed | Unconfirmed | Unknown pending doc verification |
-| MOMENT | General TSFM | Any (channel-count is a constructor arg) | ✓ HF `AutonLab/MOMENT-1-{small,base,large}` | MIT | Low thousands of timesteps (TBD exact) | ✓ | ✓ (own ECG PEFT tutorial) | Low-moderate |
+| OSF | Sleep-PSG FM | 12-ch PSG (EEG/EOG/EMG/ECG/RESP/snore) | ✓ HF `yang-ai-lab/OSF-Base` (not yet downloaded; filename unverified) | MIT (confirmed) | **30s, confirmed strictly per-epoch, no cross-epoch attention — Plan A not possible** | Epoch-level (real head API: `reset_head()`) | `peft==0.14.0` installed but zero code usage — custom wrapper needed | Moderate, Plan B only (64Hz/30s vs. our 128Hz/5s; full-channel config needed) |
+| PhysioOmni | Multimodal physio FM | EEG/ECG/EOG/EMG — **RESP confirmed absent (4 code locations)** | ✓ HF `Weibang/PhysioOmni` (confirmed) | **None found — flag as open question** | **~512s (~8.5min) hard ceiling, bidirectional non-causal — Plan A not possible** | Via frozen-embedding + head, or resilient fine-tuning (`AlignmentModule`) | ✗ confirmed zero usage anywhere in repo | Moderate, Plan B only, **apnea excluded** (no RESP pathway) |
+| MOMENT | General TSFM | Any (channel-count is a constructor arg, not checkpoint-locked) | ✓ HF `AutonLab/MOMENT-1-{small,base,large}` | MIT (confirmed) | **512 timesteps, hard-fixed ≈ 4s @128Hz — corrected from "low thousands"; Plan A not possible** | ✓ | ✓ own ECG tutorial, but **missing `modules_to_save` for head — real gap to fix ourselves** | Moderate (revised up), Plan B only |
 | Chronos-2 | General TSFM (forecaster) | Multivariate (generic) | ✓ `amazon-science/chronos-forecasting` | Verify at clone time | 8,192 tokens | ✗ (embeddings + external head) | ✓ native, built into `Chronos2Pipeline` (forecasting adapters, not classification-native) | Low-moderate for LoRA, moderate for classification head |
 | TimesFM | General TSFM (forecaster) | Multivariate (generic) | ✓ HF `google/timesfm-2.5` (via `transformers`) | Verify at clone time | 2,048 (2.0) / 4,096 (2.5) tokens | ✗ (embeddings + external head) | ✓ native LoRA/DoRA, official `examples/finetuning/` scripts; community classification-head precedent (`FlaMinGo-timesfm`) | Low-moderate |
 | UniShape | General TSFM (classification-native) | Any (UCR/UEA-style; multichannel PSG fit unconfirmed) | Unconfirmed — repo references a ckpt folder, no direct link resolved | Unconfirmed | N/A (classification-native, not sequence-length-native in the TSFM sense) | ✓ (only general-purpose model on this list built for it) | Via its own `unishape_finetune.py` (not confirmed as LoRA specifically) | Unknown pending checkpoint verification |
