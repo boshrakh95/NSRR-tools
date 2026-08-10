@@ -128,14 +128,16 @@ Core pipeline (GPU for train/infer, CPU for analyze):
   analyze_common_eval_set.py, analyze_windows.py --k-dense   Dense-K / cross-context comparisons
   debug_nan.py                NaN debugging for training runs
 
-Plotting (local, no GPU, all driven by gen_commands.py subcommands unless noted):
+Plotting (local, no GPU) — ⚠️ **NOT the current source of the paper's actual
+figures, see caveat below**:
   plot_saturation.py, plot_iso_compute.py, plot_scaling_laws.py, plot_calibration.py,
   plot_window_position.py, plot_subject_consistency.py, plot_cohort_saturation.py,
   plot_precision_recall.py, plot_subject_kstar.py, plot_task_comparison.py
   plot_modality_bar.py, plot_channel_comparison.py, plot_aggregate_scaling.py
       (these 3 are cross-round: called directly, not via gen_commands.py — read collected CSVs)
 
-Paper tables (local, no GPU):
+Paper tables (local, no GPU) — ⚠️ **used only to double-check numbers, see
+caveat below**:
   make_table1_peak_auroc.py, make_table2_lstar.py, make_table3_kgrid.py,
   make_table4_sensitivity.py, make_table5_heads.py, make_table6_modality.py,
   make_table9_cohort.py, make_table10_ci.py
@@ -143,15 +145,41 @@ Paper tables (local, no GPU):
 
 Orchestration shell wrappers:
   run_analysis.sh    Full 13-step analysis+plot pipeline for a task/head list (see guide §"Analysis and Plotting")
-  run_figures.sh     Full paper figure regeneration (see guide §"Figure Generation")
-  gen_tables.sh      Regenerates all paper tables in one call
-  assemble_figures.py   Composite multi-panel figure assembly for LaTeX inclusion
+  run_figures.sh     ⚠️ Documented in the guide but NOT how current figures are made — see caveat below
+  gen_tables.sh      Regenerates the make_table*.py outputs (double-check reference only, see caveat below)
+  assemble_figures.py   Composite multi-panel figure assembly — also superseded, see caveat below
   repo_sync.py       Cross-cluster git sync helper
 
 Dataset-adapter unit tests (current, not archived debug scripts):
   test_apples_adapter.py, test_mros_adapter.py, test_shhs_adapter.py, test_stages_adapter.py,
   test_channel_config.py, test_context_window_dataset.py
 ```
+
+**⚠️ Important workflow caveat (confirmed by the user, 2026-08-10): the
+`plot_*.py` scripts, `run_figures.sh`, and `assemble_figures.py` are
+documented in `docs/EXPERIMENTS_GUIDE.md` as the figure-generation path,
+but that is no longer how the actual paper figures are produced.** The
+user now maintains figure-generation code directly in notebooks at
+`results/paper_figures/notebooks_npj/` (one notebook per figure, e.g.
+`main_fig2_kvsk.ipynb`, `sfig14_task_landscape.ipynb`) — the plotting
+logic was originally copied out of the `plot_*.py` scripts into these
+notebooks, and **the notebooks, not the scripts, are what's edited now**.
+When paper figure order changes, the user renames/edits the notebooks
+directly to keep filenames and numbering correct — `scripts/plot_*.py`
+and `scripts/run_figures.sh` are not kept in sync with this and should be
+treated as historical/reference only, not as the current figure source.
+Outputs land in `results/paper_figures/final_npj/`. (There's also an older
+`results/paper_figures/notebooks/` + `final/` pair from the TBME
+submission, and `results/paper_figures/FIGURE_PIPELINE.md` documents that
+older TBME-era layout, not `notebooks_npj/` — don't follow it for current
+figure work.) **Similarly, the `make_table*.py` scripts / `table-N`
+subcommands / `gen_tables.sh` do not produce the paper's actual table
+content** — the tables in `npj_main.tex` are written and edited by hand;
+these scripts are used only to spot-check specific numbers against the
+collected results CSVs, not as a generation pipeline to run and paste
+from. If asked to "regenerate the tables/figures for the paper," these
+scripts are the wrong target — ask where the notebook/tex edits should
+happen instead, or check `notebooks_npj/` and `npj_main.tex` directly.
 
 ### `configs/` — YAML configs
 
