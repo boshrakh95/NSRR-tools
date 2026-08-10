@@ -490,9 +490,20 @@ code-verified — `docs/TSFM_BASELINE_CANDIDATES.md` §2.1-2.3 now reflect
 confirmed (not web-search-assumed) input formats, checkpoint locations,
 LoRA support/gaps, and contamination/modality-support findings; the
 "Confirmed status" and "Honest comparison framing" subsections above are
-current as of that pass. **A detailed, step-by-step implementation plan
-(one per model, code-level, cluster-runnable) has not been written yet** —
-that is the next request, not something to start unprompted.
+current as of that pass.
+
+**The detailed, code-level, cluster-runnable implementation plan for
+OSF (model #1 of 3) is written: [`docs/TSFM_OSF_IMPLEMENTATION_PLAN.md`](docs/TSFM_OSF_IMPLEMENTATION_PLAN.md).**
+It covers the confirmed channel mapping (our full-channel HDF5 → OSF's
+12-channel input — no raw EDF reprocessing needed), the decision to reuse
+existing full-channel HDF5s and compare against `phase0_v3_full` (not the
+paper-primary `phase0_v3`), new scripts/config/registry needed for Stage 1
+(frozen encoder + our sequence heads) and Stage 2 (LoRA fine-tuning,
+end-to-end, with a memory-mitigation fallback ladder), and a Step 0
+verification checklist to run before the full sweep. First pass scope is
+the 5 Tier-1 tasks (sex, sleep efficiency, BMI, age, apnea); PhysioOmni and
+MOMENT get their own plan docs later, after this one is validated —
+**do not start those unprompted.**
 
 ---
 
@@ -531,8 +542,12 @@ npj_digital_medicine_submission/   # the paper repo — read for framing/consist
    classification/LoRA support, integration effort.
 4. This file's "TSFM Baseline Model Comparison" section above — the Plan
    A/B/C usage modes and staged frozen/LoRA training procedure to follow.
-5. The detailed step-by-step implementation plan doc (once written — not
-   yet present as of this section's writing).
+5. **[`NSRR-tools/docs/TSFM_OSF_IMPLEMENTATION_PLAN.md`](docs/TSFM_OSF_IMPLEMENTATION_PLAN.md)
+   — the actual step-by-step plan to execute, for OSF (model #1).** Start
+   here for concrete implementation work; the docs above are the context
+   that plan was written from. PhysioOmni and MOMENT don't have plan docs
+   yet — write those (following the same research-then-plan process) only
+   once asked, after OSF's pipeline is validated.
 
 **Cluster data paths (existing convention, from `docs/EXPERIMENTS_GUIDE.md`
 and `docs/archive/RESULTS_COLLECTION.md` — moved during the 2026-08-10
