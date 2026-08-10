@@ -37,6 +37,201 @@ and on the cluster (for anything that needs to touch signal data). See
 
 ---
 
+## Repository Map
+
+This section is a code-verified orientation map (read directly from source,
+not inferred from docstrings) — it complements `docs/EXPERIMENTS_GUIDE.md`
+rather than duplicating it. Read the guide for *how to run things*; read
+this section for *where things live and how the pieces fit together*.
+
+### Housekeeping: archived content (as of 2026-08-10)
+
+The repo root and `docs/` used to be cluttered with early-implementation
+(Feb–Mar 2026) debug scripts and status docs. These have been moved:
+
+- **`archived_files/`** — old root-level `.md`/`.py` files from the initial
+  EDF-adapter/annotation-debugging phase (e.g. `debug_shhs_merge.py`,
+  `STAGES_ID_MISMATCH_DEBUG_GUIDE.md`). Historical only — nothing here is
+  imported by current code or referenced by current docs. Safe to ignore
+  unless specifically researching early preprocessing decisions.
+- **`docs/archive/`** — a *larger* and more mixed set: some genuinely
+  obsolete planning docs, but also several docs that `docs/EXPERIMENTS_GUIDE.md`
+  itself treats as authoritative reference material and still links to by
+  bare filename (e.g. `TRAINING_PROTOCOL_FIXES.md`, `RESULTS_COLLECTION.md`,
+  `SOTA_COMPARISON_AND_ABLATIONS.md`, `cohort_filter.md`,
+  `POSTHOC_THRESHOLD_TUNING.md`, `sleep_staging_design.md`, `PAPER_TABLES.md`,
+  `PAPER_PLAN.md`). **Those links are now stale** — the content is still
+  correct and worth reading, it just moved. If `docs/EXPERIMENTS_GUIDE.md`
+  or this file references `docs/SOMETHING.md` and it isn't in `docs/`,
+  check `docs/archive/SOMETHING.md` before assuming it's gone.
+- A handful of loose root-level files (`test_preprocessing.py`,
+  `test_sleepfm_compatibility.py`, `profile_signal_processing.py`, a few
+  `test_*.csv` fixtures, `assemble_figures.log`) weren't archived but are
+  also superseded by `scripts/` and `docs/EXPERIMENTS_GUIDE.md` — harmless,
+  no action needed, just don't treat them as current guidance.
+
+### `src/nsrr_tools/` — the installable package
+
+```
+core/
+  signal_processor.py      EDF → HDF5 preprocessing (resampling, filtering, channel extraction)
+  annotation_processor.py  Sleep-stage/event XML annotation parsing → aligned label arrays
+  channel_mapper.py        Canonical channel-name resolution (reads configs/channel_definitions.yaml)
+  modality_detector.py     Maps resolved channels to the 4 SleepFM modality groups (BAS/RESP/EKG/EMG)
+  metadata_builder.py      Builds unified per-subject metadata across datasets
+datasets/
+  base_adapter.py          Abstract per-dataset adapter interface
+  {apples,shhs,mros,stages}_adapter.py   One adapter per NSRR cohort (raw file layout → common schema)
+  context_window_dataset.py   ContextWindowDataset — the PyTorch Dataset every training/inference
+                               script uses. SEE "Code reuse assessment" below — this class is
+                               SleepFM-embedding-shape-specific ([T,4,128], hardcoded constants
+                               N_MODALITIES=4/EMBED_DIM=128/FLAT_DIM=512), not generic.
+models/
+  sequence_head.py          MeanPoolHead, LSTMHead, TransformerHead + build_head(cfg) factory.
+                             Dim-agnostic (input_dim is just a constructor arg) — fully reusable
+                             for any backbone's embeddings, see "Code reuse assessment" below.
+targets/
+  extraction_utils.py       Shared helpers for the per-dataset extract_targets_*.py scripts
+utils/
+  config.py                 YAML config loading/merging for experiment configs
+  mount_utils.py             Cluster filesystem path helpers (SCRATCH/HOME expansion, etc.)
+```
+
+### `scripts/` — ~70 files, grouped by purpose
+
+```
+Preprocessing / metadata (cluster, GPU not needed):
+  preprocess_signals.py, preprocess_single_subject.py   EDF→HDF5 (called by jobs/preprocess_*.sh)
+  extract_metadata.py, extract_nsrr_channels.py          Per-dataset metadata/channel inventory
+  xml_to_csv.py, xml_to_csv_simple.py                    Annotation XML → CSV
+  validate_hdf5.py, extract_sample_edfs.sh                Spot-checking utilities
+
+Target extraction (labels):
+  extract_targets_{apples,mros,shhs,stages}.py            Per-dataset clinical label extraction
+  create_master_targets.py, create_task_subject_lists.py  Unify into targets_v2/, build per-task subject lists
+
+Embeddings (GPU, cluster):
+  extract_sleepfm_embeddings.py                           HDF5 → per-subject [T,4,128] .npy (SleepFM forward pass)
+  scan_nan_embeddings.py                                  Sanity-check embeddings for NaNs
+
+Core pipeline (GPU for train/infer, CPU for analyze):
+  gen_commands.py            THE command generator — see subcommand list below. Always go through
+                              this rather than hand-writing sbatch/python invocations.
+  train_context_sweep.py     Training entry point (see "Code reuse assessment" below)
+  infer_subject_windows.py   Inference entry point (see "Code reuse assessment" below)
+  analyze_windows.py         K-sweep metrics (local, no GPU)
+  build_heatmap_df.py        Iso-compute heatmap DataFrame construction
+  eval_checkpoint.py         Ad hoc single-checkpoint evaluation
+  find_batch_size.py         Batch-size probing (gen_commands.py probe-batch)
+  collect_results.py (v1, superseded), collect_results_v2.py (current — use this one)
+  apply_threshold_tuning.py  Post-hoc decision-threshold tuning (binary tasks)
+  analyze_common_eval_set.py, analyze_windows.py --k-dense   Dense-K / cross-context comparisons
+  debug_nan.py                NaN debugging for training runs
+
+Plotting (local, no GPU, all driven by gen_commands.py subcommands unless noted):
+  plot_saturation.py, plot_iso_compute.py, plot_scaling_laws.py, plot_calibration.py,
+  plot_window_position.py, plot_subject_consistency.py, plot_cohort_saturation.py,
+  plot_precision_recall.py, plot_subject_kstar.py, plot_task_comparison.py
+  plot_modality_bar.py, plot_channel_comparison.py, plot_aggregate_scaling.py
+      (these 3 are cross-round: called directly, not via gen_commands.py — read collected CSVs)
+
+Paper tables (local, no GPU):
+  make_table1_peak_auroc.py, make_table2_lstar.py, make_table3_kgrid.py,
+  make_table4_sensitivity.py, make_table5_heads.py, make_table6_modality.py,
+  make_table9_cohort.py, make_table10_ci.py
+      (also reachable via gen_commands.py table-1 .. table-10 subcommands)
+
+Orchestration shell wrappers:
+  run_analysis.sh    Full 13-step analysis+plot pipeline for a task/head list (see guide §"Analysis and Plotting")
+  run_figures.sh     Full paper figure regeneration (see guide §"Figure Generation")
+  gen_tables.sh      Regenerates all paper tables in one call
+  assemble_figures.py   Composite multi-panel figure assembly for LaTeX inclusion
+  repo_sync.py       Cross-cluster git sync helper
+
+Dataset-adapter unit tests (current, not archived debug scripts):
+  test_apples_adapter.py, test_mros_adapter.py, test_shhs_adapter.py, test_stages_adapter.py,
+  test_channel_config.py, test_context_window_dataset.py
+```
+
+### `configs/` — YAML configs
+
+| File | Purpose |
+|---|---|
+| `phase0_v3_config.yaml` | Fast-channel seq2label training (hidden=128, layers=1, val_auroc monitor) — **the active baseline config** |
+| `phase0_v3_staging_config.yaml` | Fast-channel sleep staging (hidden=256, layers=2, val_kappa monitor) |
+| `phase0_v3_full_config.yaml` / `phase0_v3_full_staging_config.yaml` | Full-channel counterparts |
+| `phase0_v3_abl_config.yaml` | Modality-ablation config (reuses fast-channel embeddings) |
+| `preprocessing_params.yaml` / `preprocessing_params_full.yaml` | EDF→HDF5 channel-set strategy (`sleepfm` vs `sleepfm_full`) |
+| `channel_definitions.yaml` | Canonical channel-name alias resolution (read by `channel_mapper.py`) — `channel_definitions_old.yaml` is a superseded copy, kept for reference only |
+| `modality_groups.yaml` | BAS/RESP/EKG/EMG channel priority lists per group |
+| `paths.yaml` | Canonical `${SCRATCH}`/`${HOME}`-relative path templates |
+| `target_extraction.yaml` / `target_extraction_v2.yaml` | Per-task label thresholds/source-column mapping for `extract_targets_*.py` |
+| `phase0_config.yaml` / `phase0_v2_config.yaml` | Archived protocol versions — do not use for new work |
+
+### `experiments/` — registries (read by `gen_commands.py`)
+
+- `v2_registry.yaml` — fast-channel, the default (no `--registry` flag needed)
+- `v2_full_registry.yaml` — full-channel (`--registry experiments/v2_full_registry.yaml`)
+- `v2_ablation_registry.yaml` — modality ablation (`--registry experiments/v2_ablation_registry.yaml`)
+
+Each entry maps one `{task}_{head}` (or `{task}_{head}_{run_tag}`) experiment
+ID to `task, task_type, num_classes, head, datasets, contexts, batch_size,
+lr, run_tag, n_size, tier`. See `docs/EXPERIMENTS_GUIDE.md` §"Experiment
+Registry and Command Generator" for the full field reference and how to add
+new entries.
+
+### `jobs/` — SLURM submission scripts (Compute Canada)
+
+Two cluster targets exist with slightly different SLURM directives — **check
+which cluster you're on before submitting**:
+- **Default (Fir)**: `jobs/{train_context_sweep,infer_subject_windows}_gpu.sh` — uses `--exclude=fc11006,fc11013,fc11010` (bad nodes), no `--partition` needed.
+- **Rorqual**: `jobs/{train_context_sweep,infer_subject_windows,find_batch_size}_gpu_rorqual.sh` — requires `--partition=gpubase_bygpu_b3`, no `--exclude` (different node names).
+
+Common SLURM settings across GPU jobs: `--account=def-forouzan_gpu`,
+1×H100 MIG 10GB slice (`nvidia_h100_80gb_hbm3_1g.10gb:1`), Python env
+activated via `source /home/boshra95/sleepfm_env/bin/activate` (**not**
+this repo's local `.venv` — that's for local/editing use only, never on
+the cluster for training/inference). Auto-requeue via
+`--signal=B:USR1@120` + `--requeue`; see `docs/EXPERIMENTS_GUIDE.md`
+§"Checkpoint Resume and Auto-Requeue" for the mechanism.
+
+`jobs/README.md` covers preprocessing job usage specifically (already
+completed for the existing SleepFM pipeline; relevant again if a new
+backbone needs its own preprocessing pass).
+
+### Logs
+
+`logs_v3/` (fast-channel), `logs_v3_full/` (full-channel), `logs_v3_abl*/`
+(ablation, including one archived-run directory
+`logs_v3_abl_arch256_20260627/` from the wrong-architecture rerun mentioned
+in the guide), `logs_v2/` (archived protocol). Each has SLURM
+`.out`/`.err` files plus a `status/*.jsonl` structured event log per
+train/infer job (`STARTED/REQUEUED/TIMEOUT_REQUEUED/SUCCESS/FAILED`) —
+query via `python scripts/gen_commands.py runs [<exp_id>]`.
+
+### `gen_commands.py` — complete subcommand list (code-verified, not just the guide's prose)
+
+`list, probe-batch, train, infer, analyze, build-heatmap, iso-plots,
+saturation, collect, scaling-laws, calibration, window-position,
+subject-consistency, task-comparison, cohort-saturation, precision-recall,
+subject-kstar, threshold-tuning, table-1, table-2, table-3, table-4,
+table-5, table-9, table-10, status, runs`. The `table-N` subcommands
+(direct wrappers around the `make_tableN_*.py` scripts) aren't called out
+in the guide's usage examples but are real and working.
+
+### Paper table numbering caveat
+
+`docs/EXPERIMENTS_GUIDE.md` cross-references "paper Table II/III/IV/V"
+using **TBME-era roman numerals**. The active paper is now
+`npj_digital_medicine_submission/npj_main.tex`, which uses **arabic
+numbers in a different order** (6 tables total, in appearance order:
+`tab:sweep, tab:saturation, tab:heads, tab:isocompute, tab:modality,
+tab:tasks`). Don't trust the guide's roman-numeral table references for
+precision — `grep '\label{tab:' npj_main.tex` in the paper repo to get the
+current mapping if it matters.
+
+---
+
 ## TSFM Baseline Model Comparison (in progress)
 
 ### Why this exists
@@ -147,6 +342,61 @@ context handling") rather than implied to be a fairer test than it is. See
 `docs/TSFM_BASELINE_CANDIDATES.md` §2.1-2.3 for the full code evidence
 behind each of these three findings.
 
+### Code reuse assessment (code-verified 2026-08-10) — what to reuse vs. reimplement
+
+Since all three baselines are Plan-B-only (short-segment embedder + our own
+sequence head), the natural question is how much of the *existing* SleepFM
+pipeline (`src/nsrr_tools/`, `scripts/train_context_sweep.py`,
+`scripts/infer_subject_windows.py`, `scripts/gen_commands.py`) can be
+reused directly rather than rebuilt per backbone. Read directly from source:
+
+- **`src/nsrr_tools/models/sequence_head.py` — fully reusable, as-is.**
+  `MeanPoolHead`/`LSTMHead`/`TransformerHead` and the `build_head(cfg)`
+  factory are dim-agnostic: `input_dim` is just a constructor argument, no
+  SleepFM-specific assumption anywhere in the file. Any new backbone's
+  embeddings, reshaped to `(B, N, D)` with a `(B, N)` padding mask, can go
+  straight into these heads by setting `input_dim=D` in the config.
+- **`src/nsrr_tools/datasets/context_window_dataset.py`
+  (`ContextWindowDataset`) — NOT reusable unmodified.** It hardcodes
+  SleepFM's embedding shape throughout: `N_MODALITIES=4`, `EMBED_DIM=128`,
+  `FLAT_DIM=512` module-level constants, `.npy` files assumed shape
+  `[T, 4, 128]`, reshape/pad logic built around that exact 4×128 layout.
+  A backbone whose embeddings aren't shaped `[T, 4, 128]` (which is all
+  three of OSF/PhysioOmni/MOMENT — each has its own embedding dim and no
+  4-modality-group structure) needs either a parallel dataset class or a
+  parameterized fork of this one (replace the three hardcoded constants and
+  the reshape calls with values read from config/embedding metadata). This
+  is the central adapter-engineering task for each new backbone.
+- **`scripts/train_context_sweep.py` and `scripts/infer_subject_windows.py`
+  — mostly backbone-agnostic, delegate embedding I/O entirely to
+  `ContextWindowDataset`.** Neither script touches raw `.npy` shapes
+  directly — both import `ContextWindowDataset`/`build_head` and otherwise
+  just orchestrate training/checkpointing/inference. The **only**
+  SleepFM-specific artifact in either file is the `_MODALITY_INDICES =
+  {"BAS":0,"RESP":1,"EKG":2,"EMG":3}` dict used for the `--zero-modalities`
+  flag (modality ablation) — irrelevant to the TSFM baselines, which have
+  no 4-group structure to ablate. **Practical implication: once a
+  backbone-appropriate dataset class exists, these two scripts should work
+  with little to no modification** — checkpoint/resume, early stopping,
+  overfit-phase, snapshot, and bootstrap-CI machinery all come for free.
+- **`scripts/gen_commands.py` — no existing hook for a different backbone;
+  a parallel command generator is the lower-risk path, not a retrofit.**
+  The registry schema (`experiments/v2_registry.yaml` et al.) has no
+  `backbone`/`model_family` field, and the wall-time lookup tables
+  (`_TRAIN_HOURS`, `_INFER_HOURS_PER_CTX`) are calibrated specifically to
+  SleepFM's compute profile per `(n_size, head)`. Retrofitting this file to
+  support multiple backbones would touch a lot of load-bearing, working
+  code for uncertain benefit. **Recommendation: write a small parallel
+  generator (or a new registry file + a thin backbone-aware wrapper) for
+  the TSFM runs**, rather than extending `gen_commands.py` itself — this
+  should be a concrete decision point in the implementation plan, not
+  something to improvise mid-implementation. The downstream `analyze`,
+  `collect`, plotting, and table subcommands, which just read
+  `results/collected/*.csv` and per-window parquets in a fixed schema, are
+  more plausibly reusable once a new backbone's results land in the same
+  `metrics.json`/`summary.csv`/parquet format `train_context_sweep.py`/
+  `infer_subject_windows.py` already produce.
+
 ### Frozen vs. LoRA-fine-tuned conditions
 
 Every model is run in two conditions: **frozen backbone** (embeddings only,
@@ -241,16 +491,24 @@ npj_digital_medicine_submission/   # the paper repo — read for framing/consist
 1. `NSRR-tools/docs/EXPERIMENTS_GUIDE.md` — the existing SleepFM pipeline
    (V3 protocol, configs, job submission) that any new backbone's
    experiment should mirror as closely as possible for a fair comparison.
-2. `NSRR-tools/docs/TSFM_BASELINE_CANDIDATES.md` — per-model technical
+2. This file's "Repository Map" section above — code-verified map of
+   `src/`, `scripts/`, `configs/`, `experiments/`, `jobs/`, and (critically)
+   the "Code reuse assessment" under the TSFM section below, which says
+   precisely what can be reused unmodified (`sequence_head.py`, largely
+   `train_context_sweep.py`/`infer_subject_windows.py`) versus what needs a
+   new implementation per backbone (`ContextWindowDataset`'s SleepFM-shape
+   assumption, `gen_commands.py`'s lack of a multi-backbone hook).
+3. `NSRR-tools/docs/TSFM_BASELINE_CANDIDATES.md` — per-model technical
    detail: confirmed input format, checkpoint location, license,
    classification/LoRA support, integration effort.
-3. This file's "TSFM Baseline Model Comparison" section above — the Plan
+4. This file's "TSFM Baseline Model Comparison" section above — the Plan
    A/B/C usage modes and staged frozen/LoRA training procedure to follow.
-4. The detailed step-by-step implementation plan doc (once written — not
+5. The detailed step-by-step implementation plan doc (once written — not
    yet present as of this section's writing).
 
 **Cluster data paths (existing convention, from `docs/EXPERIMENTS_GUIDE.md`
-and `docs/RESULTS_COLLECTION.md`):**
+and `docs/archive/RESULTS_COLLECTION.md` — moved during the 2026-08-10
+docs cleanup, see "Repository Map" → "Housekeeping" above):**
 - Raw downloads: `/scratch/boshra95/nsrr_downloads/{stages,shhs,apples,mros}/`
 - Processed PSG (fast/reduced channels): `/scratch/boshra95/psg/{stages,shhs,apples,mros}/derived/`
 - Processed PSG (full channels): `/scratch/boshra95/psg_full/...` (same structure)
