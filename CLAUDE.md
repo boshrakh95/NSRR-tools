@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code when working with code in this repository.
 
+**Never add `Co-Authored-By: Claude ...` (or any Claude/Anthropic attribution) to commit
+messages in this repo.** The user does not want Claude listed as a collaborator on
+GitHub. This applies to every commit, not just ones the user is looking at right now.
+
 **Keep this file updated.** Whenever a significant decision is made about the
 TSFM baseline comparison — model selection, a Plan A/B/C usage mode
 finalized for a specific model, a code-level finding that changes
