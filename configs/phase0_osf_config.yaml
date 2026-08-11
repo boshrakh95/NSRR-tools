@@ -107,7 +107,10 @@ dataset:
   seq2seq_padding_policy: "complete_only"
   seq2seq_max_padding_fraction: 0.5
   min_past_denom:       8
-  max_min_past_patches: 240
+  # 40, not 240: this represents a 20-minute wall-clock cap, and OSF's
+  # epochs are 30s (240*5s=20min for SleepFM's 5s patches; 40*30s=20min here).
+  # Caught while forking osf_context_window_dataset.py, 2026-08-11.
+  max_min_past_patches: 40
 
   # Cohort consistency filter, recomputed for OSF's 30s epochs (was 2880 for
   # SleepFM's 5s patches — see docs/TSFM_OSF_IMPLEMENTATION_PLAN.md §3.2).

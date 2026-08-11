@@ -41,10 +41,10 @@ reference clone, not where we write code.
 
 ## Status (2026-08-11)
 
-Setup done (env, checkpoint). Stage 1 embedding extraction implemented and
-smoke-tested by both Claude and the user. Next: `OSFContextWindowDataset`
-(checklist 1.3). See the Implementation Checklist below for the full
-picture.
+Setup done (env, checkpoint). Stage 1 embedding extraction and
+`OSFContextWindowDataset` both implemented and smoke-tested. Next:
+`train_osf_context_sweep.py` (checklist 1.5). See the Implementation
+Checklist below for the full picture.
 
 ---
 
@@ -65,7 +65,7 @@ picture.
 | File | Purpose | Status |
 |---|---|---|
 | `scripts/extract_osf_embeddings.py` | Step 1 — extract frozen embeddings from HDF5 PSG | ✅ DONE |
-| `src/nsrr_tools/datasets/osf_context_window_dataset.py` | Step 2 — PyTorch dataset for context windows | ⬜ TODO (checklist 1.3) |
+| `src/nsrr_tools/datasets/osf_context_window_dataset.py` | Step 2 — PyTorch dataset for context windows | ✅ DONE |
 
 ### Model
 | File | Purpose | Status |
@@ -199,10 +199,29 @@ the "why," not to know what to do next.
       subjects — no NaNs, correct shapes, fill-logs match the audit table
       above (Appendix §12). 🛑 **User re-verified independently, 2026-08-11
       — passed** (ran `--limit 2` for both cohorts).
-- [ ] 1.3 Implement `src/nsrr_tools/datasets/osf_context_window_dataset.py`
-      (`OSFContextWindowDataset` — Appendix §3.2)
-- [ ] 1.4 Implement `scripts/test_osf_context_window_dataset.py` + debug
-      config, smoke-test 🛑 (Appendix §12 item 2)
+- [x] 1.3 Implement `src/nsrr_tools/datasets/osf_context_window_dataset.py`
+      (`OSFContextWindowDataset` — Appendix §3.2) — done 2026-08-11. Also
+      resolved the previously-open `PATCHES_PER_EPOCH` question while
+      forking: OSF's embeddings are already epoch-granularity (one row per
+      30s), so `PATCHES_PER_EPOCH=1` (was 6 for SleepFM's 5s sub-epoch
+      patches). Caught and fixed a matching units bug in
+      `configs/phase0_osf_config.yaml`'s `max_min_past_patches` (was 240,
+      copied verbatim from the SleepFM config; needed to be 40 to represent
+      the same 20-minute cap in 30s-epoch units — only affects seq2seq/
+      sleep-staging, not the Tier-1 seq2label tasks, but fixed now while
+      touching this code).
+- [x] 1.4 Implement `scripts/test_osf_context_window_dataset.py` + debug
+      config, smoke-test 🛑 (Appendix §12 item 2) — done 2026-08-11.
+      Extracted 10 real subjects each for apples/shhs (CPU, ~50 min) to get
+      a real train/val/test split (14/3/3 subjects — too few subjects
+      earlier would have left val empty and crashed the test). All smoke
+      tests passed: 30s (`N=1`), 10m (`N=20`), and `full_night` (variable-
+      length collation) all produced correct `[B,N,1536]` shapes, correct
+      dtypes, zero shape-mismatch errors, and `full_night`'s per-sample
+      valid lengths matched each subject's actual recording length exactly.
+      **USER CHECKPOINT** — re-verify via the `🧪 OSF Step2: Test
+      OSFContextWindowDataset` config in `~/.vscode/launch.json` before
+      continuing to item 1.5.
 - [ ] 1.5 Implement `scripts/train_osf_context_sweep.py` + debug config,
       smoke-test a tiny CPU run 🛑 (Appendix §3.3)
 - [ ] 1.6 Implement `scripts/infer_osf_subject_windows.py` + debug config,
