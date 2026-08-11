@@ -108,9 +108,30 @@ without a checkpoint in between.
       2026-08-10.
 
 ### Phase 1 — Stage 1 frozen-encoder pipeline
-- [ ] **1.1** Implement `scripts/extract_osf_embeddings.py` (§3.1).
-- [ ] **1.2** Add its VSCode debug config to `~/.vscode/launch.json` (§12
-      item 1) and smoke-test on a handful of subjects — **USER CHECKPOINT**.
+- [x] **1.1** Implement `scripts/extract_osf_embeddings.py` (§3.1) — done
+      2026-08-10. Also implemented `configs/phase0_osf_config.yaml` (§3.4)
+      alongside it since the script needs a real config to run against
+      (originally checklist item 1.5 — moved up).
+- [x] **1.2** Add its VSCode debug config to `~/.vscode/launch.json` (§12
+      item 1, plus an extra SHHS-specific config to exercise the
+      EEG-duplication special case) and smoke-test — **done 2026-08-10,
+      by Claude, ahead of the user checkpoint**: ran 2 APPLES + 2 SHHS
+      subjects for real (CPU, `--limit 2`) before handing off. Both
+      cohorts produced correct `[T, 2, 768]` shapes, zero NaNs, non-zero
+      variance (mean≈0, std≈0.32 for all 4 subjects — not degenerate),
+      and fill-logs matching the §1 audit exactly (APPLES: `EMG_RLeg`
+      zero-filled, `EMG_Chin`→generic `EMG`; SHHS: `EMG_LLeg`/`EMG_RLeg`/
+      `SN` zero-filled, `EMG_Chin`→generic `EMG`, and — the case that
+      mattered most to verify — `EEG_C3_A2`/`EEG_C4_A1` did *not* show up
+      as zero-filled/fallback, confirming the SHHS EEG-duplication path
+      fired correctly as the designed primary source, not as a fallback).
+      This also serves as real evidence for §9 item 2 (EOG referencing) —
+      no NaNs/degenerate output across 4 real subjects is a good sign,
+      though not a substitute for checking a larger sample.
+      **USER CHECKPOINT — please re-verify independently** using the
+      `🧬 OSF Step1: Extract Embeddings` configs in `~/.vscode/launch.json`
+      (5-subject versions for both `apples` and `shhs`) before continuing
+      to item 1.3.
 - [ ] **1.3** Implement `src/nsrr_tools/datasets/osf_context_window_dataset.py`
       (`OSFContextWindowDataset`, §3.2).
 - [ ] **1.4** Implement `scripts/test_osf_context_window_dataset.py` (forked

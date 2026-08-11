@@ -1,0 +1,168 @@
+# ============================================================
+# Phase 0 — OSF Baseline Config
+# ============================================================
+# OSF ("On Pre-training and Scaling of Sleep Foundation Models", ICML 2026)
+# as a frozen/LoRA-fine-tuned encoder baseline against SleepFM's
+# phase0_v3_full results. See docs/TSFM_OSF_IMPLEMENTATION_PLAN.md for the
+# full plan this config implements (§3.4 in particular).
+#
+# Compared against phase0_v3_full (full-channel SleepFM), not phase0_v3
+# (paper-primary fast-channel) — decision recorded in the plan doc §0.2.
+
+# ── Embedding Extraction ─────────────────────────────────────────────────────
+embedding:
+  checkpoint_dir: "/home/boshra95/OSF-Open-Sleep-FM/pretrained_weights/osf_backbone.pth"
+  output_dir: "/scratch/boshra95/psg_full/unified/embeddings/osf_30sec"
+  chunk_batch_size: 16
+  datasets:
+    - apples
+    - shhs
+    - mros
+    - stages
+
+# ── HDF5 Signal Data ─────────────────────────────────────────────────────────
+data:
+  hdf5_dir: "/scratch/boshra95/psg_full"
+  sampling_freq: 64          # OSF's expected rate — our HDF5s are 128Hz, resampled in extract_osf_embeddings.py
+  epoch_seconds: 30
+  epoch_samples: 1920         # 30s * 64Hz
+  # OSF channel order — do not reorder, fed positionally into a Conv2d patch layer.
+  channel_order:
+    - ECG
+    - EMG_Chin
+    - EMG_LLeg
+    - EMG_RLeg
+    - ABD
+    - THX
+    - NP
+    - SN
+    - EOG_E1_A2
+    - EOG_E2_A1
+    - EEG_C3_A2
+    - EEG_C4_A1
+  # OSF channel -> our HDF5 channel name(s), in priority order. Datasets missing
+  # the primary name fall back to the next candidate; if none are present the
+  # channel is zero-filled (logged per-subject by extract_osf_embeddings.py).
+  # SHHS is a special case handled in code (see build_channel_candidates() in
+  # extract_osf_embeddings.py): it has no distinguishable C3/C4, so the single
+  # generic "EEG" channel is duplicated into both EEG_C3_A2/EEG_C4_A1 slots
+  # instead of using C3-M2/C4-M1 here. Decision + rationale:
+  # docs/TSFM_OSF_IMPLEMENTATION_PLAN.md §1 (SHHS finding) + checklist item 0.5.
+  channel_candidates:
+    ECG: [EKG, ECG-L]
+    EMG_Chin: [CHIN, EMG]
+    EMG_LLeg: [LLEG]
+    EMG_RLeg: [RLEG]
+    ABD: [ABD]
+    THX: [Thor]
+    NP: [Airflow]
+    SN: [Snore]
+    EOG_E1_A2: [LOC]
+    EOG_E2_A1: [ROC]
+    EEG_C3_A2: [C3-M2]
+    EEG_C4_A1: [C4-M1]
+
+# ── Context-Window Dataset ───────────────────────────────────────────────────
+dataset:
+  embedding_dir: "/scratch/boshra95/psg_full/unified/embeddings/osf_30sec"
+
+  # SAME labels/splits as SleepFM phase0_v3_full — required for a fair
+  # comparison on identical subjects/splits, not just an optimization.
+  # NOTE: label_source itself is documentation-only (never read at runtime —
+  # see docs/TSFM_OSF_IMPLEMENTATION_PLAN.md §3.4 footnote 2); task_subject_dir
+  # + split_seed + the split ratios below are what actually matter.
+  label_source: "/scratch/boshra95/psg/unified/targets_v2/master_targets.parquet"
+  task_subject_dir: "/scratch/boshra95/psg/unified/targets_v2/task_subjects"
+
+  sleep_stage_dir: "/scratch/boshra95/psg"
+
+  context_lengths:
+    - "30s"
+    - "10m"
+    - "40m"
+    - "80m"
+    - "120m"
+    - "240m"
+
+  task: "sex_binary"
+  task_type: "seq2label"
+
+  datasets:
+    - apples
+    - shhs
+    - mros
+    - stages
+
+  train_split: 0.70
+  val_split:   0.15
+  test_split:  0.15
+  split_seed:  42          # SAME seed as SleepFM runs
+
+  windows_per_subject: 5
+
+  # seq2seq params carried over for parity with phase0_v3_full_config.yaml —
+  # not used by the first pass (Tier-1 tasks are all seq2label), relevant only
+  # if/when sleep staging is added for OSF in a later pass.
+  seq2seq_context_mode: "centered"
+  seq2seq_padding_policy: "complete_only"
+  seq2seq_max_padding_fraction: 0.5
+  min_past_denom:       8
+  max_min_past_patches: 240
+
+  # Cohort consistency filter, recomputed for OSF's 30s epochs (was 2880 for
+  # SleepFM's 5s patches — see docs/TSFM_OSF_IMPLEMENTATION_PLAN.md §3.2).
+  # 240m * 60s/m / 30s = 480.
+  min_recording_patches: 480
+
+# ── Sequence Head Model ──────────────────────────────────────────────────────
+# hidden_dim/num_layers held constant at phase0_v3_full's seq2label values —
+# only input_dim changes (1536 = 2 subtokens * 768, vs SleepFM's 512 = 4*128).
+# This preserves the "architecture held constant, only encoder/channels
+# change" comparison principle (docs/TSFM_OSF_IMPLEMENTATION_PLAN.md §3.3).
+model:
+  input_dim: 1536
+  head_type: "lstm"
+  hidden_dim: 128
+  num_layers: 1
+  num_heads:  8
+  dropout:    0.3
+  num_classes: 2
+
+# ── Training ─────────────────────────────────────────────────────────────────
+training:
+  epochs: 40
+  lr: 1.0e-4
+  weight_decay: 1.0e-3
+  optimizer: "adamw"   # NOTE: not actually read by train_context_sweep.py — hardcoded to plain Adam. See plan §3.4 footnote 1.
+  scheduler: "cosine"  # NOTE: not actually read either — hardcoded to CosineAnnealingLR. See plan §3.4 footnote 1.
+  early_stopping_patience: 10
+  device: "cuda"        # NOTE: not actually read — device comes from --cpu / torch.cuda.is_available(). See plan §3.4 footnote 1.
+  mixed_precision: false
+  class_weights: "auto"
+  early_stopping_monitor: "val_auroc"
+  weighted_sampler: false
+
+  windows_strategy: "fixed"
+  token_budget_minutes: 240
+  k_max: 50
+
+  context_lr_overrides:
+    "120m": 5.0e-5
+    "240m": 5.0e-5
+
+  overfit_epochs: 0
+
+  save_snapshots: true
+  snapshot_interval: 5
+
+# ── Analysis ─────────────────────────────────────────────────────────────────
+analysis:
+  bootstrap_samples: 0
+
+# ── Logging & Output ─────────────────────────────────────────────────────────
+# REQUIRED — train_context_sweep.py / infer_subject_windows.py both read
+# cfg["logging"]["results_dir"] via bare bracket access (no default). This
+# section was missing from the plan doc's first draft and would have
+# crashed the first run — see docs/TSFM_OSF_IMPLEMENTATION_PLAN.md §3.4.
+logging:
+  results_dir: "/scratch/boshra95/psg_full/unified/results/phase0_osf"
