@@ -1,177 +1,287 @@
-# OSF Implementation Plan — Code-Level, Cluster-Runnable
+# OSF Implementation Plan
 
-Detailed step-by-step plan for adding **OSF** (On Pre-training and Scaling of
-Sleep Foundation Models, ICML 2026) as the first TSFM baseline compared
-against SleepFM. Written for an agent picking this up on the Compute Canada
-cluster with `NSRR-tools`, `OSF-Open-Sleep-FM`, and
-`npj_digital_medicine_submission` all cloned as sibling directories (see
-`CLAUDE.md` → "Cluster Execution Guidance").
-
-**Status (updated 2026-08-10): environment setup and checkpoint download
-are done and verified (§4, §5) — this plan was then re-verified
-line-by-line against the real OSF and NSRR-tools source (not just prose
-review), which surfaced several corrections, most importantly a bug that
-would have broken the extraction script immediately (§3.1's
-`return_sequence` argument) and a missing config section that would have
-crashed the first training run (§3.4's `logging:` block). No pipeline code
-(extraction/dataset/training/inference scripts, configs, registries, job
-scripts) has been implemented yet — that's still all ahead, per §10.** This
-is model #1 of 3; PhysioOmni and MOMENT will get their own plan docs
-later, reusing whatever this pass validates.
-
-**Read before this doc:** `CLAUDE.md` (repo map + code reuse assessment),
-`docs/TSFM_BASELINE_CANDIDATES.md` §2.1 (OSF's public research findings),
-`docs/EXPERIMENTS_GUIDE.md` (the SleepFM pipeline this mirrors).
-
-**Reference materials (added 2026-08-10) — check these whenever unsure
-about a model detail, before guessing:**
-- **`/home/boshra95/related_work/OSF.pdf`** — the OSF paper itself. The
-  code (`osf/backbone/vit1d_cls.py`, `train_config.py`, `demo.ipynb`) is
-  the primary source of truth for anything implementation-level (exact
-  tensor shapes, argument names, checkpoint format), but the paper is the
-  right place to check when a code-level detail doesn't fully explain the
-  *reasoning* behind a design choice (e.g. why `lead_wise=1` patchification,
-  why 30s epochs, pretraining objective details). A duplicate copy also
-  exists at `NSRR-tools/papers/2603.00190v1_OSF.pdf` (same paper, arXiv ID
-  in the filename).
-- **`NSRR-tools/output/channel_analysis/{apples,shhs,mros,stages}_channels.csv`**
-  — per-subject raw EDF channel-label dumps (dataset, subject_id, channel
-  list, sampling freq, source EDF path) from an early preprocessing pass
-  (2026-02-23). This is the raw-label ground truth behind
-  `configs/channel_definitions.yaml`'s alias tables — use it to check what
-  a cohort's *original* channel names looked like before our
-  standardization, which is more informative than the standardized HDF5
-  keys alone when debugging a channel-mapping question. Companion files:
-  `all_unique_channels.txt`, `channel_frequency.json`,
-  `CHANNEL_EXTRACTION_SUMMARY.md` (human-readable summary). **Use this
-  alongside, not instead of, directly sampling the real full-channel HDF5s
-  at `/scratch/boshra95/psg_full/{dataset}/derived/hdf5_signals/*.h5`** —
-  the CSVs are raw pre-standardization labels from a 5-10-file preview per
-  cohort (Feb 2026); §1's channel-completeness table below is a larger
-  (50-subject), post-standardization audit against the actual HDF5s
-  extraction will read from, and is the more authoritative source for
-  "will this channel be there."
+> **Purpose**: Authoritative record of what's being built for OSF as TSFM
+> baseline #1 (of 3 — PhysioOmni and MOMENT follow later), why, and current
+> status. Read this top section for the plan and current checklist; the
+> **Appendix** below (old §0-§12) has the full research/verification detail
+> behind every choice here — consult it when you need the reasoning, not as
+> your first read. Format mirrors `docs/archive/PHASE0_IMPLEMENTATION.md`
+> (the SleepFM pipeline this is being compared against) — same spirit, not
+> an identical structure, since the codebase differs.
 
 ---
 
-## Master Implementation Checklist
+## Overview
 
-**This is the authoritative, actively-maintained progress tracker for
-this plan — check items off here as work completes, in this repo, on the
-`osf-implementation` branch.** The narrative sections below (§1-§12)
-contain the supporting research/reasoning each checklist item draws on;
-§10's "Suggested execution order" predates this checklist and is now
-superseded by it (kept for narrative context only — don't maintain both).
+OSF ("On Pre-training and Scaling of Sleep Foundation Models", ICML 2026)
+is being added as a frozen-then-LoRA-fine-tuned encoder baseline, compared
+against SleepFM's existing `phase0_v3_full` context-length-sweep results.
+Same research question as the SleepFM pipeline: does more temporal context
+(30s → 240m) improve Tier-1 clinical prediction tasks, and how does OSF's
+encoder compare to SleepFM's at matched context lengths and matched
+subjects/splits? Implementation lives in **`NSRR-tools`** (this repo, on
+the `osf-implementation` branch) — `OSF-Open-Sleep-FM` is a read-only
+reference clone, not where we write code.
 
-**Workflow**: work through a few unchecked items, commit after each one
-(one commit per completed item, referencing this checklist), update this
-list (check the box, add a one-line "done — see §X" note), then stop and
-hand off for the user to debug/verify using the VSCode configs in §12
-before continuing to the next batch. Do not batch many steps together
-without a checkpoint in between.
+**Reference materials** — check before guessing about a model detail:
+- **`/home/boshra95/related_work/OSF.pdf`** — the OSF paper (duplicate at
+  `NSRR-tools/papers/2603.00190v1_OSF.pdf`). Code is primary source of
+  truth for implementation details; the paper is the place to check *why*
+  (pretraining objective, patchification rationale) when code alone
+  doesn't explain it.
+- **`NSRR-tools/output/channel_analysis/{apples,shhs,mros,stages}_channels.csv`**
+  — raw per-subject EDF channel-label dumps behind
+  `configs/channel_definitions.yaml`'s alias tables. Useful alongside (not
+  instead of) directly sampling the real HDF5s at
+  `/scratch/boshra95/psg_full/{dataset}/derived/hdf5_signals/*.h5`.
+- `CLAUDE.md` (repo map), `docs/TSFM_BASELINE_CANDIDATES.md` §2.1 (OSF
+  research background), `docs/EXPERIMENTS_GUIDE.md` (the SleepFM pipeline
+  this mirrors), `docs/archive/PHASE0_IMPLEMENTATION.md` (SleepFM's
+  finished version of this same doc — useful for comparison).
 
-### Phase 0 — Setup
-- [x] **0.1** Build `osf_env`, verify `import nsrr_tools` +
-      `from osf.backbone.vit1d_cls import ViT, vit_base` — done 2026-08-10, §4.
-- [x] **0.2** Download + strict-load-verify the OSF checkpoint — done
-      2026-08-10, §5.
-- [x] **0.3** Re-verify the whole plan doc against real OSF/NSRR-tools
-      source + a real per-cohort channel audit — done 2026-08-10, this
-      whole doc.
-- [x] **0.4** Locate reference materials (channel CSVs, OSF paper) — done
-      2026-08-10, see "Reference materials" above.
-- [x] **0.5** Resolve the SHHS channel-completeness decision — **done
-      2026-08-10: duplicate SHHS's single generic `EEG` channel into both
-      `EEG_C3_A2`/`EEG_C4_A1`, zero-fill `EMG_LLeg`/`EMG_RLeg`/`SN`.
-      Explicitly flagged by the user as provisional** — if the
-      approximation turns out to hurt SHHS's OSF results too much once
-      Stage 1 numbers are in, the fix under consideration is a **targeted
-      re-preprocessing pass for SHHS specifically** (revisit
-      `signal_processor.py`/`channel_mapper.py` to see whether a
-      distinguishable C3/C4 or leg-EMG signal can be recovered from SHHS's
-      raw EDFs — the raw `EEG(sec)`/`EMG` labels are genuinely
-      undifferentiated per `channel_analysis/shhs_channels.csv`, so this
-      would need new preprocessing logic, not just a config change). Not
-      committed to doing this yet — a future decision point, not a task on
-      this checklist.
-- [x] **0.6** Confirm the SHHS/EOG-referencing questions using raw channel
-      labels — see §1's updated findings below. EOG referencing: **STAGES's
-      dominant raw label (`EOG_LOC-A2`, `EOG_ROC-A1`) confirms OSF's exact
-      expected contralateral-mastoid convention**, but
-      `channel_definitions.yaml`'s full alias table also folds
-      non-contralateral variants (`E1:M1`, `E1-Cz`, `E1:E2`) into the same
-      "LOC" bucket for less-common cases across cohorts — so this is
-      "likely correct for most subjects," not fully closed; the empirical
-      no-NaN/sanity check in §9 item 2 is still the final confirmation
-      step, now lower-risk than before.
-- [x] **0.7** Create the `osf-implementation` branch in `NSRR-tools` — done
-      2026-08-10.
+## Status (2026-08-11)
 
-### Phase 1 — Stage 1 frozen-encoder pipeline
-- [x] **1.1** Implement `scripts/extract_osf_embeddings.py` (§3.1) — done
-      2026-08-10. Also implemented `configs/phase0_osf_config.yaml` (§3.4)
-      alongside it since the script needs a real config to run against
-      (originally checklist item 1.5 — moved up).
-- [x] **1.2** Add its VSCode debug config to `~/.vscode/launch.json` (§12
-      item 1, plus an extra SHHS-specific config to exercise the
-      EEG-duplication special case) and smoke-test — **done 2026-08-10,
-      by Claude, ahead of the user checkpoint**: ran 2 APPLES + 2 SHHS
-      subjects for real (CPU, `--limit 2`) before handing off. Both
-      cohorts produced correct `[T, 2, 768]` shapes, zero NaNs, non-zero
-      variance (mean≈0, std≈0.32 for all 4 subjects — not degenerate),
-      and fill-logs matching the §1 audit exactly (APPLES: `EMG_RLeg`
-      zero-filled, `EMG_Chin`→generic `EMG`; SHHS: `EMG_LLeg`/`EMG_RLeg`/
-      `SN` zero-filled, `EMG_Chin`→generic `EMG`, and — the case that
-      mattered most to verify — `EEG_C3_A2`/`EEG_C4_A1` did *not* show up
-      as zero-filled/fallback, confirming the SHHS EEG-duplication path
-      fired correctly as the designed primary source, not as a fallback).
-      This also serves as real evidence for §9 item 2 (EOG referencing) —
-      no NaNs/degenerate output across 4 real subjects is a good sign,
-      though not a substitute for checking a larger sample.
-      **USER CHECKPOINT — please re-verify independently** using the
-      `🧬 OSF Step1: Extract Embeddings` configs in `~/.vscode/launch.json`
-      (5-subject versions for both `apples` and `shhs`) before continuing
-      to item 1.3.
-- [ ] **1.3** Implement `src/nsrr_tools/datasets/osf_context_window_dataset.py`
-      (`OSFContextWindowDataset`, §3.2).
-- [ ] **1.4** Implement `scripts/test_osf_context_window_dataset.py` (forked
-      from `test_context_window_dataset.py`, §12 item 2), add its debug
-      config, smoke-test — **USER CHECKPOINT**.
-- [ ] **1.5** Implement `configs/phase0_osf_config.yaml` (§3.4 — template
-      already fully drafted, including the previously-missing `logging:`
-      section).
-- [ ] **1.6** Implement `scripts/train_osf_context_sweep.py` (§3.3), add its
-      debug config, smoke-test a tiny CPU run — **USER CHECKPOINT**.
-- [ ] **1.7** Implement `scripts/infer_osf_subject_windows.py` (§3.3), add
-      its debug config, smoke-test — **USER CHECKPOINT**.
-- [ ] **1.8** Implement `experiments/v2_osf_registry.yaml` +
-      `scripts/gen_commands_osf.py` (§3.5 — remember `inference_dir` and
-      `python_bin: /home/boshra95/osf_env/bin/python` explicitly).
-- [ ] **1.9** Implement `jobs/extract_osf_embeddings_gpu.sh`,
-      `jobs/train_osf_context_sweep_gpu.sh`,
-      `jobs/infer_osf_subject_windows_gpu.sh` (§3.6).
-- [ ] **1.10** Run full embedding extraction for all 4 datasets (GPU job) —
-      **USER CHECKPOINT before submitting** (this is a real cluster job,
-      confirm readiness first).
-- [ ] **1.11** Run the Stage 1 sweep (5 tasks × 3 heads × 6 contexts = 90
-      training runs), then inference, then analysis.
-- [ ] **1.12** Re-run the §1 channel-completeness audit against the real
-      extraction output (all subjects, not the 50-per-cohort preview) and
-      update §1's table with final numbers.
+Setup done (env, checkpoint). Stage 1 embedding extraction implemented and
+smoke-tested by both Claude and the user. Next: `OSFContextWindowDataset`
+(checklist 1.3). See the Implementation Checklist below for the full
+picture.
 
-### Phase 2 — Stage 2 LoRA fine-tuning
-- [ ] **2.1** Implement `scripts/train_osf_lora.py` (§6.1).
-- [ ] **2.2** Add its debug config (§12 item 5), run the short wall-time
-      pilot (§6.3) — **USER CHECKPOINT**.
-- [ ] **2.3** Run the full Stage 2 sweep across context lengths, applying
-      the memory-mitigation ladder (§6.2) as needed.
+---
+
+## File Map
+
+### Environment / Checkpoint
+| Path | Purpose | Status |
+|---|---|---|
+| `/home/boshra95/osf_env` | Python 3.10 venv, OSF's trimmed/relaxed dependencies | ✅ DONE |
+| `/home/boshra95/OSF-Open-Sleep-FM/pretrained_weights/osf_backbone.pth` | OSF-Base checkpoint (325MB, MIT license) | ✅ DONE |
+
+### Configuration
+| File | Purpose | Status |
+|---|---|---|
+| `configs/phase0_osf_config.yaml` | Master config — paths, channel mapping, hyperparams | ✅ DONE |
+
+### Data pipeline
+| File | Purpose | Status |
+|---|---|---|
+| `scripts/extract_osf_embeddings.py` | Step 1 — extract frozen embeddings from HDF5 PSG | ✅ DONE |
+| `src/nsrr_tools/datasets/osf_context_window_dataset.py` | Step 2 — PyTorch dataset for context windows | ⬜ TODO (checklist 1.3) |
+
+### Model
+| File | Purpose | Status |
+|---|---|---|
+| `src/nsrr_tools/models/sequence_head.py` | LSTM/Transformer/MeanPool heads | Reused unmodified — no new file needed |
+
+### Training
+| File | Purpose | Status |
+|---|---|---|
+| `scripts/train_osf_context_sweep.py` | Step 4 — training loop, checkpointing | ⬜ TODO (checklist 1.6) |
+| `jobs/train_osf_context_sweep_gpu.sh` | SLURM job script for training | ⬜ TODO (checklist 1.9) |
+
+### Evaluation
+| File | Purpose | Status |
+|---|---|---|
+| `scripts/infer_osf_subject_windows.py` | Step 5 — inference on all windows per subject | ⬜ TODO (checklist 1.7) |
+| `jobs/infer_osf_subject_windows_gpu.sh` | SLURM job script for inference | ⬜ TODO (checklist 1.9) |
+
+### Command generation
+| File | Purpose | Status |
+|---|---|---|
+| `experiments/v2_osf_registry.yaml` | Experiment registry (5 tasks × 3 heads × 6 contexts) | ⬜ TODO (checklist 1.8) |
+| `scripts/gen_commands_osf.py` | Generates train/infer/analyze commands from the registry | ⬜ TODO (checklist 1.8) |
+
+### Stage 2 (LoRA)
+| File | Purpose | Status |
+|---|---|---|
+| `scripts/train_osf_lora.py` | New end-to-end script, OSF encoder in the trainable graph | ⬜ TODO (checklist 2.1) |
+
+---
+
+## Encoder: OSF `vit_base`
+
+- **Input per epoch**: `(B, 12, 1920)` — 12 fixed-order channels, 30s @ 64Hz.
+- **Patchify**: `lead_wise=1` (2D `Conv2d`), `patch_size_ch=4`,
+  `patch_size_time=64` → 3 channel-groups × 30 time-patches = **90 tokens**
+  + 1 CLS token (checkpoint's `pos_embedding` shape `(1,91,768)` confirms
+  this exactly).
+- **Output used**: CLS `[B,768]` + mean-pooled patch tokens `[B,768]`,
+  stacked → `[B,2,768]` per epoch — **not** the full 90-token sequence,
+  and not CLS-only (decision made 2026-08-10, see Appendix §0).
+- **Output NOT used**: the raw 91-token undivided sequence
+  (`return_sequence=True` — do not pass this; it returns the wrong thing).
+- **Checkpoint**: `osf_backbone.pth`, MIT license, 85,325,568 params,
+  strict-load-verified (zero missing/unexpected `state_dict` keys).
+- **No cross-epoch attention** — every forward pass sees exactly one 30s
+  epoch; there is no windowing/chunking mechanism inside OSF itself (that's
+  what `OSFContextWindowDataset` + the sequence head are for, same
+  division of labor as the SleepFM pipeline).
+
+---
+
+## Channel Mapping
+
+OSF expects exactly 12 channels, fixed order:
+`ECG, EMG_Chin, EMG_LLeg, EMG_RLeg, ABD, THX, NP, SN, EOG_E1_A2, EOG_E2_A1, EEG_C3_A2, EEG_C4_A1`.
+
+| OSF channel | Our HDF5 source (primary → fallback) |
+|---|---|
+| `EEG_C3_A2` | `C3-M2` (SHHS: generic `EEG`, duplicated — see below) |
+| `EEG_C4_A1` | `C4-M1` (SHHS: generic `EEG`, duplicated — see below) |
+| `EOG_E1_A2` | `LOC` |
+| `EOG_E2_A1` | `ROC` |
+| `ECG` | `EKG` → `ECG-L` |
+| `EMG_Chin` | `CHIN` → generic `EMG` |
+| `EMG_LLeg` | `LLEG` |
+| `EMG_RLeg` | `RLEG` |
+| `ABD` | `ABD` |
+| `THX` | `Thor` |
+| `NP` | `Airflow` |
+| `SN` | `Snore` |
+
+**Real per-cohort availability** (50-subject audit, 2026-08-10 — see
+Appendix §1 for the full derivation):
+
+| OSF slot | APPLES | SHHS | MrOS | STAGES |
+|---|---|---|---|---|
+| `ECG` | 100% | 100% | 100% | 90% |
+| `EMG_Chin` | 100%† | 100%† | 100% | 100% |
+| `EMG_LLeg` | 78% | **0%** | 100% | 56% |
+| `EMG_RLeg` | **0%** | **0%** | 100% | 56% |
+| `ABD` | 100% | 100% | **0%** | 100% |
+| `THX` | 100% | 100% | 100% | 100% |
+| `NP` | 100% | 68% | 100% | 100% |
+| `SN` | 100% | **0%** | **0%** | 100% |
+| `EOG_E1_A2`/`EOG_E2_A1` | 100% | 100% | 100% | 100% |
+| `EEG_C3_A2`/`EEG_C4_A1` | 100% | **0%** | 100% | 100% |
+
+†generic `EMG` fallback, not a channel literally named `CHIN`.
+
+**SHHS decision (confirmed with the user 2026-08-10, provisional)**:
+SHHS has no distinguishable C3/C4 — duplicate its single generic `EEG`
+channel into both `EEG_C3_A2`/`EEG_C4_A1` slots, zero-fill
+`EMG_LLeg`/`EMG_RLeg`/`SN`. If this hurts SHHS's OSF results too much,
+revisit with a targeted SHHS-specific reprocessing pass later (not
+committed to yet). Implemented in `extract_osf_embeddings.py`'s
+`build_channel_candidates()` and **verified working** in the 2026-08-10
+smoke test (§ Status above).
+
+**EOG referencing**: STAGES's dominant raw label (`EOG_LOC-A2`,
+`EOG_ROC-A1`) confirms OSF's expected contralateral-mastoid convention;
+not uniformly guaranteed for every subject/cohort per
+`channel_definitions.yaml`'s broader alias table. No NaNs in any smoke-test
+subject so far — encouraging, not exhaustive proof. See Appendix §1.
+
+---
+
+## Implementation Checklist
+
+**Work through a few unchecked items, commit after each, check the box,
+then stop for a user checkpoint (🛑) before continuing.** Each item links
+to its Appendix section for full detail — read that section if you need
+the "why," not to know what to do next.
+
+### Phase 0 — Setup — ✅ ALL DONE
+- [x] 0.1 Build `osf_env`, verify imports (Appendix §4)
+- [x] 0.2 Download + strict-load-verify the OSF checkpoint (Appendix §5)
+- [x] 0.3 Verify this plan against real OSF/NSRR-tools source + a real
+      channel audit (this whole doc)
+- [x] 0.4 Locate reference materials (channel CSVs, OSF paper — see above)
+- [x] 0.5 Resolve the SHHS channel-completeness decision (see Channel
+      Mapping above)
+- [x] 0.6 Find evidence for the EOG-referencing question (see Channel
+      Mapping above; Appendix §1)
+- [x] 0.7 Create the `osf-implementation` branch
+
+### Phase 1 — Stage 1 (frozen encoder)
+- [x] 1.1 Implement `scripts/extract_osf_embeddings.py` +
+      `configs/phase0_osf_config.yaml` (Appendix §3.1, §3.4)
+- [x] 1.2 Add VSCode debug configs, smoke-test on real APPLES + SHHS
+      subjects — no NaNs, correct shapes, fill-logs match the audit table
+      above (Appendix §12). 🛑 **User re-verified independently, 2026-08-11
+      — passed** (ran `--limit 2` for both cohorts).
+- [ ] 1.3 Implement `src/nsrr_tools/datasets/osf_context_window_dataset.py`
+      (`OSFContextWindowDataset` — Appendix §3.2)
+- [ ] 1.4 Implement `scripts/test_osf_context_window_dataset.py` + debug
+      config, smoke-test 🛑 (Appendix §12 item 2)
+- [ ] 1.5 Implement `scripts/train_osf_context_sweep.py` + debug config,
+      smoke-test a tiny CPU run 🛑 (Appendix §3.3)
+- [ ] 1.6 Implement `scripts/infer_osf_subject_windows.py` + debug config,
+      smoke-test 🛑 (Appendix §3.3)
+- [ ] 1.7 Implement `experiments/v2_osf_registry.yaml` +
+      `scripts/gen_commands_osf.py` — remember `inference_dir` and
+      `python_bin: /home/boshra95/osf_env/bin/python` explicitly (Appendix §3.5)
+- [ ] 1.8 Implement the three `jobs/*_osf_*_gpu.sh` job scripts (Appendix §3.6)
+- [ ] 1.9 Run full embedding extraction, all 4 datasets, GPU job 🛑 **before
+      submitting** — real cluster job, confirm readiness first
+- [ ] 1.10 Run the Stage 1 sweep (5 tasks × 3 heads × 6 contexts = 90 runs),
+      then inference, then analysis
+- [ ] 1.11 Re-run the channel-completeness audit against real (not
+      50-subject-preview) extraction output; update the table above
+
+### Phase 2 — Stage 2 (LoRA fine-tuning)
+- [ ] 2.1 Implement `scripts/train_osf_lora.py` (Appendix §6.1)
+- [ ] 2.2 Add debug config, run the short wall-time pilot 🛑 (Appendix §6.3)
+- [ ] 2.3 Run the full Stage 2 sweep, applying the memory-mitigation
+      ladder as needed (Appendix §6.2)
 
 ### Phase 3 — Results
-- [ ] **3.1** Compile Stage 1 + Stage 2 results against `phase0_v3_full`
-      (§0.2), applying the contamination caveats (§8) and the SHHS
-      channel-completeness caveat (checklist item 0.5) honestly.
-- [ ] **3.2** Report back before starting PhysioOmni or MOMENT — do not
-      start the next model's plan unprompted.
+- [ ] 3.1 Compile Stage 1 + Stage 2 results against `phase0_v3_full`,
+      applying contamination + SHHS channel-completeness caveats honestly
+      (Appendix §8)
+- [ ] 3.2 Report back before starting PhysioOmni or MOMENT — do not start
+      the next model's plan unprompted
+
+---
+
+## Key Decisions
+
+| Decision | Choice | Rationale |
+|---|---|---|
+| Comparison baseline | `phase0_v3_full` (full-channel SleepFM) | OSF needs channels (snore, thoracic/abdominal/airflow) only the full-channel config carries |
+| Task scope (first pass) | Tier-1 only: `sex_binary`, `sleep_efficiency_binary`, `bmi_binary`, `age_class`, `apnea_binary` | Validate the pipeline end-to-end before adding sleep staging / Tier-2 |
+| Embedding storage | CLS + mean-pooled patches, `[T,2,768]`, per epoch | Matches SleepFM's "save full-resolution, slice windows at train time" pattern |
+| SHHS EEG handling | Duplicate generic `EEG` into both C3/C4 slots | No distinguishable C3/C4 exists in our SHHS HDF5s; provisional, see Channel Mapping |
+| Architecture parity | `hidden_dim=128, num_layers=1`, only `input_dim` changes (1536 vs 512) | Preserves "encoder/channels change, architecture held constant" comparison principle |
+| Resampling 128→64Hz | Exact decimation (`x[::2]`) | Mathematically identical to OSF's own linear-interpolation resample for this exact 2:1 rate ratio |
+| Environment | Fresh `osf_env`, not `sleepfm_env` | Conflicting pins (`torch==2.5.1` vs whatever `sleepfm_env` has) |
+| LoRA target modules | `to_qkv`, `to_out.0` | The only two Linear layers in OSF's `Attention` block; PEFT suffix-matches through the `PreNorm` wrapper |
+| Label/split reuse | Same `task_subject_dir` + `split_seed` as SleepFM | Required for a fair comparison on identical subjects/splits — not just an optimization |
+
+---
+
+## Known Issues / Open Questions
+
+- [ ] **SHHS channel approximation impact unknown** — revisit after Stage 1
+  results if SHHS's OSF numbers look degraded (Channel Mapping above).
+- [ ] **EOG referencing** — encouraging (no NaNs across 6 smoke-tested
+  subjects so far) but not exhaustively confirmed across every cohort.
+- [ ] **STAGES-in-pretraining confirmation** — cross-check numeric IDs
+  against OSF's `osf/splits/patient_pretrain_*.csv` (Appendix §8) — not
+  yet done.
+- [ ] **`ContextWindowDataset`'s `PATCHES_PER_EPOCH` constant** — role not
+  fully traced; check before assuming `OSFContextWindowDataset` needs (or
+  doesn't need) an equivalent (Appendix §3.2).
+- [ ] **Stage 2 (LoRA) wall-clock cost** — no calibrated estimate yet,
+  unlike Stage 1's SleepFM-style estimation (Appendix §6.3).
+- [ ] **MrOS's raw EDFs do have an "ABD" channel** (per
+  `channel_analysis/mros_channels.csv`) **but it's absent from our
+  preprocessed full-channel HDF5s** — worth a quick look at whether this is
+  a fixable preprocessing gap rather than a true sensor absence, though not
+  investigated further this session (out of scope for the OSF integration
+  itself).
+
+---
+
+# Appendix: Detailed Verification & Design Notes
+
+**Everything below this point is supporting detail for the plan above —
+the full research trail, code citations, and reasoning behind every
+decision and checklist item.** It's organized as §0-§12 (numbering
+preserved from earlier drafts so existing cross-references throughout this
+doc still resolve correctly) and is dense by design — it exists so nothing
+had to be re-derived or re-verified from scratch, not for a linear read.
+Jump to a specific §N via the cross-references above rather than reading
+top to bottom.
 
 ---
 
