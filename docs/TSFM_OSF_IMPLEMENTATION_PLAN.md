@@ -38,12 +38,19 @@ reference clone, not where we write code.
   research background), `docs/EXPERIMENTS_GUIDE.md` (the SleepFM pipeline
   this mirrors), `docs/archive/PHASE0_IMPLEMENTATION.md` (SleepFM's
   finished version of this same doc — useful for comparison).
+- **`docs/OSF_EXPERIMENTS_GUIDE.md`** — the OSF counterpart to
+  `docs/EXPERIMENTS_GUIDE.md`, being filled in incrementally alongside this
+  implementation (started 2026-08-11) — has the concrete
+  commands/paths/verified-output-shapes for each step as it's built, so a
+  future session can run/monitor the OSF pipeline without re-deriving
+  anything. This plan doc is the "why," that one is the "how to actually
+  run it."
 
 ## Status (2026-08-11)
 
 Setup done (env, checkpoint). Stage 1 embedding extraction and
 `OSFContextWindowDataset` both implemented and smoke-tested. Next:
-`train_osf_context_sweep.py` (checklist 1.5). See the Implementation
+`infer_osf_subject_windows.py` (checklist 1.6). See the Implementation
 Checklist below for the full picture.
 
 ---
@@ -75,8 +82,8 @@ Checklist below for the full picture.
 ### Training
 | File | Purpose | Status |
 |---|---|---|
-| `scripts/train_osf_context_sweep.py` | Step 4 — training loop, checkpointing | ⬜ TODO (checklist 1.6) |
-| `jobs/train_osf_context_sweep_gpu.sh` | SLURM job script for training | ⬜ TODO (checklist 1.9) |
+| `scripts/train_osf_context_sweep.py` | Step 4 — training loop, checkpointing | ✅ DONE |
+| `jobs/train_osf_context_sweep_gpu.sh` | SLURM job script for training | ✅ DONE |
 
 ### Evaluation
 | File | Purpose | Status |
@@ -219,17 +226,43 @@ the "why," not to know what to do next.
       length collation) all produced correct `[B,N,1536]` shapes, correct
       dtypes, zero shape-mismatch errors, and `full_night`'s per-sample
       valid lengths matched each subject's actual recording length exactly.
-      **USER CHECKPOINT** — re-verify via the `🧪 OSF Step2: Test
-      OSFContextWindowDataset` config in `~/.vscode/launch.json` before
-      continuing to item 1.5.
-- [ ] 1.5 Implement `scripts/train_osf_context_sweep.py` + debug config,
-      smoke-test a tiny CPU run 🛑 (Appendix §3.3)
+      🛑 **User re-verified independently, 2026-08-11 — passed** (ran
+      30s/10m/80m, all three passed).
+- [x] 1.5 Implement `scripts/train_osf_context_sweep.py` + debug config,
+      smoke-test a tiny CPU run 🛑 (Appendix §3.3) — done 2026-08-11. Per
+      the user's explicit instruction, training parameters/subjects/
+      splitting/sweeping method/heads are kept identical to SleepFM's
+      pipeline wherever not genuinely model-specific — the only two
+      differences from `train_context_sweep.py` are dropping the
+      `--zero-modalities` flag (OSF has no modality groups) and defaulting
+      `--wandb-project` to `nsrr-phase0-osf` instead of `nsrr-phase0`
+      (kept separate so OSF runs don't mix with SleepFM's in the same W&B
+      dashboard) — both flagged in this doc's Key Decisions table.
+      **Bundled `jobs/train_osf_context_sweep_gpu.sh` into this same step**
+      per the user's explicit request (moved up from item 1.8) — same
+      SLURM directives, same SIGUSR1 auto-resume trap, same status-JSONL
+      convention as `train_context_sweep_gpu.sh`, pointing at `osf_env`
+      and `logs_osf/` instead of `sleepfm_env`/`logs_v3_full/`.
+      Smoke-tested end-to-end on real data (CPU, `--max-items 50`, 30s +
+      10m context, apnea_binary/lstm): full training loop ran correctly
+      (early stopping, checkpointing, snapshots), and the output directory
+      structure/`metrics.json`/`summary.csv` schema exactly matches
+      SleepFM's (verified by inspection), minus the `zero_modality_indices`
+      field (intentionally absent). **Known gap, not blocking**: `wandb`
+      isn't installed in `osf_env` (dropped during env setup — needs a Go
+      toolchain to build, wasn't used by OSF's own model code) — W&B
+      tracking is currently unavailable for OSF runs even though the code
+      path is fully implemented; `--no-wandb` works around it for now.
+      **USER CHECKPOINT** — re-verify via the `🎯 OSF Step4: Train Sweep
+      DEBUG` config in `~/.vscode/launch.json` before continuing to item 1.6.
 - [ ] 1.6 Implement `scripts/infer_osf_subject_windows.py` + debug config,
       smoke-test 🛑 (Appendix §3.3)
 - [ ] 1.7 Implement `experiments/v2_osf_registry.yaml` +
       `scripts/gen_commands_osf.py` — remember `inference_dir` and
       `python_bin: /home/boshra95/osf_env/bin/python` explicitly (Appendix §3.5)
-- [ ] 1.8 Implement the three `jobs/*_osf_*_gpu.sh` job scripts (Appendix §3.6)
+- [x] 1.8 Implement `jobs/train_osf_context_sweep_gpu.sh` — done as part of
+      item 1.5 above. Remaining: `jobs/extract_osf_embeddings_gpu.sh` and
+      `jobs/infer_osf_subject_windows_gpu.sh` (Appendix §3.6) — not yet done.
 - [ ] 1.9 Run full embedding extraction, all 4 datasets, GPU job 🛑 **before
       submitting** — real cluster job, confirm readiness first
 - [ ] 1.10 Run the Stage 1 sweep (5 tasks × 3 heads × 6 contexts = 90 runs),
@@ -272,14 +305,22 @@ the "why," not to know what to do next.
 
 - [ ] **SHHS channel approximation impact unknown** — revisit after Stage 1
   results if SHHS's OSF numbers look degraded (Channel Mapping above).
-- [ ] **EOG referencing** — encouraging (no NaNs across 6 smoke-tested
+- [ ] **EOG referencing** — encouraging (no NaNs across 20+ smoke-tested
   subjects so far) but not exhaustively confirmed across every cohort.
 - [ ] **STAGES-in-pretraining confirmation** — cross-check numeric IDs
   against OSF's `osf/splits/patient_pretrain_*.csv` (Appendix §8) — not
   yet done.
-- [ ] **`ContextWindowDataset`'s `PATCHES_PER_EPOCH` constant** — role not
-  fully traced; check before assuming `OSFContextWindowDataset` needs (or
-  doesn't need) an equivalent (Appendix §3.2).
+- [x] ~~`ContextWindowDataset`'s `PATCHES_PER_EPOCH` constant~~ **✅
+  RESOLVED 2026-08-11** — `PATCHES_PER_EPOCH=1` for OSF (embeddings are
+  already epoch-granularity), see Implementation Checklist item 1.3.
+- [ ] **`wandb` not installed in `osf_env`** — dropped during env setup
+  (needs a Go toolchain to build `wandb-core`, wasn't used by OSF's own
+  model code — see Appendix §4). `train_osf_context_sweep.py` fully
+  implements W&B tracking (matching SleepFM's pipeline exactly, per the
+  parity requirement), but it's inert until `wandb` is actually installed.
+  Not blocking for CPU/GPU debug runs (`--no-wandb`), but worth revisiting
+  before the real Stage 1 sweep if W&B tracking parity with SleepFM
+  matters for that run.
 - [ ] **Stage 2 (LoRA) wall-clock cost** — no calibrated estimate yet,
   unlike Stage 1's SleepFM-style estimation (Appendix §6.3).
 - [ ] **MrOS's raw EDFs do have an "ABD" channel** (per
