@@ -23,6 +23,135 @@ later, reusing whatever this pass validates.
 `docs/TSFM_BASELINE_CANDIDATES.md` §2.1 (OSF's public research findings),
 `docs/EXPERIMENTS_GUIDE.md` (the SleepFM pipeline this mirrors).
 
+**Reference materials (added 2026-08-10) — check these whenever unsure
+about a model detail, before guessing:**
+- **`/home/boshra95/related_work/OSF.pdf`** — the OSF paper itself. The
+  code (`osf/backbone/vit1d_cls.py`, `train_config.py`, `demo.ipynb`) is
+  the primary source of truth for anything implementation-level (exact
+  tensor shapes, argument names, checkpoint format), but the paper is the
+  right place to check when a code-level detail doesn't fully explain the
+  *reasoning* behind a design choice (e.g. why `lead_wise=1` patchification,
+  why 30s epochs, pretraining objective details). A duplicate copy also
+  exists at `NSRR-tools/papers/2603.00190v1_OSF.pdf` (same paper, arXiv ID
+  in the filename).
+- **`NSRR-tools/output/channel_analysis/{apples,shhs,mros,stages}_channels.csv`**
+  — per-subject raw EDF channel-label dumps (dataset, subject_id, channel
+  list, sampling freq, source EDF path) from an early preprocessing pass
+  (2026-02-23). This is the raw-label ground truth behind
+  `configs/channel_definitions.yaml`'s alias tables — use it to check what
+  a cohort's *original* channel names looked like before our
+  standardization, which is more informative than the standardized HDF5
+  keys alone when debugging a channel-mapping question. Companion files:
+  `all_unique_channels.txt`, `channel_frequency.json`,
+  `CHANNEL_EXTRACTION_SUMMARY.md` (human-readable summary). **Use this
+  alongside, not instead of, directly sampling the real full-channel HDF5s
+  at `/scratch/boshra95/psg_full/{dataset}/derived/hdf5_signals/*.h5`** —
+  the CSVs are raw pre-standardization labels from a 5-10-file preview per
+  cohort (Feb 2026); §1's channel-completeness table below is a larger
+  (50-subject), post-standardization audit against the actual HDF5s
+  extraction will read from, and is the more authoritative source for
+  "will this channel be there."
+
+---
+
+## Master Implementation Checklist
+
+**This is the authoritative, actively-maintained progress tracker for
+this plan — check items off here as work completes, in this repo, on the
+`osf-implementation` branch.** The narrative sections below (§1-§12)
+contain the supporting research/reasoning each checklist item draws on;
+§10's "Suggested execution order" predates this checklist and is now
+superseded by it (kept for narrative context only — don't maintain both).
+
+**Workflow**: work through a few unchecked items, commit after each one
+(one commit per completed item, referencing this checklist), update this
+list (check the box, add a one-line "done — see §X" note), then stop and
+hand off for the user to debug/verify using the VSCode configs in §12
+before continuing to the next batch. Do not batch many steps together
+without a checkpoint in between.
+
+### Phase 0 — Setup
+- [x] **0.1** Build `osf_env`, verify `import nsrr_tools` +
+      `from osf.backbone.vit1d_cls import ViT, vit_base` — done 2026-08-10, §4.
+- [x] **0.2** Download + strict-load-verify the OSF checkpoint — done
+      2026-08-10, §5.
+- [x] **0.3** Re-verify the whole plan doc against real OSF/NSRR-tools
+      source + a real per-cohort channel audit — done 2026-08-10, this
+      whole doc.
+- [x] **0.4** Locate reference materials (channel CSVs, OSF paper) — done
+      2026-08-10, see "Reference materials" above.
+- [x] **0.5** Resolve the SHHS channel-completeness decision — **done
+      2026-08-10: duplicate SHHS's single generic `EEG` channel into both
+      `EEG_C3_A2`/`EEG_C4_A1`, zero-fill `EMG_LLeg`/`EMG_RLeg`/`SN`.
+      Explicitly flagged by the user as provisional** — if the
+      approximation turns out to hurt SHHS's OSF results too much once
+      Stage 1 numbers are in, the fix under consideration is a **targeted
+      re-preprocessing pass for SHHS specifically** (revisit
+      `signal_processor.py`/`channel_mapper.py` to see whether a
+      distinguishable C3/C4 or leg-EMG signal can be recovered from SHHS's
+      raw EDFs — the raw `EEG(sec)`/`EMG` labels are genuinely
+      undifferentiated per `channel_analysis/shhs_channels.csv`, so this
+      would need new preprocessing logic, not just a config change). Not
+      committed to doing this yet — a future decision point, not a task on
+      this checklist.
+- [x] **0.6** Confirm the SHHS/EOG-referencing questions using raw channel
+      labels — see §1's updated findings below. EOG referencing: **STAGES's
+      dominant raw label (`EOG_LOC-A2`, `EOG_ROC-A1`) confirms OSF's exact
+      expected contralateral-mastoid convention**, but
+      `channel_definitions.yaml`'s full alias table also folds
+      non-contralateral variants (`E1:M1`, `E1-Cz`, `E1:E2`) into the same
+      "LOC" bucket for less-common cases across cohorts — so this is
+      "likely correct for most subjects," not fully closed; the empirical
+      no-NaN/sanity check in §9 item 2 is still the final confirmation
+      step, now lower-risk than before.
+- [x] **0.7** Create the `osf-implementation` branch in `NSRR-tools` — done
+      2026-08-10.
+
+### Phase 1 — Stage 1 frozen-encoder pipeline
+- [ ] **1.1** Implement `scripts/extract_osf_embeddings.py` (§3.1).
+- [ ] **1.2** Add its VSCode debug config to `~/.vscode/launch.json` (§12
+      item 1) and smoke-test on a handful of subjects — **USER CHECKPOINT**.
+- [ ] **1.3** Implement `src/nsrr_tools/datasets/osf_context_window_dataset.py`
+      (`OSFContextWindowDataset`, §3.2).
+- [ ] **1.4** Implement `scripts/test_osf_context_window_dataset.py` (forked
+      from `test_context_window_dataset.py`, §12 item 2), add its debug
+      config, smoke-test — **USER CHECKPOINT**.
+- [ ] **1.5** Implement `configs/phase0_osf_config.yaml` (§3.4 — template
+      already fully drafted, including the previously-missing `logging:`
+      section).
+- [ ] **1.6** Implement `scripts/train_osf_context_sweep.py` (§3.3), add its
+      debug config, smoke-test a tiny CPU run — **USER CHECKPOINT**.
+- [ ] **1.7** Implement `scripts/infer_osf_subject_windows.py` (§3.3), add
+      its debug config, smoke-test — **USER CHECKPOINT**.
+- [ ] **1.8** Implement `experiments/v2_osf_registry.yaml` +
+      `scripts/gen_commands_osf.py` (§3.5 — remember `inference_dir` and
+      `python_bin: /home/boshra95/osf_env/bin/python` explicitly).
+- [ ] **1.9** Implement `jobs/extract_osf_embeddings_gpu.sh`,
+      `jobs/train_osf_context_sweep_gpu.sh`,
+      `jobs/infer_osf_subject_windows_gpu.sh` (§3.6).
+- [ ] **1.10** Run full embedding extraction for all 4 datasets (GPU job) —
+      **USER CHECKPOINT before submitting** (this is a real cluster job,
+      confirm readiness first).
+- [ ] **1.11** Run the Stage 1 sweep (5 tasks × 3 heads × 6 contexts = 90
+      training runs), then inference, then analysis.
+- [ ] **1.12** Re-run the §1 channel-completeness audit against the real
+      extraction output (all subjects, not the 50-per-cohort preview) and
+      update §1's table with final numbers.
+
+### Phase 2 — Stage 2 LoRA fine-tuning
+- [ ] **2.1** Implement `scripts/train_osf_lora.py` (§6.1).
+- [ ] **2.2** Add its debug config (§12 item 5), run the short wall-time
+      pilot (§6.3) — **USER CHECKPOINT**.
+- [ ] **2.3** Run the full Stage 2 sweep across context lengths, applying
+      the memory-mitigation ladder (§6.2) as needed.
+
+### Phase 3 — Results
+- [ ] **3.1** Compile Stage 1 + Stage 2 results against `phase0_v3_full`
+      (§0.2), applying the contamination caveats (§8) and the SHHS
+      channel-completeness caveat (checklist item 0.5) honestly.
+- [ ] **3.2** Report back before starting PhysioOmni or MOMENT — do not
+      start the next model's plan unprompted.
+
 ---
 
 ## 0. Decisions already made (do not re-litigate without asking)
@@ -121,23 +250,16 @@ sample would smooth out. Three findings change the plan materially:
    majority-zero for every SHHS subject** (`EMG_LLeg`, `EMG_RLeg`, `SN`,
    and effectively both `EEG_C3_A2`/`EEG_C4_A1` unless the generic `EEG`
    channel is duplicated into both slots as an approximation).
-   **Decision needed before implementation (not made yet — ask before
-   picking one):**
-   - (a) duplicate SHHS's single generic `EEG` channel into both
-     `EEG_C3_A2` and `EEG_C4_A1` slots (same spirit as the already-accepted
-     `Airflow`-for-`NP` approximation), zero-fill `EMG_LLeg`/`EMG_RLeg`/`SN`, or
-   - (b) zero-fill one of the two EEG slots (say `EEG_C4_A1`) rather than
-     duplicating, or
-   - (c) report SHHS with an explicit "5/12 channels approximated or
-     zero-filled" caveat alongside the existing contamination caveat (§8),
-     or
-   - (d) exclude SHHS from the OSF comparison entirely (this would also
-     sidestep the contamination caveat, at the cost of losing the largest
-     cohort, ~8,400 subjects).
-   Given SHHS is *also* the cohort with the strongest OSF-pretraining
-   contamination risk (§8), stacking a second, independent "results aren't
-   really comparable" caveat on the same cohort is worth flagging to the
-   user explicitly rather than deciding unilaterally.
+   **✅ DECIDED 2026-08-10 (confirmed with the user): duplicate SHHS's
+   single generic `EEG` channel into both `EEG_C3_A2` and `EEG_C4_A1`
+   slots** (same spirit as the already-accepted `Airflow`-for-`NP`
+   approximation), **zero-fill `EMG_LLeg`/`EMG_RLeg`/`SN`.** Explicitly
+   flagged by the user as provisional — track in a future results pass
+   whether SHHS's OSF numbers look meaningfully degraded by this
+   approximation, and revisit with a **targeted re-preprocessing pass for
+   SHHS specifically** if so (see Master Implementation Checklist item 0.5
+   for what that would involve). Not implementing that reprocessing now —
+   only the duplication logic in `extract_osf_embeddings.py`.
 2. **MrOS has zero `ABD` channels** (0/50, not partial) despite `ABD` being
    rated "High confidence" in the original table and despite MrOS otherwise
    having excellent coverage (100% on 9 of the other 11 slots, including
@@ -185,14 +307,30 @@ before being fed in. Our own preprocessing (`signal_processor.py`'s
 **compatible by construction**, but confirm empirically (§9 sanity checks)
 rather than assuming.
 
-**EOG referencing — still needs the on-cluster verification the original
-draft flagged** (not resolved by the channel-presence audit above, which
-only checked whether the `LOC`/`ROC` *keys* exist, not what they're
-referenced to): confirm `LOC`/`ROC` in our HDF5s are referenced the way OSF
-expects (contralateral mastoid, E1-A2/E2-A1) — check
-`src/nsrr_tools/core/channel_mapper.py` provenance for a couple of
-subjects, or compare embedding sanity (no NaN/degenerate output) once
-extraction runs (§9).
+**EOG referencing — encouraging evidence found 2026-08-10, not yet fully
+closed.** The channel-presence audit above only checked whether the
+`LOC`/`ROC` *keys* exist, not what they're referenced to. Checking
+`configs/channel_definitions.yaml`'s alias tables and the raw per-subject
+channel labels in `output/channel_analysis/*_channels.csv` (see "Reference
+materials" at the top of this doc) gives a real (if partial) answer:
+**STAGES's dominant raw alias is literally `EOG_LOC-A2`/`EOG_ROC-A1`** —
+i.e. the raw EDF label itself spells out contralateral-mastoid referencing
+(A2 for the left/LOC channel, A1 for the right/ROC channel), which is
+*exactly* OSF's expected `EOG_E1_A2`/`EOG_E2_A1` convention, not just a
+plausible guess. **However, `channel_definitions.yaml`'s full `LOC` alias
+list also folds in non-contralateral variants for other cohorts/subjects**
+(`E1:M1` — ipsilateral if M1 is the same-side mastoid, `E1-Cz`, `E1:E2` —
+referenced to the other EOG channel, not a mastoid at all), meaning the
+referencing convention behind our generic "LOC" standard channel name is
+**not uniformly guaranteed across every subject/cohort**, just confirmed
+correct for STAGES's dominant case and very likely correct for SHHS/APPLES
+(both use `EOG(L)`/`EOG(R)` or bare `LOC`/`ROC` raw labels, which by
+standard AASM/clinical PSG convention also imply contralateral mastoid
+referencing, though this wasn't verified with the same "the raw label
+itself says A2" level of certainty as STAGES). **Net: likely fine for the
+large majority of subjects, worth the empirical no-NaN/no-degenerate-CLS
+sanity check in §9 item 2 as final confirmation rather than treating this
+as fully closed.**
 
 ---
 
@@ -1016,6 +1154,11 @@ OSF, which does have a respiratory channel).
 ---
 
 ## 10. Suggested execution order
+
+**Superseded by the "Master Implementation Checklist" near the top of this
+doc (added 2026-08-10) — that's the actively-maintained, checkable list;
+this section is kept only for the narrative reasoning behind the
+ordering.**
 
 1. ~~Set up `osf_env` (§4), download the checkpoint (§5).~~ **✅ DONE
    2026-08-10.**
