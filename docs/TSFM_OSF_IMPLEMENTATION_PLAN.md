@@ -255,18 +255,28 @@ the "why," not to know what to do next.
       path is fully implemented; `--no-wandb` works around it for now.
       **USER CHECKPOINT** — re-verify via the `🎯 OSF Step4: Train Sweep
       DEBUG` config in `~/.vscode/launch.json` before continuing to item 1.6.
-- [ ] 1.6 Implement `scripts/infer_osf_subject_windows.py` + debug config,
-      smoke-test 🛑 (Appendix §3.3)
+- [ ] 1.6 Implement `scripts/infer_osf_subject_windows.py` **+
+      `jobs/infer_osf_subject_windows_gpu.sh` bundled together** (same
+      pattern as 1.5's training script + job script), debug config,
+      smoke-test 🛑 (Appendix §3.3/§3.6)
 - [ ] 1.7 Implement `experiments/v2_osf_registry.yaml` +
-      `scripts/gen_commands_osf.py` — remember `inference_dir` and
-      `python_bin: /home/boshra95/osf_env/bin/python` explicitly (Appendix §3.5)
-- [x] 1.8 Implement `jobs/train_osf_context_sweep_gpu.sh` — done as part of
-      item 1.5 above. Remaining: `jobs/extract_osf_embeddings_gpu.sh` and
-      `jobs/infer_osf_subject_windows_gpu.sh` (Appendix §3.6) — not yet done.
-- [ ] 1.9 Run full embedding extraction, all 4 datasets, GPU job 🛑 **before
-      submitting** — real cluster job, confirm readiness first
-- [ ] 1.10 Run the Stage 1 sweep (5 tasks × 3 heads × 6 contexts = 90 runs),
-      then inference, then analysis
+      `scripts/gen_commands_osf.py` — the actual command-generation/
+      status-tracking infrastructure (`train`/`infer`/`analyze`/`status`/
+      `runs` subcommands, same JSONL status format and `logs_osf/status/`
+      convention as `gen_commands.py`). Remember `inference_dir` and
+      `python_bin: /home/boshra95/osf_env/bin/python` explicitly in the
+      registry (Appendix §3.5).
+- [ ] 1.8 Implement `jobs/extract_osf_embeddings_gpu.sh` — the one
+      remaining §3.6 job script (`jobs/train_osf_context_sweep_gpu.sh` was
+      done as part of 1.5; `jobs/infer_osf_subject_windows_gpu.sh` is
+      bundled into 1.6 above; extraction so far has only been run locally
+      on CPU for small subject counts, never as a real GPU job).
+- [ ] 1.9 Run full embedding extraction, all 4 datasets, GPU job (needs
+      1.8) 🛑 **before submitting** — real cluster job, confirm readiness
+      first
+- [ ] 1.10 Run the Stage 1 sweep (5 tasks × 3 heads × 6 contexts = 90 runs,
+      generated via `gen_commands_osf.py` from 1.7), then inference, then
+      analysis
 - [ ] 1.11 Re-run the channel-completeness audit against real (not
       50-subject-preview) extraction output; update the table above
 
