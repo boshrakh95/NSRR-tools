@@ -50,7 +50,7 @@ reference clone, not where we write code.
 
 Setup done (env, checkpoint). Stage 1 embedding extraction and
 `OSFContextWindowDataset` both implemented and smoke-tested. Next:
-`infer_osf_subject_windows.py` (checklist 1.6). See the Implementation
+`v2_osf_registry.yaml` + `gen_commands_osf.py` (checklist 1.7). See the Implementation
 Checklist below for the full picture.
 
 ---
@@ -88,8 +88,8 @@ Checklist below for the full picture.
 ### Evaluation
 | File | Purpose | Status |
 |---|---|---|
-| `scripts/infer_osf_subject_windows.py` | Step 5 — inference on all windows per subject | ⬜ TODO (checklist 1.7) |
-| `jobs/infer_osf_subject_windows_gpu.sh` | SLURM job script for inference | ⬜ TODO (checklist 1.9) |
+| `scripts/infer_osf_subject_windows.py` | Step 5 — inference on all windows per subject | ✅ DONE |
+| `jobs/infer_osf_subject_windows_gpu.sh` | SLURM job script for inference | ✅ DONE |
 
 ### Command generation
 | File | Purpose | Status |
@@ -255,10 +255,42 @@ the "why," not to know what to do next.
       path is fully implemented; `--no-wandb` works around it for now.
       **USER CHECKPOINT** — re-verify via the `🎯 OSF Step4: Train Sweep
       DEBUG` config in `~/.vscode/launch.json` before continuing to item 1.6.
-- [ ] 1.6 Implement `scripts/infer_osf_subject_windows.py` **+
+- [x] 1.6 Implement `scripts/infer_osf_subject_windows.py` **+
       `jobs/infer_osf_subject_windows_gpu.sh` bundled together** (same
       pattern as 1.5's training script + job script), debug config,
-      smoke-test 🛑 (Appendix §3.3/§3.6)
+      smoke-test 🛑 (Appendix §3.3/§3.6) — done 2026-08-11. Backbone-
+      agnostic fork, identical to `infer_subject_windows.py` except the
+      dataset import and one deliberate recalibration: the batch-size
+      auto-scaling reference point (`_ref_N`) was `2880` (SleepFM's 240m
+      in 5s-patch units) — reusing that literal number for OSF would be
+      dimensionally wrong, since OSF's own 240m is 480 (30s-epoch units).
+      Changed to `_ref_N=480`; `_ref_bs=64` kept as an unverified starting
+      assumption, same caveat as the original script's own comment (not
+      GPU-tested yet either way) — flagged in Key Decisions table.
+      **Found and fixed a real gap while smoke-testing**: `osf_env` was
+      missing `pyarrow` (dropped during initial env setup since nothing in
+      OSF's own code needed it — but `infer_osf_subject_windows.py`'s
+      `df.to_parquet()` call does). Compute Canada's `pip install pyarrow`
+      hits the same "dummy package, use the Arrow module" wall documented
+      in Appendix §4, and the Arrow module's `EBPYTHONPREFIXES` injection
+      mechanism doesn't reach an isolated (`--system-site-packages=false`)
+      venv. Tried `fastparquet` as an alternative parquet engine instead —
+      it wanted `numpy<2.0`, which would have downgraded numpy and risked
+      breaking already-tested code, so abandoned that path without
+      completing the downgrade. Fixed cleanly instead: `arrow/25.0.0` (the
+      default module) only ships Python 3.11+ bindings, but `arrow/18.1.0`
+      still has a Python 3.10 build — added a `.pth` file in `osf_env`'s
+      site-packages pointing directly at
+      `.../arrow/18.1.0/lib/python3.10/site-packages` (same mechanism as
+      the existing `nsrr_tools_src.pth`). Verified this works with no
+      `module load` needed at runtime (tested in a fully clean shell) —
+      safe for job scripts. Full smoke test (real trained checkpoints from
+      1.5, `30s`/`10m`/`40m`, val split): all three contexts succeeded,
+      parquet schema exactly matches SleepFM's documented columns
+      (`subject_id, dataset, window_idx, true_label, pred_label,
+      prob_class0…N`).
+      **USER CHECKPOINT** — re-verify via the `🎯 OSF Step5: Infer DEBUG`
+      config in `~/.vscode/launch.json` before continuing to item 1.7.
 - [ ] 1.7 Implement `experiments/v2_osf_registry.yaml` +
       `scripts/gen_commands_osf.py` — the actual command-generation/
       status-tracking infrastructure (`train`/`infer`/`analyze`/`status`/
@@ -308,6 +340,9 @@ the "why," not to know what to do next.
 | Environment | Fresh `osf_env`, not `sleepfm_env` | Conflicting pins (`torch==2.5.1` vs whatever `sleepfm_env` has) |
 | LoRA target modules | `to_qkv`, `to_out.0` | The only two Linear layers in OSF's `Attention` block; PEFT suffix-matches through the `PreNorm` wrapper |
 | Label/split reuse | Same `task_subject_dir` + `split_seed` as SleepFM | Required for a fair comparison on identical subjects/splits — not just an optimization |
+| W&B project | `nsrr-phase0-osf`, not `nsrr-phase0` | Keeps OSF runs separate from SleepFM's dashboard; currently inert (`wandb` not installed in `osf_env`, see Known Issues) |
+| Inference batch-size reference point | `_ref_N=480` (OSF's 240m), not SleepFM's literal `2880` | Same formula/intent as `infer_subject_windows.py`, but `2880` is 5s-patch units — reusing it verbatim would be dimensionally wrong for OSF's 30s-epoch units |
+| `pyarrow` in `osf_env` | `.pth` file pointing at `arrow/18.1.0`'s Python 3.10 site-packages (not `pip install`) | CC's `pip install pyarrow` always hits a dummy package; the Arrow module's own injection mechanism doesn't reach an isolated venv; `fastparquet` (the alternative) wanted `numpy<2.0`, an unacceptable downgrade — see checklist 1.6 |
 
 ---
 

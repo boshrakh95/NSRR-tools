@@ -32,7 +32,7 @@ complete list; everything not listed there is intentionally identical.
 5. [Step 2 — Dataset Smoke Test](#step-2--dataset-smoke-test)
 6. [Step 3 — Config](#step-3--config)
 7. [Step 4 — Training](#step-4--training)
-8. Step 5 — Inference **(not yet implemented)**
+8. [Step 5 — Inference](#step-5--inference)
 9. Step 6 — Command Generator (`gen_commands_osf.py`) **(not yet implemented)**
 10. Step 7 — Analysis and Plotting **(not yet implemented)**
 11. Step 8 — Stage 2 (LoRA fine-tuning) **(not yet implemented)**
@@ -67,7 +67,7 @@ full technical plan this guide operationalizes.
 | **Train config** | `configs/phase0_v3_full_config.yaml` (hidden=128, layers=1) | `configs/phase0_osf_config.yaml` (hidden=128, layers=1 — same, per parity decision) |
 | **Registry** | `experiments/v2_full_registry.yaml` | `experiments/v2_osf_registry.yaml` **(not yet implemented)** |
 | **Results root** | `.../results/phase0_v3_full/` | `.../results/phase0_osf/` |
-| **Inference root** | `.../results/phase0_v3_full/inference/` | `.../results/phase0_osf/inference/` **(not yet implemented)** |
+| **Inference root** | `.../results/phase0_v3_full/inference/` | `.../results/phase0_osf/inference/` |
 | **Training/job logs** | `logs_v3_full/` | `logs_osf/` |
 | **Labels/splits** | `/scratch/boshra95/psg/unified/targets_v2/` | **Same** — required for a fair comparison |
 | **W&B project** | `nsrr-phase0` (or per-script default) | `nsrr-phase0-osf` (kept separate, OSF-specific difference) |
@@ -178,6 +178,60 @@ sbatch --export=ALL,TASK=apnea_binary,HEAD=lstm jobs/train_osf_context_sweep_gpu
 Same auto-resume mechanism as SleepFM's job script (`--signal=B:USR1@120`
 bash trap + `resume.pt`), same status-JSONL convention, logs to
 `logs_osf/` instead of `logs_v3_full/`.
+
+---
+
+## Step 5 — Inference
+
+**Status: DONE (script + job script), smoke-tested on real data; full
+sweep not yet run (depends on the real Stage 1 sweep, checklist item 1.10).**
+
+```bash
+# CPU debug run against the checkpoints from the Step 4 debug run
+# (mirrors the VSCode "🎯 OSF Step5: Infer DEBUG" config)
+python scripts/infer_osf_subject_windows.py \
+    --config configs/phase0_osf_config.yaml \
+    --task apnea_binary --task-type seq2label --head lstm \
+    --context 30s 10m 40m --datasets apples shhs \
+    --split val --cpu
+```
+
+**Output:** `{results_dir}/inference/{task}_{head_type}/context_{L}/{split}_windows.parquet`
+— columns `subject_id, dataset, window_idx, true_label, pred_label,
+prob_class0…prob_classN` (plus `anchor_patch_end` for seq2seq tasks only).
+Identical schema to SleepFM's inference output, verified by inspection
+2026-08-11.
+
+**GPU job** (once ready — not done as of 2026-08-11):
+```bash
+sbatch --export=ALL,TASK=apnea_binary,TASK_TYPE=seq2label,HEAD=lstm,CONTEXTS="30s 10m 40m 80m 120m 240m" \
+    jobs/infer_osf_subject_windows_gpu.sh
+```
+Same auto-resume mechanism, same status-JSONL convention as training's job
+script, logs to `logs_osf/`.
+
+**Environment note (found 2026-08-11):** `osf_env` needed `pyarrow` for
+`df.to_parquet()`, which wasn't installed (it was dropped from
+`osf_env`'s dependencies during initial setup — nothing in OSF's own
+model code needs it, so this wasn't caught until inference actually ran).
+Compute Canada's `pip install pyarrow` doesn't work in an isolated venv
+(hits a deliberate dummy package pointing at the Arrow environment module,
+whose injection mechanism doesn't reach a `--system-site-packages=false`
+venv). Fixed via a `.pth` file in `osf_env`'s site-packages pointing
+directly at `arrow/18.1.0`'s Python 3.10 build (the default `arrow/25.0.0`
+module only ships Python 3.11+ bindings) — same trick already used for
+`nsrr_tools_src.pth`. No `module load` needed at runtime; verified in a
+clean shell. See plan doc's Key Decisions table for the full reasoning
+(including why `fastparquet` was tried and rejected as an alternative).
+
+**Batch-size auto-scaling note:** the inference script auto-scales its
+batch size down for longer contexts to avoid OOM, same formula as
+SleepFM's script, but the reference point was recalibrated from SleepFM's
+`_ref_N=2880` (5s-patch units) to `_ref_N=480` (OSF's own 240m in 30s-epoch
+units) — reusing SleepFM's literal number would have been dimensionally
+wrong. Not yet GPU-verified either way (same caveat SleepFM's own script
+comment carries) — check actual memory headroom once the Stage 1 GPU sweep
+runs.
 
 ---
 
