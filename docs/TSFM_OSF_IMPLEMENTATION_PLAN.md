@@ -48,14 +48,14 @@ reference clone, not where we write code.
 
 ## Status (2026-08-12)
 
-All of Phase 1's code is now implemented: embedding extraction, dataset,
-training, inference, the command-generation layer, and (as of this update)
-`jobs/extract_osf_embeddings_gpu.sh` — the last job script. That last one is
-**not yet verified via a real GPU allocation** (see checklist 1.8 for why) —
-test it on a small `--export=ALL,END=5` GPU job before trusting it for the
-real full-population extraction. Next: 🛑 user checkpoint, then 1.9 (full
-extraction) and 1.10 (Stage 1 sweep). See the Implementation Checklist below
-for the full picture.
+**All of Phase 1's code is implemented — nothing left to build for Stage 1.**
+From here it's job submission/monitoring, not implementation: a small GPU
+test job (`54342713`) is running for checklist 1.8's verification; once
+confirmed good, 1.9 (full extraction, 6 sharded GPU jobs) and 1.10 (the 90-run
+Stage 1 sweep) are both pure `sbatch`/`gen_commands_osf.py` operations with
+copy-pasteable commands now written into the checklist below and
+`docs/OSF_EXPERIMENTS_GUIDE.md`'s Step 7 — no further code changes are
+needed until Phase 2 (LoRA, `train_osf_lora.py`, not started).
 
 ---
 
@@ -354,12 +354,40 @@ the "why," not to know what to do next.
       directly, with `--cpu`). **Test this specific job script via a real
       small GPU allocation (e.g. `--export=ALL,END=5`) before trusting it
       for the full run in 1.9.**
-- [ ] 1.9 Run full embedding extraction, all 4 datasets, GPU job (needs
-      1.8) 🛑 **before submitting** — real cluster job, confirm readiness
-      first
-- [ ] 1.10 Run the Stage 1 sweep (5 tasks × 3 heads × 6 contexts = 90 runs,
-      generated via `gen_commands_osf.py` from 1.7), then inference, then
-      analysis
+- [ ] 1.9 Run full embedding extraction, all 4 datasets, GPU job. **Small
+      test job submitted 2026-08-12, job `54342713`
+      (`--export=ALL,END=5`, first 5 subjects) — check it succeeded
+      (`sacct -j 54342713`, then verify `.npy` files/`_channel_fill_log.jsonl`
+      under `osf_30sec/apples/`) before submitting the full sharded run
+      below.** From here this is pure job submission — no more code to
+      write for this step:
+      ```bash
+      cd /home/boshra95/NSRR-tools
+      # 6 shards, ~2500 subjects each (same subject order as SleepFM's
+      # phase0_v3_full extraction — see job script header comment):
+      sbatch --export=ALL,START=0,END=2500       jobs/extract_osf_embeddings_gpu.sh
+      sbatch --export=ALL,START=2500,END=5000    jobs/extract_osf_embeddings_gpu.sh
+      sbatch --export=ALL,START=5000,END=7500    jobs/extract_osf_embeddings_gpu.sh
+      sbatch --export=ALL,START=7500,END=9600    jobs/extract_osf_embeddings_gpu.sh
+      sbatch --export=ALL,START=9600,END=12500   jobs/extract_osf_embeddings_gpu.sh
+      sbatch --export=ALL,START=12500,END=15100  jobs/extract_osf_embeddings_gpu.sh
+      # Monitor: sq   (or squeue -u $USER)
+      # Verify counts once done:
+      find /scratch/boshra95/psg_full/unified/embeddings/osf_30sec -name '*.npy' | wc -l
+      ```
+      Per-subject GPU cost is unknown (checklist 1.8) — watch the first
+      shard's early progress in its `.out` log before assuming all 6 will
+      finish within the 4h `#SBATCH --time` default; bump `--time` on
+      resubmit if needed (auto-requeue handles timeouts either way).
+- [ ] 1.10 Run the Stage 1 sweep (5 tasks × 3 heads × 6 contexts = up to 90
+      training runs, generated via `gen_commands_osf.py` from 1.7), then
+      inference, then analysis. Also pure job submission from here —
+      mirrors `docs/EXPERIMENTS_GUIDE.md`'s "Submitting Jobs" /
+      "Typical workflow" pattern exactly, just pointed at
+      `gen_commands_osf.py`. **See `docs/OSF_EXPERIMENTS_GUIDE.md`'s new
+      "Step 7 — Running the Full Stage 1 Sweep" section for the complete
+      copy-pasteable loop** (train all 15 experiments → monitor → infer →
+      analyze → collect). Requires 1.9 to be done first.
 - [ ] 1.11 Re-run the channel-completeness audit against real (not
       50-subject-preview) extraction output; update the table above
 

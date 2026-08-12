@@ -34,7 +34,7 @@ complete list; everything not listed there is intentionally identical.
 7. [Step 4 — Training](#step-4--training)
 8. [Step 5 — Inference](#step-5--inference)
 9. [Step 6 — Command Generator (`gen_commands_osf.py`)](#step-6--command-generator-gen_commands_osfpy)
-10. Step 7 — Analysis and Plotting **(not yet implemented)**
+10. [Step 7 — Running the Full Stage 1 Sweep](#step-7--running-the-full-stage-1-sweep)
 11. Step 8 — Stage 2 (LoRA fine-tuning) **(not yet implemented)**
 12. [Checkpoint Resume and Auto-Requeue](#checkpoint-resume-and-auto-requeue)
 13. [Job Run History and Tracking](#job-run-history-and-tracking)
@@ -307,6 +307,79 @@ figure-generation code path.
   underestimate just costs one extra auto-requeue, not lost work.
 - No rorqual variant — only Fir job scripts (`train_osf_context_sweep_gpu.sh`,
   `infer_osf_subject_windows_gpu.sh`) exist for OSF so far.
+
+---
+
+## Step 7 — Running the Full Stage 1 Sweep
+
+**This is the actual next step once 1.9 (full extraction) is done — pure
+job submission from here, no code left to write for Stage 1.** Mirrors
+`docs/EXPERIMENTS_GUIDE.md`'s "Submitting Jobs" / "Typical workflow for one
+experiment" pattern exactly, just pointed at `gen_commands_osf.py` and
+looped over all 15 tier-1 experiments instead of one.
+
+**Prerequisite:** checklist 1.9 done (full embeddings extracted for all 4
+datasets — verify with `find .../osf_30sec -name '*.npy' | wc -l`).
+
+```bash
+cd /home/boshra95/NSRR-tools
+
+OSF_EXPS="
+  sex_binary_lstm sex_binary_transformer sex_binary_mean_pool
+  sleep_efficiency_binary_lstm sleep_efficiency_binary_transformer sleep_efficiency_binary_mean_pool
+  bmi_binary_lstm bmi_binary_transformer bmi_binary_mean_pool
+  age_class_lstm age_class_transformer age_class_mean_pool
+  apnea_binary_lstm apnea_binary_transformer apnea_binary_mean_pool
+"
+
+# 1. Train — submits one sbatch job per (experiment, context), up to 90 total.
+#    Submit a few at a time and watch the queue if you're worried about
+#    hitting a job-count/priority limit — no need to fire all 90 at once.
+for exp in $OSF_EXPS; do
+    python scripts/gen_commands_osf.py train $exp | bash
+done
+
+# 2. Monitor
+python scripts/gen_commands_osf.py list                # status of all 15 at a glance
+python scripts/gen_commands_osf.py runs apnea_binary_lstm    # job history for one
+python scripts/gen_commands_osf.py status apnea_binary_lstm  # file-level detail for one
+sq                                                       # raw queue state
+
+# 3. Inference — once an experiment's contexts finish training
+for exp in $OSF_EXPS; do
+    python scripts/gen_commands_osf.py infer $exp | bash
+done
+
+# 4. Analysis (local, no GPU — activate osf_env first)
+source /home/boshra95/osf_env/bin/activate
+for exp in $OSF_EXPS; do
+    echo "=== START $exp $(date) ==="
+    python scripts/gen_commands_osf.py analyze $exp --plot | bash
+    echo "=== END $exp $(date) ==="
+done 2>&1 | tee analysis_osf_stage1.log
+
+# 5. Collect all results into flat CSVs
+python scripts/gen_commands_osf.py collect $OSF_EXPS | bash
+```
+
+**A generated train command looks like** (same shape as SleepFM's, see
+`EXPERIMENTS_GUIDE.md`'s "Submitting Jobs" section for the field reference):
+```bash
+TASK=apnea_binary TASK_TYPE=seq2label HEAD=lstm CONTEXT=30s \
+  DATASETS="apples shhs mros stages" BATCH_SIZE=32 ACCUM_STEPS=1 LR=1e-4 \
+  CONFIG=configs/phase0_osf_config.yaml LOGS_DIR=/home/boshra95/NSRR-tools/logs_osf \
+  sbatch --requeue --time=01:30:00 \
+    --output=.../logs_osf/train_apnea_binary_lstm_30s_lr1e-4_%j.out \
+    --error=.../logs_osf/train_apnea_binary_lstm_30s_lr1e-4_%j.err \
+    /home/boshra95/NSRR-tools/jobs/train_osf_context_sweep_gpu.sh
+```
+
+**Not included** (deliberately, per Step 6's design decision): saturation
+curves, iso-compute plots, scaling-laws, calibration, and the other
+figure/table subcommands. Once `collect` has produced `training.csv`/
+`analysis.csv` under `.../phase0_osf/collected/`, feed those into notebooks
+the same way SleepFM's collected results are — don't build a parallel
+`plot_*.py` pipeline for OSF.
 
 ---
 
