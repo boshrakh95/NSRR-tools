@@ -33,7 +33,7 @@ complete list; everything not listed there is intentionally identical.
 6. [Step 3 — Config](#step-3--config)
 7. [Step 4 — Training](#step-4--training)
 8. [Step 5 — Inference](#step-5--inference)
-9. Step 6 — Command Generator (`gen_commands_osf.py`) **(not yet implemented)**
+9. [Step 6 — Command Generator (`gen_commands_osf.py`)](#step-6--command-generator-gen_commands_osfpy)
 10. Step 7 — Analysis and Plotting **(not yet implemented)**
 11. Step 8 — Stage 2 (LoRA fine-tuning) **(not yet implemented)**
 12. [Checkpoint Resume and Auto-Requeue](#checkpoint-resume-and-auto-requeue)
@@ -65,7 +65,7 @@ full technical plan this guide operationalizes.
 | **Embeddings dir** | `.../unified/embeddings/sleepfm_5sec/` | `.../unified/embeddings/osf_30sec/` |
 | **Embedding shape** | `[T, 4, 128]` (5s patches) | `[T, 2, 768]` (30s epochs) |
 | **Train config** | `configs/phase0_v3_full_config.yaml` (hidden=128, layers=1) | `configs/phase0_osf_config.yaml` (hidden=128, layers=1 — same, per parity decision) |
-| **Registry** | `experiments/v2_full_registry.yaml` | `experiments/v2_osf_registry.yaml` **(not yet implemented)** |
+| **Registry** | `experiments/v2_full_registry.yaml` (`gen_commands.py`) | `experiments/v2_osf_registry.yaml` (`gen_commands_osf.py`) |
 | **Results root** | `.../results/phase0_v3_full/` | `.../results/phase0_osf/` |
 | **Inference root** | `.../results/phase0_v3_full/inference/` | `.../results/phase0_osf/inference/` |
 | **Training/job logs** | `logs_v3_full/` | `logs_osf/` |
@@ -235,6 +235,70 @@ runs.
 
 ---
 
+## Step 6 — Command Generator (`gen_commands_osf.py`)
+
+**Status: DONE**, smoke-tested against the real Step 4/5 debug checkpoints;
+no real GPU sweep has run yet (depends on 1.9's full extraction).
+
+Same role as SleepFM's `scripts/gen_commands.py`: reads
+`experiments/v2_osf_registry.yaml` and prints ready-to-run `sbatch`/`python`
+commands, rather than hand-writing them. **Not a `gen_commands.py`
+retrofit** — a separate script, per `CLAUDE.md`'s Code-reuse-assessment
+decision (the original registry/wall-time-table schema has no
+backbone-family hook).
+
+```bash
+# List all 15 tier-1 experiments (5 tasks × 3 heads) and their status
+python scripts/gen_commands_osf.py list
+
+# Train sbatch command for one context (auto-computes wall time, batch/accum)
+python scripts/gen_commands_osf.py train apnea_binary_lstm --context 30s
+
+# Inference sbatch command (auto-discovers trained contexts)
+python scripts/gen_commands_osf.py infer apnea_binary_lstm --split val
+
+# File-level status / job history for one experiment
+python scripts/gen_commands_osf.py status apnea_binary_lstm
+python scripts/gen_commands_osf.py runs apnea_binary_lstm
+```
+
+**Registry:** `experiments/v2_osf_registry.yaml` — same 15 tier-1 entries as
+`experiments/v2_full_registry.yaml` (identical datasets/contexts/batch_size/
+lr, since OSF is compared against `phase0_v3_full`), with
+`results_dir`/`inference_dir` pointed at `.../results/phase0_osf` and
+`python_bin: /home/boshra95/osf_env/bin/python`. `sleep_staging` is
+deferred (not yet ported to `OSFContextWindowDataset`).
+
+**Subcommands kept** (same as `gen_commands.py`): `list, probe-batch, train,
+infer, analyze, build-heatmap, collect, threshold-tuning, status, runs`.
+`analyze`/`build-heatmap`/`collect`/`threshold-tuning` call the same
+underlying scripts as SleepFM's pipeline (`analyze_windows.py`,
+`build_heatmap_df.py`, `collect_results_v2.py`,
+`apply_threshold_tuning.py`) **unmodified** — confirmed backbone-agnostic
+by smoke test (ran with `--help` in `osf_env`, accept the exact flags
+`gen_commands_osf.py` generates).
+
+**Subcommands deliberately dropped**: all figure/table subcommands
+(`iso-plots, saturation, scaling-laws, calibration, window-position,
+subject-consistency, task-comparison, cohort-saturation, precision-recall,
+subject-kstar, table-1..table-10`) — these wrap `plot_*.py`/`make_table*.py`
+scripts, which `CLAUDE.md` already documents as superseded by notebooks for
+the current paper. Once OSF results exist, feed them into notebooks the
+same way SleepFM's results are, rather than building a second
+figure-generation code path.
+
+**Known gaps:**
+- `probe-batch` is schema parity only — no OSF experiment uses
+  `batch_mode: memory_bounded` yet, and `jobs/find_batch_size_osf_gpu.sh`
+  doesn't exist.
+- Wall-time lookup tables (`_TRAIN_HOURS`/`_INFER_HOURS_PER_CTX`) are
+  placeholder copies of SleepFM's — not GPU-calibrated for OSF. An
+  underestimate just costs one extra auto-requeue, not lost work.
+- No rorqual variant — only Fir job scripts (`train_osf_context_sweep_gpu.sh`,
+  `infer_osf_subject_windows_gpu.sh`) exist for OSF so far.
+
+---
+
 ## Checkpoint Resume and Auto-Requeue
 
 Identical mechanism to SleepFM's (see `EXPERIMENTS_GUIDE.md`'s section of
@@ -244,9 +308,8 @@ the same name for the full explanation) — two distinct layers:
    and resubmits itself via `sbatch`, picking up from `resume.pt` (saved
    every epoch by `train_osf_context_sweep.py`).
 2. **Node-failure requeue**: SLURM-native `--requeue`, supplied at the
-   *initial* `sbatch` invocation by `gen_commands_osf.py`
-   **(not yet implemented — checklist item 1.7)**, not baked into the job
-   script itself.
+   *initial* `sbatch` invocation by `gen_commands_osf.py` (see Step 6
+   above), not baked into the job script itself.
 
 ---
 
@@ -254,8 +317,9 @@ the same name for the full explanation) — two distinct layers:
 
 Same JSONL status-file convention as SleepFM:
 `logs_osf/status/train_{task}_{head}[_{run_tag}]_{context}_lr{lr}.jsonl`,
-one line per `STARTED`/`TIMEOUT_REQUEUED`/`SUCCESS`/`FAILED` event.
-Status-checking commands **(not yet implemented — depends on
-`gen_commands_osf.py`'s `status`/`runs` subcommands, checklist item 1.7)**
-will mirror `python scripts/gen_commands.py status`/`runs` exactly, just
-pointed at `experiments/v2_osf_registry.yaml`.
+one line per `STARTED`/`TIMEOUT_REQUEUED`/`SUCCESS`/`FAILED` event. Query
+via `python scripts/gen_commands_osf.py status [<exp_id>]`/`runs [<exp_id>]`
+(see Step 6 above) — mirrors `python scripts/gen_commands.py status`/`runs`
+exactly, just pointed at `experiments/v2_osf_registry.yaml`. No real GPU
+jobs have run yet as of 2026-08-12, so `logs_osf/status/` is still empty
+(`runs` correctly reports "No status directory found yet").

@@ -46,12 +46,15 @@ reference clone, not where we write code.
   anything. This plan doc is the "why," that one is the "how to actually
   run it."
 
-## Status (2026-08-11)
+## Status (2026-08-12)
 
-Setup done (env, checkpoint). Stage 1 embedding extraction and
-`OSFContextWindowDataset` both implemented and smoke-tested. Next:
-`v2_osf_registry.yaml` + `gen_commands_osf.py` (checklist 1.7). See the Implementation
-Checklist below for the full picture.
+Setup done (env, checkpoint). Stage 1 embedding extraction,
+`OSFContextWindowDataset`, training, inference, and the command-generation
+layer (`v2_osf_registry.yaml` + `gen_commands_osf.py`) are all implemented
+and smoke-tested. Next: `jobs/extract_osf_embeddings_gpu.sh` (checklist
+1.8), the last piece before the real full-population extraction (1.9) and
+Stage 1 sweep (1.10). See the Implementation Checklist below for the full
+picture.
 
 ---
 
@@ -94,8 +97,8 @@ Checklist below for the full picture.
 ### Command generation
 | File | Purpose | Status |
 |---|---|---|
-| `experiments/v2_osf_registry.yaml` | Experiment registry (5 tasks × 3 heads × 6 contexts) | ⬜ TODO (checklist 1.8) |
-| `scripts/gen_commands_osf.py` | Generates train/infer/analyze commands from the registry | ⬜ TODO (checklist 1.8) |
+| `experiments/v2_osf_registry.yaml` | Experiment registry (5 tasks × 3 heads × 6 contexts) | ✅ DONE |
+| `scripts/gen_commands_osf.py` | Generates train/infer/analyze/collect/status/runs commands from the registry | ✅ DONE |
 
 ### Stage 2 (LoRA)
 | File | Purpose | Status |
@@ -291,13 +294,41 @@ the "why," not to know what to do next.
       prob_class0…N`).
       **USER CHECKPOINT** — re-verify via the `🎯 OSF Step5: Infer DEBUG`
       config in `~/.vscode/launch.json` before continuing to item 1.7.
-- [ ] 1.7 Implement `experiments/v2_osf_registry.yaml` +
-      `scripts/gen_commands_osf.py` — the actual command-generation/
-      status-tracking infrastructure (`train`/`infer`/`analyze`/`status`/
-      `runs` subcommands, same JSONL status format and `logs_osf/status/`
-      convention as `gen_commands.py`). Remember `inference_dir` and
-      `python_bin: /home/boshra95/osf_env/bin/python` explicitly in the
-      registry (Appendix §3.5).
+- [x] 1.7 Implement `experiments/v2_osf_registry.yaml` +
+      `scripts/gen_commands_osf.py` (Appendix §3.5) — done 2026-08-12.
+      Registry ports the exact same 15 tier-1 entries (5 tasks × 3 heads:
+      sex_binary, sleep_efficiency_binary, bmi_binary, age_class,
+      apnea_binary) field-for-field from `v2_full_registry.yaml` (identical
+      datasets/contexts/batch_size/lr — full-channel registry, since OSF
+      compares against `phase0_v3_full`), with `results_dir`/
+      `inference_dir` pointed at `phase0_osf` and `python_bin:
+      /home/boshra95/osf_env/bin/python` as required. `sleep_staging`
+      (seq2seq) deferred — not yet ported to `OSFContextWindowDataset`.
+      `gen_commands_osf.py` is a parallel generator (not a `gen_commands.py`
+      retrofit, per the Code-reuse-assessment decision in `CLAUDE.md`),
+      keeping `list/probe-batch/train/infer/analyze/build-heatmap/collect/
+      threshold-tuning/status/runs` — same JSONL status format and
+      `logs_osf/status/` convention as `gen_commands.py`. **Deliberately
+      dropped**: `iso-plots/saturation/scaling-laws/calibration/
+      window-position/subject-consistency/task-comparison/
+      cohort-saturation/precision-recall/subject-kstar/table-1..table-10`
+      — all of these wrap `plot_*.py`/`make_table*.py` scripts, which
+      `CLAUDE.md` already documents as superseded by notebooks
+      (`results/paper_figures/notebooks_npj/`) for the current paper; no
+      reason to build a second figure-generation path for OSF. `probe-batch`
+      is kept for schema parity only — no OSF experiment uses
+      `batch_mode: memory_bounded` yet and `jobs/find_batch_size_osf_gpu.sh`
+      doesn't exist. Wall-time lookup tables are placeholder copies of
+      SleepFM's — **not GPU-calibrated for OSF** (only CPU-debugged so
+      far); revisit after 1.10's real sweep. Smoke-tested: `list` correctly
+      picked up the item-1.5 debug checkpoints
+      (`apnea_binary_lstm` → `trained (3/6 contexts)`); `train`, `infer`,
+      `status`, `runs`, `collect`, `threshold-tuning`, `build-heatmap`,
+      `analyze` all generate correct commands, and the four reused
+      downstream scripts (`analyze_windows.py`, `build_heatmap_df.py`,
+      `collect_results_v2.py`, `apply_threshold_tuning.py`) were confirmed
+      to run in `osf_env` and accept the exact flags generated — no forking
+      needed for those, confirming `CLAUDE.md`'s reuse assessment.
 - [ ] 1.8 Implement `jobs/extract_osf_embeddings_gpu.sh` — the one
       remaining §3.6 job script (`jobs/train_osf_context_sweep_gpu.sh` was
       done as part of 1.5; `jobs/infer_osf_subject_windows_gpu.sh` is
@@ -343,6 +374,8 @@ the "why," not to know what to do next.
 | W&B project | `nsrr-phase0-osf`, not `nsrr-phase0` | Keeps OSF runs separate from SleepFM's dashboard; currently inert (`wandb` not installed in `osf_env`, see Known Issues) |
 | Inference batch-size reference point | `_ref_N=480` (OSF's 240m), not SleepFM's literal `2880` | Same formula/intent as `infer_subject_windows.py`, but `2880` is 5s-patch units — reusing it verbatim would be dimensionally wrong for OSF's 30s-epoch units |
 | `pyarrow` in `osf_env` | `.pth` file pointing at `arrow/18.1.0`'s Python 3.10 site-packages (not `pip install`) | CC's `pip install pyarrow` always hits a dummy package; the Arrow module's own injection mechanism doesn't reach an isolated venv; `fastparquet` (the alternative) wanted `numpy<2.0`, an unacceptable downgrade — see checklist 1.6 |
+| `gen_commands_osf.py` scope | Separate script from `gen_commands.py`; kept `list/probe-batch/train/infer/analyze/build-heatmap/collect/threshold-tuning/status/runs`, dropped all figure/table subcommands (`iso-plots`, `saturation`, `scaling-laws`, `calibration`, `window-position`, `subject-consistency`, `task-comparison`, `cohort-saturation`, `precision-recall`, `subject-kstar`, `table-1..10`) | No backbone hook in the original registry/wall-time-table schema (see `CLAUDE.md` Code-reuse-assessment); the dropped subcommands wrap `plot_*.py`/`make_table*.py` scripts already superseded by notebooks for the current paper — no reason to build a second figure path for OSF |
+| OSF wall-time tables | Placeholder copies of SleepFM's `_TRAIN_HOURS`/`_INFER_HOURS_PER_CTX` | No real GPU sweep has run yet to calibrate against (only CPU-debugged); auto-requeue means an underestimate just costs one resubmission — revisit after checklist 1.10 |
 
 ---
 
