@@ -48,13 +48,14 @@ reference clone, not where we write code.
 
 ## Status (2026-08-12)
 
-Setup done (env, checkpoint). Stage 1 embedding extraction,
-`OSFContextWindowDataset`, training, inference, and the command-generation
-layer (`v2_osf_registry.yaml` + `gen_commands_osf.py`) are all implemented
-and smoke-tested. Next: `jobs/extract_osf_embeddings_gpu.sh` (checklist
-1.8), the last piece before the real full-population extraction (1.9) and
-Stage 1 sweep (1.10). See the Implementation Checklist below for the full
-picture.
+All of Phase 1's code is now implemented: embedding extraction, dataset,
+training, inference, the command-generation layer, and (as of this update)
+`jobs/extract_osf_embeddings_gpu.sh` — the last job script. That last one is
+**not yet verified via a real GPU allocation** (see checklist 1.8 for why) —
+test it on a small `--export=ALL,END=5` GPU job before trusting it for the
+real full-population extraction. Next: 🛑 user checkpoint, then 1.9 (full
+extraction) and 1.10 (Stage 1 sweep). See the Implementation Checklist below
+for the full picture.
 
 ---
 
@@ -75,6 +76,7 @@ picture.
 | File | Purpose | Status |
 |---|---|---|
 | `scripts/extract_osf_embeddings.py` | Step 1 — extract frozen embeddings from HDF5 PSG | ✅ DONE |
+| `jobs/extract_osf_embeddings_gpu.sh` | SLURM job script for embedding extraction | ✅ DONE |
 | `src/nsrr_tools/datasets/osf_context_window_dataset.py` | Step 2 — PyTorch dataset for context windows | ✅ DONE |
 
 ### Model
@@ -329,11 +331,29 @@ the "why," not to know what to do next.
       `collect_results_v2.py`, `apply_threshold_tuning.py`) were confirmed
       to run in `osf_env` and accept the exact flags generated — no forking
       needed for those, confirming `CLAUDE.md`'s reuse assessment.
-- [ ] 1.8 Implement `jobs/extract_osf_embeddings_gpu.sh` — the one
-      remaining §3.6 job script (`jobs/train_osf_context_sweep_gpu.sh` was
-      done as part of 1.5; `jobs/infer_osf_subject_windows_gpu.sh` is
-      bundled into 1.6 above; extraction so far has only been run locally
-      on CPU for small subject counts, never as a real GPU job).
+- [x] 1.8 Implement `jobs/extract_osf_embeddings_gpu.sh` (Appendix §3.6) —
+      done 2026-08-12. Forked from `jobs/extract_embeddings_gpu.sh`, same
+      `--start-idx`/`--end-idx` sharding pattern and SIGUSR1 auto-resume
+      trap as the other OSF job scripts (Fir only — no rorqual variant
+      exists for OSF yet). Points at `osf_env`/`logs_osf/`, calls
+      `extract_osf_embeddings.py` with `--config`/`--start-idx`/`--end-idx`/
+      `--datasets`/`--no-skip`. `bash -n` syntax-checked clean; file
+      permissions matched to the other job scripts (`640`).
+      **Not fully smoke-tested — flagging honestly rather than claiming
+      more than was verified**: this interactive session's node appears to
+      have no GPU (`sq` shows a `vsc-proxy-jump` job, not a GPU allocation),
+      and running the script's `torch.cuda.is_available()` fail-fast check
+      directly did not return within ~90s (vs. the near-instant activation
+      step) — inconclusive whether that's this node lacking CUDA/NVML
+      entirely (plausible explanation, not a code bug) or something worth
+      investigating. The identical check pattern already exists unmodified
+      in the already-committed `train_osf_context_sweep_gpu.sh` /
+      `infer_osf_subject_windows_gpu.sh`, so this isn't new/untested logic
+      — but neither of those has been run through an actual `sbatch` GPU
+      allocation this session either (only their underlying `.py` scripts,
+      directly, with `--cpu`). **Test this specific job script via a real
+      small GPU allocation (e.g. `--export=ALL,END=5`) before trusting it
+      for the full run in 1.9.**
 - [ ] 1.9 Run full embedding extraction, all 4 datasets, GPU job (needs
       1.8) 🛑 **before submitting** — real cluster job, confirm readiness
       first

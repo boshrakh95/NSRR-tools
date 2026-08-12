@@ -94,18 +94,29 @@ Checkpoint already downloaded to
 
 ## Step 1 — Embedding Extraction
 
-**Status: DONE (script), extraction only run on small subject counts so
-far (not the full population — that's checklist item 1.9).**
+**Status: DONE (script + job script), extraction only run on small subject
+counts so far (not the full population — that's checklist item 1.9).**
+`jobs/extract_osf_embeddings_gpu.sh` exists but has **not been verified via
+a real GPU allocation yet** (see plan doc checklist 1.8) — test with a
+small `END` range before trusting it for the full run.
 
 ```bash
 cd /home/boshra95/NSRR-tools
 source /home/boshra95/osf_env/bin/activate
 
-# Small debug run (CPU, ~200-400s/subject — slow, CPU-only; GPU job TBD, checklist 1.9)
+# Small debug run (CPU, ~200-400s/subject — slow, CPU-only)
 python scripts/extract_osf_embeddings.py --config configs/phase0_osf_config.yaml \
     --datasets apples --limit 10 --cpu
 python scripts/extract_osf_embeddings.py --config configs/phase0_osf_config.yaml \
     --datasets shhs --limit 10 --cpu
+
+# GPU job (small test range — verify this works before the full run):
+sbatch --export=ALL,END=5 jobs/extract_osf_embeddings_gpu.sh
+
+# GPU job, full population, sharded (subject order = config's datasets list):
+sbatch --export=ALL,START=0,END=2500      jobs/extract_osf_embeddings_gpu.sh
+sbatch --export=ALL,START=2500,END=5000   jobs/extract_osf_embeddings_gpu.sh
+# ... see the job script's header comment for the full 6-shard breakdown
 ```
 
 **Output:** `/scratch/boshra95/psg_full/unified/embeddings/osf_30sec/{dataset}/{subject_id}.npy`,
