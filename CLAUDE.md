@@ -450,18 +450,55 @@ implementation starts (`pip install peft`, pin a version, add to
 
 ### Honest comparison framing (do not soften these in the paper)
 
-- **OSF**: pretraining-set contamination is real but not uniform across
-  cohorts — code-verified from OSF's own shipped patient-ID splits. **SHHS
-  is confirmed in OSF's pretraining set** (high risk, any SHHS AUROC
-  comparison against SleepFM is not fair). **STAGES is very likely also in
-  pretraining** (numeric-ID pattern match; needs one more confirmation
-  step — cross-check a handful of numeric IDs against our local STAGES
-  `subject_code` list before treating as certain). **MrOS was only in OSF's
-  downstream/eval split, not pretraining** — lower risk than SHHS/STAGES,
-  but OSF's own authors already benchmarked on it. **APPLES has no mention
-  anywhere in OSF's config/splits/README — clean.** Report SHHS (and likely
-  STAGES) results with an explicit contamination caveat; APPLES (and
-  probably MrOS) can be reported more directly.
+- **OSF**: pretraining-set contamination is real, precisely quantified,
+  and highly non-uniform across cohorts — **2026-08-13 update: verified
+  directly from the OSF paper text (Fig. 2's explicit 9-dataset list) and
+  by exact subject-ID matching against OSF's own shipped
+  `osf/splits/patient_pretrain_{train,valid,test}_ids.csv`, not just an ID
+  pattern guess.**
+  - **SHHS: severe, quantified contamination.** OSF's paper lists SHHS as
+    one of five **in-domain/pretraining** cohorts (SHHS, NCHSDB, WSC,
+    CCSHS, CFS). Exact-ID overlap check against our own SHHS test split
+    (apnea_binary/80m, N=1,271): **990 (77.9%) were in OSF's pretrain
+    *train* split, 124 (9.8%) in OSF's pretrain *valid* split — 87.7%
+    total direct pretraining exposure.** Only 125 (9.8%) were in OSF's own
+    held-out `pretrain_test` split (genuinely unseen even by OSF's own
+    authors) and 32 (2.5%) weren't found in any OSF split. **Any SHHS
+    AUROC comparison against SleepFM is not a fair generalization test as
+    currently computed.** Re-running AUROC on just the 125+32=157
+    individually-unseen subjects did *not* shrink OSF's advantage on SHHS
+    (if anything it grew slightly for the two tasks checked) — meaning
+    subject-level exclusion alone doesn't fully resolve this: OSF's
+    encoder was still trained on ~1,114 *other* SHHS subjects, so even
+    "clean" individual subjects likely still benefit from the encoder
+    having deeply learned that cohort's specific recording/device signal
+    characteristics (a cohort-level, not just subject-level, contamination
+    concern). Treat SHHS as **not a clean comparison cohort for OSF**,
+    full stop — report it separately with this caveat, don't blend it into
+    headline numbers.
+  - **STAGES: confirmed clean, corrects an earlier weaker claim.** The
+    earlier "very likely also in pretraining" note (based on a numeric-ID
+    pattern guess) is **wrong** — OSF's paper explicitly lists only 9
+    datasets total (SHHS, NCHSDB, WSC, CCSHS, CFS pretrain + MROS, MESA,
+    CHAT, SOF out-of-domain); **STAGES appears nowhere in OSF's training
+    corpus.** Confirmed a second way: searched all 6 of OSF's shipped
+    split files for STAGES's actual site-code naming (`STNF`, `MSTR`,
+    `GSDV`, `MAYO`, `MSNF`, `GSSW`, `GSBB`, `BOGN`, etc.) — zero matches
+    anywhere. STAGES can be reported as directly as APPLES.
+  - **MrOS: confirmed clean, same as before, now re-verified by exact-ID
+    match (zero overlap) rather than inference from OSF's dataset list
+    alone.** OSF's own paper explicitly holds MrOS/MESA/CHAT/SOF out of
+    pretraining entirely, using them only for out-of-domain downstream
+    evaluation — the same methodology we're implicitly relying on by
+    treating MrOS as a fair cohort.
+  - **APPLES: confirmed clean** — no mention anywhere in OSF's
+    config/splits/README, re-verified with zero exact-ID matches.
+  - **Practical implication for the npj comparison**: APPLES, MrOS, and
+    STAGES are all genuinely fair comparison cohorts (zero subject- or
+    even cohort-level OSF exposure). SHHS is not, at any granularity —
+    report it separately, caveated, never blended into a pooled/headline
+    AUROC number. See `docs/TSFM_OSF_IMPLEMENTATION_PLAN.md`'s "Stage 1
+    Results" section for the full per-cohort breakdown this produced.
 - **PhysioOmni**: **confirmed, not just suspected — no respiratory/airflow
   pathway exists anywhere in the model or its pretraining data** (verified
   via `dataset.yaml` schema, `dataset.py` modality keys, and two dataset-prep

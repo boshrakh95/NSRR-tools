@@ -238,34 +238,124 @@ heads) directly from `test_windows.parquet` (mean-prob aggregation):
 | apnea_binary | lstm | apples | 0.849 | 0.865 | **−1.7pp** | clean |
 | apnea_binary | lstm | mros | 0.791 | 0.871 | **−7.9pp** | low |
 | apnea_binary | lstm | shhs | 0.896 | 0.869 | +2.7pp | high |
-| apnea_binary | lstm | stages | 0.856 | 0.766 | +9.0pp | high (likely) |
+| apnea_binary | lstm | stages | 0.856 | 0.766 | +9.0pp | none (confirmed clean) |
 | apnea_binary | transformer | apples | 0.862 | 0.916 | **−5.4pp** | clean |
 | apnea_binary | transformer | mros | 0.832 | 0.897 | **−6.5pp** | low |
 | apnea_binary | transformer | shhs | 0.920 | 0.899 | +2.1pp | high |
-| apnea_binary | transformer | stages | 0.874 | 0.843 | +3.1pp | high (likely) |
+| apnea_binary | transformer | stages | 0.874 | 0.843 | +3.1pp | none (confirmed clean) |
+
+### Precise contamination quantification (2026-08-13, supersedes the earlier general risk statement)
+
+Cross-checked our own test-split subject IDs against OSF's own shipped
+`osf/splits/patient_pretrain_{train,valid,test}_ids.csv` by exact ID
+match (not inference from OSF's dataset list alone) — full detail in
+`CLAUDE.md`'s "Honest comparison framing" section, summarized here:
+
+- **SHHS is severely contaminated, precisely: 87.7% of our SHHS test
+  subjects (1,114 of 1,271, apnea_binary/80m) were directly in OSF's own
+  pretraining train+valid splits.** Only 157 (12.3%) were genuinely unseen
+  by OSF (125 in OSF's own held-out `pretrain_test` split + 32 not found
+  in any OSF split). Recomputed AUROC on just those 157 clean-subject
+  subjects — **OSF's advantage over SleepFM did not shrink** (if anything
+  grew slightly: sex_binary/lstm +5.0pp full → +7.1pp clean-only;
+  apnea_binary/lstm +2.7pp full → +3.2pp clean-only). This means
+  individual-subject filtering alone doesn't fully rescue SHHS as a fair
+  comparison cohort — OSF's encoder was still trained on ~1,114 *other*
+  SHHS subjects, so even individually-unseen SHHS subjects likely still
+  benefit from the encoder having deeply learned that cohort's specific
+  recording/device signal characteristics. **Treat SHHS as not usable for
+  a fair OSF-vs-SleepFM comparison, at any subject-filtering granularity.**
+- **STAGES is confirmed clean — this corrects the earlier "very likely
+  also in pretraining" note, which was wrong.** OSF's paper explicitly
+  names its 9 training datasets (SHHS/NCHSDB/WSC/CCSHS/CFS pretrain +
+  MROS/MESA/CHAT/SOF out-of-domain) — STAGES isn't one of them. Also
+  searched all 6 of OSF's split files for STAGES's real site-code naming
+  (`STNF`, `MSTR`, `GSDV`, `MAYO`, etc.) — zero matches. STAGES is exactly
+  as usable as APPLES for a fair comparison.
+- **APPLES and MrOS: re-confirmed clean by exact-ID match** (previously
+  inferred from OSF's dataset list; now directly verified, zero overlap).
+
+**Why this isn't just a supervised-label-leakage question**: even though
+OSF's pretraining is self-supervised (no downstream task labels seen), the
+encoder still directly updates its weights on the raw SHHS signal for
+these subjects — the objective doesn't need to see a "sex" or "apnea"
+label to potentially memorize subject-specific or cohort-specific signal
+idiosyncrasies that a downstream linear/LSTM head can then exploit. This
+is a well-established concern in foundation-model contamination
+discussions generally, and **OSF's own authors clearly treat it as real**:
+they explicitly partition their benchmark into disjoint in-domain
+(pretrain) vs. out-of-domain cohorts, and even hold out a `pretrain_test`
+subject split *within* their own pretraining cohorts specifically so they
+have a genuinely-unseen slice to evaluate on. If the risk were negligible,
+that design effort wouldn't be necessary.
+
+**Does OSF's own paper report downstream results on SHHS?** Yes, but via
+their own carefully disjoint `pretrain_test` split — never the subjects
+they actually trained on. Our current SHHS numbers, by contrast, are 87.7%
+computed on subjects OSF *did* train on — not comparable to how OSF's own
+authors validated the model.
+
+**Recommendation — no retraining needed to answer this.** Retraining our
+sequence heads without SHHS in the training mix wouldn't fix anything (the
+contamination is in OSF's *encoder* pretraining, not in how we train our
+downstream head) and would diverge from SleepFM's own comparison protocol
+unnecessarily. Instead: **keep SHHS in the training/registry mix for
+protocol consistency with SleepFM, but never report its AUROC as part of
+a pooled/headline number — always report it separately with this
+caveat**, optionally alongside the clean-157-subject-subset number for
+context (computed post-hoc from already-existing inference parquets, no
+rerun required — see the snippet used for the numbers above, filterable
+by cross-referencing `osf/splits/patient_pretrain_{train,valid}_ids.csv`).
+
+### Context-length pattern: partially similar, with real per-task differences
+
+Checked whether OSF and SleepFM show the same *shape* of AUROC-vs-context
+curve, using the fully-clean APPLES cohort only (lstm head, all 6
+contexts) to avoid any contamination confound:
+
+- **`sex_binary`**: both models improve with context, but the *pattern*
+  differs — SleepFM is fairly flat/noisy (0.79–0.82, even dipping toward
+  120m/240m), while OSF climbs steadily (0.939→0.960). The gap actually
+  *widens* with context (+14.6pp at 30s → +20.1pp at 240m). OSF appears to
+  make more effective use of longer context for this task.
+- **`sleep_efficiency_binary`**: both broadly increase with context —
+  similar shape — but cross over at 240m (SleepFM edges ahead by 1.3pp,
+  the only context where it does on this cohort).
+- **`apnea_binary`**: both curves are noisy on this cohort (N=168) with
+  multiple sign flips across the sweep (SleepFM ahead at 30s/40m/80m,
+  roughly tied at 120m, OSF ahead at 240m) — no confident claim about
+  pattern similarity here; treat as within-noise until a larger cohort or
+  bootstrap CIs are available.
 
 ### Honest per-task verdict
 
 - **`sex_binary` — real, credible win.** The clean cohort (APPLES) shows
   an *even bigger* gap (+12–17pp) than the contaminated cohort (SHHS,
-  +2–5pp). If contamination were driving this, the pattern would run the
-  other way. This is genuine evidence OSF's encoder is substantially
-  better at sex classification, not a memorization artifact. Holds for
-  both heads.
+  +2–5pp on the full set, +7pp even on SHHS's clean-subject subset). If
+  contamination were driving this, the pattern would run the other way.
+  This is genuine evidence OSF's encoder is substantially better at sex
+  classification, not a memorization artifact — and it appears to use
+  additional context more effectively too. Holds for both heads.
 - **`sleep_efficiency_binary` — mixed, inconclusive.** APPLES flips sign
   between heads (lstm +5.5pp, transformer −3.8pp); MrOS favors SleepFM in
-  both heads (near-tied to −7.3pp). Only SHHS (contaminated) consistently
-  favors OSF, modestly. **Do not claim an OSF win here** — the clean-cohort
-  evidence doesn't support it either way with confidence yet.
-- **`apnea_binary` — the pooled "OSF wins" result is very likely a
-  contamination artifact, not a real improvement.** OSF loses to SleepFM
-  on **both** lower-risk cohorts (APPLES, MrOS) for **both** heads,
-  sometimes substantially (−7.9pp on MrOS/lstm, −6.5pp on MrOS/transformer)
-  — and only "wins" on the two contamination-risk cohorts (SHHS, STAGES).
-  This replicated identically across both heads, which rules out a
-  single-run fluke. **Honest reading: OSF likely underperforms SleepFM for
-  apnea detection on genuinely held-out data**, and the pooled number
-  should not be quoted without this breakdown.
+  both heads (near-tied to −7.3pp). Only SHHS (contaminated, and
+  unreliable even after subject-filtering — see above) consistently
+  favors OSF. **Do not claim an OSF win here** — the clean-cohort evidence
+  doesn't support it either way with confidence yet.
+- **`apnea_binary` — genuinely mixed on clean data, not a clean
+  "contamination explains it" story.** ~~Earlier draft of this section
+  claimed OSF only won on contamination-risk cohorts~~ — **that was wrong,
+  based on STAGES being incorrectly flagged as contamination-risk (now
+  corrected above, STAGES is confirmed clean).** The real picture: OSF
+  **loses** on APPLES (−1.7 to −5.4pp) and MrOS (−6.5 to −7.9pp) — both
+  clean — but **wins** on STAGES (+3.1 to +9.0pp, also clean) and SHHS
+  (+2.1 to +2.7pp, contaminated). Two clean cohorts favor SleepFM, one
+  clean cohort favors OSF by a large margin. **Contamination explains
+  SHHS's result but not the pooled picture as a whole** — this is a
+  genuinely mixed, cohort-dependent result that needs more investigation
+  (e.g., does STAGES's known channel-completeness profile — see
+  `docs/OSF_CHANNEL_REPROCESSING_PLAN.md` — interact with this somehow?)
+  before drawing any conclusion, rather than a tidy narrative either way.
 
 ### Known caveat not yet resolved: subject-count mismatches between OSF and SleepFM
 
@@ -286,9 +376,11 @@ flip from a few percent of subjects being added/removed.
 
 - **`sex_binary` is worth pursuing further** (remaining head — mean_pool —
   and eventually LoRA) — the strongest, cleanest signal so far.
-- **`apnea_binary` needs the caveat front-and-center** if it goes in the
-  paper at all in its current form; do not present the pooled AUROC without
-  the per-cohort breakdown.
+- **`apnea_binary` needs the per-cohort breakdown front-and-center** if it
+  goes in the paper — not just an SHHS caveat, since STAGES (clean) also
+  drives part of the pooled number; never present the pooled AUROC alone.
+  Worth investigating *why* STAGES and SHHS favor OSF while APPLES/MrOS
+  don't before concluding anything about apnea specifically.
 - **`sleep_efficiency_binary` needs more data before a verdict** — remaining
   head, and possibly the other two Tier-1 tasks (`bmi_binary`, `age_class`)
   for a fuller picture of whether OSF's advantage is task-specific or
