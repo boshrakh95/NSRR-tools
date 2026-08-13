@@ -444,12 +444,25 @@ the "why," not to know what to do next.
   SHHS `EMG_LLeg`/`EMG_RLeg`/`SN` 100%, `NP` 15%; MrOS `ABD`/`SN` 100%. This
   matches the pre-registered 50-subject audit above almost exactly, and
   matches OSF's own reference implementation's missing-channel handling
-  (zero-fill, per §0 Appendix). **No code fix needed, no re-extraction
-  needed.** SHHS remains the cohort with the most degraded input (3 slots
-  always zero + 1 partial + the EEG C3/C4 duplication approximation) —
-  **impact on SHHS's actual downstream OSF results is still unknown**
-  (that part of this item is not resolved — revisit once Stage 1 training
-  results exist).
+  (zero-fill, per §0 Appendix). **No fix needed in
+  `extract_osf_embeddings.py` itself** — it correctly uses everything
+  present in `psg_full/`. SHHS remains the cohort with the most degraded
+  input (3 slots always zero + 1 partial + the EEG C3/C4 duplication
+  approximation) — **impact on SHHS's actual downstream OSF results is
+  still unknown** (revisit once Stage 1 training results exist).
+  **Important follow-up finding (2026-08-12, deeper dive into the raw EDF
+  channel inventories, not just `psg_full/`'s existing HDF5s):**
+  `psg_full/` itself — the *upstream* preprocessing, shared with SleepFM —
+  has three confirmed, quantified, fixable gaps: MrOS's `ABD` is a genuine
+  code bug (100% missing despite being ~100% present in raw data), and
+  STAGES `LLEG`/`RLEG` (+23.2pp available) and SHHS `NP` (+22.9pp
+  available) are simple alias-list gaps. **Full investigation, root-cause
+  traces, and a fork-not-edit fix plan (does not touch any SleepFM file)
+  are in [`docs/OSF_CHANNEL_REPROCESSING_PLAN.md`](OSF_CHANNEL_REPROCESSING_PLAN.md)
+  — deliberately not acted on now** (re-preprocessing ~14,000 subjects is
+  a bigger undertaking than anything else in this implementation, needs an
+  explicit decision to spend the compute). Come back to that doc if
+  MrOS/STAGES/SHHS results look degraded enough to be worth the re-run.
 - [ ] **EOG referencing** — encouraging (no NaNs across 20+ smoke-tested
   subjects so far) but not exhaustively confirmed across every cohort.
 - [ ] **STAGES-in-pretraining confirmation** — cross-check numeric IDs
