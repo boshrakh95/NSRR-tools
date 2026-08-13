@@ -505,9 +505,43 @@ paper-primary `phase0_v3`), new scripts/config/registry needed for Stage 1
 (frozen encoder + our sequence heads) and Stage 2 (LoRA fine-tuning,
 end-to-end, with a memory-mitigation fallback ladder), and a Step 0
 verification checklist to run before the full sweep. First pass scope is
-the 5 Tier-1 tasks (sex, sleep efficiency, BMI, age, apnea); PhysioOmni and
-MOMENT get their own plan docs later, after this one is validated —
-**do not start those unprompted.**
+the 5 Tier-1 tasks (sex, sleep efficiency, BMI, age, apnea).
+
+**PhysioOmni (model #2 of 3) also has a written plan now, code-verified
+2026-08-13: [`docs/TSFM_PHYSIOOMNI_IMPLEMENTATION_PLAN.md`](docs/TSFM_PHYSIOOMNI_IMPLEMENTATION_PLAN.md)
+— plan only, nothing implemented.** Verdict: proceed, but with real
+caveats stated up front, not softened — the paper is arXiv-only (never
+peer-reviewed), its sleep-relevant pretraining slice (CAP + Sleep-EDF,
+~305 recordings) is tiny next to our ~16,000-subject cohort and next to
+OSF's own pretraining scale, and **on its own best-fit downstream task
+(HMC sleep staging), PhysioOmni's own reported number (0.7377 balanced
+accuracy) does not beat its paper's own non-foundation-model baseline
+(FeatFusion, 0.7478)** — a real reason to keep expectations modest, not a
+reason to skip the comparison (a mixed/negative result here is still
+informative for a paper about *why* SleepFM was chosen). Apnea is excluded
+(no respiratory pathway anywhere in the model, confirmed at 4 independent
+code locations). License is split, not simply "missing": the GitHub code
+repo has no LICENSE file, but the HuggingFace weights repo
+(`Weibang/PhysioOmni`) declares **CC-BY-4.0** explicitly (verified live via
+the HF API) — both facts should be stated if this ships in the paper.
+Channel-coverage news is better than OSF's: PhysioOmni needs only
+EEG/EOG/ECG/EMG (no RESP), and the existing **fast-channel** `psg/` HDF5s
+(the paper-primary tree) already carry everything needed — confirmed both
+from `configs/preprocessing_params.yaml`/`modality_groups.yaml`'s
+priority-order caps and from real HDF5 key listings for all 4 cohorts, not
+assumed by analogy to OSF — so no reprocessing is needed, and the
+comparison baseline is `phase0_v3` (paper-primary), not `phase0_v3_full`.
+Normalization is the one place PhysioOmni is harder than OSF: it expects
+raw amplitude scaled by `/100`, not z-scored data, so extraction needs to
+invert our stored per-channel `normalization_stats` back to raw scale
+first — mechanically free (the stats are already saved in every HDF5) but
+**not a uniform V→µV conversion**: reading real stats shows `LOC`/`ROC`'s
+recovered scale looks like volts while other channels already look
+µV-scale, so the unit-correction has to be checked per channel, not
+applied as one flat rule. Not yet empirically validated either way.
+**Do not start implementing PhysioOmni until OSF's Stage 1 sweep and Stage
+2 LoRA are done** — MOMENT (model #3) still doesn't have a plan doc yet;
+write that only once asked, same rule.
 
 ---
 
