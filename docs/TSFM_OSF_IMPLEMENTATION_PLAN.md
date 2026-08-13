@@ -185,6 +185,122 @@ subject so far — encouraging, not exhaustive proof. See Appendix §1.
 
 ---
 
+## Stage 1 Results (partial, in progress — 2026-08-13)
+
+**Scope so far**: 3 of 5 Tier-1 tasks (`sex_binary`, `sleep_efficiency_binary`,
+`apnea_binary`), 2 of 3 heads (`lstm`, `transformer`) — trained, inferred,
+and analyzed (`gen_commands_osf.py analyze`, K-sweep, test split). `bmi_binary`,
+`age_class`, and `mean_pool` not run yet.
+
+### Pooled AUROC, K=5, mean-prob aggregation, test split
+
+| Task | Head | 30s | 10m | 40m | 80m | 120m | 240m |
+|---|---|---|---|---|---|---|---|
+| sex_binary | lstm | **OSF 0.906** / SF 0.840 | **0.932** / 0.871 | **0.941** / 0.894 | **0.950** / 0.885 | **0.943** / 0.894 | — |
+| sex_binary | transformer | **0.907** / 0.825 | **0.933** / 0.854 | **0.946** / 0.892 | **0.958** / 0.921 | **0.963** / 0.929 | — |
+| sleep_efficiency_binary | lstm | **0.714** / 0.704 | **0.739** / 0.695 | **0.754** / 0.722 | **0.779** / 0.751 | **0.794** / 0.767 | **0.824** / 0.810 |
+| sleep_efficiency_binary | transformer | **0.706** / 0.694 | **0.731** / 0.709 | **0.765** / 0.751 | **0.790** / 0.783 | **0.801** / 0.798 | **0.841** / 0.825 |
+| apnea_binary | lstm | **0.789** / 0.768 | **0.824** / 0.782 | **0.851** / 0.827 | **0.875** / 0.857 | **0.882** / 0.874 | — |
+| apnea_binary | transformer | **0.787** / 0.774 | **0.832** / 0.799 | **0.858** / 0.857 | **0.902** / 0.888 | **0.910** / 0.900 | — |
+
+(SF = SleepFM `phase0_v3_full`, same split protocol, same test subjects
+where N matches — see caveat below. `sex_binary`/`apnea_binary` have no
+240m row in either pipeline's collected results as of this writing.)
+
+**Read naively, OSF beats SleepFM at every single context/task/head
+combination above, by 0.4–8 pp AUROC.** That headline is misleading on its
+own — see the per-cohort breakdown immediately below, which is the actual
+basis for the verdict in each task's row of the summary table further down.
+
+### Critical caveat: OSF's pretraining contamination risk (already flagged in `CLAUDE.md`)
+
+OSF's own pretraining data includes **SHHS** (confirmed) and **very likely
+STAGES** (not yet 100% confirmed — see Known Issues). **MrOS** was only in
+OSF's downstream/eval split (lower risk). **APPLES is clean** (no mention
+anywhere in OSF's own splits/config). A pooled, all-cohort AUROC number
+cannot distinguish "OSF's encoder genuinely generalizes better" from "OSF
+already memorized some of these subjects during pretraining" — it has to
+be broken down per cohort. Did this at context=80m (mid-sweep, both
+heads) directly from `test_windows.parquet` (mean-prob aggregation):
+
+| Task | Head | Cohort | OSF AUROC | SleepFM AUROC | Δ | Contamination risk |
+|---|---|---|---|---|---|---|
+| sex_binary | lstm | apples | 0.957 | 0.783 | **+17.4pp** | clean |
+| sex_binary | lstm | shhs | 0.949 | 0.899 | +5.0pp | high |
+| sex_binary | transformer | apples | 0.970 | 0.846 | **+12.4pp** | clean |
+| sex_binary | transformer | shhs | 0.957 | 0.933 | +2.4pp | high |
+| sleep_efficiency_binary | lstm | apples | 0.755 | 0.701 | +5.5pp | clean |
+| sleep_efficiency_binary | lstm | mros | 0.638 | 0.637 | ~0pp | low |
+| sleep_efficiency_binary | lstm | shhs | 0.800 | 0.765 | +3.5pp | high |
+| sleep_efficiency_binary | transformer | apples | 0.775 | 0.813 | **−3.8pp** | clean |
+| sleep_efficiency_binary | transformer | mros | 0.660 | 0.733 | **−7.3pp** | low |
+| sleep_efficiency_binary | transformer | shhs | 0.807 | 0.789 | +1.8pp | high |
+| apnea_binary | lstm | apples | 0.849 | 0.865 | **−1.7pp** | clean |
+| apnea_binary | lstm | mros | 0.791 | 0.871 | **−7.9pp** | low |
+| apnea_binary | lstm | shhs | 0.896 | 0.869 | +2.7pp | high |
+| apnea_binary | lstm | stages | 0.856 | 0.766 | +9.0pp | high (likely) |
+| apnea_binary | transformer | apples | 0.862 | 0.916 | **−5.4pp** | clean |
+| apnea_binary | transformer | mros | 0.832 | 0.897 | **−6.5pp** | low |
+| apnea_binary | transformer | shhs | 0.920 | 0.899 | +2.1pp | high |
+| apnea_binary | transformer | stages | 0.874 | 0.843 | +3.1pp | high (likely) |
+
+### Honest per-task verdict
+
+- **`sex_binary` — real, credible win.** The clean cohort (APPLES) shows
+  an *even bigger* gap (+12–17pp) than the contaminated cohort (SHHS,
+  +2–5pp). If contamination were driving this, the pattern would run the
+  other way. This is genuine evidence OSF's encoder is substantially
+  better at sex classification, not a memorization artifact. Holds for
+  both heads.
+- **`sleep_efficiency_binary` — mixed, inconclusive.** APPLES flips sign
+  between heads (lstm +5.5pp, transformer −3.8pp); MrOS favors SleepFM in
+  both heads (near-tied to −7.3pp). Only SHHS (contaminated) consistently
+  favors OSF, modestly. **Do not claim an OSF win here** — the clean-cohort
+  evidence doesn't support it either way with confidence yet.
+- **`apnea_binary` — the pooled "OSF wins" result is very likely a
+  contamination artifact, not a real improvement.** OSF loses to SleepFM
+  on **both** lower-risk cohorts (APPLES, MrOS) for **both** heads,
+  sometimes substantially (−7.9pp on MrOS/lstm, −6.5pp on MrOS/transformer)
+  — and only "wins" on the two contamination-risk cohorts (SHHS, STAGES).
+  This replicated identically across both heads, which rules out a
+  single-run fluke. **Honest reading: OSF likely underperforms SleepFM for
+  apnea detection on genuinely held-out data**, and the pooled number
+  should not be quoted without this breakdown.
+
+### Known caveat not yet resolved: subject-count mismatches between OSF and SleepFM
+
+N counts are close but not always identical between the two pipelines at
+the same context/task (e.g. apnea_binary/80m: OSF N=2,077 vs SleepFM
+N=2,054, driven mostly by STAGES: 227 vs 200 — a ~13% difference for that
+cohort specifically). Both pipelines are supposed to draw from the same
+`task_subject_dir`/`split_seed` (confirmed identical in the configs), so
+this is most likely explained by embedding-extraction coverage
+differences (not every subject may have had an OSF embedding ready when a
+given inference run happened) rather than an actual split mismatch — but
+this hasn't been root-caused yet. **Worth verifying before trusting the
+comparison too precisely for STAGES-heavy tasks**, though the direction
+and rough magnitude of the per-cohort findings above are unlikely to
+flip from a few percent of subjects being added/removed.
+
+### What this means for next steps
+
+- **`sex_binary` is worth pursuing further** (remaining head — mean_pool —
+  and eventually LoRA) — the strongest, cleanest signal so far.
+- **`apnea_binary` needs the caveat front-and-center** if it goes in the
+  paper at all in its current form; do not present the pooled AUROC without
+  the per-cohort breakdown.
+- **`sleep_efficiency_binary` needs more data before a verdict** — remaining
+  head, and possibly the other two Tier-1 tasks (`bmi_binary`, `age_class`)
+  for a fuller picture of whether OSF's advantage is task-specific or
+  broader.
+- Per the user's explicit sequencing: **frozen (Stage 1) and LoRA
+  (Stage 2) results should both be in before drawing final conclusions** —
+  these frozen-encoder numbers are informative but not the final word on
+  whether OSF is a strong baseline; do not start Stage 2 implementation
+  until explicitly asked.
+
+---
+
 ## Implementation Checklist
 
 **Work through a few unchecked items, commit after each, check the box,
@@ -379,7 +495,7 @@ the "why," not to know what to do next.
       shard's early progress in its `.out` log before assuming all 6 will
       finish within the 4h `#SBATCH --time` default; bump `--time` on
       resubmit if needed (auto-requeue handles timeouts either way).
-- [ ] 1.10 Run the Stage 1 sweep (5 tasks × 3 heads × 6 contexts = up to 90
+- [~] 1.10 Run the Stage 1 sweep (5 tasks × 3 heads × 6 contexts = up to 90
       training runs, generated via `gen_commands_osf.py` from 1.7), then
       inference, then analysis. Also pure job submission from here —
       mirrors `docs/EXPERIMENTS_GUIDE.md`'s "Submitting Jobs" /
@@ -388,6 +504,11 @@ the "why," not to know what to do next.
       "Step 7 — Running the Full Stage 1 Sweep" section for the complete
       copy-pasteable loop** (train all 15 experiments → monitor → infer →
       analyze → collect). Requires 1.9 to be done first.
+      **IN PROGRESS as of 2026-08-13**: `sex_binary`/`sleep_efficiency_binary`/
+      `apnea_binary` × `lstm`/`transformer` (6 of 15 registry entries) are
+      trained + inferred + analyzed — see the new "Stage 1 Results" section
+      above for the comparison against SleepFM and the honest per-task
+      verdict. `bmi_binary`, `age_class`, and all `mean_pool` runs remain.
 - [ ] 1.11 Re-run the channel-completeness audit against real (not
       50-subject-preview) extraction output; update the table above
 

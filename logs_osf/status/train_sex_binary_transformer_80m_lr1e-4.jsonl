@@ -1,0 +1,2 @@
+{"ts":"2026-08-13T12:34:38-07:00","job_id":"54568366","node":"fc11008","status":"STARTED","task":"sex_binary","head":"transformer","context":"80m","lr":"1e-4","datasets":"apples shhs"}
+{"ts":"2026-08-13T13:08:14-07:00","job_id":"54568366","node":"fc11008","status":"SUCCESS","task":"sex_binary","head":"transformer","context":"80m","lr":"1e-4","datasets":"apples shhs"}
