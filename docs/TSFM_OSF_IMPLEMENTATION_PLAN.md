@@ -429,8 +429,27 @@ the "why," not to know what to do next.
 
 ## Known Issues / Open Questions
 
-- [ ] **SHHS channel approximation impact unknown** — revisit after Stage 1
-  results if SHHS's OSF numbers look degraded (Channel Mapping above).
+- [x] ~~**Does `extract_osf_embeddings.py`'s channel mapping correctly use
+  everything available, or is it missing an unrecognized channel-name
+  variant?**~~ **✅ VERIFIED 2026-08-12 against the real full-population
+  extraction run (checklist 1.9, in progress).** Cross-checked two ways:
+  (1) exhaustively scanned all distinct HDF5 keys across 200 random
+  subjects/dataset — no leg-EMG/abdominal/snore-like channel name exists
+  under any other name that the candidate lists are missing; (2) aggregated
+  the real `_channel_fill_log.jsonl` files from the running extraction
+  (716 APPLES / 936 SHHS / 267 MrOS subjects so far) — every zero-fill rate
+  is a clean 100% or ~0%, never partial/flaky, confirming these are
+  structural per-cohort absences (the channel was never recorded for that
+  cohort), not a naming-match bug: APPLES `EMG_RLeg` 100%, `EMG_LLeg` 19%;
+  SHHS `EMG_LLeg`/`EMG_RLeg`/`SN` 100%, `NP` 15%; MrOS `ABD`/`SN` 100%. This
+  matches the pre-registered 50-subject audit above almost exactly, and
+  matches OSF's own reference implementation's missing-channel handling
+  (zero-fill, per §0 Appendix). **No code fix needed, no re-extraction
+  needed.** SHHS remains the cohort with the most degraded input (3 slots
+  always zero + 1 partial + the EEG C3/C4 duplication approximation) —
+  **impact on SHHS's actual downstream OSF results is still unknown**
+  (that part of this item is not resolved — revisit once Stage 1 training
+  results exist).
 - [ ] **EOG referencing** — encouraging (no NaNs across 20+ smoke-tested
   subjects so far) but not exhaustively confirmed across every cohort.
 - [ ] **STAGES-in-pretraining confirmation** — cross-check numeric IDs

@@ -3,7 +3,7 @@
 #SBATCH --account=def-forouzan_gpu
 #SBATCH --time=04:00:00
 #SBATCH --gpus=nvidia_h100_80gb_hbm3_1g.10gb:1
-#SBATCH --cpus-per-task=4
+#SBATCH --cpus-per-task=5
 #SBATCH --mem=16000M
 #SBATCH --exclude=fc11006
 #SBATCH --signal=B:USR1@120
