@@ -97,11 +97,19 @@ def _classify_failure(exc: BaseException) -> str:
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def build_dataset(cfg: dict, split: str, context_length: str,
-                  task: str, datasets_filter: list, all_windows: bool) -> OSFRawEpochWindowDataset:
+                  task: str, datasets_filter: list, all_windows: bool,
+                  limit: int = None) -> OSFRawEpochWindowDataset:
     """Build an OSFRawEpochWindowDataset, optionally overriding K_max to use
     all windows. Same override technique as Stage 1's build_dataset — the
     in-memory cfg copy's dataset.windows_per_subject is read as _K_max by
-    the dataset class; this does not modify phase0_osf_lora_config.yaml."""
+    the dataset class; this does not modify phase0_osf_lora_config.yaml.
+
+    limit (debug only, NOT present in Stage 1's inference script): caps the
+    subject pool to the first N subjects of the split. Stage 1's inference
+    never needed this — it reads cheap precomputed embeddings, so full-scope
+    inference is fast even without a cap. Stage 2 runs a live LoRA-adapted
+    backbone forward pass per window, so full-scope CPU debugging is
+    impractically slow without restricting subject count first."""
     if all_windows:
         cfg["dataset"]["windows_per_subject"] = 99_999
 
@@ -113,6 +121,7 @@ def build_dataset(cfg: dict, split: str, context_length: str,
             context_length=context_length,
             task=task,
             datasets=datasets_filter,
+            limit=limit,
         )
     return ds
 
@@ -172,6 +181,11 @@ def main():
                         help="Override output directory")
     parser.add_argument("--run-tag",    default="", dest="run_tag",
                         help="Must match the --run-tag used during training (default: no suffix).")
+    parser.add_argument("--limit",      default=None, type=int,
+                        help="DEBUG ONLY, not in Stage 1's inference script: cap the subject "
+                             "pool to the first N subjects of the split. Real/final inference "
+                             "runs should omit this — see build_dataset()'s docstring for why "
+                             "Stage 2 needs it and Stage 1 doesn't.")
     args = parser.parse_args()
 
     with open(args.config) as f:
@@ -207,6 +221,8 @@ def main():
     print(f"  All windows: {all_windows}")
     print(f"  Datasets:    {args.datasets or '(all)'}")
     print(f"  Device:      {device}")
+    if args.limit is not None:
+        print(f"  Limit:       {args.limit} subjects  ⚠️  DEBUG ONLY — omit for real runs")
     print()
 
     any_failed = False
@@ -249,6 +265,7 @@ def main():
                 task=args.task,
                 datasets_filter=args.datasets,
                 all_windows=all_windows,
+                limit=args.limit,
             )
             print(f"  Dataset items: {len(ds):,}  (subjects: {len(ds.df):,})")
 

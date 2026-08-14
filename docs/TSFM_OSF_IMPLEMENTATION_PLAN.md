@@ -878,32 +878,49 @@ from Stage 1 gets edited:
         than Stage 1's (32). Uses a fixed `--batch-size` (default 4)
         instead of inventing an unverified formula; real GPU numbers from
         checklist 2.6 may motivate a real one later.
-      - **Smoke test** (CPU, real data): regenerated a throwaway pilot
-        checkpoint (same recipe as 2.3's pilot: `apnea_binary`/`lstm`/30s,
-        24 subjects, 12 items, warm-started from the real Stage 1
-        checkpoint, trained to completion), then verified inference
-        end-to-end against it — checkpoint load via
-        `set_peft_model_state_dict` succeeded, forward pass produced
-        valid softmax probabilities (rows sum to 1) and correct
-        subject/window bookkeeping (6 subjects × K=5 windows → 30 items,
-        `groupby(subject_id, dataset).size()` = 5 for every subject), and
-        the parquet output schema round-trips correctly
-        (`subject_id, dataset, true_label, pred_label, prob_class0…N,
-        window_idx`). The full CLI path was exercised too, but its
-        default "all windows" mode at 30s context (≈1 window per epoch,
-        so ≈T windows/subject for a full night) combined with no subject
-        limit made a full CPU run impractically slow for a smoke test —
-        verified the same underlying functions
-        (`get_subject_ids`/`run_inference`/`build_combined_lora_model`)
-        directly instead, which the CLI itself imports unmodified, so
-        this is a genuine test of the real code path, not a reimplementation.
-        Real end-to-end CLI timing (both `--no-all-windows` and full
-        "all windows" mode) is expected to be exercised for real on GPU
-        (checklist 2.6/2.7), same as Stage 2 training's own
-        not-yet-GPU-exercised caveat. All throwaway pilot/smoke-test
-        outputs were deleted afterward — **outputs directory confirmed
-        empty** before the next step, so the real sweep (2.7) starts
-        clean, warm-starting only from genuine Stage 1 checkpoints.
+      - **Added `--limit` (debug only, NOT in Stage 1's inference
+        script)**: found live, after the user tried the `🔬 OSF-LoRA
+        Step3` config against their own real Step2 pilot checkpoint —
+        the CLI's default "all windows" mode at 30s context (≈1 window
+        per epoch, so ≈T windows/subject for a full night) with no
+        subject cap made a CPU debug run impractically slow (the user
+        had to stop it manually). Stage 1's inference script never
+        needed a `--limit` because it only does cheap precomputed-
+        embedding lookups; Stage 2 runs a live LoRA-adapted backbone
+        forward pass per window, so full-scope CPU debugging needs a
+        subject cap the way training already has one. Added
+        `--limit N` (passed through to `OSFRawEpochWindowDataset`,
+        capping the subject pool same as training's own `--limit`),
+        printed loudly with a "DEBUG ONLY" warning when set, and wired
+        into the `🔬 OSF-LoRA Step3` config (`--limit 6
+        --no-all-windows`) alongside the existing `--no-all-windows`
+        flag. Documented in-code as deliberately absent from real/final
+        inference runs.
+      - **Smoke test** (CPU, real data, via the real CLI end-to-end —
+        not just the underlying functions): re-ran `🔬 OSF-LoRA Step3`
+        (now with `--limit 6 --no-all-windows`) against the user's own
+        real Step2 pilot checkpoint (`apnea_binary`/`lstm`/30s,
+        `run_tag=pilot_test`, warm-started from the real Stage 1
+        checkpoint) — completed successfully: checkpoint load via
+        `set_peft_model_state_dict` succeeded, 6 subjects × K=5 windows
+        → 30 items, 83.33% segment accuracy, parquet written with the
+        correct schema (`subject_id, dataset, true_label, pred_label,
+        prob_class0…N, window_idx`). Confirms the full CLI path (arg
+        parsing, output path construction, skip-if-exists, per-context
+        loop, failure handling) works, not just the imported helper
+        functions checked in an earlier, separate direct-script probe
+        during initial implementation (that earlier probe predates the
+        `--limit` fix and is superseded by this CLI-level result).
+        Earlier throwaway smoke-test outputs (from a separate throwaway
+        pilot checkpoint used before `--limit` existed) were deleted;
+        the current `pilot_test`-tagged checkpoint/inference output are
+        the user's own real Step2/Step3 debug artifacts and are left in
+        place for now — clean these before the real sweep (2.7), same
+        as the Step2 pilot's own cleanup note.
+        Real GPU timing for both `--no-all-windows` and full "all
+        windows" mode at full scope is still expected from checklist
+        2.6/2.7, same as Stage 2 training's own not-yet-GPU-exercised
+        caveat.
       - VSCode debug config added: `🔬 OSF-LoRA Step3: Infer Pilot DEBUG
         (apnea_binary, lstm, 30s, CPU) (checklist 2.4)`.
       🛑 **User checkpoint** — debug the `🔬 OSF-LoRA Step3` config before
