@@ -544,6 +544,23 @@ end-to-end, with a memory-mitigation fallback ladder), and a Step 0
 verification checklist to run before the full sweep. First pass scope is
 the 5 Tier-1 tasks (sex, sleep efficiency, BMI, age, apnea).
 
+**Stage 1 (frozen encoder) results, 2026-08-13, in progress: all 5 Tier-1
+tasks × lstm/transformer trained and analyzed against SleepFM
+`phase0_v3_full` (`mean_pool` still pending).** Headline finding, per-cohort
+verified against OSF's exact pretraining subject-ID overlap (see "Honest
+comparison framing" below): **`sex_binary`, `bmi_binary`, and `age_class`
+are real, credible OSF wins** — the clean-cohort (APPLES) gap is *larger*
+than the contaminated-cohort (SHHS) gap in every one of these three tasks,
+which is the opposite of what contamination alone would produce.
+**`sleep_efficiency_binary` is inconclusive; `apnea_binary` is genuinely
+mixed** (OSF loses on both clean lower-N cohorts, wins on STAGES and SHHS,
+not explainable by contamination alone since STAGES is confirmed clean).
+Emerging pattern worth tracking: OSF looks strong on tasks tied to
+static/structural subject characteristics (sex, age, BMI) and unproven on
+tasks tied to dynamic physiological events (sleep efficiency, apnea) — see
+`docs/TSFM_OSF_IMPLEMENTATION_PLAN.md`'s "Stage 1 Results" section for the
+full per-cohort tables. Do not start Stage 2 (LoRA) until explicitly asked.
+
 **PhysioOmni (model #2 of 3) also has a written plan now, code-verified
 2026-08-13: [`docs/TSFM_PHYSIOOMNI_IMPLEMENTATION_PLAN.md`](docs/TSFM_PHYSIOOMNI_IMPLEMENTATION_PLAN.md)
 — plan only, nothing implemented.** Verdict: proceed, but with real
