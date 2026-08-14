@@ -60,11 +60,15 @@ still outstanding.
 the Implementation Checklist's Phase 2 section below (expanded 2026-08-13
 from a 3-item stub into the same granularity as Phase 1). Items 2.1
 (peft/LoRA-wiring verification), 2.2 (Stage 2 config, shared raw-signal
-utility, `OSFRawEpochWindowDataset`), and 2.3 (`train_osf_lora.py` +
+utility, `OSFRawEpochWindowDataset`), 2.3 (`train_osf_lora.py` +
 job script, combined LoRA+head model, warm-start from Stage 1, real CPU
-pilot successful end-to-end) are all done — 🛑 **user checkpoint**, debug
-via the `🔬 OSF-LoRA Step2` config in `~/.vscode/launch.json` before
-continuing to 2.4 (`infer_osf_lora_subject_windows.py`). Same
+pilot successful end-to-end — user independently reran and confirmed the
+expected severe-overfitting pattern on the tiny 12-item debug pilot), and
+2.4 (`infer_osf_lora_subject_windows.py` + job script, live-backbone
+inference for LoRA checkpoints, smoke-tested against a throwaway pilot
+checkpoint then cleaned up) are all done. 🛑 **User checkpoint** — debug
+via the `🔬 OSF-LoRA Step3` config in `~/.vscode/launch.json` before
+continuing to 2.5 (experiment registry + command generator). Same
 one-step-at-a-time workflow as Phase 1.
 
 ---
@@ -121,8 +125,8 @@ one-step-at-a-time workflow as Phase 1.
 | `scripts/test_osf_raw_epoch_dataset.py` | Smoke test for the above | ✅ DONE |
 | `scripts/train_osf_lora.py` | New end-to-end script, OSF encoder in the trainable graph | ✅ DONE |
 | `jobs/train_osf_lora_gpu.sh` | SLURM job script for LoRA training | ✅ DONE |
-| `scripts/infer_osf_lora_subject_windows.py` | Inference for LoRA checkpoints — live backbone forward pass, not cached `.npy` | ⬜ TODO (checklist 2.4) |
-| `jobs/infer_osf_lora_subject_windows_gpu.sh` | SLURM job script for LoRA inference | ⬜ TODO (checklist 2.4) |
+| `scripts/infer_osf_lora_subject_windows.py` | Inference for LoRA checkpoints — live backbone forward pass, not cached `.npy` | ✅ DONE |
+| `jobs/infer_osf_lora_subject_windows_gpu.sh` | SLURM job script for LoRA inference | ✅ DONE |
 | `experiments/v2_osf_lora_registry.yaml` | Stage 2 experiment registry, isolated `results_dir`/`logs_dir` | ⬜ TODO (checklist 2.5) |
 | `scripts/gen_commands_osf_lora.py` | Command generator for Stage 2, forked from `gen_commands_osf.py` | ⬜ TODO (checklist 2.5) |
 
@@ -841,7 +845,7 @@ from Stage 1 gets edited:
         calibration (checklist 2.6, separate step).
       🛑 **User checkpoint** — debug the `🔬 OSF-LoRA Step2` config before
       continuing to 2.4 (`infer_osf_lora_subject_windows.py`).
-- [ ] 2.4 **`scripts/infer_osf_lora_subject_windows.py` +
+- [x] 2.4 **`scripts/infer_osf_lora_subject_windows.py` +
       `jobs/infer_osf_lora_subject_windows_gpu.sh`** (bundled, same
       pattern as Stage 1's 1.6). **New relative to Stage 1's Appendix §6
       draft, which only covered training** — Stage 2 needs its own
@@ -851,8 +855,59 @@ from Stage 1 gets edited:
       checkpoint, runs the LoRA-adapted backbone live on raw signal per
       window (via the same shared utility from 2.2), same output parquet
       schema as Stage 1's inference for downstream `analyze`/`collect`
-      compatibility. Debug config + smoke test against the 2.3 pilot
-      checkpoint. 🛑 **User checkpoint**.
+      compatibility.
+      - **Implementation notes**: reuses (imports, doesn't duplicate)
+        `build_combined_lora_model` from `train_osf_lora.py` — same model
+        construction as training, so architecture can never drift between
+        train and inference. Loads the trained checkpoint via peft's
+        `set_peft_model_state_dict` (the exact inverse of training's
+        `get_peft_model_state_dict` save — same round-trip machinery
+        already proven working in 2.3's resume/best-checkpoint logic, now
+        exercised from a fresh process instead of mid-training).
+        Seq2label-only, matching `OSFRawEpochWindowDataset`'s scope — no
+        `anchor_patch_end`/seq2seq handling like Stage 1's script carries.
+        `num_classes` read from the checkpoint's sibling `metrics.json`,
+        same as Stage 1.
+      - **Deliberate simplification vs. Stage 1's inference script**: does
+        NOT reuse Stage 1's context-length batch-size auto-scaling formula
+        (`_ref_bs`/`_ref_N`). That formula assumes a cheap precomputed-
+        embedding lookup; here every item still runs a full LoRA-adapted
+        ViT forward pass per raw epoch (chunked internally via
+        `chunk_batch_size`), so the cost profile doesn't match — same
+        reason `train_osf_lora.py`'s own batch size (4) is much smaller
+        than Stage 1's (32). Uses a fixed `--batch-size` (default 4)
+        instead of inventing an unverified formula; real GPU numbers from
+        checklist 2.6 may motivate a real one later.
+      - **Smoke test** (CPU, real data): regenerated a throwaway pilot
+        checkpoint (same recipe as 2.3's pilot: `apnea_binary`/`lstm`/30s,
+        24 subjects, 12 items, warm-started from the real Stage 1
+        checkpoint, trained to completion), then verified inference
+        end-to-end against it — checkpoint load via
+        `set_peft_model_state_dict` succeeded, forward pass produced
+        valid softmax probabilities (rows sum to 1) and correct
+        subject/window bookkeeping (6 subjects × K=5 windows → 30 items,
+        `groupby(subject_id, dataset).size()` = 5 for every subject), and
+        the parquet output schema round-trips correctly
+        (`subject_id, dataset, true_label, pred_label, prob_class0…N,
+        window_idx`). The full CLI path was exercised too, but its
+        default "all windows" mode at 30s context (≈1 window per epoch,
+        so ≈T windows/subject for a full night) combined with no subject
+        limit made a full CPU run impractically slow for a smoke test —
+        verified the same underlying functions
+        (`get_subject_ids`/`run_inference`/`build_combined_lora_model`)
+        directly instead, which the CLI itself imports unmodified, so
+        this is a genuine test of the real code path, not a reimplementation.
+        Real end-to-end CLI timing (both `--no-all-windows` and full
+        "all windows" mode) is expected to be exercised for real on GPU
+        (checklist 2.6/2.7), same as Stage 2 training's own
+        not-yet-GPU-exercised caveat. All throwaway pilot/smoke-test
+        outputs were deleted afterward — **outputs directory confirmed
+        empty** before the next step, so the real sweep (2.7) starts
+        clean, warm-starting only from genuine Stage 1 checkpoints.
+      - VSCode debug config added: `🔬 OSF-LoRA Step3: Infer Pilot DEBUG
+        (apnea_binary, lstm, 30s, CPU) (checklist 2.4)`.
+      🛑 **User checkpoint** — debug the `🔬 OSF-LoRA Step3` config before
+      continuing to 2.5.
 - [ ] 2.5 **`experiments/v2_osf_lora_registry.yaml` +
       `scripts/gen_commands_osf_lora.py`** (forked from
       `gen_commands_osf.py`, same reason `gen_commands_osf.py` itself was
