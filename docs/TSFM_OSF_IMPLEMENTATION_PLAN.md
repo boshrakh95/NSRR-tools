@@ -65,11 +65,16 @@ job script, combined LoRA+head model, warm-start from Stage 1, real CPU
 pilot successful end-to-end — user independently reran and confirmed the
 expected severe-overfitting pattern on the tiny 12-item debug pilot), and
 2.4 (`infer_osf_lora_subject_windows.py` + job script, live-backbone
-inference for LoRA checkpoints, smoke-tested against a throwaway pilot
-checkpoint then cleaned up) are all done. 🛑 **User checkpoint** — debug
-via the `🔬 OSF-LoRA Step3` config in `~/.vscode/launch.json` before
-continuing to 2.5 (experiment registry + command generator). Same
-one-step-at-a-time workflow as Phase 1.
+inference for LoRA checkpoints; needed a follow-up `--limit` fix after the
+user's own real debug run exposed how slow unrestricted CPU inference is —
+**confirmed working by the user 2026-08-14**), and 2.5 (experiment
+registry + `gen_commands_osf_lora.py`, plus a real bug fix in
+`train_osf_lora.py` itself — `context_lr_overrides` was silently never
+applied, found while double-checking registry/config consistency against
+Stage 1) are all done. Next: checklist 2.6 (real wall-time calibration
+pilot on GPU) — no more debug-config checkpoints needed until then, since
+2.6 requires an actual GPU allocation rather than local CPU debugging.
+Same one-step-at-a-time workflow as Phase 1.
 
 ---
 
@@ -127,8 +132,8 @@ one-step-at-a-time workflow as Phase 1.
 | `jobs/train_osf_lora_gpu.sh` | SLURM job script for LoRA training | ✅ DONE |
 | `scripts/infer_osf_lora_subject_windows.py` | Inference for LoRA checkpoints — live backbone forward pass, not cached `.npy` | ✅ DONE |
 | `jobs/infer_osf_lora_subject_windows_gpu.sh` | SLURM job script for LoRA inference | ✅ DONE |
-| `experiments/v2_osf_lora_registry.yaml` | Stage 2 experiment registry, isolated `results_dir`/`logs_dir` | ⬜ TODO (checklist 2.5) |
-| `scripts/gen_commands_osf_lora.py` | Command generator for Stage 2, forked from `gen_commands_osf.py` | ⬜ TODO (checklist 2.5) |
+| `experiments/v2_osf_lora_registry.yaml` | Stage 2 experiment registry, isolated `results_dir`/`logs_dir` | ✅ DONE |
+| `scripts/gen_commands_osf_lora.py` | Command generator for Stage 2, forked from `gen_commands_osf.py` | ✅ DONE |
 
 ---
 
@@ -924,17 +929,74 @@ from Stage 1 gets edited:
       - VSCode debug config added: `🔬 OSF-LoRA Step3: Infer Pilot DEBUG
         (apnea_binary, lstm, 30s, CPU) (checklist 2.4)`.
       🛑 **User checkpoint** — debug the `🔬 OSF-LoRA Step3` config before
-      continuing to 2.5.
-- [ ] 2.5 **`experiments/v2_osf_lora_registry.yaml` +
+      continuing to 2.5. **Confirmed by the user 2026-08-14** (ran Step2
+      then Step3 successfully after the `--limit` fix above).
+      - **Also found and fixed during 2.4's debugging (real user run)**:
+        the shared `🔬 OSF-LoRA Step2` config's default "all windows"
+        inference at 30s context (no subject cap) was impractically slow
+        on CPU — the user had to stop it manually. Root cause and fix
+        described above (`--limit` addition). This surfaced *after* 2.4
+        was first marked done and required a follow-up commit — noted
+        here so the sequence is traceable.
+- [x] 2.5 **`experiments/v2_osf_lora_registry.yaml` +
       `scripts/gen_commands_osf_lora.py`** (forked from
       `gen_commands_osf.py`, same reason `gen_commands_osf.py` itself was
       forked from `gen_commands.py` rather than parameterized —
       `gen_commands_osf.py`'s `_TRAIN_SCRIPT`/`_INFER_SCRIPT` are hardcoded
       module constants, not registry-configurable). Same 15-entry scope as
-      `v2_osf_registry.yaml` initially (5 Tier-1 tasks × lstm/transformer/
-      mean_pool), `results_dir`/`logs_dir`/`python_bin` pointed at Stage
-      2's isolated paths. Wall-time tables start as placeholder copies,
-      same caveat as Stage 1's registry.
+      `v2_osf_registry.yaml` (5 Tier-1 tasks × lstm/transformer/mean_pool),
+      `results_dir`/`logs_dir`/`python_bin` pointed at Stage 2's isolated
+      paths.
+      - **Real schema divergences from Stage 1's registry (not just a
+        path rename)**, found while double-checking against Stage 1 per
+        the standing instruction:
+        - **No `gradient_accumulation` section / `batch_mode` field.**
+          `train_osf_lora.py` has no `--accum-steps` flag and
+          `jobs/train_osf_lora_gpu.sh` has no `ACCUM_STEPS` env var —
+          gradient accumulation was never implemented for Stage 2. Each
+          entry has a flat `batch_size: 4` (matching
+          `train_osf_lora.py`'s own CLI default), passed straight through,
+          uniform across head types (unlike Stage 1's 32/32/64/128 —
+          Stage 2's per-item cost is dominated by the backbone forward
+          pass, which doesn't vary by head type the way Stage 1's
+          head-only training does).
+        - `task_type` kept in each entry for side-by-side readability
+          against `v2_osf_registry.yaml` but is informational only —
+          `gen_commands_osf_lora.py` never reads it (no `--task-type`
+          flag exists on either Stage 2 script).
+        - **`probe-batch` subcommand dropped entirely** (not just kept
+          for schema parity like Stage 1's is) — no `batch_mode` concept
+          exists in this registry at all, so there's nothing to probe.
+        - Added an optional `--stage1-checkpoint` override for `train`
+          (normally omitted — `train_osf_lora.py` auto-detects the
+          matching Stage 1 checkpoint per task/head/context).
+      - **Real bug found and fixed in `train_osf_lora.py` itself** while
+        writing the registry (checking `context_lr_overrides`, which
+        `phase0_osf_lora_config.yaml` sets for `120m`/`240m`, against
+        what actually consumes it): `train_osf_context_sweep.py` (Stage 1)
+        actively applies this override per-context
+        (`if not cli_lr_set: ... cfg["training"]["lr"] = override_lr`),
+        but `train_osf_lora.py` never read it at all — every context
+        would have silently trained at the same LR regardless of the
+        config's stated 120m/240m override. Ported the exact same
+        `cli_lr_set`-gated logic into `train_one_context()`/`main()`
+        (CLI `--lr`, if given, still takes precedence over the config
+        override, matching Stage 1 exactly). `windows_strategy`/
+        `token_budget_minutes`/`k_max` were checked too but found
+        harmless — both stages default to `windows_strategy: "fixed"`,
+        which makes those keys inert in Stage 1 as well, so this isn't a
+        Stage-2-specific gap.
+      - Wall-time tables: Stage 1's own (already-placeholder) OSF tables,
+        scaled by a flat 6× multiplier — an explicitly-labeled unverified
+        guess (full backbone forward+backward per raw epoch every step is
+        qualitatively far more expensive than Stage 1's cached-embedding
+        lookup, but no real number exists to calibrate the multiplier
+        itself). Revisit after checklist 2.6.
+      - Smoke-tested: `list`, `train`, `infer`, `status`, `runs`,
+        `analyze`, `collect` all verified to produce correct, well-formed
+        commands against the real registry; confirmed
+        `analyze_windows.py`/`collect_results_v2.py` accept every flag
+        `gen_commands_osf_lora.py` generates (`--help` cross-check).
 - [ ] 2.6 **Real wall-time calibration pilot on GPU** (Appendix §6.3) — a
       short real run (few epochs, smallest context) on an actual GPU
       allocation to get real per-step timing, since Stage 2's cost model

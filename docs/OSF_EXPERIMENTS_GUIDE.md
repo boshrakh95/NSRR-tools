@@ -35,7 +35,7 @@ complete list; everything not listed there is intentionally identical.
 8. [Step 5 — Inference](#step-5--inference)
 9. [Step 6 — Command Generator (`gen_commands_osf.py`)](#step-6--command-generator-gen_commands_osfpy)
 10. [Step 7 — Running the Full Stage 1 Sweep](#step-7--running-the-full-stage-1-sweep)
-11. Step 8 — Stage 2 (LoRA fine-tuning) **(not yet implemented)**
+11. [Step 8 — Stage 2 (LoRA fine-tuning)](#step-8--stage-2-lora-fine-tuning)
 12. [Checkpoint Resume and Auto-Requeue](#checkpoint-resume-and-auto-requeue)
 13. [Job Run History and Tracking](#job-run-history-and-tracking)
 
@@ -380,6 +380,249 @@ figure/table subcommands. Once `collect` has produced `training.csv`/
 `analysis.csv` under `.../phase0_osf/collected/`, feed those into notebooks
 the same way SleepFM's collected results are — don't build a parallel
 `plot_*.py` pipeline for OSF.
+
+---
+
+## Step 8 — Stage 2 (LoRA fine-tuning)
+
+**Status: implementation in progress.** Checklist 2.1–2.5 done (peft
+verification, config + raw-signal dataset, training script, inference
+script, registry + command generator) — see
+`docs/TSFM_OSF_IMPLEMENTATION_PLAN.md`'s Phase 2 checklist for full
+technical detail; this section is the operational how-to-run counterpart,
+same relationship Steps 0–7 above have to Phase 1. **Not yet done:**
+checklist 2.6 (real GPU wall-time calibration), 2.7 (the full sweep,
+🛑 user-gated), 2.8 (analysis).
+
+### What's different from Stage 1
+
+Stage 1 precomputes embeddings once, then trains lightweight heads on
+cached `.npy` files — cheap, and the OSF backbone never appears in the
+trainable graph. **Stage 2 puts the OSF backbone itself in the trainable
+graph** (wrapped with LoRA adapters via `peft`) and trains it jointly with
+the sequence head, on raw signal loaded live every step — there is no
+precomputed-embeddings step at all. Concretely:
+
+| | Stage 1 (frozen encoder) | Stage 2 (LoRA) |
+|---|---|---|
+| **Input to training** | Precomputed `.npy` embeddings `[T,2,768]` | Raw signal `[N,12,1920]`, loaded live per window |
+| **What's trainable** | Sequence head only (~130K–2.4M params) | LoRA adapters (~442K, 0.52% of backbone) + sequence head (~2.1M) |
+| **Config** | `configs/phase0_osf_config.yaml` | `configs/phase0_osf_lora_config.yaml` |
+| **Training script** | `scripts/train_osf_context_sweep.py` | `scripts/train_osf_lora.py` |
+| **Job script** | `jobs/train_osf_context_sweep_gpu.sh` | `jobs/train_osf_lora_gpu.sh` |
+| **Inference script** | `scripts/infer_osf_subject_windows.py` (reads `.npy`) | `scripts/infer_osf_lora_subject_windows.py` (live backbone forward pass) |
+| **Inference job script** | `jobs/infer_osf_subject_windows_gpu.sh` | `jobs/infer_osf_lora_subject_windows_gpu.sh` |
+| **Registry** | `experiments/v2_osf_registry.yaml` | `experiments/v2_osf_lora_registry.yaml` |
+| **Command generator** | `scripts/gen_commands_osf.py` | `scripts/gen_commands_osf_lora.py` |
+| **Results dir** | `.../results/phase0_osf/` | `.../results/phase0_osf_lora/` |
+| **Logs dir** | `logs_osf/` | `logs_osf_lora/` |
+| **Checkpoint contents** | Full sequence-head `state_dict` | `peft`'s `get_peft_model_state_dict()` — LoRA deltas + head only, NOT the 85M-param frozen backbone (always reloadable from `embedding.checkpoint_dir`) |
+| **Batch size** | 32 (lstm/transformer), 64–128 (mean_pool), grad-accum to an effective batch of 32 | Flat **4** for all heads, no grad accumulation (Stage 2 has no `--accum-steps`) |
+| **Training procedure** | Single stage | **Staged LP-FT**: warm-starts the sequence head from the matching Stage 1 checkpoint, then fine-tunes LoRA + head together (Kumar et al. 2022 justification — see `CLAUDE.md`) |
+| **Wall-time tables** | Placeholder (uncalibrated) | Placeholder × 6 (uncalibrated, qualitative multiplier — see checklist 2.6) |
+
+Everything not listed above (labels/splits, `task_subject_dir`,
+`split_seed`, channel mapping, sequence-head architecture) is identical to
+Stage 1 by design, for a fair comparison.
+
+### Step 8.0 — Environment (same as Stage 1)
+
+Same `osf_env`, same checkpoint. No separate setup needed — see Step 0
+above.
+
+### Step 8.1 — peft/LoRA wiring verification
+
+**Status: DONE.** Live-verified against the real OSF checkpoint (not
+assumed from docs): `LoraConfig(target_modules=["to_qkv", "to_out.0"],
+r=8, lora_alpha=16)` correctly injects LoRA adapters into all 12
+transformer blocks (96 LoRA-parameter submodules, 442,368 / 85,767,936
+base params trainable ≈ 0.52%), `peft`'s custom-method delegation
+(`forward_encoding`) forwards correctly through the wrapped model, and
+gradients flow to LoRA parameters from a loss computed through it. See
+`docs/TSFM_OSF_IMPLEMENTATION_PLAN.md` checklist 2.1 for the verification
+script/output.
+
+### Step 8.2 — Config + raw-signal dataset
+
+**Status: DONE.** `configs/phase0_osf_lora_config.yaml` — forked from
+Stage 1's config, same channel mapping / labels / splits / head
+architecture, new `lora:` section (`r=8, lora_alpha=16, lora_dropout=0.05,
+target_modules=["to_qkv","to_out.0"], modules_to_save=["sequence_head"]`
+— not yet tuned), no `embedding_dir` (nothing precomputed).
+
+```bash
+# Dataset smoke test (mirrors Step 2 above, but for raw signal windows)
+python scripts/test_osf_raw_epoch_dataset.py \
+    --config configs/phase0_osf_lora_config.yaml \
+    --task apnea_binary --context 30s 10m 240m \
+    --datasets apples --limit 5
+```
+
+Verified (2026-08-13): correct `[B,N,12,1920]` shapes at 30s/10m/240m
+context extremes, no NaN/Inf, correct padding, against real APPLES
+subjects. VSCode config: `🔬 OSF-LoRA Step1`.
+
+### Step 8.3 — Training
+
+**Status: DONE (script + job script), CPU pilot successful end-to-end;
+full sweep not yet run (depends on 2.6/2.7).**
+
+```bash
+# Tiny CPU debug pilot (mirrors the VSCode "🔬 OSF-LoRA Step2" config).
+# --limit/--max-items keep this fast — DEBUG ONLY, omit for real runs.
+# NOTE: training.epochs comes from the config file, not a CLI flag (same
+# as Stage 1) — edit configs/phase0_osf_lora_config.yaml's training.epochs
+# temporarily (e.g. to 3) for a faster debug run, then set it back.
+python scripts/train_osf_lora.py \
+    --config configs/phase0_osf_lora_config.yaml \
+    --task apnea_binary --head lstm --context 30s \
+    --datasets apples --limit 24 --max-items 12 \
+    --batch-size 2 --run-tag pilot_test --cpu
+```
+
+**Output:** `{results_dir}/{task}_{head_type}/context_{L}/{best_model.pt,metrics.json,training_curves.csv}`,
+`{results_dir}/{task}_{head_type}/summary.csv` — `results_dir` =
+`/scratch/boshra95/psg_full/unified/results/phase0_osf_lora`.
+`best_model.pt` is a `peft` state dict (LoRA deltas + `sequence_head`),
+**not** the full backbone — much smaller than Stage 1's checkpoint.
+
+**Warm-start from Stage 1:** if `--stage1-checkpoint` isn't passed, the
+script auto-detects the matching Stage 1 checkpoint at
+`/scratch/boshra95/psg_full/unified/results/phase0_osf/{task}_{head}/context_{ctx}/best_model.pt`.
+Without either a resume state or a Stage 1 checkpoint, the head starts
+from random init — a loud `warnings.warn` fires, and this is only meant
+for quick architecture-correctness pilots, never a real run.
+
+**Expected pilot behavior — severe overfitting, not a bug:** with only a
+handful of debug items, train loss collapses toward 0 within a few epochs
+while val loss climbs and val accuracy stays at chance. This is expected —
+the pilot's purpose is "does the pipeline run and do gradients flow,"
+not "is the model good." Don't read anything into pilot-scale metrics.
+
+**GPU job** (not yet run for real — checklist 2.6/2.7):
+```bash
+sbatch --export=ALL,TASK=apnea_binary,HEAD=lstm jobs/train_osf_lora_gpu.sh
+```
+Same auto-resume mechanism as Stage 1 (`--signal=B:USR1@120` + `resume.pt`,
+saved every epoch as a `peft` state dict + optimizer/scheduler state),
+same status-JSONL convention, logs to `logs_osf_lora/`.
+
+⚠️ **Wall-time NOT calibrated** — the job script's 24h default is a
+placeholder, not measured. See checklist 2.6.
+
+### Step 8.4 — Inference
+
+**Status: DONE (script + job script), CPU pilot successful end-to-end
+against a real Stage-2-trained checkpoint; full sweep not yet run.**
+
+```bash
+# CPU debug run against a Step 8.3 pilot checkpoint (mirrors the VSCode
+# "🔬 OSF-LoRA Step3" config). --limit is DEBUG ONLY (not in Stage 1's
+# inference script at all) — Stage 2 inference runs a live backbone
+# forward pass per window, so full-scope CPU debugging is impractically
+# slow without it; omit for real runs.
+python scripts/infer_osf_lora_subject_windows.py \
+    --config configs/phase0_osf_lora_config.yaml \
+    --task apnea_binary --head lstm --context 30s \
+    --datasets apples --split test --limit 6 --no-all-windows \
+    --batch-size 2 --run-tag pilot_test --cpu
+```
+
+**Output:** `{inference_dir}/{task}_{head_type}/context_{L}/{split}_windows.parquet`
+— identical schema to Stage 1's inference output (`subject_id, dataset,
+window_idx, true_label, pred_label, prob_class0…prob_classN`) for
+downstream `analyze`/`collect` compatibility. No `anchor_patch_end`
+column — Stage 2 is seq2label-only for now (matches
+`OSFRawEpochWindowDataset`'s scope).
+
+**GPU job** (not yet run for real):
+```bash
+sbatch --export=ALL,TASK=apnea_binary,HEAD=lstm,CONTEXTS="30s 10m 40m 80m 120m 240m" \
+    jobs/infer_osf_lora_subject_windows_gpu.sh
+```
+Same auto-resume mechanism, same status-JSONL convention, logs to
+`logs_osf_lora/`.
+
+**Batch-size note (deliberately simpler than Stage 1's):** does NOT reuse
+Stage 1's context-length auto-scaling formula — that formula assumes a
+cheap embedding lookup, and every Stage 2 item still runs a full
+LoRA-adapted backbone forward pass. Uses a fixed `--batch-size` (default
+4) instead of inventing an unverified scaling formula.
+
+### Step 8.5 — Command Generator (`gen_commands_osf_lora.py`)
+
+**Status: DONE**, smoke-tested against the real registry (`list`,
+`train`, `infer`, `status`, `runs`, `analyze`, `collect` all verified to
+produce correct commands); no real GPU sweep has run yet.
+
+```bash
+# List all 15 tier-1 LoRA experiments and their status
+python scripts/gen_commands_osf_lora.py list
+
+# Train sbatch command for one context (auto-detects the matching Stage 1
+# checkpoint for warm-starting — no need to specify it)
+python scripts/gen_commands_osf_lora.py train apnea_binary_lstm --context 30s
+
+# Inference sbatch command (auto-discovers trained contexts)
+python scripts/gen_commands_osf_lora.py infer apnea_binary_lstm --split val
+
+# File-level status / job history for one experiment
+python scripts/gen_commands_osf_lora.py status apnea_binary_lstm
+python scripts/gen_commands_osf_lora.py runs apnea_binary_lstm
+
+# Analysis / collection — SAME underlying scripts as Stage 1, reused
+# unmodified, just pointed at phase0_osf_lora's results dir
+python scripts/gen_commands_osf_lora.py analyze apnea_binary_lstm --plot
+python scripts/gen_commands_osf_lora.py collect
+```
+
+**Registry:** `experiments/v2_osf_lora_registry.yaml` — same 15 tier-1
+entries as `v2_osf_registry.yaml` (identical tasks/datasets/contexts,
+required for a fair comparison), `results_dir`/`inference_dir` pointed at
+`.../results/phase0_osf_lora`, flat `batch_size: 4` for every entry (see
+the comparison table above for why this differs from Stage 1's schema).
+
+**Real schema differences from `gen_commands_osf.py`** (not just path
+renames — found while double-checking against Stage 1, see
+`docs/TSFM_OSF_IMPLEMENTATION_PLAN.md` checklist 2.5 for the full
+reasoning):
+- **No gradient-accumulation machinery at all** — `train_osf_lora.py` has
+  no `--accum-steps` flag, so there's no `resolve_batch_accum()`,
+  `gradient_accumulation` registry section, or `ACCUM_STEPS` env var.
+- **No `probe-batch` subcommand** — dropped entirely (not kept for schema
+  parity like Stage 1's is), since this registry has no `batch_mode`
+  concept to probe.
+- **No `TASK_TYPE` env var** — neither Stage 2 script has a `--task-type`
+  flag.
+- Added an optional `--stage1-checkpoint` override for `train` (normally
+  omitted so auto-detection handles it).
+
+**Subcommands kept**: `list, train, infer, analyze, build-heatmap,
+collect, threshold-tuning, status, runs` — same figure/table subcommands
+dropped as Stage 1's generator, same reasoning (superseded by notebooks).
+
+**Real bug found and fixed while building this step**:
+`train_osf_lora.py` never read `context_lr_overrides` from the config
+(Stage 1's script does — `phase0_osf_lora_config.yaml` sets a lower LR for
+120m/240m, but nothing was applying it). Fixed by porting Stage 1's exact
+`cli_lr_set`-gated override logic into `train_osf_lora.py`. If you ran any
+120m/240m Stage 2 training before 2026-08-14, it used the base LR, not the
+override — re-run if that matters for your results.
+
+### Not yet done
+
+- **Checklist 2.6** — real wall-time calibration pilot on GPU (current
+  wall-time tables are an unverified 6× placeholder multiplier on Stage
+  1's own already-placeholder numbers).
+- **Checklist 2.7** — 🛑 the full Stage 2 sweep (same 5-task ×
+  lstm/transformer scope as Stage 1's current progress; `mean_pool`
+  deferred, matching Stage 1). Applies the memory-mitigation ladder from
+  `docs/TSFM_OSF_IMPLEMENTATION_PLAN.md` Appendix §6.2 if GPU memory
+  pressure appears (gradient checkpointing → larger GPU allocation →
+  capped max context, in that order).
+- **Checklist 2.8** — analyze + collect Stage 2 results, compare against
+  Stage 1 + SleepFM, same contamination-aware methodology as Stage 1's
+  results section.
 
 ---
 

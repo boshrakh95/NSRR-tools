@@ -245,11 +245,25 @@ def train_one_context(
     max_items: int,
     batch_size: int = 4,
     exp_id: str = None,
+    cli_lr_set: bool = False,
 ):
     if exp_id is None:
         exp_id = f"{task}_{head_type}"
     t_cfg = cfg["training"]
     N = parse_context_length(context_length)
+
+    # ── Per-context LR override (only when no CLI --lr was given) ──────────
+    # Identical logic to train_osf_context_sweep.py's train_one_context —
+    # found missing here during checklist 2.5's Stage-1-parity check.
+    # phase0_osf_lora_config.yaml sets context_lr_overrides for 120m/240m
+    # (5e-5, lower than the 1e-4 default) but nothing applied it before
+    # this fix, silently leaving long-context LoRA runs at the wrong LR.
+    if not cli_lr_set:
+        ctx_lr_overrides = t_cfg.get("context_lr_overrides", {})
+        if str(context_length) in ctx_lr_overrides:
+            override_lr = float(ctx_lr_overrides[str(context_length)])
+            t_cfg["lr"] = override_lr
+            print(f"  LR override for {context_length}: {override_lr} (from context_lr_overrides)")
 
     print(f"\n{'='*60}")
     print(f"Context: {context_length}  ({N} epochs)")
@@ -484,7 +498,8 @@ def main():
 
     task = args.task or cfg["dataset"]["task"]
     head_type = args.head_type or cfg["model"]["head_type"]
-    if args.lr is not None:
+    _cli_lr_set = args.lr is not None
+    if _cli_lr_set:
         cfg["training"]["lr"] = args.lr
 
     context_lengths = args.context or cfg["dataset"]["context_lengths"]
@@ -525,7 +540,7 @@ def main():
                 cfg=cfg, context_length=ctx, task=task, head_type=head_type,
                 out_dir=ctx_dir, device=device, datasets_filter=args.datasets,
                 stage1_checkpoint=stage1_ckpt, limit=args.limit, max_items=args.max_items,
-                batch_size=args.batch_size, exp_id=exp_id,
+                batch_size=args.batch_size, exp_id=exp_id, cli_lr_set=_cli_lr_set,
             )
             if metrics is not None:
                 append_to_summary(summary_path, metrics)

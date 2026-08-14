@@ -1,0 +1,260 @@
+# ============================================================
+# V2 OSF LoRA Registry — Stage 2 (LoRA fine-tuning of OSF backbone)
+# ============================================================
+# Forked from experiments/v2_osf_registry.yaml (checklist 2.5,
+# docs/TSFM_OSF_IMPLEMENTATION_PLAN.md). Same 15 tier-1 entries (5 tasks ×
+# 3 heads), same datasets/contexts/tier/notes per task — required for a
+# fair Stage 1 vs Stage 2 comparison on identical subjects/splits. Only
+# what's genuinely different for LoRA fine-tuning changes:
+#
+#   - config/results_dir/inference_dir/logs_dir point at Stage 2's isolated
+#     paths (phase0_osf_lora, logs_osf_lora), never overlapping Stage 1's.
+#   - NO `gradient_accumulation` section, and no per-experiment `batch_mode`.
+#     train_osf_lora.py has no --accum-steps flag and
+#     jobs/train_osf_lora_gpu.sh has no ACCUM_STEPS env var — gradient
+#     accumulation was never implemented for Stage 2 (LoRA's trainable
+#     param count is tiny; the memory pressure that motivated Stage 1's
+#     accum mechanism comes from a different place here — full backbone
+#     activations, not optimizer state — and hasn't been shown to need
+#     accumulation). Each entry's flat `batch_size` is passed straight
+#     through as --batch-size, no accum_steps concept at all.
+#   - `batch_size: 4` uniformly across all 15 entries (NOT varied by head
+#     type the way Stage 1's is 32/32/64/128) — Stage 2's per-item cost is
+#     dominated by the backbone forward pass (chunked internally via
+#     embedding.chunk_batch_size), which is the same regardless of head
+#     type, unlike Stage 1 where head type materially changes per-batch
+#     cost. Matches train_osf_lora.py's own CLI default. NOT YET
+#     GPU-CALIBRATED (only CPU-debugged with --batch-size 2) — revisit
+#     after checklist 2.6.
+#   - `task_type` is informational only here — train_osf_lora.py has no
+#     --task-type flag (OSFRawEpochWindowDataset is seq2label-only for
+#     now, see its module docstring). Kept for side-by-side readability
+#     against v2_osf_registry.yaml, not read by gen_commands_osf_lora.py.
+#
+# Use gen_commands_osf_lora.py (not gen_commands_osf.py or gen_commands.py)
+# to generate commands from this file.
+
+config: configs/phase0_osf_lora_config.yaml
+results_dir: /scratch/boshra95/psg_full/unified/results/phase0_osf_lora
+inference_dir: /scratch/boshra95/psg_full/unified/results/phase0_osf_lora/inference
+logs_dir: /home/boshra95/NSRR-tools/logs_osf_lora
+python_bin: /home/boshra95/osf_env/bin/python
+
+# ── Tier 1: 5 Tier-1 tasks × 3 heads = 15 experiments ──────────────────────
+
+experiments:
+
+  # ── sex_binary (N=13,163 — APPLES, SHHS) ─────────────────────────────────
+  sex_binary_lstm:
+    task: sex_binary
+    task_type: seq2label
+    num_classes: 2
+    head: lstm
+    datasets: [apples, shhs]
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
+    batch_size: 4
+    lr: 1.0e-4
+    run_tag: ""
+    n_size: large
+    tier: 1
+    notes: "Female=1, Male=0. MrOS excluded (all-male cohort, zero variance)."
+
+  sex_binary_transformer:
+    task: sex_binary
+    task_type: seq2label
+    num_classes: 2
+    head: transformer
+    datasets: [apples, shhs]
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
+    batch_size: 4
+    lr: 1.0e-4
+    run_tag: ""
+    n_size: large
+    tier: 1
+    notes: ""
+
+  sex_binary_mean_pool:
+    task: sex_binary
+    task_type: seq2label
+    num_classes: 2
+    head: mean_pool
+    datasets: [apples, shhs]
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
+    batch_size: 4
+    lr: 1.0e-4
+    run_tag: ""
+    n_size: large
+    tier: 1
+    notes: "Baseline (no temporal modelling)."
+
+  # ── sleep_efficiency_binary (N=13,615 — APPLES, SHHS, MrOS) ─────────────
+  sleep_efficiency_binary_lstm:
+    task: sleep_efficiency_binary
+    task_type: seq2label
+    num_classes: 2
+    head: lstm
+    datasets: [apples, shhs, mros]
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
+    batch_size: 4
+    lr: 1.0e-4
+    run_tag: ""
+    n_size: large
+    tier: 1
+    notes: "Sleep efficiency < 85% = 1. STAGES excluded (no eff. score available)."
+
+  sleep_efficiency_binary_transformer:
+    task: sleep_efficiency_binary
+    task_type: seq2label
+    num_classes: 2
+    head: transformer
+    datasets: [apples, shhs, mros]
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
+    batch_size: 4
+    lr: 1.0e-4
+    run_tag: ""
+    n_size: large
+    tier: 1
+    notes: ""
+
+  sleep_efficiency_binary_mean_pool:
+    task: sleep_efficiency_binary
+    task_type: seq2label
+    num_classes: 2
+    head: mean_pool
+    datasets: [apples, shhs, mros]
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
+    batch_size: 4
+    lr: 1.0e-4
+    run_tag: ""
+    n_size: large
+    tier: 1
+    notes: ""
+
+  # ── bmi_binary (APPLES, SHHS, MrOS) ─────────────────────────────────────
+  bmi_binary_lstm:
+    task: bmi_binary
+    task_type: seq2label
+    num_classes: 2
+    head: lstm
+    datasets: [apples, shhs, mros]
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
+    batch_size: 4
+    lr: 1.0e-4
+    run_tag: ""
+    n_size: large
+    tier: 1
+    notes: "BMI >= 30 = obese (WHO definition). MrOS: visit-1 labels only."
+
+  bmi_binary_transformer:
+    task: bmi_binary
+    task_type: seq2label
+    num_classes: 2
+    head: transformer
+    datasets: [apples, shhs, mros]
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
+    batch_size: 4
+    lr: 1.0e-4
+    run_tag: ""
+    n_size: large
+    tier: 1
+    notes: ""
+
+  bmi_binary_mean_pool:
+    task: bmi_binary
+    task_type: seq2label
+    num_classes: 2
+    head: mean_pool
+    datasets: [apples, shhs, mros]
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
+    batch_size: 4
+    lr: 1.0e-4
+    run_tag: ""
+    n_size: large
+    tier: 1
+    notes: ""
+
+  # ── age_class (3-class — APPLES, SHHS, MrOS) ────────────────────────────
+  age_class_lstm:
+    task: age_class
+    task_type: seq2label
+    num_classes: 3
+    head: lstm
+    datasets: [apples, shhs, mros]
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
+    batch_size: 4
+    lr: 1.0e-4
+    run_tag: ""
+    n_size: large
+    tier: 1
+    notes: "3-class: <50=0, 50-64=1, >=65=2. MrOS all class 2 (65+ cohort)."
+
+  age_class_transformer:
+    task: age_class
+    task_type: seq2label
+    num_classes: 3
+    head: transformer
+    datasets: [apples, shhs, mros]
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
+    batch_size: 4
+    lr: 1.0e-4
+    run_tag: ""
+    n_size: large
+    tier: 1
+    notes: ""
+
+  age_class_mean_pool:
+    task: age_class
+    task_type: seq2label
+    num_classes: 3
+    head: mean_pool
+    datasets: [apples, shhs, mros]
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
+    batch_size: 4
+    lr: 1.0e-4
+    run_tag: ""
+    n_size: large
+    tier: 1
+    notes: ""
+
+  # ── apnea_binary (APPLES, SHHS, MrOS, STAGES) ───────────────────────────
+  apnea_binary_lstm:
+    task: apnea_binary
+    task_type: seq2label
+    num_classes: 2
+    head: lstm
+    datasets: [apples, shhs, mros, stages]
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
+    batch_size: 4
+    lr: 1.0e-4
+    run_tag: ""
+    n_size: large
+    tier: 1
+    notes: "AHI >= 15 = moderate/severe OSA. Standard clinical threshold. ~1:1 class balance."
+
+  apnea_binary_transformer:
+    task: apnea_binary
+    task_type: seq2label
+    num_classes: 2
+    head: transformer
+    datasets: [apples, shhs, mros, stages]
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
+    batch_size: 4
+    lr: 1.0e-4
+    run_tag: ""
+    n_size: large
+    tier: 1
+    notes: ""
+
+  apnea_binary_mean_pool:
+    task: apnea_binary
+    task_type: seq2label
+    num_classes: 2
+    head: mean_pool
+    datasets: [apples, shhs, mros, stages]
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
+    batch_size: 4
+    lr: 1.0e-4
+    run_tag: ""
+    n_size: large
+    tier: 1
+    notes: "Baseline (no temporal modelling)."
