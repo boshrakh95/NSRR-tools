@@ -1,0 +1,172 @@
+# ============================================================
+# Phase 0 — OSF Stage 2 (LoRA fine-tuning) Config
+# ============================================================
+# Forked from configs/phase0_osf_config.yaml (checklist item 2.2,
+# docs/TSFM_OSF_IMPLEMENTATION_PLAN.md Appendix §6) — Stage 2's own config,
+# never edited in place alongside Stage 1's, so the two never overwrite
+# each other. Everything not called out below is identical to Stage 1 by
+# design (same channel mapping, same labels/splits, same head architecture)
+# — only what's genuinely different for LoRA fine-tuning changes.
+#
+# KEY DIFFERENCE FROM STAGE 1: Stage 2 has no precomputed-embeddings step.
+# `embedding.checkpoint_dir` is still used (to load the base OSF backbone
+# before wrapping it with LoRA), but `data.hdf5_dir` + `data.channel_*` are
+# read live, every training step, via
+# nsrr_tools.datasets.osf_channel_loader.load_and_resample_channels() —
+# not precomputed to `embedding.output_dir` the way Stage 1 does.
+
+# ── Base checkpoint (loaded fresh, then wrapped with LoRA) ──────────────────
+embedding:
+  checkpoint_dir: "/home/boshra95/OSF-Open-Sleep-FM/pretrained_weights/osf_backbone.pth"
+  chunk_batch_size: 16   # epochs-per-forward-pass batch size within one training window
+
+# ── HDF5 Signal Data — identical to Stage 1's data: section ─────────────────
+data:
+  hdf5_dir: "/scratch/boshra95/psg_full"
+  sampling_freq: 64
+  epoch_seconds: 30
+  epoch_samples: 1920
+  channel_order:
+    - ECG
+    - EMG_Chin
+    - EMG_LLeg
+    - EMG_RLeg
+    - ABD
+    - THX
+    - NP
+    - SN
+    - EOG_E1_A2
+    - EOG_E2_A1
+    - EEG_C3_A2
+    - EEG_C4_A1
+  channel_candidates:
+    ECG: [EKG, ECG-L]
+    EMG_Chin: [CHIN, EMG]
+    EMG_LLeg: [LLEG]
+    EMG_RLeg: [RLEG]
+    ABD: [ABD]
+    THX: [Thor]
+    NP: [Airflow]
+    SN: [Snore]
+    EOG_E1_A2: [LOC]
+    EOG_E2_A1: [ROC]
+    EEG_C3_A2: [C3-M2]
+    EEG_C4_A1: [C4-M1]
+
+# ── Raw-Epoch Window Dataset ─────────────────────────────────────────────────
+# Same subject/split/task/context settings as Stage 1's dataset: section —
+# same task_subject_dir + split_seed, required for a fair comparison on
+# identical subjects/splits. No embedding_dir here (nothing precomputed);
+# raw signal is loaded live from data.hdf5_dir per window.
+dataset:
+  label_source: "/scratch/boshra95/psg/unified/targets_v2/master_targets.parquet"
+  task_subject_dir: "/scratch/boshra95/psg/unified/targets_v2/task_subjects"
+
+  sleep_stage_dir: "/scratch/boshra95/psg"
+
+  context_lengths:
+    - "30s"
+    - "10m"
+    - "40m"
+    - "80m"
+    - "120m"
+    - "240m"
+
+  task: "sex_binary"
+  task_type: "seq2label"
+
+  datasets:
+    - apples
+    - shhs
+    - mros
+    - stages
+
+  train_split: 0.70
+  val_split:   0.15
+  test_split:  0.15
+  split_seed:  42
+
+  windows_per_subject: 5
+
+  # seq2seq params carried for config-shape parity with Stage 1 — NOT
+  # implemented in OSFRawEpochWindowDataset yet (checklist 2.2 scoped to
+  # seq2label only, matching Stage 1's own current sweep scope; sleep_staging
+  # deferred for both stages). Revisit if/when seq2seq is added.
+  seq2seq_context_mode: "centered"
+  seq2seq_padding_policy: "complete_only"
+  seq2seq_max_padding_fraction: 0.5
+  min_past_denom:       8
+  max_min_past_patches: 40
+
+  min_recording_patches: 480
+
+# ── Sequence Head Model — identical architecture to Stage 1 ─────────────────
+# Warm-started from the matching Stage 1 checkpoint at training start
+# (train_osf_lora.py, checklist 2.3) — architecture must match exactly for
+# the warm-start state_dict to load.
+model:
+  input_dim: 1536
+  head_type: "lstm"
+  hidden_dim: 128
+  num_layers: 1
+  num_heads:  8
+  dropout:    0.3
+  num_classes: 2
+
+# ── LoRA ──────────────────────────────────────────────────────────────────────
+# Target modules confirmed live against the real checkpoint 2026-08-13 (see
+# checklist 2.1): peft.get_peft_model with these settings injects 96
+# LoRA-parameter submodules across all 12 transformer blocks, 442,368 /
+# 85,767,936 base params trainable (0.52%) before counting the head.
+# r/lora_alpha/lora_dropout/lr are NOT yet calibrated against a real
+# pilot run — starting values are standard-practice defaults, not tuned.
+# Revisit after checklist 2.6's wall-time/quality pilot.
+lora:
+  r: 8
+  lora_alpha: 16
+  lora_dropout: 0.05
+  target_modules: ["to_qkv", "to_out.0"]
+  modules_to_save: ["sequence_head"]
+
+# ── Training ─────────────────────────────────────────────────────────────────
+# Same shape as Stage 1's training: section. lr is LoRA-adapter-specific,
+# not the head-only lr Stage 1 used — NOT yet calibrated, see lora: section
+# note above. epochs/early_stopping_patience kept at Stage 1's values as a
+# starting point; may need reducing once checklist 2.6's pilot shows real
+# per-epoch wall-clock cost (Appendix §6.3).
+training:
+  epochs: 40
+  lr: 1.0e-4
+  weight_decay: 1.0e-3
+  optimizer: "adamw"
+  scheduler: "cosine"
+  early_stopping_patience: 10
+  device: "cuda"
+  mixed_precision: false
+  class_weights: "auto"
+  early_stopping_monitor: "val_auroc"
+  weighted_sampler: false
+
+  windows_strategy: "fixed"
+  token_budget_minutes: 240
+  k_max: 50
+
+  context_lr_overrides:
+    "120m": 5.0e-5
+    "240m": 5.0e-5
+
+  overfit_epochs: 0
+
+  save_snapshots: true
+  snapshot_interval: 5
+
+# ── Analysis ─────────────────────────────────────────────────────────────────
+analysis:
+  bootstrap_samples: 0
+
+# ── Logging & Output ─────────────────────────────────────────────────────────
+# Separate results_dir from Stage 1 — sibling directory, never overlaps.
+# logs_dir is set at the registry level (experiments/v2_osf_lora_registry.yaml,
+# checklist 2.5), not here, matching Stage 1's convention.
+logging:
+  results_dir: "/scratch/boshra95/psg_full/unified/results/phase0_osf_lora"

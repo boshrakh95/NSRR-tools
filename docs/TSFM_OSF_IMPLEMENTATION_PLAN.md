@@ -46,16 +46,24 @@ reference clone, not where we write code.
   anything. This plan doc is the "why," that one is the "how to actually
   run it."
 
-## Status (2026-08-12)
+## Status (2026-08-13)
 
-**All of Phase 1's code is implemented — nothing left to build for Stage 1.**
-From here it's job submission/monitoring, not implementation: a small GPU
-test job (`54342713`) is running for checklist 1.8's verification; once
-confirmed good, 1.9 (full extraction, 6 sharded GPU jobs) and 1.10 (the 90-run
-Stage 1 sweep) are both pure `sbatch`/`gen_commands_osf.py` operations with
-copy-pasteable commands now written into the checklist below and
-`docs/OSF_EXPERIMENTS_GUIDE.md`'s Step 7 — no further code changes are
-needed until Phase 2 (LoRA, `train_osf_lora.py`, not started).
+**Stage 1 (frozen encoder) is functionally done for lstm/transformer across
+all 5 Tier-1 tasks** — see "Stage 1 Results" below for the full comparison
+against SleepFM. **⏳ TODO (flagged 2026-08-13, not done yet): re-run
+`mean_pool` for all 5 tasks and fold those results into the Stage 1
+Results section once available** — the user will run train/infer for
+`mean_pool` and ask for the analysis update later; don't forget this is
+still outstanding.
+
+**Phase 2 (Stage 2, LoRA fine-tuning) implementation has started** — see
+the Implementation Checklist's Phase 2 section below (expanded 2026-08-13
+from a 3-item stub into the same granularity as Phase 1). Items 2.1
+(peft/LoRA-wiring verification) and 2.2 (Stage 2 config, shared
+raw-signal utility, `OSFRawEpochWindowDataset`, smoke test, debug config)
+are done — 🛑 **user checkpoint**, debug via the `🔬 OSF-LoRA Step1` config
+in `~/.vscode/launch.json` before continuing to 2.3
+(`train_osf_lora.py`). Same one-step-at-a-time workflow as Phase 1.
 
 ---
 
@@ -105,7 +113,16 @@ needed until Phase 2 (LoRA, `train_osf_lora.py`, not started).
 ### Stage 2 (LoRA)
 | File | Purpose | Status |
 |---|---|---|
-| `scripts/train_osf_lora.py` | New end-to-end script, OSF encoder in the trainable graph | ⬜ TODO (checklist 2.1) |
+| `configs/phase0_osf_lora_config.yaml` | Stage 2 config — separate `results_dir`/`logs_dir`, `lora:` hyperparams | ✅ DONE |
+| `src/nsrr_tools/datasets/osf_channel_loader.py` | Shared channel-mapping/resampling utility (used by Stage 1's extraction script too, checklist 2.2) | ✅ DONE |
+| `src/nsrr_tools/datasets/osf_raw_epoch_dataset.py` | `OSFRawEpochWindowDataset` — raw signal windows, not precomputed embeddings | ✅ DONE |
+| `scripts/test_osf_raw_epoch_dataset.py` | Smoke test for the above | ✅ DONE |
+| `scripts/train_osf_lora.py` | New end-to-end script, OSF encoder in the trainable graph | ⬜ TODO (checklist 2.3) |
+| `jobs/train_osf_lora_gpu.sh` | SLURM job script for LoRA training | ⬜ TODO (checklist 2.3) |
+| `scripts/infer_osf_lora_subject_windows.py` | Inference for LoRA checkpoints — live backbone forward pass, not cached `.npy` | ⬜ TODO (checklist 2.4) |
+| `jobs/infer_osf_lora_subject_windows_gpu.sh` | SLURM job script for LoRA inference | ⬜ TODO (checklist 2.4) |
+| `experiments/v2_osf_lora_registry.yaml` | Stage 2 experiment registry, isolated `results_dir`/`logs_dir` | ⬜ TODO (checklist 2.5) |
+| `scripts/gen_commands_osf_lora.py` | Command generator for Stage 2, forked from `gen_commands_osf.py` | ⬜ TODO (checklist 2.5) |
 
 ---
 
@@ -659,10 +676,162 @@ the "why," not to know what to do next.
       50-subject-preview) extraction output; update the table above
 
 ### Phase 2 — Stage 2 (LoRA fine-tuning)
-- [ ] 2.1 Implement `scripts/train_osf_lora.py` (Appendix §6.1)
-- [ ] 2.2 Add debug config, run the short wall-time pilot 🛑 (Appendix §6.3)
-- [ ] 2.3 Run the full Stage 2 sweep, applying the memory-mitigation
-      ladder as needed (Appendix §6.2)
+
+**Expanded 2026-08-13 from a 3-item stub to full step-by-step granularity,
+matching Phase 1's workflow: implement one item, user debugs via a
+`launch.json` config, then move to the next.** See "Phase 2 design notes"
+right below the checklist for the reasoning behind this structure, and
+Appendix §6 (updated) for full technical detail per item.
+
+**Staged (LP-FT), not joint, confirmed as the approach**: Stage 2 warm-starts
+from Stage 1's already-trained sequence head and continues training LoRA +
+head together (per `CLAUDE.md`'s "Frozen vs. LoRA-fine-tuned conditions",
+justified by the LP-FT literature — Kumar et al. 2022 — fine-tuning from a
+randomly-initialized head risks distorting the pretrained features in ways
+that hurt out-of-distribution generalization). Not re-litigating this now;
+flag here only because the user asked whether staged-vs-joint was still an
+open question — it isn't, this was already decided when the plan was
+first written.
+
+**Total file/folder isolation from Stage 1, mirroring how Stage 1 stayed
+isolated from SleepFM** — every new file below is a *new* file, nothing
+from Stage 1 gets edited:
+
+| Stage 1 (frozen) | Stage 2 (LoRA) | Shared (read-only input, not edited) |
+|---|---|---|
+| `configs/phase0_osf_config.yaml` | `configs/phase0_osf_lora_config.yaml` | — |
+| `experiments/v2_osf_registry.yaml` | `experiments/v2_osf_lora_registry.yaml` | — |
+| `scripts/gen_commands_osf.py` | `scripts/gen_commands_osf_lora.py` | — |
+| `scripts/train_osf_context_sweep.py` | `scripts/train_osf_lora.py` | — |
+| `scripts/infer_osf_subject_windows.py` | `scripts/infer_osf_lora_subject_windows.py` | — |
+| `jobs/train_osf_context_sweep_gpu.sh` | `jobs/train_osf_lora_gpu.sh` | — |
+| `jobs/infer_osf_subject_windows_gpu.sh` | `jobs/infer_osf_lora_subject_windows_gpu.sh` | — |
+| `logs_osf/` | `logs_osf_lora/` | — |
+| `.../results/phase0_osf/` | `.../results/phase0_osf_lora/` | — |
+| `src/.../osf_context_window_dataset.py` | `src/.../osf_raw_epoch_dataset.py` (new) | — |
+| `.../embeddings/osf_30sec/` (precomputed) | *(none — raw signal loaded live, not precomputed)* | `.../psg_full/{dataset}/derived/hdf5_signals/` (same source HDF5s Stage 1 reads) |
+| `scripts/extract_osf_embeddings.py`'s channel-loading logic | reused via a new shared utility (item 2.2), not duplicated | — |
+
+- [x] 2.1 **Verify `peft` install + LoRA target-module wiring against the
+      real checkpoint** — done 2026-08-13, no code needed. `peft` is
+      already installed in `osf_env` (0.14.0) — the "not currently a
+      dependency" note in `CLAUDE.md` was stale, now corrected. Live smoke
+      test: loaded the real `osf_backbone.pth`, wrapped it with
+      `LoraConfig(target_modules=["to_qkv","to_out.0"], r=8, lora_alpha=16)`
+      via `peft.get_peft_model` — confirmed 96 LoRA-parameter submodules
+      injected across all 12 transformer blocks, 442,368 / 85,767,936
+      params trainable (0.52%). This is a **runtime** confirmation, not
+      just the source-reading-based claim already in Appendix §6.1 —
+      de-risks the core Stage 2 architecture assumption before writing any
+      new code.
+- [x] 2.2 **`configs/phase0_osf_lora_config.yaml` + shared raw-signal
+      utility + `OSFRawEpochWindowDataset` + smoke test + debug config** —
+      done 2026-08-13.
+      - `configs/phase0_osf_lora_config.yaml`: forked from
+        `phase0_osf_config.yaml`, separate `results_dir`
+        (`.../results/phase0_osf_lora`), new `lora:` section (`r=8`,
+        `lora_alpha=16`, `lora_dropout=0.05`, `target_modules`,
+        `modules_to_save=["sequence_head"]` — explicitly flagged
+        not-yet-calibrated, revisit after 2.6's pilot).
+      - **Shared utility**: created
+        `src/nsrr_tools/datasets/osf_channel_loader.py`
+        (`load_and_resample_channels`, `build_channel_candidates`,
+        `resample_128_to_64`, `get_epoch_count`, `OSF_CHANNEL_ORDER`).
+        **Deliberately placed under `datasets/`, not `core/`** — found
+        during implementation that `nsrr_tools.core.__init__.py` eagerly
+        imports `channel_mapper.py`, which imports `pyedflib`, which
+        isn't installed in `osf_env` (confirmed live:
+        `ModuleNotFoundError: No module named 'pyedflib'` when importing
+        anything under `nsrr_tools.core` in `osf_env`) — `datasets/`'s
+        `__init__.py` has no such transitive dependency, confirmed
+        working. Refactored `extract_osf_embeddings.py` to import from
+        this shared module instead of defining the same functions
+        locally (removed ~35 lines of now-duplicate code, plus an
+        unused `h5py` import).
+      - **Regression-tested the refactor**: re-ran extraction on a real
+        already-extracted subject (`APL0001`, `--no-skip`) and compared
+        old vs. new output numerically (not just byte-diff, since CPU
+        float ops aren't guaranteed bit-identical across runs) —
+        shapes match exactly, `np.allclose(atol=1e-3, rtol=1e-3)` passes,
+        max abs diff 0.001 / mean abs diff ~4e-7 (consistent with normal
+        float16 rounding noise, not a logic change). Restored the
+        original file afterward so Stage 1's already-completed
+        training/analysis isn't touched by even this negligible
+        float-noise difference.
+      - `src/nsrr_tools/datasets/osf_raw_epoch_dataset.py`
+        (`OSFRawEpochWindowDataset`): K-sampling/windowing arithmetic
+        copied from `OSFContextWindowDataset` (pure integer index math,
+        no reference to what's stored per epoch), but materializes raw
+        `[N_epochs, 12, 1920]` signal via the shared utility instead of
+        slicing a precomputed embedding array. **Scoped to seq2label
+        only** (matches Stage 1's own current scope — no Tier-1 task
+        trained so far is seq2seq/sleep_staging — not a capability
+        regression). Shape cache built from fast HDF5 metadata reads
+        (`get_epoch_count`), self-contained — does not depend on Stage
+        1's `shape_cache.json` existing.
+      - Smoke-tested (`scripts/test_osf_raw_epoch_dataset.py`, real
+        APPLES subjects, CPU): `30s` (1 epoch) and `240m` (480 epochs,
+        the two extremes) both pass — correct
+        `[B, N, 12, 1920]` shapes, `float32`/`bool`/`int64` dtypes, no
+        NaNs, K=5 windows/subject sampled correctly, zero padding at
+        240m (expected — `min_recording_patches=480` already excludes
+        subjects too short to need padding at max context, same as
+        Stage 1's behavior).
+      - VSCode debug config added: `🔬 OSF-LoRA Step1: Test
+        OSFRawEpochWindowDataset (apnea_binary, apples, CPU) (checklist
+        2.2)`.
+      🛑 **User checkpoint** — debug the smoke-test config before continuing.
+- [ ] 2.3 **`scripts/train_osf_lora.py` + `jobs/train_osf_lora_gpu.sh`**
+      (bundled, same pattern as Stage 1's 1.5 — job script mirrors the
+      SIGUSR1 auto-resume/status-JSONL convention, pointed at `osf_env`/
+      `logs_osf_lora/`) — combined LoRA-ViT + sequence-head module,
+      warm-started from the matching Stage 1 checkpoint (Appendix §6.1).
+      Debug config + a tiny correctness pilot (few items, few epochs,
+      CPU) — not the wall-time calibration pilot yet, just "does it run
+      and does loss go down." 🛑 **User checkpoint**.
+- [ ] 2.4 **`scripts/infer_osf_lora_subject_windows.py` +
+      `jobs/infer_osf_lora_subject_windows_gpu.sh`** (bundled, same
+      pattern as Stage 1's 1.6). **New relative to Stage 1's Appendix §6
+      draft, which only covered training** — Stage 2 needs its own
+      inference script too, since the fine-tuned LoRA weights change the
+      embeddings; `infer_osf_subject_windows.py` (Stage 1's, which reads
+      precomputed `.npy` files) cannot be reused. Loads a `train_osf_lora.py`
+      checkpoint, runs the LoRA-adapted backbone live on raw signal per
+      window (via the same shared utility from 2.2), same output parquet
+      schema as Stage 1's inference for downstream `analyze`/`collect`
+      compatibility. Debug config + smoke test against the 2.3 pilot
+      checkpoint. 🛑 **User checkpoint**.
+- [ ] 2.5 **`experiments/v2_osf_lora_registry.yaml` +
+      `scripts/gen_commands_osf_lora.py`** (forked from
+      `gen_commands_osf.py`, same reason `gen_commands_osf.py` itself was
+      forked from `gen_commands.py` rather than parameterized —
+      `gen_commands_osf.py`'s `_TRAIN_SCRIPT`/`_INFER_SCRIPT` are hardcoded
+      module constants, not registry-configurable). Same 15-entry scope as
+      `v2_osf_registry.yaml` initially (5 Tier-1 tasks × lstm/transformer/
+      mean_pool), `results_dir`/`logs_dir`/`python_bin` pointed at Stage
+      2's isolated paths. Wall-time tables start as placeholder copies,
+      same caveat as Stage 1's registry.
+- [ ] 2.6 **Real wall-time calibration pilot on GPU** (Appendix §6.3) — a
+      short real run (few epochs, smallest context) on an actual GPU
+      allocation to get real per-step timing, since Stage 2's cost model
+      (full ViT forward+backward per epoch, every training step, plus raw
+      HDF5 I/O per window instead of Stage 1's cheap `.npy` lookup) is
+      fundamentally different from Stage 1's and cannot be extrapolated
+      from SleepFM's or Stage 1's calibrated tables. Update
+      `gen_commands_osf_lora.py`'s wall-time tables with the real numbers.
+- [ ] 2.7 🛑 **Run the full Stage 2 sweep** — same scope as Stage 1's
+      current progress (5 Tier-1 tasks × lstm/transformer; `mean_pool`
+      deferred, matching Stage 1), applying the memory-mitigation ladder
+      from Appendix §6.2 in order (gradient checkpointing → larger GPU
+      allocation → capped max context, in that order, per the §0 decision
+      — do not skip to capping). Real cluster job, confirm readiness
+      first, same as Stage 1's 1.9.
+- [ ] 2.8 **Analyze + collect Stage 2 results, compare against Stage 1 +
+      SleepFM** — extend the same per-cohort, contamination-aware
+      methodology used for Stage 1's "Stage 1 Results" section (same
+      SHHS/STAGES/MrOS/APPLES contamination facts apply unchanged, since
+      contamination is about OSF's *pretraining*, not which fine-tuning
+      stage is being evaluated).
 
 ### Phase 3 — Results
 - [ ] 3.1 Compile Stage 1 + Stage 2 results against `phase0_v3_full`,
@@ -1609,16 +1778,38 @@ runs; Stage 2 needs the OSF encoder inside the trainable graph, so
 embeddings can no longer be precomputed — raw signal has to be loaded and
 encoded on the fly, every training step.
 
+### 6.0 File isolation and the shared raw-signal utility
+
+**Every Stage 2 file is new — nothing from Stage 1 or SleepFM gets
+edited.** Full new-vs-existing file table is in the Implementation
+Checklist's Phase 2 section (added 2026-08-13) — not duplicated here.
+
+**One deliberate exception to "everything is new": the channel-mapping +
+resampling logic is *shared*, not duplicated.** `extract_osf_embeddings.py`
+already implements this correctly (its
+`extract_subject_embeddings()` function, roughly lines 204-235: load the
+12 mapped channels from the HDF5 with fallback/zero-fill, resample
+128→64Hz). Stage 2's raw-epoch dataset needs the exact same logic — factor
+it into a shared, importable function (e.g.
+`load_and_resample_channels(h5_path, dataset, channel_candidates) ->
+(signal_matrix[12, n_samples_64], fill_info)`) that both
+`extract_osf_embeddings.py` (Stage 1, refactored to call it — regression-
+test byte-identical output) and the new
+`src/nsrr_tools/datasets/osf_raw_epoch_dataset.py` (Stage 2) import.
+Duplicating this logic a second time would be a real risk: any future fix
+to channel mapping (e.g. the STAGES `LAT`/`RAT` or SHHS `NEW AIR` gaps in
+`docs/OSF_CHANNEL_REPROCESSING_PLAN.md`, if ever acted on) would need to be
+applied twice and could silently drift out of sync between stages.
+
 ### 6.1 New script: `scripts/train_osf_lora.py`
 
 A genuinely new end-to-end training script, not a fork of
 `train_context_sweep.py`. Structure:
 
-- **New raw-epoch dataset** (e.g. `OSFRawEpochWindowDataset`): same
-  windowing/K-sampling logic as `OSFContextWindowDataset` (§3.2), but
+- **`OSFRawEpochWindowDataset`** (`src/nsrr_tools/datasets/osf_raw_epoch_dataset.py`):
+  same windowing/K-sampling logic as `OSFContextWindowDataset` (§3.2), but
   `__getitem__` returns the raw `[N_epochs, 12, 1920]` signal tensor for
-  the window (built from the full-channel HDF5 via the §1 channel mapping
-  + resample, same as the extraction script) instead of a precomputed
+  the window (via §6.0's shared utility) instead of a precomputed
   embedding array.
 - **Combined model**: wrap OSF's `ViT` with LoRA
   (`peft.get_peft_model(vit, LoraConfig(target_modules=["to_qkv", "to_out.0"], r=..., lora_alpha=...))`
@@ -1664,6 +1855,30 @@ A genuinely new end-to-end training script, not a fork of
   script pattern) — don't skip this, LoRA runs at long context will be the
   slowest, most timeout-prone jobs in the whole project.
 
+### 6.1b New script: `scripts/infer_osf_lora_subject_windows.py` (missing from the original draft of this Appendix — added 2026-08-13)
+
+The original draft of this section only planned the training script,
+implicitly assuming Stage 1's `infer_osf_subject_windows.py` could be
+reused for evaluation. **It can't** — that script reads precomputed `.npy`
+embeddings, and Stage 2's whole point is that the embeddings change (the
+backbone is fine-tuned), so there's nothing precomputed to read for a
+LoRA checkpoint. Needs its own script:
+
+- Loads a `train_osf_lora.py` checkpoint (combined LoRA-ViT + head state).
+- For each subject/window, loads raw signal via §6.0's shared utility,
+  runs it through the LoRA-adapted backbone live (`torch.no_grad()` at
+  inference time, unlike training), same mean-pool-patches +
+  flatten-to-`[N,1536]` step as training, then through the sequence head.
+- Same output parquet schema as Stage 1's inference script
+  (`subject_id, dataset, window_idx, true_label, pred_label,
+  prob_class0…N`) so `analyze_windows.py`/`collect_results_v2.py` work
+  unmodified against Stage 2 results too — same reuse logic already
+  established for Stage 1 (`CLAUDE.md`'s code-reuse assessment).
+- Same architecture-auto-detection-from-checkpoint pattern as
+  `infer_osf_subject_windows.py` (Appendix §3.3) where practical, though
+  Stage 2 checkpoints carry more state (LoRA adapter weights + head) so
+  this may need adjusting rather than reusing verbatim.
+
 ### 6.2 Memory mitigation ladder (apply in this order — per §0 decision)
 
 1. **Gradient checkpointing** (`torch.utils.checkpoint`) through the ViT's
@@ -1688,6 +1903,18 @@ precomputed-embedding lookup. **Run a short pilot (a handful of epochs at
 the smallest context length, e.g. 30s or 10m) before submitting the full
 sweep**, to get real wall-clock numbers and set realistic `--time` values
 — do not extrapolate from SleepFM's training-time table.
+
+**A second, easy-to-miss cost source (added 2026-08-13): raw HDF5 I/O,
+not just backbone compute.** Stage 1 reads one small precomputed `.npy`
+file per subject; Stage 2 reads raw signal directly from
+`/scratch/boshra95/psg_full/{dataset}/derived/hdf5_signals/*.h5` for
+*every window, every training step* — at long contexts (240m = 480
+epochs/window) this could plausibly be I/O-bound in addition to
+compute-bound, especially if many workers hit the same scratch filesystem
+concurrently (this project has already seen real, unrelated scratch
+filesystem contention this session — see the disk-usage investigation
+earlier). Worth watching for during the 2.6 calibration pilot, not just
+assuming the cost is purely GPU-bound.
 
 ---
 

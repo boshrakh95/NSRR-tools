@@ -59,11 +59,21 @@ import sys
 import time
 from pathlib import Path
 
-import h5py
 import numpy as np
 import torch
 import yaml
 from loguru import logger
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+from nsrr_tools.datasets.osf_channel_loader import (  # noqa: E402
+    OSF_CHANNEL_ORDER,
+    EPOCH_SECONDS,
+    TARGET_HZ,
+    EPOCH_SAMPLES,
+    build_channel_candidates,
+    resample_128_to_64,
+    load_and_resample_channels,
+)
 
 # ── Graceful-stop flag (set by SIGTERM handler) ───────────────────────────────
 # Mirrors extract_sleepfm_embeddings.py's pattern (finish current subject,
@@ -95,17 +105,9 @@ except ImportError as e:
     sys.exit(1)
 
 # ── Constants ─────────────────────────────────────────────────────────────────
-# Fixed order OSF expects — do not reorder, fed positionally into a Conv2d
-# patch-embedding layer indexed by channel position, not by name.
-OSF_CHANNEL_ORDER = [
-    "ECG", "EMG_Chin", "EMG_LLeg", "EMG_RLeg",
-    "ABD", "THX", "NP", "SN",
-    "EOG_E1_A2", "EOG_E2_A1", "EEG_C3_A2", "EEG_C4_A1",
-]
-
-EPOCH_SECONDS = 30
-TARGET_HZ = 64
-EPOCH_SAMPLES = EPOCH_SECONDS * TARGET_HZ  # 1920
+# OSF_CHANNEL_ORDER / EPOCH_SECONDS / TARGET_HZ / EPOCH_SAMPLES now live in
+# nsrr_tools.datasets.osf_channel_loader (imported above) — checklist 2.2,
+# shared with Stage 2's raw-epoch dataset so the two never drift apart.
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -142,36 +144,6 @@ def load_model(checkpoint_path: str, device: torch.device):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Channel mapping
-# ─────────────────────────────────────────────────────────────────────────────
-
-def build_channel_candidates(dataset: str, cfg_candidates: dict) -> dict:
-    """OSF channel -> ordered list of candidate our-HDF5 channel names.
-
-    SHHS special case: no distinguishable C3/C4 channel exists in our
-    full-channel HDF5s (confirmed structural, 0/50 subjects in a
-    50-subject audit — docs/TSFM_OSF_IMPLEMENTATION_PLAN.md §1). Duplicate
-    the single generic "EEG" channel into both EEG slots rather than
-    looking for C3-M2/C4-M1 (which will never be found for SHHS).
-    """
-    candidates = {k: list(v) for k, v in cfg_candidates.items()}
-    if dataset == "shhs":
-        candidates["EEG_C3_A2"] = ["EEG"]
-        candidates["EEG_C4_A1"] = ["EEG"]
-    return candidates
-
-
-def resample_128_to_64(x: np.ndarray) -> np.ndarray:
-    """Resample 128Hz -> 64Hz. Exact decimation, not an approximation:
-    since 128/64=2, linear interpolation at t=0,1/64,2/64,... lands exactly
-    on original sample indices 0,2,4,... — equivalent to OSF's own
-    pandas-reindex+linear-interpolate resampling with zero error for this
-    specific rate pair. See docs/TSFM_OSF_IMPLEMENTATION_PLAN.md §2.
-    """
-    return x[::2]
-
-
-# ─────────────────────────────────────────────────────────────────────────────
 # Core extraction
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -201,38 +173,8 @@ def extract_subject_embeddings(
         fill_info  : dict — which OSF channels were zero-filled / which
                      fallback candidate was used, for the per-subject log
     """
-    with h5py.File(h5_path, "r") as hf:
-        available = set(hf.keys())
-
-        channel_arrays = []
-        fill_info = {"zero_filled": [], "fallback_used": {}}
-        for osf_ch in OSF_CHANNEL_ORDER:
-            candidates = channel_candidates[osf_ch]
-            found_key = next((c for c in candidates if c in available), None)
-
-            if found_key is None:
-                fill_info["zero_filled"].append(osf_ch)
-                channel_arrays.append(None)  # filled with zeros once n_samples_64 is known
-                continue
-
-            if found_key != candidates[0]:
-                fill_info["fallback_used"][osf_ch] = found_key
-
-            raw = hf[found_key][:].astype(np.float32)
-            channel_arrays.append(resample_128_to_64(raw))
-
-    # All present channels share the same original sample count (uniform
-    # per-file 128Hz signals), so any non-None array gives us n_samples_64.
-    present_arrays = [a for a in channel_arrays if a is not None]
-    if not present_arrays:
-        raise ValueError(f"No mapped OSF channels found at all in {h5_path}")
-    n_samples_64 = present_arrays[0].shape[0]
-
-    for i, arr in enumerate(channel_arrays):
-        if arr is None:
-            channel_arrays[i] = np.zeros(n_samples_64, dtype=np.float32)
-
-    signal_matrix = np.stack(channel_arrays, axis=0)  # [12, n_samples_64]
+    signal_matrix, fill_info = load_and_resample_channels(h5_path, channel_candidates)
+    n_samples_64 = signal_matrix.shape[1]
 
     n_full_epochs = n_samples_64 // EPOCH_SAMPLES
     if n_full_epochs == 0:

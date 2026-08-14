@@ -444,9 +444,15 @@ justification (LP-FT literature, Kumar et al. 2022):
    modules_to_save=["classifier"]))`, continue training LoRA + head
    together. This is the LoRA condition.
 
-`peft` is not currently a dependency anywhere in NSRR-tools — add it when
-implementation starts (`pip install peft`, pin a version, add to
-`requirements.txt`/`pyproject.toml` next to the other training deps).
+**Update 2026-08-13: `peft` is already installed in `osf_env` (0.14.0)** —
+the note above about adding it was written before `osf_env` existed and is
+now stale. Live-verified against the real OSF checkpoint: wrapping it with
+`LoraConfig(target_modules=["to_qkv", "to_out.0"], r=8, lora_alpha=16)`
+correctly injects LoRA adapters into all 12 transformer blocks (96
+LoRA-parameter submodules, 442,368 / 85,767,936 params trainable ≈ 0.52%)
+— the target-module names are confirmed correct at runtime, not just from
+reading source. See `docs/TSFM_OSF_IMPLEMENTATION_PLAN.md`'s Phase 2
+checklist for the full Stage 2 implementation plan (in progress).
 
 ### Honest comparison framing (do not soften these in the paper)
 
