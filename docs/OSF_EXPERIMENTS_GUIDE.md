@@ -417,7 +417,7 @@ precomputed-embeddings step at all. Concretely:
 | **Results dir** | `.../results/phase0_osf/` | `.../results/phase0_osf_lora/` |
 | **Logs dir** | `logs_osf/` | `logs_osf_lora/` |
 | **Checkpoint contents** | Full sequence-head `state_dict` | `peft`'s `get_peft_model_state_dict()` — LoRA deltas + head only, NOT the 85M-param frozen backbone (always reloadable from `embedding.checkpoint_dir`) |
-| **Batch size** | 32 (lstm/transformer), 64–128 (mean_pool), grad-accum to an effective batch of 32 | Flat **4** for all heads, no grad accumulation (Stage 2 has no `--accum-steps`) |
+| **Batch size** | 32 (lstm/transformer), 64–128 (mean_pool), grad-accum to an effective batch of 32 | 32 for all heads, grad-accum to effective batch 32 (same convention — **not yet verified to fit on GPU**, lower `context_micro_batch` + raise `accum_steps` if it OOMs) |
 | **Training procedure** | Single stage | **Staged LP-FT**: warm-starts the sequence head from the matching Stage 1 checkpoint, then fine-tunes LoRA + head together (Kumar et al. 2022 justification — see `CLAUDE.md`) |
 | **Wall-time tables** | Placeholder (uncalibrated) | Placeholder × 6 (uncalibrated, qualitative multiplier — see checklist 2.6) |
 
@@ -579,19 +579,22 @@ python scripts/gen_commands_osf_lora.py collect
 **Registry:** `experiments/v2_osf_lora_registry.yaml` — same 15 tier-1
 entries as `v2_osf_registry.yaml` (identical tasks/datasets/contexts,
 required for a fair comparison), `results_dir`/`inference_dir` pointed at
-`.../results/phase0_osf_lora`, flat `batch_size: 4` for every entry (see
-the comparison table above for why this differs from Stage 1's schema).
+`.../results/phase0_osf_lora`, **same `gradient_accumulation` convention
+as Stage 1/SleepFM**: `batch_size: 32` per entry + a `context_micro_batch`
+table (all contexts start at 32, `accum_steps=1`) — required for
+comparable training dynamics, not just comparable results. **32 is NOT
+yet verified to fit on GPU for Stage 2** — if a context OOMs, lower that
+context's `context_micro_batch` value and `accum_steps` rises
+automatically to keep `effective_batch=32`.
 
 **Real schema differences from `gen_commands_osf.py`** (not just path
 renames — found while double-checking against Stage 1, see
 `docs/TSFM_OSF_IMPLEMENTATION_PLAN.md` checklist 2.5 for the full
 reasoning):
-- **No gradient-accumulation machinery at all** — `train_osf_lora.py` has
-  no `--accum-steps` flag, so there's no `resolve_batch_accum()`,
-  `gradient_accumulation` registry section, or `ACCUM_STEPS` env var.
 - **No `probe-batch` subcommand** — dropped entirely (not kept for schema
   parity like Stage 1's is), since this registry has no `batch_mode`
-  concept to probe.
+  concept to probe (only the `grad_accum` mode is implemented, no
+  `memory_bounded` branch — no probing script exists for Stage 2).
 - **No `TASK_TYPE` env var** — neither Stage 2 script has a `--task-type`
   flag.
 - Added an optional `--stage1-checkpoint` override for `train` (normally
@@ -601,13 +604,36 @@ reasoning):
 collect, threshold-tuning, status, runs` — same figure/table subcommands
 dropped as Stage 1's generator, same reasoning (superseded by notebooks).
 
-**Real bug found and fixed while building this step**:
-`train_osf_lora.py` never read `context_lr_overrides` from the config
-(Stage 1's script does — `phase0_osf_lora_config.yaml` sets a lower LR for
-120m/240m, but nothing was applying it). Fixed by porting Stage 1's exact
-`cli_lr_set`-gated override logic into `train_osf_lora.py`. If you ran any
-120m/240m Stage 2 training before 2026-08-14, it used the base LR, not the
-override — re-run if that matters for your results.
+**Two real bugs found and fixed while building this step:**
+1. `train_osf_lora.py` never read `context_lr_overrides` from the config
+   (Stage 1's script does — `phase0_osf_lora_config.yaml` sets a lower LR
+   for 120m/240m, but nothing was applying it). Fixed by porting Stage 1's
+   exact `cli_lr_set`-gated override logic into `train_osf_lora.py`. If
+   you ran any 120m/240m Stage 2 training before 2026-08-14, it used the
+   base LR, not the override — re-run if that matters for your results.
+2. **This step originally shipped with NO gradient accumulation at all**
+   (flat `batch_size: 4`, reasoned as "Stage 2's cost is dominated by the
+   backbone forward pass so effective-batch parity doesn't obviously
+   matter") — **the user correctly rejected this**: batch size affects
+   optimization dynamics regardless of what dominates per-item compute,
+   and the standing rule is to match SleepFM/Stage 1's options unless the
+   model genuinely requires otherwise (it doesn't here). Fixed the same
+   day: `run_epoch()` (already imported from `train_osf_context_sweep.py`)
+   already had working `accum_steps` support — it just wasn't wired
+   through `train_osf_lora.py`'s CLI, the job script, or the generator.
+   Added `--accum-steps`, the `args.batch_size or 32` fallback, and
+   `resolve_batch_accum()`, all matching Stage 1 exactly. If you ran any
+   Stage 2 training before 2026-08-14, it trained at effective batch 4,
+   not 32 — re-run if that matters for your results.
+
+**Audit note**: a full three-way CLI comparison (SleepFM vs. Stage 1 vs.
+Stage 2 training/inference scripts) also confirmed `--task-type`/
+`--full-night-epochs` are genuinely, deliberately absent from Stage 2
+(seq2label-only scope, no `full_night` support — not oversights), and
+`--wandb-project`/`--wandb-entity`/`--no-wandb` are absent too, left that
+way since `wandb` isn't installed in `osf_env` for *either* stage (Stage
+1's own W&B flags are already non-functional) — flagged, not fixed, since
+it has zero effect on training.
 
 ### Not yet done
 

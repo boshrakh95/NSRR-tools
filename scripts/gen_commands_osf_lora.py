@@ -12,11 +12,14 @@ gen_commands.py (no backbone/stage hook in the registry schema).
 Differences from gen_commands_osf.py, all deliberate:
   - Targets experiments/v2_osf_lora_registry.yaml, not v2_osf_registry.yaml.
   - Targets jobs/{train,infer}_osf_lora*_gpu.sh (Fir only).
-  - NO gradient-accumulation machinery (`resolve_batch_accum`,
-    `ACCUM_STEPS`) — train_osf_lora.py has no --accum-steps flag and
-    jobs/train_osf_lora_gpu.sh has no ACCUM_STEPS env var. Each
-    experiment's flat `batch_size` is passed straight through as
-    --batch-size.
+  - HAS gradient-accumulation machinery (`resolve_batch_accum`,
+    `ACCUM_STEPS`), same as gen_commands_osf.py — train_osf_lora.py
+    gained --accum-steps 2026-08-14 (it already had run_epoch()'s
+    accum_steps support imported from train_osf_context_sweep.py; it
+    just wasn't wired through). effective_batch=32, same as Stage 1/
+    SleepFM, required for comparable training dynamics, not just
+    comparable results. No `memory_bounded` batch_mode branch, though —
+    dropped along with probe-batch below (no probing infra exists yet).
   - NO `probe-batch` subcommand — no OSF-LoRA experiment uses a
     memory_bounded batch mode and no find_batch_size_osf_lora_gpu.sh
     exists; unlike gen_commands_osf.py this isn't even kept for schema
@@ -234,6 +237,26 @@ def exp_status(exp: dict, registry: dict) -> str:
 
 # ── Command builders ──────────────────────────────────────────────────────────
 
+def resolve_batch_accum(exp: dict, registry: dict, context: str,
+                        override_batch_size: int = None):
+    """Return (micro_batch, accum_steps) for this context. Same grad_accum
+    logic as gen_commands_osf.py's resolve_batch_accum — the memory_bounded
+    branch is dropped (no OSF-LoRA experiment uses it, no probing script
+    exists yet, see module docstring)."""
+    if override_batch_size is not None:
+        return override_batch_size, 1
+
+    ga = registry.get("gradient_accumulation", {})
+    if ga.get("enabled", False):
+        effective_batch = int(ga.get("effective_batch", 32))
+        ctx_map = ga.get("context_micro_batch", {})
+        micro_batch = int(ctx_map.get(context, effective_batch))
+        accum_steps = max(1, effective_batch // micro_batch)
+        return micro_batch, accum_steps
+    else:
+        return exp["batch_size"], 1
+
+
 def build_train_cmd(exp: dict, registry: dict, context: str,
                     override_time: str = None, override_batch_size: int = None,
                     stage1_checkpoint: str = None) -> str:
@@ -242,14 +265,15 @@ def build_train_cmd(exp: dict, registry: dict, context: str,
     n_size = exp.get("n_size", "large")
     wall_time = override_time if override_time else estimate_train_time(n_size, exp["head"], context)
     stem = _log_stem(exp, "train", context)
-    batch_size = override_batch_size if override_batch_size is not None else exp["batch_size"]
+    micro_batch, accum_steps = resolve_batch_accum(exp, registry, context, override_batch_size)
 
     env_vars = [
         f"TASK={exp['task']}",
         f"HEAD={exp['head']}",
         f"CONTEXT={context}",
         f"DATASETS=\"{' '.join(exp['datasets'])}\"",
-        f"BATCH_SIZE={batch_size}",
+        f"BATCH_SIZE={micro_batch}",
+        f"ACCUM_STEPS={accum_steps}",
         f"LR={format_lr(exp['lr'])}",
     ]
     if exp.get("run_tag"):
@@ -384,15 +408,23 @@ def cmd_train(args, registry):
     contexts = args.context if args.context else exp["contexts"]
     n_size = exp.get("n_size", "large")
     stage1_ckpt = getattr(args, "stage1_checkpoint", None)
+    ga = registry.get("gradient_accumulation", {})
+    ga_enabled = ga.get("enabled", False)
+    if ga_enabled:
+        batch_label = f"GRAD-ACCUM (effective_batch={ga.get('effective_batch', 32)}, accum varies by context)"
+    else:
+        batch_label = f"FLAT batch={exp['batch_size']}, accum_steps=1"
     print(f"# LoRA training commands for: {args.exp_id}")
     print(f"# Task: {exp['task']}  Head: {exp['head']}  LR: {exp['lr']}  N-size: {n_size}")
     print(f"# Datasets: {exp['datasets']}")
-    print(f"# Batch size: {getattr(args, 'override_batch_size', None) or exp['batch_size']} "
-          f"(flat, no gradient accumulation — see module docstring)")
+    print(f"# Batch mode: {batch_label}")
     print(f"# Stage 1 checkpoint: "
           f"{stage1_ckpt or '(auto-detected per context by train_osf_lora.py)'}")
     print(f"# Logs → {registry.get('logs_dir', 'logs_osf_lora/')}")
     print(f"# NOTE: wall-time estimates are placeholder, NOT GPU-calibrated for OSF-LoRA yet")
+    print(f"# NOTE: micro-batch=32 is NOT verified to fit on GPU yet — if a run OOMs, "
+          f"lower context_micro_batch in the registry and re-generate (accum_steps "
+          f"auto-adjusts to keep effective_batch=32)")
     print()
     for ctx in contexts:
         if ctx not in exp["contexts"]:
@@ -400,7 +432,13 @@ def cmd_train(args, registry):
             continue
         trained = ctx in trained_contexts(exp, registry)
         wall = estimate_train_time(n_size, exp["head"], ctx)
-        status_tag = "  # already trained" if trained else f"  # est. {wall}"
+        micro_batch, accum_steps = resolve_batch_accum(
+            exp, registry, ctx,
+            override_batch_size=getattr(args, "override_batch_size", None),
+        )
+        eff_batch = micro_batch * accum_steps
+        batch_tag = f"micro={micro_batch} accum={accum_steps} eff={eff_batch}"
+        status_tag = "  # already trained" if trained else f"  # est. {wall}  [{batch_tag}]"
         print(build_train_cmd(exp, registry, ctx,
                               override_time=getattr(args, "override_time", None),
                               override_batch_size=getattr(args, "override_batch_size", None),

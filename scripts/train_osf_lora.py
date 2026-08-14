@@ -243,7 +243,8 @@ def train_one_context(
     stage1_checkpoint: str,
     limit: int,
     max_items: int,
-    batch_size: int = 4,
+    batch_size: int = 32,
+    accum_steps: int = 1,
     exp_id: str = None,
     cli_lr_set: bool = False,
 ):
@@ -267,7 +268,8 @@ def train_one_context(
 
     print(f"\n{'='*60}")
     print(f"Context: {context_length}  ({N} epochs)")
-    print(f"  batch_size: {batch_size}")
+    print(f"  batch_size: {batch_size}  accum_steps: {accum_steps}  "
+          f"(effective batch: {batch_size * accum_steps})")
     print(f"{'='*60}")
 
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -370,6 +372,7 @@ def train_one_context(
     for epoch in range(start_epoch, epochs + 1):
         train_loss, train_logits, train_targets = run_epoch(
             model, train_loader, optimizer, criterion, device, None, train=True,
+            accum_steps=accum_steps,
         )
         val_loss, val_logits, val_targets = run_epoch(
             model, val_loader, None, criterion, device, None, train=False,
@@ -441,7 +444,9 @@ def train_one_context(
         "n_train": len(train_ds), "n_val": len(val_ds), "n_test": len(test_ds),
         "early_stopping_monitor": monitor, "best_val_monitor": best_monitor,
         "n_epochs_run": len(history), "training_time_min": elapsed / 60,
-        "batch_size": batch_size, "n_trainable_params": n_trainable,
+        "batch_size": batch_size, "accum_steps": accum_steps,
+        "effective_batch_size": batch_size * accum_steps,
+        "n_trainable_params": n_trainable,
         "n_total_params": n_total,
         "stage1_checkpoint": stage1_checkpoint,
         "train": train_metrics, "val": val_metrics, "test": test_metrics,
@@ -485,10 +490,19 @@ def main():
                               "resume state exists, head starts from random init — only "
                               "intended for quick pilots, not real runs.")
     parser.add_argument("--cpu", action="store_true")
-    parser.add_argument("--batch-size", default=4, type=int, dest="batch_size",
-                         help="Micro-batch size (default: 4 — much smaller than Stage 1's "
-                              "32, since each item is a full raw-signal window run through "
-                              "the backbone, not a cheap precomputed embedding lookup)")
+    parser.add_argument("--batch-size", default=None, type=int, dest="batch_size",
+                         help="Micro-batch size. Defaults to 32 if omitted (same convention "
+                              "as train_context_sweep.py/train_osf_context_sweep.py: "
+                              "'args.batch_size or 32') — NOT assumed to fit at every "
+                              "context; if it OOMs, lower --batch-size and raise "
+                              "--accum-steps proportionally to keep effective_batch=32.")
+    parser.add_argument("--accum-steps", default=1, type=int, dest="accum_steps",
+                         help="Gradient accumulation steps (default: 1). effective_batch = "
+                              "--batch-size * --accum-steps — set this so effective_batch "
+                              "matches the 32 used by Stage 1/SleepFM for a fair comparison "
+                              "(e.g. --batch-size 4 --accum-steps 8). Uses run_epoch()'s "
+                              "existing accum_steps support (imported from "
+                              "train_osf_context_sweep.py), same mechanism as Stage 1.")
     parser.add_argument("--lr", default=None, type=float)
     parser.add_argument("--run-tag", default="", dest="run_tag")
     args = parser.parse_args()
@@ -501,6 +515,9 @@ def main():
     _cli_lr_set = args.lr is not None
     if _cli_lr_set:
         cfg["training"]["lr"] = args.lr
+
+    # Same fallback convention as train_context_sweep.py/train_osf_context_sweep.py.
+    train_batch_size = args.batch_size or 32
 
     context_lengths = args.context or cfg["dataset"]["context_lengths"]
 
@@ -540,7 +557,8 @@ def main():
                 cfg=cfg, context_length=ctx, task=task, head_type=head_type,
                 out_dir=ctx_dir, device=device, datasets_filter=args.datasets,
                 stage1_checkpoint=stage1_ckpt, limit=args.limit, max_items=args.max_items,
-                batch_size=args.batch_size, exp_id=exp_id, cli_lr_set=_cli_lr_set,
+                batch_size=train_batch_size, accum_steps=args.accum_steps,
+                exp_id=exp_id, cli_lr_set=_cli_lr_set,
             )
             if metrics is not None:
                 append_to_summary(summary_path, metrics)

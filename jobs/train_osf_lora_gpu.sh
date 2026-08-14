@@ -81,7 +81,8 @@ TASK=${TASK:-""}
 HEAD=${HEAD:-""}
 CONTEXT=${CONTEXT:-""}
 DATASETS=${DATASETS:-""}
-BATCH_SIZE=${BATCH_SIZE:-""}   # default in train_osf_lora.py: 4 (much smaller than Stage 1's 32)
+BATCH_SIZE=${BATCH_SIZE:-""}   # empty = train_osf_lora.py falls back to 32 (same as Stage 1/SleepFM)
+ACCUM_STEPS=${ACCUM_STEPS:-1}  # effective_batch = BATCH_SIZE × ACCUM_STEPS; raise if BATCH_SIZE must drop to fit
 LR=${LR:-""}
 RUN_TAG=${RUN_TAG:-""}
 STAGE1_CHECKPOINT=${STAGE1_CHECKPOINT:-""}   # empty = auto-detect matching Stage 1 checkpoint
@@ -154,6 +155,7 @@ CMD="python scripts/train_osf_lora.py --config $CONFIG"
 [ -n "$CONTEXT"           ] && CMD="$CMD --context $CONTEXT"
 [ -n "$DATASETS"          ] && CMD="$CMD --datasets $DATASETS"
 [ -n "$BATCH_SIZE"        ] && CMD="$CMD --batch-size $BATCH_SIZE"
+CMD="$CMD --accum-steps $ACCUM_STEPS"
 [ -n "$LR"                ] && CMD="$CMD --lr $LR"
 [ -n "$RUN_TAG"           ] && CMD="$CMD --run-tag $RUN_TAG"
 [ -n "$STAGE1_CHECKPOINT" ] && CMD="$CMD --stage1-checkpoint $STAGE1_CHECKPOINT"

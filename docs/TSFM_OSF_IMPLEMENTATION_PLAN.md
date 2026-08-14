@@ -950,16 +950,6 @@ from Stage 1 gets edited:
       - **Real schema divergences from Stage 1's registry (not just a
         path rename)**, found while double-checking against Stage 1 per
         the standing instruction:
-        - **No `gradient_accumulation` section / `batch_mode` field.**
-          `train_osf_lora.py` has no `--accum-steps` flag and
-          `jobs/train_osf_lora_gpu.sh` has no `ACCUM_STEPS` env var —
-          gradient accumulation was never implemented for Stage 2. Each
-          entry has a flat `batch_size: 4` (matching
-          `train_osf_lora.py`'s own CLI default), passed straight through,
-          uniform across head types (unlike Stage 1's 32/32/64/128 —
-          Stage 2's per-item cost is dominated by the backbone forward
-          pass, which doesn't vary by head type the way Stage 1's
-          head-only training does).
         - `task_type` kept in each entry for side-by-side readability
           against `v2_osf_registry.yaml` but is informational only —
           `gen_commands_osf_lora.py` never reads it (no `--task-type`
@@ -986,6 +976,43 @@ from Stage 1 gets edited:
         harmless — both stages default to `windows_strategy: "fixed"`,
         which makes those keys inert in Stage 1 as well, so this isn't a
         Stage-2-specific gap.
+      - **Second real gap, found and fixed 2026-08-14 after the user
+        pushed back on an initial wrong call**: the registry/script were
+        first shipped with a flat `batch_size: 4` and no gradient
+        accumulation at all, reasoned as "Stage 2's per-item cost is
+        dominated by the backbone forward pass, so effective-batch parity
+        with Stage 1/SleepFM's 32 doesn't obviously matter." **The user
+        correctly rejected this** — effective batch size affects gradient
+        noise/optimization dynamics regardless of what dominates per-item
+        compute, and the standing instruction is to match
+        SleepFM/Stage-1's options unless the model genuinely requires
+        something different (it doesn't here). A full three-way argparse
+        audit (`train_context_sweep.py` vs `train_osf_context_sweep.py`
+        vs `train_osf_lora.py`) found `run_epoch()` — already imported by
+        `train_osf_lora.py` from `train_osf_context_sweep.py` — already
+        had working `accum_steps` support; it just wasn't wired through.
+        Fixed by porting the same `--accum-steps` flag, `args.batch_size
+        or 32` fallback convention, and `resolve_batch_accum()` logic
+        into `train_osf_lora.py` / `jobs/train_osf_lora_gpu.sh` /
+        `gen_commands_osf_lora.py` / `v2_osf_lora_registry.yaml`
+        (`gradient_accumulation: {enabled: true, effective_batch: 32,
+        context_micro_batch: {all contexts: 32}}`, accum_steps=1 as a
+        starting point, same as Stage 1's own registry). **32 is
+        explicitly NOT verified to fit on GPU** — if it OOMs, lower
+        `context_micro_batch` and let `accum_steps` rise to compensate,
+        exactly the workflow the user described. Live-verified end-to-end
+        on CPU (`--batch-size 2 --accum-steps 3` → prints "effective
+        batch: 6", trains and completes normally; `metrics.json` records
+        `batch_size`/`accum_steps`/`effective_batch_size`).
+        Audit also confirmed: `--task-type`/`--full-night-epochs` are
+        genuinely, deliberately absent from Stage 2 (seq2label-only,
+        no full_night support — not oversights); `--wandb-project`/
+        `--wandb-entity`/`--no-wandb` are absent too, left that way since
+        `wandb` isn't installed in `osf_env` for *either* stage (Stage 1's
+        own flags are already non-functional) — flagged as optional,
+        zero-effect-on-training, not fixed; inference's `--batch-size`/
+        `--num-workers` defaults differing from Stage 1's are fine as-is
+        (no gradient/effective-batch concept applies at inference time).
       - Wall-time tables: Stage 1's own (already-placeholder) OSF tables,
         scaled by a flat 6× multiplier — an explicitly-labeled unverified
         guess (full backbone forward+backward per raw epoch every step is
