@@ -56,14 +56,16 @@ Results section once available** — the user will run train/infer for
 `mean_pool` and ask for the analysis update later; don't forget this is
 still outstanding.
 
-**Phase 2 (Stage 2, LoRA fine-tuning) implementation has started** — see
+**Phase 2 (Stage 2, LoRA fine-tuning) implementation in progress** — see
 the Implementation Checklist's Phase 2 section below (expanded 2026-08-13
 from a 3-item stub into the same granularity as Phase 1). Items 2.1
-(peft/LoRA-wiring verification) and 2.2 (Stage 2 config, shared
-raw-signal utility, `OSFRawEpochWindowDataset`, smoke test, debug config)
-are done — 🛑 **user checkpoint**, debug via the `🔬 OSF-LoRA Step1` config
-in `~/.vscode/launch.json` before continuing to 2.3
-(`train_osf_lora.py`). Same one-step-at-a-time workflow as Phase 1.
+(peft/LoRA-wiring verification), 2.2 (Stage 2 config, shared raw-signal
+utility, `OSFRawEpochWindowDataset`), and 2.3 (`train_osf_lora.py` +
+job script, combined LoRA+head model, warm-start from Stage 1, real CPU
+pilot successful end-to-end) are all done — 🛑 **user checkpoint**, debug
+via the `🔬 OSF-LoRA Step2` config in `~/.vscode/launch.json` before
+continuing to 2.4 (`infer_osf_lora_subject_windows.py`). Same
+one-step-at-a-time workflow as Phase 1.
 
 ---
 
@@ -117,8 +119,8 @@ in `~/.vscode/launch.json` before continuing to 2.3
 | `src/nsrr_tools/datasets/osf_channel_loader.py` | Shared channel-mapping/resampling utility (used by Stage 1's extraction script too, checklist 2.2) | ✅ DONE |
 | `src/nsrr_tools/datasets/osf_raw_epoch_dataset.py` | `OSFRawEpochWindowDataset` — raw signal windows, not precomputed embeddings | ✅ DONE |
 | `scripts/test_osf_raw_epoch_dataset.py` | Smoke test for the above | ✅ DONE |
-| `scripts/train_osf_lora.py` | New end-to-end script, OSF encoder in the trainable graph | ⬜ TODO (checklist 2.3) |
-| `jobs/train_osf_lora_gpu.sh` | SLURM job script for LoRA training | ⬜ TODO (checklist 2.3) |
+| `scripts/train_osf_lora.py` | New end-to-end script, OSF encoder in the trainable graph | ✅ DONE |
+| `jobs/train_osf_lora_gpu.sh` | SLURM job script for LoRA training | ✅ DONE |
 | `scripts/infer_osf_lora_subject_windows.py` | Inference for LoRA checkpoints — live backbone forward pass, not cached `.npy` | ⬜ TODO (checklist 2.4) |
 | `jobs/infer_osf_lora_subject_windows_gpu.sh` | SLURM job script for LoRA inference | ⬜ TODO (checklist 2.4) |
 | `experiments/v2_osf_lora_registry.yaml` | Stage 2 experiment registry, isolated `results_dir`/`logs_dir` | ⬜ TODO (checklist 2.5) |
@@ -781,14 +783,64 @@ from Stage 1 gets edited:
         OSFRawEpochWindowDataset (apnea_binary, apples, CPU) (checklist
         2.2)`.
       🛑 **User checkpoint** — debug the smoke-test config before continuing.
-- [ ] 2.3 **`scripts/train_osf_lora.py` + `jobs/train_osf_lora_gpu.sh`**
-      (bundled, same pattern as Stage 1's 1.5 — job script mirrors the
-      SIGUSR1 auto-resume/status-JSONL convention, pointed at `osf_env`/
-      `logs_osf_lora/`) — combined LoRA-ViT + sequence-head module,
-      warm-started from the matching Stage 1 checkpoint (Appendix §6.1).
-      Debug config + a tiny correctness pilot (few items, few epochs,
-      CPU) — not the wall-time calibration pilot yet, just "does it run
-      and does loss go down." 🛑 **User checkpoint**.
+- [x] 2.3 **`scripts/train_osf_lora.py` + `jobs/train_osf_lora_gpu.sh`** —
+      done 2026-08-13.
+      - **Reuses, doesn't duplicate, Stage 1's low-level training
+        functions**: `run_epoch`, `compute_metrics`,
+        `compute_monitor_metric`, `append_to_summary`, `_classify_failure`
+        are imported directly from `train_osf_context_sweep.py` rather
+        than copy-pasted — `run_epoch` in particular has no idea what's
+        inside `model`, it just calls `model(x, mask)`, so it works
+        completely unmodified once `CombinedOSFLoRAModel.forward()`
+        matches that signature. (Side effect worth knowing: this import
+        also registers `train_osf_context_sweep.py`'s module-level
+        SIGTERM handler, which is exactly the auto-resume behavior
+        `jobs/train_osf_lora_gpu.sh` needs too — reused deliberately, not
+        an accidental side effect, documented in the file.)
+      - `CombinedOSFLoRAModel`: wraps the OSF ViT backbone + sequence
+        head as one `nn.Module` **before** peft injection (per Appendix
+        §6.1), so `get_peft_model(combined, LoraConfig(...,
+        modules_to_save=["sequence_head"]))` makes peft's own state-dict
+        save/load cover both the LoRA deltas and the head together.
+      - **Two real bugs found and fixed during the pilot** (exactly why
+        self-testing before handoff matters):
+        1. `peft`'s `modules_to_save` doesn't leave the target submodule
+           as a plain module — it wraps it in a `ModulesToSaveWrapper`
+           holding two copies (`.original_module`, a frozen reference,
+           and `.modules_to_save["default"]`, the actual trainable copy
+           used during forward). A naive `load_state_dict()` call for the
+           Stage 1 warm-start failed with a key-prefix mismatch against
+           the wrapper itself — fixed by loading into both inner copies
+           explicitly. Verified live against the real wrapper structure
+           (`peft.utils.other.ModulesToSaveWrapper`) before writing the
+           fix, not guessed.
+        2. The already-known NaN-AUROC-blocks-checkpoint-saving issue
+           (documented for Stage 1 in the plan doc, "Work around it now,
+           leave code untouched" — user's explicit decision) reproduced
+           identically here with a too-small `--limit`, confirming it's
+           the same pre-existing behavior, not a new Stage 2 bug. Worked
+           around the same way: used more debug subjects so both classes
+           appear in val.
+      - **Pilot smoke test, real data, CPU** (`apnea_binary`/`lstm`/30s,
+        24 subjects, 12 items, batch_size=2): full pipeline
+        SUCCESS — warm-start from the real Stage 1 checkpoint, training
+        loop (loss 0.0006→0.0002, confirming gradients flow through the
+        LoRA-adapted backbone end-to-end), checkpoint save/load round-trip
+        via `get_peft_model_state_dict`/`set_peft_model_state_dict`, final
+        train/val/test evaluation all worked. **Unplanned bonus
+        verification**: an earlier attempt got killed mid-run by a test
+        timeout after saving `resume.pt` at epoch 4 — the next run
+        correctly auto-resumed from epoch 5, confirming the resume
+        mechanism works without a dedicated test for it.
+      - VSCode debug config added: `🔬 OSF-LoRA Step2: Train Pilot DEBUG
+        (apnea_binary, lstm, 30s, CPU) (checklist 2.3)`.
+      - **Not yet exercised**: GPU execution (this pilot was CPU-only),
+        the memory-mitigation ladder (Appendix §6.2 — not needed yet,
+        no GPU memory pressure encountered), long contexts (240m = 480
+        backbone forward passes/window — untested), and wall-time
+        calibration (checklist 2.6, separate step).
+      🛑 **User checkpoint** — debug the `🔬 OSF-LoRA Step2` config before
+      continuing to 2.4 (`infer_osf_lora_subject_windows.py`).
 - [ ] 2.4 **`scripts/infer_osf_lora_subject_windows.py` +
       `jobs/infer_osf_lora_subject_windows_gpu.sh`** (bundled, same
       pattern as Stage 1's 1.6). **New relative to Stage 1's Appendix §6
@@ -1836,11 +1888,26 @@ A genuinely new end-to-end training script, not a fork of
   save/load and gradient-freezing logic treats the head as a first-class
   fully-trainable submodule, matching the `modules_to_save=["classifier"]`
   pattern already documented in `docs/TSFM_BASELINE_CANDIDATES.md` §6.
+  **A second real PEFT nuance, found live during checklist 2.3's
+  implementation (not just predicted here)**: `modules_to_save` doesn't
+  leave the target submodule as a plain module afterward — it's replaced
+  with a `peft.utils.other.ModulesToSaveWrapper` holding *two* copies:
+  `.original_module` (a frozen reference, restored if the adapter is ever
+  disabled) and `.modules_to_save["default"]` (the actual trainable copy
+  used during the forward pass while the adapter is active). Loading a
+  plain Stage 1 state dict directly into the wrapper fails with a
+  key-prefix mismatch (`"original_module.lstm..."` /
+  `"modules_to_save.default.lstm..."` expected, not bare `"lstm..."`) —
+  load into both inner copies explicitly instead
+  (`scripts/train_osf_lora.py`'s `warm_start_head_from_stage1()` does
+  this correctly; verified against the real wrapper structure before
+  writing the fix, not guessed).
 - **Warm start from Stage 1**: load the Stage-1-trained sequence head's
   weights into the combined module's head submodule before starting Stage
   2 training (per the staged LP-FT procedure in `CLAUDE.md` → "Frozen vs.
   LoRA-fine-tuned conditions") — don't start LoRA fine-tuning from a
-  randomly-initialized head.
+  randomly-initialized head. **Implemented and verified working** —
+  checklist 2.3.
 - **Forward pass per training step**: for each window, run all `N_epochs`
   raw epochs through the LoRA-adapted ViT (batched across epochs, same
   batching pattern as the extraction script, calling
