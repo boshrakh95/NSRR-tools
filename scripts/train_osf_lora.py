@@ -74,7 +74,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import yaml
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, WeightedRandomSampler
 
 from peft import LoraConfig, get_peft_model, get_peft_model_state_dict, set_peft_model_state_dict
 
@@ -296,6 +296,7 @@ def train_one_context(
     # ── Class weights — identical logic to train_osf_context_sweep.py ──────
     train_labels = np.array([entry[2] for entry in train_ds._index])
     class_weights_cfg = t_cfg.get("class_weights")
+    w_auto = None   # kept for WeightedRandomSampler if configured, matching Stage 1
     if class_weights_cfg == "auto":
         counts = np.bincount(train_labels, minlength=num_classes).astype(float)
         counts = np.where(counts == 0, 1.0, counts)
@@ -304,30 +305,55 @@ def train_one_context(
         print(f"  Auto class weights: {np.round(w_auto, 3).tolist()}")
         criterion = nn.CrossEntropyLoss(weight=torch.tensor(w_auto, dtype=torch.float32, device=device))
     elif class_weights_cfg is not None:
-        w = np.array(class_weights_cfg, dtype=float)
-        criterion = nn.CrossEntropyLoss(weight=torch.tensor(w, dtype=torch.float32, device=device))
+        w_auto = np.array(class_weights_cfg, dtype=float)
+        criterion = nn.CrossEntropyLoss(weight=torch.tensor(w_auto, dtype=torch.float32, device=device))
     else:
         criterion = nn.CrossEntropyLoss()
 
     # ── DataLoaders — small num_workers default: raw-signal windows are far
     # larger tensors per item than Stage 1's precomputed embeddings ────────
     num_workers = min(2, max(0, len(train_ds) // 64))
-    # SubjectGroupedSampler (checklist 2.5b): keeps each subject's items
-    # consecutive so the per-worker single-subject cache in
-    # OSFRawEpochWindowDataset actually hits, instead of missing on nearly
-    # every item under plain shuffle=True — stacks with the raw-signal
-    # cache fix rather than replacing it. sampler and shuffle are mutually
-    # exclusive in DataLoader; only the train split needs this (val/test
-    # already use shuffle=False, i.e. sequential index order, which is
-    # naturally subject-grouped since _build_seq2label_index emits all of
-    # one subject's windows together).
-    train_sampler = SubjectGroupedSampler(train_ds._index)
+
+    # Sampler priority (checklist 2.5c) — mirrors train_osf_context_sweep.py's
+    # exact priority order (weighted_sampler wins over grouped sampler when
+    # both would apply), found missing here while auditing Stage 1 parity.
+    # weighted_sampler defaults to false in every config (SleepFM/Stage 1/
+    # Stage 2) so this is currently inert — worth having anyway for real
+    # feature parity, and to fail correctly (not silently) if it's ever
+    # turned on. NOTE if it IS turned on for Stage 2: WeightedRandomSampler
+    # samples with replacement in effectively random order, losing the
+    # per-worker single-subject cache benefit SubjectGroupedSampler
+    # provides — a real speed tradeoff Stage 1 doesn't have (its cached-
+    # embedding reads are cheap regardless of order), not just a copy-paste
+    # concern.
+    use_weighted_sampler = t_cfg.get("weighted_sampler", False) and w_auto is not None
+    if use_weighted_sampler:
+        sample_weights = torch.tensor(w_auto[train_labels], dtype=torch.float32)
+        train_sampler = WeightedRandomSampler(sample_weights, len(sample_weights), replacement=True)
+        print(f"  WeightedRandomSampler: enabled")
+    else:
+        # SubjectGroupedSampler (checklist 2.5b): keeps each subject's items
+        # consecutive so the per-worker single-subject cache in
+        # OSFRawEpochWindowDataset actually hits, instead of missing on
+        # nearly every item under plain shuffle=True.
+        train_sampler = SubjectGroupedSampler(train_ds._index)
+    # sampler and shuffle are mutually exclusive in DataLoader; only the
+    # train split needs a custom sampler (val/test already use
+    # shuffle=False, i.e. sequential index order, which is naturally
+    # subject-grouped since _build_seq2label_index emits all of one
+    # subject's windows together).
+    # persistent_workers=True (matching Stage 1) keeps worker processes and
+    # their per-worker single-subject cache alive across epochs, not just
+    # within one.
     train_loader = DataLoader(train_ds, batch_size=batch_size, sampler=train_sampler,
-                               num_workers=num_workers, pin_memory=(device.type == "cuda"))
+                               num_workers=num_workers, pin_memory=(device.type == "cuda"),
+                               persistent_workers=(num_workers > 0))
     val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False,
-                             num_workers=num_workers, pin_memory=(device.type == "cuda"))
+                             num_workers=num_workers, pin_memory=(device.type == "cuda"),
+                             persistent_workers=(num_workers > 0))
     test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False,
-                              num_workers=num_workers, pin_memory=(device.type == "cuda"))
+                              num_workers=num_workers, pin_memory=(device.type == "cuda"),
+                              persistent_workers=(num_workers > 0))
 
     # ── Model — build fresh, warm-start head, resume LoRA state if present ─
     model = build_combined_lora_model(cfg, num_classes, head_type, device)
@@ -360,6 +386,15 @@ def train_one_context(
     epochs = t_cfg["epochs"]
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
 
+    # mixed_precision (checklist 2.5c): was previously hardcoded to no AMP
+    # regardless of the config value — a real gap found while auditing
+    # against Stage 1, which does wire this up. Same pattern as Stage 1
+    # (only the training call gets the scaler; eval calls always pass
+    # None) — worth having here specifically because AMP reduces backbone
+    # activation memory, directly relevant to whether batch_size=32 fits.
+    use_amp = t_cfg.get("mixed_precision", True) and device.type == "cuda"
+    scaler = torch.cuda.amp.GradScaler() if use_amp else None
+
     patience = t_cfg.get("early_stopping_patience", 5)
     monitor = t_cfg.get("early_stopping_monitor", "val_loss")
     monitor_higher_is_better = (monitor != "val_loss")
@@ -382,7 +417,7 @@ def train_one_context(
     t0 = time.time()
     for epoch in range(start_epoch, epochs + 1):
         train_loss, train_logits, train_targets = run_epoch(
-            model, train_loader, optimizer, criterion, device, None, train=True,
+            model, train_loader, optimizer, criterion, device, scaler, train=True,
             accum_steps=accum_steps,
         )
         val_loss, val_logits, val_targets = run_epoch(

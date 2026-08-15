@@ -27,11 +27,13 @@ auto-scaling formula (_ref_bs/_ref_N). That formula was calibrated for
 looking up cheap precomputed embeddings; here every item still runs a full
 LoRA-adapted ViT forward pass per raw epoch (chunked inside
 CombinedOSFLoRAModel.forward via chunk_batch_size), so the compute/memory
-profile is fundamentally different — same reason train_osf_lora.py's own
-default batch size (4) is much smaller than Stage 1's (32). Default here
-matches that: fixed --batch-size, not auto-scaled. Real GPU numbers from
-checklist 2.6 may motivate a real formula later; not invented here
-unverified.
+profile is fundamentally different. Default here is a fixed --batch-size
+(4) — smaller than train_osf_lora.py's own default (32, matching Stage
+1/SleepFM's effective_batch=32 convention as of checklist 2.5c) because
+inference has no gradient/effective-batch concept to keep comparable
+across stages — it's a pure throughput/memory knob, so there was no
+reason to default it to 32 too. Real GPU numbers from checklist 2.6 may
+motivate a real auto-scaling formula later; not invented here unverified.
 
 Output (per context) — same schema as Stage 1's inference:
     {inference_dir}/{task}_{head}/context_{ctx}/{split}_windows.parquet
@@ -173,8 +175,10 @@ def main():
     parser.add_argument("--no-all-windows", action="store_true", dest="no_all_windows",
                         help="Use K=5 windows (reproduces training eval) instead of all windows")
     parser.add_argument("--batch-size", default=4, type=int, dest="batch_size",
-                        help="Fixed micro-batch size (default: 4, same as train_osf_lora.py — "
-                             "NOT auto-scaled by context length, see module docstring)")
+                        help="Fixed micro-batch size (default: 4 — deliberately smaller than "
+                             "train_osf_lora.py's default of 32, since inference has no "
+                             "effective-batch concept to keep comparable; NOT auto-scaled by "
+                             "context length, see module docstring)")
     parser.add_argument("--num-workers", default=2, type=int, dest="num_workers")
     parser.add_argument("--cpu",        action="store_true")
     parser.add_argument("--out-dir",    default=None, dest="out_dir",

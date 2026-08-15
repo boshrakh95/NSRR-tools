@@ -157,10 +157,10 @@ training:
   epochs: 40
   lr: 1.0e-4
   weight_decay: 1.0e-3
-  optimizer: "adamw"
-  scheduler: "cosine"
+  optimizer: "adamw"   # NOTE: not actually read by train_osf_lora.py — hardcoded to plain Adam, same as train_osf_context_sweep.py. See phase0_osf_config.yaml's footnote 1 / plan §3.4.
+  scheduler: "cosine"  # NOTE: not actually read either — hardcoded to CosineAnnealingLR (same as Stage 1).
   early_stopping_patience: 10
-  device: "cuda"
+  device: "cuda"        # NOTE: not actually read — device comes from --cpu / torch.cuda.is_available() (same as Stage 1).
   mixed_precision: false
   class_weights: "auto"
   early_stopping_monitor: "val_auroc"

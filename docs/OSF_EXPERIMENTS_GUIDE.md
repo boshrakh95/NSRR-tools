@@ -544,6 +544,21 @@ sweep involving those cohorts (checklist 2.7).
 **Status: DONE (script + job script), CPU pilot successful end-to-end;
 full sweep not yet run (depends on 2.6/2.7).**
 
+**Levers available if `batch_size=32` doesn't fit on GPU** (checklist
+2.5c — a pre-submission audit found these were silently unwired despite
+Stage 1 having working versions; both default OFF, matching Stage 1/
+SleepFM, so nothing changes unless you flip them in
+`configs/phase0_osf_lora_config.yaml`):
+- `training.mixed_precision: true` — enables AMP (autocast + GradScaler),
+  reduces backbone activation memory. Try this before lowering batch size.
+- `training.weighted_sampler: true` — switches the train loader from
+  `SubjectGroupedSampler` to `WeightedRandomSampler`; trades away the
+  cache-locality speed benefit for class-balanced sampling. Usually not
+  needed since `class_weights: "auto"` already reweights the loss.
+- Lower `context_micro_batch` in `experiments/v2_osf_lora_registry.yaml`
+  and let `accum_steps` rise to compensate (keeps `effective_batch=32`) —
+  see Step 8.5 below.
+
 ```bash
 # Tiny CPU debug pilot (mirrors the VSCode "🔬 OSF-LoRA Step2" config).
 # --limit/--max-items keep this fast — DEBUG ONLY, omit for real runs.

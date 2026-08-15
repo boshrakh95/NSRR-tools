@@ -80,10 +80,17 @@ Stage 1 before computing the train/val/test split — now fixed to match
 exactly; see checklist 2.5b for the live-confirmed details, and the
 related, NOT-fixed, explicitly-flagged finding that SleepFM and OSF Stage
 1 themselves already use subtly different splits). Live-verified
-end-to-end on a full real dataset (APPLES). Next: checklist 2.6 (real
-wall-time calibration pilot on GPU) — run the precompute for the
-remaining 3 datasets first (see `docs/OSF_EXPERIMENTS_GUIDE.md` Step
-8.2b), then submit. Same one-step-at-a-time workflow as Phase 1.
+end-to-end on a full real dataset (APPLES). While the remaining 3
+datasets' precompute jobs were queued, checklist 2.5c did a full
+line-by-line pre-submission audit (config sections, dataset/training
+code, registry, job scripts) against both Stage 1 and SleepFM, finding
+and fixing 3 more real (currently inert) parity gaps — `mixed_precision`/
+`weighted_sampler` were never wired up despite Stage 1 having working
+versions, and `persistent_workers` was missing from all 3 DataLoaders —
+plus one stale docstring. Next: checklist 2.6 (real wall-time calibration
+pilot on GPU) — run the precompute for the remaining 3 datasets first
+(see `docs/OSF_EXPERIMENTS_GUIDE.md` Step 8.2b), then submit. Same
+one-step-at-a-time workflow as Phase 1.
 
 ---
 
@@ -1129,6 +1136,82 @@ from Stage 1 gets edited:
       - See `docs/OSF_EXPERIMENTS_GUIDE.md` Step 8.2b for the exact
         commands to run the precompute (small test, sharded full run, gap
         re-fill) before any real training/inference job.
+- [x] 2.5c **Full pre-submission audit** — while the 2.5b precompute jobs
+      were queued, systematically re-read every Stage 2 code/config file
+      side-by-side against Stage 1 (`train_osf_context_sweep.py`) and
+      SleepFM (`train_context_sweep.py`), specifically hunting for
+      "Stage 1/SleepFM has a real, working option that Stage 2 silently
+      doesn't." Three more real (if currently inert) gaps found and
+      fixed, same category as 2.5's `context_lr_overrides` fix and the
+      earlier `--accum-steps` fix:
+      - **`mixed_precision`**: Stage 1 actually wires up AMP
+        (`torch.autocast` + `GradScaler`, gated by
+        `t_cfg.get("mixed_precision", True) and device.type=="cuda"`,
+        scaler only on the training call, never on eval calls) —
+        `train_osf_lora.py` hardcoded `scaler=None` regardless of the
+        config value. Since `run_epoch()` (already imported from Stage 1)
+        already supports this, fixed by wiring the same construction +
+        call pattern into `train_one_context()`. `mixed_precision: false`
+        remains the default everywhere (SleepFM/Stage 1/Stage 2), so this
+        doesn't change current behavior — but it's a real, useful lever
+        now: AMP reduces backbone activation memory, directly relevant to
+        whether `batch_size=32` fits once checklist 2.6 tests it for real.
+      - **`weighted_sampler`**: Stage 1 supports an alternative to the
+        (grouped) train sampler — `WeightedRandomSampler` over
+        `w_auto[train_labels]` — with a real priority order
+        (`weighted_sampler` wins over the grouped sampler when both would
+        apply). `train_osf_lora.py` had zero reference to this config key
+        at all. Fixed by porting the same conditional + priority order,
+        `w_auto` now tracked through both the `"auto"` and explicit-list
+        `class_weights` branches (matching Stage 1's variable reuse).
+        `weighted_sampler: false` remains the default everywhere, so
+        currently inert — but documented inline that turning it on for
+        Stage 2 specifically trades away `SubjectGroupedSampler`'s cache-
+        locality benefit (`WeightedRandomSampler` samples with
+        replacement in effectively random order), a real tradeoff Stage 1
+        doesn't have since its embedding reads are cheap regardless of
+        order.
+      - **`persistent_workers`**: Stage 1 sets `persistent_workers=
+        (num_workers > 0)` on every DataLoader, keeping worker processes
+        (and each one's per-worker single-subject cache) alive across
+        epochs, not just within one. Stage 2's loaders were missing this
+        entirely — added to all three (train/val/test).
+      - **Stale docstring found in `infer_osf_lora_subject_windows.py`**:
+        claimed its `--batch-size` default (4) matched
+        `train_osf_lora.py`'s default — true when written, but
+        `train_osf_lora.py`'s default became 32 during the earlier
+        `--accum-steps` fix. Corrected the docstring/help text to
+        explain the (still-correct, still-deliberate) reasoning instead:
+        inference has no effective-batch/gradient-comparability concept,
+        so there was never a reason to match Stage 1's 32 there.
+      - **Also checked, found genuinely consistent (no fix needed)**:
+        `model:`/`training:` config sections match Stage 1/SleepFM
+        exactly (`hidden_dim=128, num_layers=1, num_heads=8, dropout=0.3`,
+        `epochs=40, lr=1e-4, weight_decay=1e-3, early_stopping_patience=10`
+        — only `input_dim` legitimately differs, 512/1536, matching each
+        backbone's embedding width); `min_recording_patches`/
+        `max_min_past_patches` differ in raw number between SleepFM and
+        OSF but represent the identical real-world duration once each
+        system's own patch/epoch units are accounted for (240m minimum
+        recording, 20min seq2seq lookback); the registry's task/dataset/
+        context lists are identical to `v2_osf_registry.yaml` (one
+        dropped inline comment, no value difference); the seq2label
+        index-building and window-extraction arithmetic in
+        `osf_raw_epoch_dataset.py` is arithmetic-for-arithmetic identical
+        to `osf_context_window_dataset.py`'s (materialization differs,
+        the math doesn't); `optimizer`/`scheduler`/`device` config keys
+        are consistently NOT read by either stage's script (both
+        hardcode plain Adam/CosineAnnealingLR/flag-derived device) — this
+        was already documented for Stage 1 but missing for Stage 2, so
+        the matching footnote comment was added to
+        `phase0_osf_lora_config.yaml` too.
+      - Re-verified end-to-end after all fixes: real (non-`--limit`
+        subject-count, real batch/accum) training smoke test against the
+        full APPLES cache completed successfully with the new AMP/
+        weighted-sampler/persistent-workers code paths active (AMP/
+        weighted-sampler inactive per current config defaults, exercised
+        only the "off" branch — still confirms no regression), identical
+        training curve to pre-audit runs.
 - [ ] 2.6 **Real wall-time calibration pilot on GPU** (Appendix §6.3) — a
       short real run (few epochs, smallest context) on an actual GPU
       allocation to get real per-step timing, since Stage 2's cost model
