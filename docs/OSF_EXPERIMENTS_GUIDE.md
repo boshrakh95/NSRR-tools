@@ -576,16 +576,27 @@ while val loss climbs and val accuracy stays at chance. This is expected —
 the pilot's purpose is "does the pipeline run and do gradients flow,"
 not "is the model good." Don't read anything into pilot-scale metrics.
 
-**GPU job** (not yet run for real — checklist 2.6/2.7):
+**GPU job — go through `gen_commands_osf_lora.py`, not a hand-written
+`sbatch` call** (not yet run for real — checklist 2.6/2.7). Calling
+`jobs/train_osf_lora_gpu.sh` directly without `--context` runs ALL 6
+context lengths sequentially inside one job using the script's 24h
+default wall time — nowhere near enough (~117h combined at the current
+placeholder per-context estimates). `gen_commands_osf_lora.py` submits
+one correctly-time-boxed job per context instead:
 ```bash
-sbatch --export=ALL,TASK=apnea_binary,HEAD=lstm jobs/train_osf_lora_gpu.sh
+# One job per context, each with its own wall-time estimate + resolved batch/accum
+python scripts/gen_commands_osf_lora.py train apnea_binary_lstm | bash
+
+# Or a single context to start
+python scripts/gen_commands_osf_lora.py train apnea_binary_lstm --context 30s | bash
 ```
 Same auto-resume mechanism as Stage 1 (`--signal=B:USR1@120` + `resume.pt`,
 saved every epoch as a `peft` state dict + optimizer/scheduler state),
 same status-JSONL convention, logs to `logs_osf_lora/`.
 
-⚠️ **Wall-time NOT calibrated** — the job script's 24h default is a
-placeholder, not measured. See checklist 2.6.
+⚠️ **Wall-time NOT calibrated** — every estimate `gen_commands_osf_lora.py`
+prints is a placeholder, not measured. See checklist 2.6. Auto-requeue
+means an underestimate just costs one resubmission, not lost work.
 
 ### Step 8.4 — Inference
 
@@ -612,10 +623,13 @@ downstream `analyze`/`collect` compatibility. No `anchor_patch_end`
 column — Stage 2 is seq2label-only for now (matches
 `OSFRawEpochWindowDataset`'s scope).
 
-**GPU job** (not yet run for real):
+**GPU job — again, prefer `gen_commands_osf_lora.py infer` over a
+hand-written `sbatch` call**, same reason as training: it auto-discovers
+trained contexts and sizes the wall-time estimate to match, rather than
+using the job script's flat `05:00:00` default regardless of how many
+contexts are listed (not yet run for real):
 ```bash
-sbatch --export=ALL,TASK=apnea_binary,HEAD=lstm,CONTEXTS="30s 10m 40m 80m 120m 240m" \
-    jobs/infer_osf_lora_subject_windows_gpu.sh
+python scripts/gen_commands_osf_lora.py infer apnea_binary_lstm --split test | bash
 ```
 Same auto-resume mechanism, same status-JSONL convention, logs to
 `logs_osf_lora/`.
