@@ -83,6 +83,7 @@ _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT / "src"))
 from nsrr_tools.datasets.osf_raw_epoch_dataset import (
     OSFRawEpochWindowDataset,
+    SubjectGroupedSampler,
     parse_context_length,
 )
 from nsrr_tools.models.sequence_head import build_head
@@ -311,7 +312,17 @@ def train_one_context(
     # ── DataLoaders — small num_workers default: raw-signal windows are far
     # larger tensors per item than Stage 1's precomputed embeddings ────────
     num_workers = min(2, max(0, len(train_ds) // 64))
-    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True,
+    # SubjectGroupedSampler (checklist 2.5b): keeps each subject's items
+    # consecutive so the per-worker single-subject cache in
+    # OSFRawEpochWindowDataset actually hits, instead of missing on nearly
+    # every item under plain shuffle=True — stacks with the raw-signal
+    # cache fix rather than replacing it. sampler and shuffle are mutually
+    # exclusive in DataLoader; only the train split needs this (val/test
+    # already use shuffle=False, i.e. sequential index order, which is
+    # naturally subject-grouped since _build_seq2label_index emits all of
+    # one subject's windows together).
+    train_sampler = SubjectGroupedSampler(train_ds._index)
+    train_loader = DataLoader(train_ds, batch_size=batch_size, sampler=train_sampler,
                                num_workers=num_workers, pin_memory=(device.type == "cuda"))
     val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False,
                              num_workers=num_workers, pin_memory=(device.type == "cuda"))

@@ -11,9 +11,19 @@ subject-list/split/K-sampling/window-position index-building logic is
 IDENTICAL (pure integer arithmetic over T epochs and N context length, no
 reference to what's actually stored per epoch) and copied near-verbatim.
 The only real difference is *materialization*: OSFContextWindowDataset
-slices a precomputed [T, 2, 768] embedding array; this class loads raw
-signal live via nsrr_tools.datasets.osf_channel_loader and slices a
-[12, n_samples_64] array by epoch-aligned sample ranges instead.
+slices a precomputed [T, 2, 768] embedding array; this class slices a
+[12, n_samples_64] resampled-signal array instead.
+
+READS FROM THE PRECOMPUTED RAW SIGNAL CACHE (checklist 2.5b), NOT the raw
+HDF5, as of 2026-08-14. Originally called
+nsrr_tools.datasets.osf_channel_loader.load_and_resample_channels() live
+on every __getitem__ — found (via a real stalled GPU job, 54716906) to be
+the dominant cost of every Stage 2 training run: repeated from scratch on
+every item, for every task/head/context/job, even though the resampled
+signal doesn't depend on any of those. scripts/precompute_osf_raw_signal_cache.py
+now builds this once, offline, CPU-only; this class just reads it. See
+that script's module docstring and docs/TSFM_OSF_IMPLEMENTATION_PLAN.md
+checklist 2.5b for the full diagnosis/fix.
 
 SCOPE (deliberately narrower than OSFContextWindowDataset for this first
 pass): seq2label only. Stage 1 itself has not yet run sleep_staging
@@ -21,10 +31,19 @@ pass): seq2label only. Stage 1 itself has not yet run sleep_staging
 this is not a capability regression, just matching Stage 1's own current
 scope. Add seq2seq support later if/when Stage 1 does.
 
+SUBJECT/SPLIT SELECTION IS UNCHANGED BY THE CACHE — task_subject_dir,
+split_seed, train/val/test proportions all work exactly as before. The
+cache only changes *how* the signal for an already-selected subject is
+read, never *which* subjects/splits are selected — required so Stage 1
+and Stage 2 always train/evaluate on identical subjects.
+
 INPUT
 ─────
-  {hdf5_dir}/{dataset}/derived/hdf5_signals/{subject_id}.h5  (same source
-  HDF5s Stage 1 reads — read-only shared input, not copied or modified)
+  {raw_signal_cache_dir}/{dataset}/{subject_id}.npy  (precomputed by
+  scripts/precompute_osf_raw_signal_cache.py — run that first. A subject
+  present in the task CSV/split but missing from the cache raises a clear
+  error at dataset-construction time, not a silent fallback to the raw
+  HDF5 and not a silent subject drop — see __init__ below.)
 
   seq2label subject CSV: [unified_id, dataset, subject_id, visit, label]
   (same task_subjects/*.csv Stage 1 uses — same task_subject_dir/split_seed,
@@ -49,9 +68,9 @@ from torch.utils.data import Dataset
 
 from nsrr_tools.datasets.osf_channel_loader import (
     EPOCH_SAMPLES,
-    build_channel_candidates,
-    get_epoch_count,
-    load_and_resample_channels,
+    cache_path_for,
+    get_cached_epoch_count,
+    load_signal_cache,
 )
 
 # ── Constants — identical to osf_context_window_dataset.py ─────────────────────
@@ -87,19 +106,24 @@ def parse_context_length(s) -> int:
     return int(patches)
 
 
-def _build_raw_shape_cache(hdf5_dir: Path, df: pd.DataFrame) -> dict:
-    """{dataset}/{subject_id} -> epoch count, via fast HDF5 metadata reads
-    (nsrr_tools.datasets.osf_channel_loader.get_epoch_count — no full
-    channel load). Self-contained: does NOT depend on Stage 1's
-    shape_cache.json existing, unlike an earlier design option that would
-    have coupled Stage 2 to Stage 1's precomputed-embeddings output."""
+def _build_raw_shape_cache(cache_dir: Path, df: pd.DataFrame) -> Tuple[dict, List[str]]:
+    """{dataset}/{subject_id} -> epoch count, via a fast shape-only read of
+    the precomputed raw-signal cache (nsrr_tools.datasets.osf_channel_loader.
+    get_cached_epoch_count — mmap, no raw HDF5 touched at all). Returns
+    (shape_dict, missing_keys) — missing_keys lists any subject in df whose
+    cache file doesn't exist yet, so __init__ can fail loudly (see its
+    docstring) instead of silently dropping subjects or falling back to a
+    slow raw-HDF5 read."""
     cache = {}
+    missing = []
     for _, row in df.iterrows():
         key = f"{row['dataset']}/{row['subject_id']}"
-        h5_path = hdf5_dir / row["dataset"] / "derived" / "hdf5_signals" / f"{row['subject_id']}.h5"
-        if h5_path.exists():
-            cache[key] = get_epoch_count(h5_path)
-    return cache
+        cache_path = cache_path_for(cache_dir, row["dataset"], row["subject_id"])
+        if cache_path.exists():
+            cache[key] = get_cached_epoch_count(cache_path)
+        else:
+            missing.append(key)
+    return cache, missing
 
 
 class OSFRawEpochWindowDataset(Dataset):
@@ -139,7 +163,7 @@ class OSFRawEpochWindowDataset(Dataset):
         self.split = split
         self.task = task
         self.seed = seed
-        self.hdf5_dir = Path(data_cfg["hdf5_dir"])
+        self.cache_dir = Path(data_cfg["raw_signal_cache_dir"])
 
         self.N = parse_context_length(context_length)
         if self.N == FULL_NIGHT_SENTINEL:
@@ -148,10 +172,6 @@ class OSFRawEpochWindowDataset(Dataset):
             )
 
         self._K_max = ds_cfg.get("windows_per_subject", 5)
-
-        # ── Channel candidates per dataset (SHHS EEG special-case) ─────────
-        self._cfg_candidates = data_cfg["channel_candidates"]
-        self._channel_candidates_cache: dict = {}
 
         # ── Load subject list — identical logic to OSFContextWindowDataset ──
         task_subject_dir = Path(ds_cfg["task_subject_dir"])
@@ -163,20 +183,31 @@ class OSFRawEpochWindowDataset(Dataset):
         if datasets:
             df = df[df["dataset"].isin(datasets)].reset_index(drop=True)
 
-        # Keep only subjects with a raw HDF5 file (read-only source shared
-        # with Stage 1 — same files, no separate copy).
-        has_h5 = df.apply(
+        # Filter by Stage 1 embedding-file existence — NOT raw HDF5 or
+        # Stage 2's own cache — so len(df) (and subject identity/order)
+        # exactly matches what OSFContextWindowDataset (Stage 1) used at
+        # split-computation time. Existence check ONLY; no embedding
+        # contents are ever read here. Any other filter criterion risks a
+        # completely different np.random.default_rng(split_seed).shuffle()
+        # permutation the instant len(df) or subject order differs — live-
+        # confirmed real, not hypothetical: MrOS has exactly 1 subject
+        # (AA2557_v2) and STAGES exactly 1 (STLK00096) with a raw HDF5 but
+        # no Stage 1 OSF embedding.
+        stage1_embedding_dir = Path(ds_cfg["stage1_embedding_dir"])
+        has_emb = df.apply(
             lambda r: (
-                self.hdf5_dir / r["dataset"] / "derived" / "hdf5_signals" / f"{r['subject_id']}.h5"
+                stage1_embedding_dir / r["dataset"] / f"{r['subject_id']}.npy"
             ).exists(),
             axis=1,
         )
         n_before = len(df)
-        df = df[has_h5].reset_index(drop=True)
+        df = df[has_emb].reset_index(drop=True)
         n_missing = n_before - len(df)
         if n_missing > 0:
             warnings.warn(
-                f"{n_missing}/{n_before} subjects have no HDF5 file — skipped.",
+                f"{n_missing}/{n_before} subjects have no Stage 1 embedding file "
+                f"(under {stage1_embedding_dir}) — skipped, to match Stage 1's "
+                f"exact subject pool at split-computation time.",
                 stacklevel=2,
             )
 
@@ -201,8 +232,23 @@ class OSFRawEpochWindowDataset(Dataset):
         if limit is not None:
             self.df = self.df.iloc[:limit].reset_index(drop=True)
 
-        # ── Shape cache (epoch counts via fast HDF5 metadata reads) ────────
-        self._shape_cache = _build_raw_shape_cache(self.hdf5_dir, self.df)
+        # ── Shape cache (epoch counts, fast mmap shape read) + hard
+        # completeness check — a subject selected above (same pool as
+        # Stage 1) MUST have its raw-signal cache precomputed, or Stage 2
+        # would either crash confusingly mid-training or (worse) silently
+        # read stale/wrong data. Fail loudly and immediately instead. ────
+        self._shape_cache, _missing_cache = _build_raw_shape_cache(self.cache_dir, self.df)
+        if _missing_cache:
+            preview = ", ".join(_missing_cache[:10])
+            more = f" (+{len(_missing_cache) - 10} more)" if len(_missing_cache) > 10 else ""
+            raise FileNotFoundError(
+                f"[{split}] {len(_missing_cache)}/{len(self.df)} selected subjects have no "
+                f"precomputed raw-signal cache under {self.cache_dir}: {preview}{more}\n"
+                f"Run scripts/precompute_osf_raw_signal_cache.py first (see "
+                f"docs/OSF_EXPERIMENTS_GUIDE.md Step 8.2b) — these subjects are part of "
+                f"Stage 1's subject pool and cannot be silently dropped without breaking "
+                f"the Stage 1/Stage 2 split match."
+            )
 
         # ── Minimum recording length filter — identical logic/units to
         # OSFContextWindowDataset (480 epochs = 240m at 30s/epoch) ─────────
@@ -233,15 +279,6 @@ class OSFRawEpochWindowDataset(Dataset):
         self._index = self._build_seq2label_index()
         if max_items is not None and len(self._index) > max_items:
             self._index = self._index[:max_items]
-
-    # ── Channel candidates (per dataset, cached) ────────────────────────────
-
-    def _get_channel_candidates(self, dataset: str) -> dict:
-        if dataset not in self._channel_candidates_cache:
-            self._channel_candidates_cache[dataset] = build_channel_candidates(
-                dataset, self._cfg_candidates
-            )
-        return self._channel_candidates_cache[dataset]
 
     # ── Index builder — identical arithmetic to OSFContextWindowDataset's
     # _build_seq2label_index, copied as-is (pure integer arithmetic on T/N,
@@ -290,18 +327,17 @@ class OSFRawEpochWindowDataset(Dataset):
         row = self.df.iloc[row_idx]
         dataset = row["dataset"]
 
-        h5_path = self.hdf5_dir / dataset / "derived" / "hdf5_signals" / f"{row['subject_id']}.h5"
-        path_str = str(h5_path)
+        cache_path = cache_path_for(self.cache_dir, dataset, row["subject_id"])
+        path_str = str(cache_path)
 
-        # Per-worker single-subject cache (same pattern as
-        # OSFContextWindowDataset — SubjectGroupedSampler keeps items from
-        # one subject consecutive, so this avoids reloading raw signal
-        # for every window of the same subject).
+        # Per-worker single-subject cache — cheap even on a cache miss now
+        # (mmap read, not a raw HDF5 channel-search + resample), but still
+        # avoids re-reading the same subject's array for every window when
+        # a SubjectGroupedSampler (see below) keeps items from one subject
+        # consecutive.
         if getattr(self, "_cached_path", None) != path_str:
             self._cached_path = path_str
-            candidates = self._get_channel_candidates(dataset)
-            signal_matrix, _fill_info = load_and_resample_channels(h5_path, candidates)
-            self._cached_signal = signal_matrix  # [12, n_samples_64] float32
+            self._cached_signal = load_signal_cache(cache_path)  # [12, n_samples_64] float32
         signal = self._cached_signal
         T = signal.shape[1] // EPOCH_SAMPLES
 
@@ -367,3 +403,46 @@ class OSFRawEpochWindowDataset(Dataset):
             f"split={self.split}, context={self.N} epochs ({self.N * PATCH_SECONDS}s), "
             f"n_items={len(self._index)})"
         )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SubjectGroupedSampler (checklist 2.5b)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class SubjectGroupedSampler(torch.utils.data.Sampler):
+    """Yield item indices grouped by subject, with per-epoch subject-order shuffle.
+
+    Identical to osf_context_window_dataset.py's SubjectGroupedSampler
+    (itself identical to context_window_dataset.py's) — purely index-
+    arithmetic, no reference to embedding/signal shape. Copied as-is
+    (not imported) so this module has no import dependency on the
+    SleepFM-side or Stage-1-OSF-side dataset files.
+
+    Added to Stage 2's train loader after the raw-signal cache fix
+    (load_signal_cache is now cheap, but grouping still avoids redundant
+    per-item mmap-open overhead within an epoch, stacking with the cache
+    fix rather than replacing it — see docs/TSFM_OSF_IMPLEMENTATION_PLAN.md
+    checklist 2.5b).
+
+    Usage::
+
+        sampler = SubjectGroupedSampler(train_ds._index)
+        loader  = DataLoader(train_ds, batch_size=32, sampler=sampler,
+                             shuffle=False, persistent_workers=True, ...)
+    """
+
+    def __init__(self, index: list, generator=None):
+        from collections import defaultdict
+        groups: dict = defaultdict(list)
+        for item_idx, (row_idx, _, _) in enumerate(index):
+            groups[row_idx].append(item_idx)
+        self._groups = list(groups.values())
+        self._generator = generator
+
+    def __iter__(self):
+        perm = torch.randperm(len(self._groups), generator=self._generator)
+        for g_idx in perm.tolist():
+            yield from self._groups[g_idx]
+
+    def __len__(self) -> int:
+        return sum(len(g) for g in self._groups)

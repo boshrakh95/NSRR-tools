@@ -448,7 +448,9 @@ script/output.
 Stage 1's config, same channel mapping / labels / splits / head
 architecture, new `lora:` section (`r=8, lora_alpha=16, lora_dropout=0.05,
 target_modules=["to_qkv","to_out.0"], modules_to_save=["sequence_head"]`
-— not yet tuned), no `embedding_dir` (nothing precomputed).
+— not yet tuned). No precomputed *embeddings* (that's the whole point of
+LoRA fine-tuning the backbone) — but the raw signal itself IS precomputed,
+see Step 8.2b below, added after this step was originally written.
 
 ```bash
 # Dataset smoke test (mirrors Step 2 above, but for raw signal windows)
@@ -461,6 +463,81 @@ python scripts/test_osf_raw_epoch_dataset.py \
 Verified (2026-08-13): correct `[B,N,12,1920]` shapes at 30s/10m/240m
 context extremes, no NaN/Inf, correct padding, against real APPLES
 subjects. VSCode config: `🔬 OSF-LoRA Step1`.
+
+### Step 8.2b — Raw signal cache precompute (offline, CPU-only)
+
+**Status: DONE, APPLES fully cached and live-verified; SHHS/MrOS/STAGES
+not yet run.** **Run this before any real training or inference job** —
+`OSFRawEpochWindowDataset` will raise a clear `FileNotFoundError` at
+construction time if any selected subject's cache is missing, rather than
+falling back to a slow raw-HDF5 read or silently dropping subjects.
+
+**Why this exists**: a real GPU training job (`54716906`,
+`apnea_binary_lstm`/30s) stalled for 2+ hours with the GPU essentially
+idle before printing "Epoch 1" — root cause was `OSFRawEpochWindowDataset`
+reading and resampling raw signal from HDF5 live, on every item, for
+every job, repeating identical work across every task/head/context
+combination. This script precomputes it once. See
+`docs/TSFM_OSF_IMPLEMENTATION_PLAN.md` checklist 2.5b for the full
+diagnosis, including a related split-matching bug found and fixed in the
+same pass (Stage 2 now filters subjects by Stage 1 embedding-file
+existence, not raw HDF5, so `OSFRawEpochWindowDataset`'s train/val/test
+split is guaranteed to exactly match `OSFContextWindowDataset`'s —
+**required, since Stage 1 and Stage 2 must be compared on identical
+subjects/splits**; SleepFM's own split is subtly different from OSF's,
+flagged separately, not something this fix touches).
+
+```bash
+# Small test (a few subjects, CPU, seconds)
+python scripts/precompute_osf_raw_signal_cache.py \
+    --config configs/phase0_osf_lora_config.yaml \
+    --datasets apples --limit 5
+
+# One full dataset, locally/interactively (real numbers: 1104 APPLES
+# subjects in 5.1 min at --num-workers 8, ~3.6 subjects/s, CPU-only)
+python scripts/precompute_osf_raw_signal_cache.py \
+    --config configs/phase0_osf_lora_config.yaml \
+    --datasets apples --num-workers 8
+
+# Full population, sharded, CPU-only SLURM job (no GPU allocation used —
+# ~15,000 subjects total; at the APPLES rate, expect well under an hour
+# per shard at --num-workers 16, comfortably inside the 8h default):
+sbatch --export=ALL,START=0,END=4000       jobs/precompute_osf_raw_signal_cache.sh
+sbatch --export=ALL,START=4000,END=8000    jobs/precompute_osf_raw_signal_cache.sh
+sbatch --export=ALL,START=8000,END=12000   jobs/precompute_osf_raw_signal_cache.sh
+sbatch --export=ALL,START=12000,END=15100  jobs/precompute_osf_raw_signal_cache.sh
+
+# Or one dataset at a time:
+sbatch --export=ALL,DATASETS=shhs   jobs/precompute_osf_raw_signal_cache.sh
+sbatch --export=ALL,DATASETS=mros   jobs/precompute_osf_raw_signal_cache.sh
+sbatch --export=ALL,DATASETS=stages jobs/precompute_osf_raw_signal_cache.sh
+
+# Re-run any time to fill gaps — already-cached subjects are skipped
+# automatically (idempotent, safe to re-submit or re-run interactively):
+python scripts/precompute_osf_raw_signal_cache.py --config configs/phase0_osf_lora_config.yaml
+```
+
+**Output:** `{raw_signal_cache_dir}/{dataset}/{subject_id}.npy` — float16,
+shape `[12, n_samples_64]` (resampled, NOT epoch-chunked), plus a
+per-dataset `_channel_fill_log.jsonl` (same schema/purpose as Stage 1's
+extraction log). `raw_signal_cache_dir` =
+`/scratch/boshra95/psg_full/unified/osf_raw_signal_64hz` (per
+`configs/phase0_osf_lora_config.yaml`'s `data.raw_signal_cache_dir`).
+
+**Verify:** `find /scratch/boshra95/psg_full/unified/osf_raw_signal_64hz -name '*.npy' | wc -l`
+— compare against `find /scratch/boshra95/psg_full/{dataset}/derived/hdf5_signals -name '*.h5' | wc -l`
+per dataset (apples=1104, shhs=8444, mros=3933, stages=1513).
+
+**Estimated total size**: ~0.8TB (float16, all ~15,000 subjects) — well
+within scratch headroom (12.6TB free at time of writing, 6.4TB/19TB used).
+
+**As of 2026-08-14**: APPLES fully cached (1104/1104) and live-verified
+(dataset construction: 172s cold for train+val+test combined, vs. the
+~47-min-per-job cost this replaces; zero train/val/test subject overlap
+confirmed; a real, non-`--limit` training run against the full cache
+produced numerically identical training behavior to earlier raw-HDF5-
+backed pilots). SHHS/MrOS/STAGES not yet run — do that before any real
+sweep involving those cohorts (checklist 2.7).
 
 ### Step 8.3 — Training
 

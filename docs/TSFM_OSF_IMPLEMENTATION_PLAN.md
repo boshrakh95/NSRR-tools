@@ -71,10 +71,19 @@ user's own real debug run exposed how slow unrestricted CPU inference is —
 registry + `gen_commands_osf_lora.py`, plus a real bug fix in
 `train_osf_lora.py` itself — `context_lr_overrides` was silently never
 applied, found while double-checking registry/config consistency against
-Stage 1) are all done. Next: checklist 2.6 (real wall-time calibration
-pilot on GPU) — no more debug-config checkpoints needed until then, since
-2.6 requires an actual GPU allocation rather than local CPU debugging.
-Same one-step-at-a-time workflow as Phase 1.
+Stage 1) are all done. A real user-submitted GPU job then exposed a
+serious performance bug (2+ hours, GPU idle, before "Epoch 1") — root-
+caused and fixed as checklist 2.5b: offline raw-signal cache precompute
+(`scripts/precompute_osf_raw_signal_cache.py`) plus a real split-matching
+bug found in the process (Stage 2 was filtering subjects differently from
+Stage 1 before computing the train/val/test split — now fixed to match
+exactly; see checklist 2.5b for the live-confirmed details, and the
+related, NOT-fixed, explicitly-flagged finding that SleepFM and OSF Stage
+1 themselves already use subtly different splits). Live-verified
+end-to-end on a full real dataset (APPLES). Next: checklist 2.6 (real
+wall-time calibration pilot on GPU) — run the precompute for the
+remaining 3 datasets first (see `docs/OSF_EXPERIMENTS_GUIDE.md` Step
+8.2b), then submit. Same one-step-at-a-time workflow as Phase 1.
 
 ---
 
@@ -134,6 +143,8 @@ Same one-step-at-a-time workflow as Phase 1.
 | `jobs/infer_osf_lora_subject_windows_gpu.sh` | SLURM job script for LoRA inference | ✅ DONE |
 | `experiments/v2_osf_lora_registry.yaml` | Stage 2 experiment registry, isolated `results_dir`/`logs_dir` | ✅ DONE |
 | `scripts/gen_commands_osf_lora.py` | Command generator for Stage 2, forked from `gen_commands_osf.py` | ✅ DONE |
+| `scripts/precompute_osf_raw_signal_cache.py` | Offline, CPU-only raw-signal cache precompute (checklist 2.5b) | ✅ DONE |
+| `jobs/precompute_osf_raw_signal_cache.sh` | CPU-only SLURM job script for the above | ✅ DONE |
 
 ---
 
@@ -1024,6 +1035,100 @@ from Stage 1 gets edited:
         commands against the real registry; confirmed
         `analyze_windows.py`/`collect_results_v2.py` accept every flag
         `gen_commands_osf_lora.py` generates (`--help` cross-check).
+- [x] 2.5b **`scripts/precompute_osf_raw_signal_cache.py` +
+      `jobs/precompute_osf_raw_signal_cache.sh`** — offline, CPU-only raw
+      signal cache. **New, unplanned step, added 2026-08-14 after
+      diagnosing a real stalled GPU job (54716906, apnea_binary_lstm/30s):
+      2+ hours with the GPU essentially idle (22GB just holding the model)
+      while 2 DataLoader workers burned CPU on redundant raw-HDF5 reads.**
+      Root cause: `OSFRawEpochWindowDataset` read raw signal live via
+      `load_and_resample_channels()` on every `__getitem__` (channel
+      search + 128→64Hz resample) and rebuilt a full HDF5-metadata shape
+      cache (~47 min) on every dataset construction — both **redone from
+      scratch on every job, for every task/head/context**, even though
+      the resampled signal is completely independent of all of those.
+      The default `shuffle=True` train loader made this far worse: it
+      defeats the existing per-worker single-subject cache (consecutive
+      shuffled items almost never share a subject), so ~48,375 expensive
+      reads were happening instead of ~2,900 (one per subject).
+      - **Fix**: precompute the resampled 12-channel, 64Hz signal ONCE
+        per subject, offline, on CPU (no GPU, no model — pure I/O +
+        `x[::2]` decimation), stored as float16 `.npy` under a new
+        `data.raw_signal_cache_dir`. `OSFRawEpochWindowDataset` now reads
+        directly from this cache (`osf_channel_loader.load_signal_cache`/
+        `get_cached_epoch_count`, both mmap-based) instead of ever
+        touching the raw HDF5 during training/inference. Real numbers:
+        1104 APPLES subjects cached in 5.1 min at 8 CPU workers (~3.6
+        subjects/s) — extrapolated to ~15,000 subjects at 16 workers,
+        comfortably under an hour, vs. the ~47-min-per-*job* cost this
+        replaces. Estimated total cache size ~0.8TB (well within the
+        12.6TB free scratch headroom at the time of writing).
+      - **A `SubjectGroupedSampler` was also added** to the train loader
+        (copied from `osf_context_window_dataset.py`'s, itself identical
+        to `context_window_dataset.py`'s — pure index arithmetic, no new
+        logic) — stacks with the cache fix: keeps each subject's items
+        consecutive so the per-worker cache actually hits within an
+        epoch, on top of the cache making each individual read cheap.
+      - **A second, more serious bug found and fixed while building
+        this**: `OSFRawEpochWindowDataset` filtered subjects by raw-HDF5
+        existence before computing the train/val/test split, but Stage
+        1's `OSFContextWindowDataset` filters by **Stage 1 embedding-file
+        existence** at the same point. Since
+        `np.random.default_rng(split_seed).shuffle(np.arange(len(df)))`
+        produces a completely different permutation if `len(df)` (or
+        subject order) differs even slightly, this was a **real,
+        live-confirmed split mismatch, not a hypothetical one**: MrOS has
+        exactly 1 subject (`AA2557_v2`) and STAGES exactly 1
+        (`STLK00096`) with a raw HDF5 but no Stage 1 OSF embedding —
+        enough to scramble the entire split for every task including
+        those cohorts (most Tier-1 tasks). No real Stage 2 results had
+        been produced yet when this was found (the killed GPU job never
+        completed an epoch), so nothing needed invalidating. **Fixed** by
+        adding `dataset.stage1_embedding_dir` to
+        `phase0_osf_lora_config.yaml` and filtering by *its* existence
+        (existence check only — no embedding contents are ever read),
+        guaranteeing `OSFRawEpochWindowDataset` reproduces Stage 1's
+        exact `len(df)`/subject order at split-computation time. The
+        raw-signal cache completeness check (a separate, additive check)
+        now runs *after* this — if a subject Stage 1 used is missing from
+        Stage 2's own cache, dataset construction raises a loud, clear
+        `FileNotFoundError` naming the missing subjects and pointing at
+        the precompute script, rather than silently dropping them (which
+        would again break the split match) or silently falling back to a
+        slow raw-HDF5 read.
+      - **Related finding, flagged per explicit user request, NOT
+        fixed (out of scope — would invalidate already-completed,
+        already-published results)**: SleepFM and OSF Stage 1 themselves
+        **already use subtly different splits**, because their embedding-
+        extraction success populations differ slightly — both filter by
+        "has embedding file" using the same code pattern, but against
+        different embedding directories (`sleepfm_5sec` vs `osf_30sec`).
+        Live-confirmed: APPLES has 1 subject (`APL0419`) with an OSF
+        embedding but no SleepFM embedding; STAGES has 1 subject each way
+        (`STLK00099` OSF-only, `STLK00096` SleepFM-only). SHHS and MrOS
+        embedding populations are identical between the two backbones.
+        This means any given subject's train/val/test assignment can
+        differ between the SleepFM paper-primary results and the OSF
+        Stage 1 results — a pre-existing fact about the already-completed
+        SleepFM vs. OSF Stage 1 comparison, not something introduced by
+        this fix. **Stage 2 (LoRA) is deliberately anchored to match
+        Stage 1 (OSF) exactly, not SleepFM** — that's the comparison this
+        checklist item's fix guarantees. If exact SleepFM-vs-OSF split
+        parity ever matters for the paper, it would require re-deriving
+        one of those two already-published splits, which is a separate,
+        much larger decision outside this checklist's scope.
+      - Live-verified end-to-end: dataset construction (train+val+test,
+        apnea_binary/apples) completed in 172s cold (vs. the ~47-min/job
+        this replaces), zero train/val/test subject overlap confirmed,
+        item shapes correct; a real (non-`--limit`) training smoke test
+        against the full APPLES cache produced the identical training
+        curve shape seen in earlier raw-HDF5-backed pilots (same warm
+        start, same overfitting-on-tiny-pool pattern), confirming the
+        cache read is numerically equivalent to the raw-HDF5 read, not
+        just faster.
+      - See `docs/OSF_EXPERIMENTS_GUIDE.md` Step 8.2b for the exact
+        commands to run the precompute (small test, sharded full run, gap
+        re-fill) before any real training/inference job.
 - [ ] 2.6 **Real wall-time calibration pilot on GPU** (Appendix §6.3) — a
       short real run (few epochs, smallest context) on an actual GPU
       allocation to get real per-step timing, since Stage 2's cost model

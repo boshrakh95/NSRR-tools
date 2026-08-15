@@ -529,6 +529,30 @@ checklist for the full Stage 2 implementation plan (in progress).
   leave a cell that reads like a completed, unremarkable result. (This
   mirrors the standing instruction already applied throughout the paper's
   supplementary review: never report incomplete results as if complete.)
+- **SleepFM and OSF Stage 1 already use subtly different train/val/test
+  splits** (found 2026-08-14 while implementing OSF Stage 2's raw-signal
+  cache, checklist 2.5b in `docs/TSFM_OSF_IMPLEMENTATION_PLAN.md`). Both
+  filter subjects by "has embedding file" using the identical code
+  pattern (`np.random.default_rng(split_seed).shuffle()` over the
+  filtered subject list), but against *different* embedding directories
+  (`sleepfm_5sec` vs `osf_30sec`) — and their extraction success
+  populations differ by a handful of subjects per cohort. Live-confirmed,
+  exact: APPLES has 1 subject (`APL0419`) with an OSF embedding but no
+  SleepFM embedding; STAGES has 1 subject each way (`STLK00099` OSF-only,
+  `STLK00096` SleepFM-only). SHHS and MrOS populations are identical
+  between the two. Because `rng.shuffle()`'s entire output permutation
+  changes when the input list's length or order differs even by one
+  subject, **this means individual subjects can land in different splits
+  between the already-published SleepFM results and the already-published
+  OSF Stage 1 results** — not a rounding-level discrepancy, a genuinely
+  different split. This was NOT fixed (fixing it would mean re-deriving
+  one of the two already-completed, already-analyzed splits, invalidating
+  existing results — a much bigger decision than this checklist item, out
+  of scope unless explicitly asked for). **OSF Stage 2 (LoRA) is
+  deliberately anchored to match OSF Stage 1 exactly** (same fix, same
+  checklist item), since that's the comparison Stage 2 exists to make —
+  it does NOT attempt to also match SleepFM's split, since it isn't being
+  compared against SleepFM directly in the same way.
 
 ### Status
 

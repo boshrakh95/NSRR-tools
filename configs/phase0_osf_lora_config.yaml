@@ -10,19 +10,24 @@
 #
 # KEY DIFFERENCE FROM STAGE 1: Stage 2 has no precomputed-embeddings step.
 # `embedding.checkpoint_dir` is still used (to load the base OSF backbone
-# before wrapping it with LoRA), but `data.hdf5_dir` + `data.channel_*` are
-# read live, every training step, via
-# nsrr_tools.datasets.osf_channel_loader.load_and_resample_channels() —
-# not precomputed to `embedding.output_dir` the way Stage 1 does.
+# before wrapping it with LoRA). The 12-channel, 64Hz RESAMPLED SIGNAL
+# (not embeddings — the backbone still runs live, LoRA-adapted, every
+# training step) IS precomputed once, offline, to `data.raw_signal_cache_dir`
+# (checklist 2.5b) — see scripts/precompute_osf_raw_signal_cache.py. Run
+# that script before any real training; OSFRawEpochWindowDataset raises a
+# clear error if a subject's cache entry is missing, rather than silently
+# falling back to a slow raw-HDF5 read.
 
 # ── Base checkpoint (loaded fresh, then wrapped with LoRA) ──────────────────
 embedding:
   checkpoint_dir: "/home/boshra95/OSF-Open-Sleep-FM/pretrained_weights/osf_backbone.pth"
   chunk_batch_size: 16   # epochs-per-forward-pass batch size within one training window
 
-# ── HDF5 Signal Data — identical to Stage 1's data: section ─────────────────
+# ── HDF5 Signal Data — identical to Stage 1's data: section, plus the
+# Stage-2-only raw_signal_cache_dir (checklist 2.5b) ─────────────────────────
 data:
   hdf5_dir: "/scratch/boshra95/psg_full"
+  raw_signal_cache_dir: "/scratch/boshra95/psg_full/unified/osf_raw_signal_64hz"
   sampling_freq: 64
   epoch_seconds: 30
   epoch_samples: 1920
@@ -56,11 +61,25 @@ data:
 # ── Raw-Epoch Window Dataset ─────────────────────────────────────────────────
 # Same subject/split/task/context settings as Stage 1's dataset: section —
 # same task_subject_dir + split_seed, required for a fair comparison on
-# identical subjects/splits. No embedding_dir here (nothing precomputed);
-# raw signal is loaded live from data.hdf5_dir per window.
+# identical subjects/splits. Raw signal itself comes from data.raw_signal_cache_dir
+# (checklist 2.5b), not embeddings.
+#
+# stage1_embedding_dir (checklist 2.5b, NOT used to load any signal data —
+# existence-check ONLY): OSFContextWindowDataset (Stage 1) filters subjects
+# by "has embedding .npy" BEFORE computing the train/val/test split; if
+# Stage 2 filtered by a different criterion (e.g. "has raw HDF5"), even a
+# single subject's difference in filtered population size changes
+# np.random.default_rng(split_seed).shuffle()'s ENTIRE output permutation
+# (confirmed live: MrOS has 1 subject with a raw HDF5 but no Stage 1
+# embedding — AA2557_v2 — and STAGES has 1 — STLK00096 — both would have
+# silently produced different splits for every task including those
+# cohorts). Stage 2 filters by this SAME criterion first, guaranteeing
+# identical splits, then separately checks its own raw_signal_cache_dir for
+# actually reading signal — two different checks for two different purposes.
 dataset:
   label_source: "/scratch/boshra95/psg/unified/targets_v2/master_targets.parquet"
   task_subject_dir: "/scratch/boshra95/psg/unified/targets_v2/task_subjects"
+  stage1_embedding_dir: "/scratch/boshra95/psg_full/unified/embeddings/osf_30sec"
 
   sleep_stage_dir: "/scratch/boshra95/psg"
 

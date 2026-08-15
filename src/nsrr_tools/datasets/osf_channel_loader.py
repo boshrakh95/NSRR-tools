@@ -9,8 +9,19 @@ is ever revisited (e.g. docs/OSF_CHANNEL_REPROCESSING_PLAN.md).
 
 Used by:
   - scripts/extract_osf_embeddings.py       (Stage 1, precompute)
-  - src/nsrr_tools/datasets/osf_raw_epoch_dataset.py  (Stage 2, on the fly)
-  - scripts/infer_osf_lora_subject_windows.py         (Stage 2, on the fly)
+  - scripts/precompute_osf_raw_signal_cache.py  (Stage 2, offline precompute)
+  - src/nsrr_tools/datasets/osf_raw_epoch_dataset.py  (Stage 2, reads the cache)
+  - scripts/infer_osf_lora_subject_windows.py         (Stage 2, reads the cache)
+
+RAW SIGNAL CACHE (added 2026-08-14, docs/TSFM_OSF_IMPLEMENTATION_PLAN.md
+checklist 2.5b): load_and_resample_channels() against the ORIGINAL raw
+HDF5 is expensive (per-channel HDF5 read + resample) and was found to be
+the dominant cost of every Stage 2 training job — repeated from scratch on
+every __getitem__, for every task/head/context/job, since the resampled
+signal doesn't depend on any of those. save_signal_cache/load_signal_cache/
+get_cached_epoch_count below read/write a precomputed per-subject cache
+(built once, offline, by precompute_osf_raw_signal_cache.py) instead of
+touching the raw HDF5 at all during training/inference.
 """
 
 import h5py
@@ -117,6 +128,13 @@ def get_epoch_count(h5_path) -> int:
     doesn't depend on Stage 1 extraction having run for a given subject).
     Assumes all channels in the file share the same sample count at 128Hz
     (same assumption load_and_resample_channels relies on).
+
+    NOTE: superseded by get_cached_epoch_count() for any subject whose
+    raw-signal cache has been precomputed (checklist 2.5b) — this
+    HDF5-scanning version is only used by precompute_osf_raw_signal_cache.py
+    itself (building the cache in the first place) and as documentation of
+    what the cache's shape means. OSFRawEpochWindowDataset no longer calls
+    this directly.
     """
     with h5py.File(h5_path, "r") as hf:
         keys = list(hf.keys())
@@ -124,4 +142,47 @@ def get_epoch_count(h5_path) -> int:
             return 0
         n_samples_128 = hf[keys[0]].shape[0]
     n_samples_64 = n_samples_128 // 2
+    return n_samples_64 // EPOCH_SAMPLES
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Raw signal cache (checklist 2.5b) — precomputed once, offline, reused by
+# every Stage 2 training/inference job instead of re-reading the raw HDF5.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def cache_path_for(cache_dir, dataset: str, subject_id: str):
+    """Path convention for one subject's cached signal: {cache_dir}/{dataset}/{subject_id}.npy"""
+    from pathlib import Path
+    return Path(cache_dir) / dataset / f"{subject_id}.npy"
+
+
+def save_signal_cache(cache_path, signal_matrix: np.ndarray) -> None:
+    """Save a resampled [12, n_samples_64] float32 signal matrix as float16
+    (halves storage; the underlying HDF5 signal is already z-scored/
+    normalized — confirmed no raw-amplitude scaling happens anywhere in
+    load_and_resample_channels — so float16's ~3-decimal-digit precision is
+    not a meaningful loss, same precedent as Stage 1's own float16
+    embedding storage)."""
+    from pathlib import Path
+    Path(cache_path).parent.mkdir(parents=True, exist_ok=True)
+    np.save(cache_path, signal_matrix.astype(np.float16))
+
+
+def load_signal_cache(cache_path) -> np.ndarray:
+    """Load a cached signal matrix, memory-mapped (cheap repeated slicing,
+    no full-array copy until actually sliced — same benefit the per-worker
+    single-subject cache in OSFRawEpochWindowDataset relies on), cast back
+    up to float32 for downstream math (matches load_and_resample_channels'
+    return dtype, so callers don't need to know which source they read
+    from)."""
+    arr = np.load(cache_path, mmap_mode="r")
+    return arr.astype(np.float32)
+
+
+def get_cached_epoch_count(cache_path) -> int:
+    """Fast shape-only read of a cached signal file's epoch count — no
+    raw HDF5 scan needed once the cache exists. Reads via mmap (lazy;
+    does not load the array's data into memory just to check its shape)."""
+    arr = np.load(cache_path, mmap_mode="r")
+    n_samples_64 = arr.shape[1]
     return n_samples_64 // EPOCH_SAMPLES
