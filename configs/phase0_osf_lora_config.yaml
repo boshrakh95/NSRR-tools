@@ -21,7 +21,21 @@
 # ── Base checkpoint (loaded fresh, then wrapped with LoRA) ──────────────────
 embedding:
   checkpoint_dir: "/home/boshra95/OSF-Open-Sleep-FM/pretrained_weights/osf_backbone.pth"
-  chunk_batch_size: 16   # epochs-per-forward-pass batch size within one training window
+  # Raised 2026-08-16 from 16 -> 64 (checklist 2.5d follow-up): the 3g.40gb
+  # GPU upgrade measured ZERO speedup over 1g.10gb across 12 real epochs of
+  # the v2 30s pilot (~61.6 min/epoch both ways), despite 3x more compute/
+  # memory being available -- pointing at this too-small per-call GPU batch
+  # (not raw compute) as the real bottleneck, since kernel-launch/Python-loop
+  # overhead per chunk is roughly fixed regardless of available compute.
+  # Purely a GPU-batching/scheduling knob -- does NOT affect batch_size,
+  # effective_batch_size, or the forward pass's mathematical result (verified
+  # 2026-08-16: OSF's backbone uses only per-sample-independent nn.LayerNorm,
+  # zero nn.BatchNorm, in osf/backbone/vit1d_cls.py), so this is safe to
+  # change without compromising the paper's "context length is the only
+  # variable" methodology claim. Must be re-validated with a real pilot
+  # before trusting it for the full sweep -- see docs/TSFM_OSF_IMPLEMENTATION_PLAN.md
+  # checklist 2.5d.
+  chunk_batch_size: 64   # epochs-per-forward-pass batch size within one training window
 
 # ── HDF5 Signal Data — identical to Stage 1's data: section, plus the
 # Stage-2-only raw_signal_cache_dir (checklist 2.5b) ─────────────────────────
