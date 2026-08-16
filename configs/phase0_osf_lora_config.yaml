@@ -154,14 +154,24 @@ lora:
 # starting point; may need reducing once checklist 2.6's pilot shows real
 # per-epoch wall-clock cost (Appendix §6.3).
 training:
-  epochs: 40
-  lr: 1.0e-4
+  # epochs/lr/early_stopping_patience revised 2026-08-15 (checklist 2.6
+  # prep) from Stage 1's original placeholder values (epochs=40, lr=1e-4,
+  # patience=10), grounded in the first real 30s LoRA run's actual curve:
+  # best val_auroc at epoch 9 (0.7193), then declining/noisy through
+  # epoch 16 while train_bal_acc kept climbing — clear overfitting, not
+  # "needs more time." lr halved to 5e-5 partly because LoRA fine-tuning
+  # generally needs less aggressive updates than training a head from
+  # scratch, and partly because the same LR was being applied to both the
+  # fresh LoRA matrices AND the already-converged (Stage-1-warm-started)
+  # head, which may have been too aggressive for the latter specifically.
+  epochs: 18
+  lr: 5.0e-5
   weight_decay: 1.0e-3
   optimizer: "adamw"   # NOTE: not actually read by train_osf_lora.py — hardcoded to plain Adam, same as train_osf_context_sweep.py. See phase0_osf_config.yaml's footnote 1 / plan §3.4.
   scheduler: "cosine"  # NOTE: not actually read either — hardcoded to CosineAnnealingLR (same as Stage 1).
-  early_stopping_patience: 10
+  early_stopping_patience: 5
   device: "cuda"        # NOTE: not actually read — device comes from --cpu / torch.cuda.is_available() (same as Stage 1).
-  mixed_precision: false
+  mixed_precision: false  # reverted 2026-08-15 — measured zero speedup on the 1g.10gb pilot (61.7 vs 59.9 min/epoch), not worth the numerical asymmetry vs Stage 1/SleepFM's fp32 training for no benefit.
   class_weights: "auto"
   early_stopping_monitor: "val_auroc"
   weighted_sampler: false
@@ -170,9 +180,13 @@ training:
   token_budget_minutes: 240
   k_max: 50
 
+  # Rescaled 2026-08-15 to stay proportionally lower than the new base lr
+  # (5e-5) — previously both equaled the old base (1e-4/2=5e-5), which
+  # would have made this override a no-op now. Preserves the original
+  # intent (half of base) rather than the original absolute number.
   context_lr_overrides:
-    "120m": 5.0e-5
-    "240m": 5.0e-5
+    "120m": 2.5e-5
+    "240m": 2.5e-5
 
   overfit_epochs: 0
 

@@ -49,6 +49,9 @@ mkdir -p "$LOGS_DIR"
 module load python/3.10.13 2>/dev/null || true
 source /home/boshra95/osf_env/bin/activate
 
+# Unbuffered stdout — see jobs/train_osf_lora_gpu.sh for why this matters.
+export PYTHONUNBUFFERED=1
+
 # ── Job parameters ────────────────────────────────────────────────────────────
 CONFIG=${CONFIG:-"configs/phase0_osf_lora_config.yaml"}
 START=${START:-0}

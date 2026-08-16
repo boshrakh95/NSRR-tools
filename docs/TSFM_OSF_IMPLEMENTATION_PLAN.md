@@ -1212,6 +1212,129 @@ from Stage 1 gets edited:
         weighted-sampler inactive per current config defaults, exercised
         only the "off" branch — still confirms no regression), identical
         training curve to pre-audit runs.
+- [x] 2.5d **Compute-scaling discovery + revised training protocol
+      (2026-08-15).** Design decisions only — the code change (warm-start
+      wiring) is checklist 2.7's first sub-step, not yet implemented.
+      **Everything in this item is written with an eye toward what the
+      paper's Methods/Limitations will eventually need to say — flag
+      changes here rather than scattering them, so the design can still
+      be revisited as a whole if needed.**
+
+      **1. Why the original per-length-independent LoRA design isn't
+      computable in a normal project timeline.** OSF has no cross-epoch
+      attention — `CombinedOSFLoRAModel.forward()` runs *every* raw
+      30-second epoch in a training window through the full backbone
+      individually (chunked for batching, but not amortized: every epoch
+      still gets its own forward+backward pass, since LoRA gradients
+      must flow through the frozen layers to reach the adapters nested
+      inside them). Consequently, per-step compute scales **linearly
+      with context length N** (epochs per window), not sub-linearly.
+      This is architectural, not an implementation inefficiency: Stage 1
+      never had this problem because its backbone ran exactly once, at
+      one-time embedding-extraction, regardless of how long the
+      downstream context sweep later got.
+      Real measurement (1g.10gb MIG slice, `apnea_binary`/`lstm`, from
+      `resume.pt`'s own accumulated-time field, not estimated): **30s
+      context ≈ 60 min/epoch.** Linear extrapolation: 240m (480×
+      more epochs/window than 30s) ≈ 480× that ≈ 20 days/epoch — an
+      independently-fine-tuned LoRA run at every one of the 6 context
+      lengths, for every (task, head) pair, is not achievable within a
+      normal project timeline, even after moving to the largest MIG
+      slice this cluster offers (`3g.40gb`, ~3× compute — helps the
+      short/medium end, does not change the linear-scaling problem
+      itself).
+
+      **2. Revised design: warm-start every other length from a single
+      30s LoRA fine-tune, not a per-length-independent run and not a
+      sequential chain.** Each context length still gets its own
+      dedicated, fully-converged LoRA fine-tuning run and its own
+      reported result — this is not "train once, reuse everywhere"
+      (that idea was considered and rejected, see point 3). What changes
+      is only the *initialization*: instead of every length warm-starting
+      from Stage 1's frozen-backbone head (random-init LoRA adapters),
+      every length other than 30s warm-starts its LoRA adapters + head
+      from 30s's own fully-fine-tuned LoRA checkpoint. 30s is the cheapest
+      context to fine-tune (fewest epoch-forward-passes per item), so it
+      is the natural, cheap common reference point.
+      **Branch from 30s directly, not a chain (30s→10m→40m→80m→120m→240m):**
+      - *Architectural reason*: the backbone has no per-length internal
+        state — it processes one 30-second epoch at a time regardless of
+        which window it belongs to. There is no structural reason to
+        expect a chained lineage (each length inheriting from the next-
+        shorter one) to produce a more relevant starting point than
+        branching from one common ancestor; the backbone's LoRA
+        adaptation is fundamentally about per-epoch representation
+        quality, not something specific to a particular context length.
+      - *Methodological reason*: a chain makes every length's final
+        result depend on the (arbitrary) sweep order, an extra
+        uncontrolled variable with no principled justification. Branching
+        from one fixed reference point keeps initialization a controlled
+        constant across the sweep — the closest achievable approximation,
+        under the compute constraint, to this paper's own stated sweep
+        principle (Methods, §Context-Length Sweep Design): *"the context
+        window length N is the only variable between the trained
+        models... performance differences are therefore directly
+        attributable to the amount of temporal context available."*
+      **Honest limitation to state explicitly in the paper, not soften**:
+      for the frozen condition (Stage 1), N really is the only variable —
+      every head is trained from the same random init against the same
+      frozen backbone. For the LoRA condition (Stage 2), the *backbone's
+      starting point* is now shared/inherited across lengths (all
+      descending from the 30s fine-tune) rather than independently
+      random-initialized per length the way Stage 1's heads are. This is
+      a genuine, deliberate departure from the frozen condition's
+      methodology, made necessary by compute constraints — should be
+      stated plainly as a limitation of the LoRA condition specifically,
+      not implied to have the same "N is the only variable" purity Stage
+      1 has.
+
+      **3. "Train once at one length, evaluate at all others with no
+      further tuning" was considered and rejected.** Discussed and
+      decided against: it would mean the LoRA condition's backbone was
+      never actually adapted for most of the reported context lengths,
+      while the frozen condition's head *is* retrained at every length —
+      an asymmetry that would confound "does LoRA help at length L"
+      with "does a backbone tuned elsewhere transfer to length L," and
+      would not answer what the prof asked for (frozen vs. fine-tuned,
+      compared at matched context length). Recorded here so this option
+      isn't quietly reconsidered later without remembering why it was
+      rejected the first time.
+
+      **4. Training budget revised from Stage 1's placeholder values,
+      grounded in a real observed curve, not intuition.** Original
+      values (`epochs=40, patience=10, lr=1e-4`) were carried over
+      unchanged from Stage 1's already-tuned head-only-training budget —
+      never independently validated for LoRA fine-tuning's different
+      optimization regime. The first completed real 30s LoRA run (`lr=1e-4`,
+      before this revision) showed clear, real overfitting: best
+      `val_auroc` at epoch 9 (0.7193), declining/noisy through epoch 16
+      (0.701–0.713) while `train_bal_acc` kept climbing (0.677→0.771) —
+      not "still converging." Revised to `epochs=18, patience=5,
+      lr=5e-5` (`configs/phase0_osf_lora_config.yaml`,
+      `context_lr_overrides` rescaled proportionally to 2.5e-5 for
+      120m/240m so they stay half of the new base, matching the original
+      intent rather than the original absolute number). Justification to
+      carry into the paper: (a) the observed curve directly supports a
+      shorter budget; (b) LoRA fine-tuning generally needs less
+      aggressive/shorter training than learning a head from random init,
+      consistent with standard transfer-learning practice; (c) lr halved
+      partly for that same reason and partly because the *same* lr was
+      being applied to both the freshly-injected LoRA matrices and the
+      already-converged (Stage-1-warm-started) head — a real, unresolved
+      simplification (a discriminative per-parameter-group lr would be
+      more correct but was not implemented, given time constraints — note
+      as a known limitation, not silently fixed). `mixed_precision` was
+      tested and reverted to `false`: measured zero speedup (59.9 vs 61.7
+      min/epoch, `1g.10gb`), not worth the fp32-vs-mixed-precision
+      numerical asymmetry against Stage 1/SleepFM for no benefit.
+      **These training-budget values now genuinely differ from Stage 1's
+      — state this explicitly in Methods as an intentional, evidence-based
+      choice for the LoRA condition's own optimization regime, not an
+      unexplained inconsistency.**
+
+      **Status**: decisions finalized, config/job-script changes applied
+      and committed. Warm-start code implementation is checklist 2.7's
+      first sub-step — not started yet.
 - [ ] 2.6 **Real wall-time calibration pilot on GPU** (Appendix §6.3) — a
       short real run (few epochs, smallest context) on an actual GPU
       allocation to get real per-step timing, since Stage 2's cost model
@@ -1261,6 +1384,8 @@ from Stage 1 gets edited:
 | `pyarrow` in `osf_env` | `.pth` file pointing at `arrow/18.1.0`'s Python 3.10 site-packages (not `pip install`) | CC's `pip install pyarrow` always hits a dummy package; the Arrow module's own injection mechanism doesn't reach an isolated venv; `fastparquet` (the alternative) wanted `numpy<2.0`, an unacceptable downgrade — see checklist 1.6 |
 | `gen_commands_osf.py` scope | Separate script from `gen_commands.py`; kept `list/probe-batch/train/infer/analyze/build-heatmap/collect/threshold-tuning/status/runs`, dropped all figure/table subcommands (`iso-plots`, `saturation`, `scaling-laws`, `calibration`, `window-position`, `subject-consistency`, `task-comparison`, `cohort-saturation`, `precision-recall`, `subject-kstar`, `table-1..10`) | No backbone hook in the original registry/wall-time-table schema (see `CLAUDE.md` Code-reuse-assessment); the dropped subcommands wrap `plot_*.py`/`make_table*.py` scripts already superseded by notebooks for the current paper — no reason to build a second figure path for OSF |
 | OSF wall-time tables | Placeholder copies of SleepFM's `_TRAIN_HOURS`/`_INFER_HOURS_PER_CTX` | No real GPU sweep has run yet to calibrate against (only CPU-debugged); auto-requeue means an underestimate just costs one resubmission — revisit after checklist 1.10 |
+| LoRA per-length initialization | All lengths other than 30s warm-start from the single 30s LoRA fine-tune (branch, not a sequential chain) | Compute scales linearly with context length (no cross-epoch attention in OSF); full per-length-independent LoRA fine-tuning isn't achievable in project timeline. See checklist 2.5d for the full reasoning (why branch not chain, why not "train once reuse everywhere") |
+| LoRA training budget | `epochs=18, patience=5, lr=5e-5` (was `40/10/1e-4`, copied from Stage 1's head-only budget) | Real 30s pilot showed overfitting by epoch ~9-16, not slow convergence — see checklist 2.5d |
 
 ---
 

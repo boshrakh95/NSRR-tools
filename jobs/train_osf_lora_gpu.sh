@@ -2,7 +2,7 @@
 #SBATCH --job-name=osf_lora_sweep
 #SBATCH --account=def-forouzan_gpu
 #SBATCH --time=24:00:00
-#SBATCH --gpus=nvidia_h100_80gb_hbm3_1g.10gb:1
+#SBATCH --gpus=nvidia_h100_80gb_hbm3_3g.40gb:1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32000M
 #SBATCH --exclude=fc11006,fc11013,fc11010
@@ -29,15 +29,29 @@
 # Auto-resume on timeout: same mechanism as train_osf_context_sweep_gpu.sh
 # (--signal=B:USR1@120 + bash trap + resume.pt, saved every epoch).
 #
-# ⚠️ WALL-TIME NOT YET CALIBRATED (checklist 2.6, not done yet as of this
-# writing) — the 24h default below is a placeholder copied from Stage 1,
-# NOT informed by any real Stage 2 timing data. Stage 2's per-epoch cost
-# is fundamentally different (full ViT forward+backward pass per raw
-# epoch in the window, every training step, plus live HDF5 I/O instead of
-# Stage 1's cheap precomputed-embedding lookup) — see Appendix §6.3's I/O
-# caveat. Run the real calibration pilot (checklist 2.6) before trusting
-# this default for a real sweep, especially at long contexts (240m = 480
-# ViT forward passes per window).
+# GPU size: 3g.40gb (upgraded 2026-08-15 from 1g.10gb) — MIG partitions
+# compute (SMs) proportionally to memory, not just VRAM, so this should be
+# a real ~3x throughput gain, not just more headroom. Real 1g.10gb data
+# point: apnea_binary/lstm/30s ran at ~60 min/epoch (measured from
+# resume.pt's accumulated_time_min, not a guess) — full backbone
+# forward+backward per raw epoch in the window, every training step,
+# fundamentally different from Stage 1's cheap precomputed-embedding
+# lookup. 3g.40gb timing not yet independently confirmed.
+#
+# ⚠️ COMPUTE SCALES ~LINEARLY WITH CONTEXT LENGTH, NOT SUB-LINEARLY —
+# CombinedOSFLoRAModel.forward() runs every single raw epoch in a window
+# through the full backbone individually (chunked, but not amortized), so
+# 240m (480 epochs/window) costs ~480x what 30s (1 epoch/window) costs per
+# training step, not a fraction of it. Confirm feasibility per context
+# length before submitting long-context jobs — see
+# docs/TSFM_OSF_IMPLEMENTATION_PLAN.md checklist 2.6 for the real numbers
+# once measured, and the warm-start-from-30s plan for how long contexts
+# are intended to be made tractable.
+#
+# ⚠️ WALL-TIME NOT YET FULLY CALIBRATED for 3g.40gb (checklist 2.6, not
+# done yet as of this writing) — the 24h default below is a placeholder,
+# not measured at this GPU size. Run a real pilot before trusting it for
+# long contexts.
 #
 # Usage examples:
 #   sbatch --export=ALL,TASK=apnea_binary,HEAD=lstm jobs/train_osf_lora_gpu.sh
@@ -68,6 +82,13 @@ mkdir -p "$LOGS_DIR/status"
 module load python/3.10.13 2>/dev/null || true
 
 source /home/boshra95/osf_env/bin/activate
+
+# Unbuffered stdout — without this, Python block-buffers when stdout isn't a
+# TTY (i.e. always, here), so epoch progress can sit invisible in an internal
+# buffer for a long time before appearing in the log file (only flushed on
+# process exit/kill). Found live 2026-08-15: a real job had made genuine
+# progress (verified via resume.pt) with nothing showing in the log.
+export PYTHONUNBUFFERED=1
 
 # Fail fast if CUDA is not available — avoids silent CPU fallback
 python -c "import torch; assert torch.cuda.is_available(), 'CUDA not available on node $SLURM_NODELIST'" || {

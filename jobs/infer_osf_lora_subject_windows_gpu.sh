@@ -70,6 +70,9 @@ module load python/3.10.13 2>/dev/null || true
 
 source /home/boshra95/osf_env/bin/activate
 
+# Unbuffered stdout — see jobs/train_osf_lora_gpu.sh for why this matters.
+export PYTHONUNBUFFERED=1
+
 # Fail fast if CUDA is not available
 python -c "import torch; assert torch.cuda.is_available(), 'CUDA not available on node $SLURM_NODELIST'" || {
     echo "ERROR: CUDA not available. Cancel and resubmit with --exclude=$SLURM_NODELIST"
