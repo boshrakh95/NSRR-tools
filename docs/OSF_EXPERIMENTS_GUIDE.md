@@ -578,12 +578,48 @@ python scripts/train_osf_lora.py \
 `best_model.pt` is a `peft` state dict (LoRA deltas + `sequence_head`),
 **not** the full backbone — much smaller than Stage 1's checkpoint.
 
-**Warm-start from Stage 1:** if `--stage1-checkpoint` isn't passed, the
-script auto-detects the matching Stage 1 checkpoint at
-`/scratch/boshra95/psg_full/unified/results/phase0_osf/{task}_{head}/context_{ctx}/best_model.pt`.
-Without either a resume state or a Stage 1 checkpoint, the head starts
-from random init — a loud `warnings.warn` fires, and this is only meant
-for quick architecture-correctness pilots, never a real run.
+**⚠️ Required run order: 30s before any other context, per (task, head)**
+(checklist 2.5d — full reasoning there; this is the operational summary).
+Compute scales ~linearly with context length, so independently
+fine-tuning all 6 lengths isn't feasible. The fix: **only 30s
+warm-starts from Stage 1** (unchanged); **every other context length
+warm-starts from that same (task, head)'s own 30s LoRA checkpoint**
+instead — auto-detected at `{results_dir}/{task}_{head}/context_30s/best_model.pt`,
+always the **plain, untagged path**, regardless of what `--run-tag` the
+*current* run uses. Each context length still trains fully independently
+to its own convergence — only the starting point changes.
+- If you run a non-30s context before that task/head's 30s run exists
+  (and don't pass an explicit override), it fails immediately with a
+  clear error telling you to run 30s first — it does **not** silently
+  fall back to Stage 1 or random init.
+- Overrides, for edge cases (e.g. ablating warm-start source): `--stage2-30s-checkpoint <path>`
+  (point at a specific Stage 2 30s checkpoint) or `--stage1-checkpoint <path>`
+  (force the old Stage-1-warm-start behavior for a non-30s context).
+- `gen_commands_osf_lora.py train` also checks this at command-generation
+  time and prints a `⚠ WARNING`/`⚠ will fail` tag if a 30s checkpoint
+  isn't discoverable yet — see Step 8.5.
+
+**Run-tag policy for the current rollout**: only the very first
+`apnea_binary_lstm` 30s comparison (old `lr=1e-4` pilot vs. the
+re-tuned `run_tag=v2` pilot, see Step 8.3's config-revision note below)
+uses a `--run-tag`. Once you've picked the better of the two, consolidate
+it into the plain untagged path (`apnea_binary_lstm/context_30s/`) —
+rename directories, don't leave both — and delete the losing pilot's
+output entirely. **Do not use `--run-tag` for any other task or context**
+— every other 30s run (the other 4 tasks) and every longer-context run
+goes straight to the untagged path, so the auto-detection above finds it
+with zero ambiguity.
+
+**Training budget revised 2026-08-15** (checklist 2.5d, grounded in a
+real observed overfitting curve, not guessed): `epochs=18,
+early_stopping_patience=5, lr=5e-5` (`context_lr_overrides` at 2.5e-5 for
+120m/240m) — down from Stage 1's original placeholder values
+(`40/10/1e-4`). These are now the config defaults; no CLI flags needed to
+get them.
+
+Without either a resume state or a warm-start checkpoint at all, the head
+starts from random init — a loud `warnings.warn` fires, and this is only
+meant for quick architecture-correctness pilots, never a real run.
 
 **Expected pilot behavior — severe overfitting, not a bug:** with only a
 handful of debug items, train loss collapses toward 0 within a few epochs
@@ -592,12 +628,11 @@ the pilot's purpose is "does the pipeline run and do gradients flow,"
 not "is the model good." Don't read anything into pilot-scale metrics.
 
 **GPU job — go through `gen_commands_osf_lora.py`, not a hand-written
-`sbatch` call** (not yet run for real — checklist 2.6/2.7). Calling
-`jobs/train_osf_lora_gpu.sh` directly without `--context` runs ALL 6
-context lengths sequentially inside one job using the script's 24h
-default wall time — nowhere near enough (~117h combined at the current
-placeholder per-context estimates). `gen_commands_osf_lora.py` submits
-one correctly-time-boxed job per context instead:
+`sbatch` call.** Calling `jobs/train_osf_lora_gpu.sh` directly without
+`--context` runs ALL requested context lengths sequentially inside one
+job against a single wall-time budget — easy to under-provision.
+`gen_commands_osf_lora.py` submits one correctly-time-boxed job per
+context instead:
 ```bash
 # One job per context, each with its own wall-time estimate + resolved batch/accum
 python scripts/gen_commands_osf_lora.py train apnea_binary_lstm | bash
@@ -609,9 +644,19 @@ Same auto-resume mechanism as Stage 1 (`--signal=B:USR1@120` + `resume.pt`,
 saved every epoch as a `peft` state dict + optimizer/scheduler state),
 same status-JSONL convention, logs to `logs_osf_lora/`.
 
-⚠️ **Wall-time NOT calibrated** — every estimate `gen_commands_osf_lora.py`
-prints is a placeholder, not measured. See checklist 2.6. Auto-requeue
-means an underestimate just costs one resubmission, not lost work.
+**GPU size**: `jobs/train_osf_lora_gpu.sh` requests `3g.40gb` (upgraded
+2026-08-15 from `1g.10gb` — MIG partitions compute proportionally to
+memory, so this is a real ~3× throughput gain). `3g.40gb` is the largest
+MIG slice this cluster offers (no full/unpartitioned H100 available).
+
+⚠️ **Wall-time NOT calibrated at `3g.40gb`** — every estimate
+`gen_commands_osf_lora.py` prints is still a placeholder. One real data
+point exists at the *old* `1g.10gb` size: `apnea_binary/lstm/30s` ran at
+~60 min/epoch (measured from `resume.pt`, not guessed). **Compute scales
+~linearly with context length, not sub-linearly** (see checklist 2.5d) —
+240m would be ~480× that at the same GPU size. Auto-requeue means an
+underestimate just costs one resubmission, not lost work, but confirm a
+context length is actually tractable before submitting a long one.
 
 ### Step 8.4 — Inference
 
@@ -665,8 +710,9 @@ produce correct commands); no real GPU sweep has run yet.
 # List all 15 tier-1 LoRA experiments and their status
 python scripts/gen_commands_osf_lora.py list
 
-# Train sbatch command for one context (auto-detects the matching Stage 1
-# checkpoint for warm-starting — no need to specify it)
+# Train sbatch command for one context — warm-start source is
+# auto-detected (Stage 1 checkpoint for 30s, this task/head's own 30s
+# LoRA checkpoint for everything else, checklist 2.5d); no need to specify it
 python scripts/gen_commands_osf_lora.py train apnea_binary_lstm --context 30s
 
 # Inference sbatch command (auto-discovers trained contexts)
@@ -705,6 +751,10 @@ reasoning):
   flag.
 - Added an optional `--stage1-checkpoint` override for `train` (normally
   omitted so auto-detection handles it).
+- `train` prints a `⚠ WARNING`/`⚠ will fail` pre-flight tag (checklist
+  2.5d) if a non-30s context is requested before that (task, head) has a
+  discoverable 30s Stage 2 checkpoint — catches the ordering requirement
+  at command-generation time rather than only at job runtime.
 
 **Subcommands kept**: `list, train, infer, analyze, build-heatmap,
 collect, threshold-tuning, status, runs` — same figure/table subcommands

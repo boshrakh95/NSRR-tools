@@ -426,6 +426,19 @@ def cmd_train(args, registry):
           f"lower context_micro_batch in the registry and re-generate (accum_steps "
           f"auto-adjusts to keep effective_batch=32)")
     print()
+    # Checklist 2.5d: every context other than 30s warm-starts from this
+    # (task, head)'s OWN 30s Stage 2 checkpoint by default — always the
+    # plain, untagged path (matches train_osf_lora.py's own auto-detection
+    # exactly). Pre-flight check here so a missing 30s run is caught at
+    # command-generation time, not job runtime.
+    stage2_30s_path = Path(registry["results_dir"]) / f"{exp['task']}_{exp['head']}" / "context_30s" / "best_model.pt"
+    stage2_30s_ready = stage2_30s_path.exists()
+    if any(ctx != "30s" for ctx in contexts) and not stage2_30s_ready and not stage1_ckpt:
+        print(f"# ⚠ WARNING: no Stage 2 30s checkpoint at {stage2_30s_path} yet — "
+              f"non-30s contexts below will fail at runtime with a clear error "
+              f"unless you run 30s first (checklist 2.5d) or pass --stage1-checkpoint.")
+        print()
+
     for ctx in contexts:
         if ctx not in exp["contexts"]:
             print(f"# WARNING: context '{ctx}' not in registry for this experiment — skipping")
@@ -438,7 +451,12 @@ def cmd_train(args, registry):
         )
         eff_batch = micro_batch * accum_steps
         batch_tag = f"micro={micro_batch} accum={accum_steps} eff={eff_batch}"
-        status_tag = "  # already trained" if trained else f"  # est. {wall}  [{batch_tag}]"
+        if trained:
+            status_tag = "  # already trained"
+        elif ctx != "30s" and not stage2_30s_ready and not stage1_ckpt:
+            status_tag = f"  # est. {wall}  [{batch_tag}]  ⚠ will fail: 30s checkpoint not found yet"
+        else:
+            status_tag = f"  # est. {wall}  [{batch_tag}]"
         print(build_train_cmd(exp, registry, ctx,
                               override_time=getattr(args, "override_time", None),
                               override_batch_size=getattr(args, "override_batch_size", None),

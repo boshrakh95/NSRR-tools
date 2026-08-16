@@ -1333,8 +1333,58 @@ from Stage 1 gets edited:
       unexplained inconsistency.**
 
       **Status**: decisions finalized, config/job-script changes applied
-      and committed. Warm-start code implementation is checklist 2.7's
-      first sub-step — not started yet.
+      and committed. **Warm-start code implemented and live-verified
+      2026-08-15.**
+
+      **5. Implementation.** `scripts/train_osf_lora.py`: new
+      `warm_start_from_stage2_30s()` loads a previously-saved Stage 2 30s
+      checkpoint's full `peft` state dict (LoRA deltas + head together)
+      via `set_peft_model_state_dict` — simpler than the Stage 1
+      warm-start function (`warm_start_head_from_stage1`), since this
+      checkpoint is already in `peft`'s own format (no
+      `ModulesToSaveWrapper` key-prefix handling needed). Selection
+      priority in `train_one_context()`: `resume.pt` (mid-run resume) →
+      `stage2_30s_checkpoint` → `stage1_checkpoint` → random init +
+      warning. `main()` only populates `stage2_30s_checkpoint` for
+      contexts other than `"30s"`; 30s itself is untouched, still
+      warm-starting from Stage 1 exactly as before. Auto-detected path is
+      always `results_dir/{task}_{head}/context_30s/best_model.pt` — the
+      **plain, untagged** path regardless of the *current* run's own
+      `--run-tag`, matching how the user plans to consolidate the 30s
+      comparison pilot (keep the better of the two runs at the untagged
+      path, delete the other) before submitting any longer context.
+      **Fails loudly, not silently**, if a non-30s context has neither a
+      discoverable 30s checkpoint nor an explicit `--stage1-checkpoint`
+      override — same "don't silently do the wrong thing" principle as
+      the raw-signal-cache completeness check (checklist 2.5b). New CLI
+      flags: `--stage2-30s-checkpoint` (override the auto-detected path)
+      and an updated `--stage1-checkpoint` docstring (now an *explicit
+      override* for non-30s contexts, not the default). `metrics.json`
+      gained a `stage2_30s_checkpoint` field recording which checkpoint
+      was actually used, for reproducibility.
+      `scripts/gen_commands_osf_lora.py`'s `train` subcommand also gained
+      a pre-flight check: warns at command-generation time (not just job
+      runtime) if a non-30s context is requested before that (task,head)
+      has a discoverable 30s checkpoint.
+      **Live-verified** (CPU, real data, both branches): (a) success
+      case — `apnea_binary/lstm/10m` correctly auto-detected and loaded
+      the plain-path 30s checkpoint even though the *test* run itself
+      used a different `--run-tag`, training then proceeded normally;
+      (b) failure case — `sex_binary/lstm/10m` (no 30s checkpoint exists
+      yet for this task) failed with the intended clear, actionable error
+      message and `Status: FAILED`, no crash/traceback noise, no partial/
+      corrupt output written. All throwaway test outputs deleted
+      afterward.
+      **Operational note for the current rollout**: the plain
+      `apnea_binary_lstm/context_30s/best_model.pt` path right now still
+      holds the *abandoned* `lr=1e-4` pilot (the `run_tag=v2` comparison
+      run hasn't been consolidated yet) — anyone generating a 10m+
+      command for `apnea_binary_lstm` before that consolidation happens
+      will warm-start from the pilot being discarded, not the final
+      chosen one. Consolidate (rename the winning pilot's directory to
+      the untagged path, delete the other) before submitting apnea's
+      longer contexts. The other 4 tasks have no such ambiguity — their
+      first-ever 30s run goes straight to the untagged path.
 - [ ] 2.6 **Real wall-time calibration pilot on GPU** (Appendix §6.3) — a
       short real run (few epochs, smallest context) on an actual GPU
       allocation to get real per-step timing, since Stage 2's cost model

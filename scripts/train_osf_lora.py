@@ -23,6 +23,22 @@ CLAUDE.md's "Frozen vs. LoRA-fine-tuned conditions" (Kumar et al. 2022
 LP-FT justification). This is an already-made decision, not re-litigated
 here.
 
+WARM-START SOURCE DIFFERS BY CONTEXT LENGTH (checklist 2.5d/2.7, added
+2026-08-15): compute scales ~linearly with context length (every raw
+epoch in a window gets its own backbone forward+backward pass — see
+docs/TSFM_OSF_IMPLEMENTATION_PLAN.md checklist 2.5d), so independently
+LoRA-fine-tuning all 6 context lengths from Stage 1's frozen-backbone
+checkpoint isn't achievable in project timeline. Only **30s** warm-starts
+from Stage 1 (unchanged, original behavior). **Every other context
+length warm-starts from this task/head's OWN 30s LoRA fine-tune**
+(`results_dir/{task}_{head}/context_30s/best_model.pt` — always the
+plain, untagged path, regardless of what --run-tag the current run uses,
+since that's the canonical reference checkpoint the 30s run is expected
+to be consolidated into). Each context length still gets its own fully
+independent, fully-converged fine-tuning run — only the *initialization*
+changes; nothing here means "train once, reuse everywhere" (that idea
+was considered and explicitly rejected, see checklist 2.5d point 3).
+
 MODEL ARCHITECTURE
 ───────────────────
   CombinedOSFLoRAModel(backbone, sequence_head) is built as ONE nn.Module
@@ -229,6 +245,26 @@ def warm_start_head_from_stage1(peft_model, stage1_checkpoint_path: str):
     print(f"  Warm-started sequence_head from: {stage1_checkpoint_path}")
 
 
+def warm_start_from_stage2_30s(peft_model, stage2_30s_checkpoint_path: str):
+    """Load a previously-fine-tuned Stage 2 (LoRA) 30s checkpoint's FULL
+    peft state dict (LoRA deltas + sequence_head together) as the starting
+    point for fine-tuning at a DIFFERENT context length (checklist 2.5d/2.7
+    — see module docstring for why: compute scales ~linearly with context
+    length, so independently fine-tuning every length from Stage 1's
+    frozen-backbone checkpoint isn't achievable in project timeline).
+
+    Unlike warm_start_head_from_stage1 (which loads Stage 1's plain
+    head-only state dict into a freshly-LoRA-wrapped model, requiring the
+    ModulesToSaveWrapper key-prefix handling above), this checkpoint is
+    ALREADY in peft's own format — produced by get_peft_model_state_dict
+    during the 30s run — so set_peft_model_state_dict handles it directly,
+    the exact same round-trip already proven correct for resume.pt.
+    """
+    state = torch.load(stage2_30s_checkpoint_path, map_location="cpu", weights_only=False)
+    set_peft_model_state_dict(peft_model, state)
+    print(f"  Warm-started LoRA+head from Stage 2 30s checkpoint: {stage2_30s_checkpoint_path}")
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Single context-length experiment
 # ─────────────────────────────────────────────────────────────────────────────
@@ -248,6 +284,7 @@ def train_one_context(
     accum_steps: int = 1,
     exp_id: str = None,
     cli_lr_set: bool = False,
+    stage2_30s_checkpoint: str = None,
 ):
     if exp_id is None:
         exp_id = f"{task}_{head_type}"
@@ -367,14 +404,22 @@ def train_one_context(
         _rckpt = torch.load(resume_path, map_location="cpu", weights_only=False)
         set_peft_model_state_dict(model, _rckpt["peft_state_dict"])
         print(f"  [RESUME] Found checkpoint — continuing from epoch {_rckpt['epoch'] + 1}")
+    elif stage2_30s_checkpoint:
+        # Checklist 2.5d/2.7: every context length other than 30s prefers
+        # this task/head's OWN 30s LoRA fine-tune as its warm-start source
+        # (see module docstring for the full reasoning) — takes priority
+        # over stage1_checkpoint when both are available, since main()
+        # only populates stage2_30s_checkpoint for non-30s contexts.
+        warm_start_from_stage2_30s(model, stage2_30s_checkpoint)
     elif stage1_checkpoint:
         warm_start_head_from_stage1(model, stage1_checkpoint)
     else:
         warnings.warn(
-            "No stage1_checkpoint provided and no resume state found — "
-            "sequence_head starts from random init, NOT the staged LP-FT "
-            "procedure the plan calls for. Only intended for quick "
-            "architecture-correctness pilots, not real runs.",
+            "No stage1_checkpoint or stage2_30s_checkpoint provided and no "
+            "resume state found — sequence_head starts from random init, "
+            "NOT the staged LP-FT procedure the plan calls for. Only "
+            "intended for quick architecture-correctness pilots, not real "
+            "runs.",
             stacklevel=2,
         )
 
@@ -495,6 +540,7 @@ def train_one_context(
         "n_trainable_params": n_trainable,
         "n_total_params": n_total,
         "stage1_checkpoint": stage1_checkpoint,
+        "stage2_30s_checkpoint": stage2_30s_checkpoint,
         "train": train_metrics, "val": val_metrics, "test": test_metrics,
     }
 
@@ -532,9 +578,21 @@ def main():
     parser.add_argument("--max-items", default=None, type=int, dest="max_items")
     parser.add_argument("--stage1-checkpoint", default=None, dest="stage1_checkpoint",
                          help="Path to the matching Stage 1 best_model.pt to warm-start "
-                              "the sequence_head from (LP-FT staging). If omitted and no "
-                              "resume state exists, head starts from random init — only "
-                              "intended for quick pilots, not real runs.")
+                              "the sequence_head from (LP-FT staging). Only used for the "
+                              "30s context by default (checklist 2.5d) — for other "
+                              "contexts, passing this explicitly OVERRIDES the default "
+                              "warm-start-from-30s-LoRA-checkpoint behavior (e.g. for an "
+                              "ablation comparing the two warm-start sources). If omitted "
+                              "and no resume/stage2-30s state exists, head starts from "
+                              "random init — only intended for quick pilots, not real runs.")
+    parser.add_argument("--stage2-30s-checkpoint", default=None, dest="stage2_30s_checkpoint",
+                         help="Path to this task/head's own Stage 2 (LoRA) 30s best_model.pt "
+                              "to warm-start OTHER context lengths from (checklist 2.5d). "
+                              "Auto-detected by default at "
+                              "{results_dir}/{task}_{head}/context_30s/best_model.pt — "
+                              "always the plain, untagged path, regardless of --run-tag. "
+                              "Never used for the 30s context itself (which always warm-"
+                              "starts from Stage 1, per --stage1-checkpoint above).")
     parser.add_argument("--cpu", action="store_true")
     parser.add_argument("--batch-size", default=None, type=int, dest="batch_size",
                          help="Micro-batch size. Defaults to 32 if omitted (same convention "
@@ -589,14 +647,45 @@ def main():
             print(f"\n[SKIP] {ctx} — metrics.json already exists.")
             continue
 
-        # Default stage1 checkpoint path if not explicitly given: mirror
-        # the Stage 1 experiment folder naming under phase0_osf's results_dir.
+        # Warm-start source selection (checklist 2.5d/2.7) — 30s always
+        # warm-starts from Stage 1 (original behavior, unchanged); every
+        # other context length prefers this task/head's OWN 30s Stage 2
+        # LoRA checkpoint instead. See module docstring for the full
+        # reasoning (compute scales ~linearly with context length).
         stage1_ckpt = args.stage1_checkpoint
-        if stage1_ckpt is None:
-            _guess = Path("/scratch/boshra95/psg_full/unified/results/phase0_osf") / f"{task}_{head_type}" / f"context_{ctx}" / "best_model.pt"
-            if _guess.exists():
-                stage1_ckpt = str(_guess)
-                print(f"  Auto-detected Stage 1 checkpoint: {stage1_ckpt}")
+        stage2_30s_ckpt = None
+
+        if str(ctx) == "30s":
+            # Unchanged: mirror the Stage 1 experiment folder naming under
+            # phase0_osf's results_dir.
+            if stage1_ckpt is None:
+                _guess = Path("/scratch/boshra95/psg_full/unified/results/phase0_osf") / f"{task}_{head_type}" / f"context_{ctx}" / "best_model.pt"
+                if _guess.exists():
+                    stage1_ckpt = str(_guess)
+                    print(f"  Auto-detected Stage 1 checkpoint: {stage1_ckpt}")
+        else:
+            # Non-30s: default source is this task/head's OWN 30s Stage 2
+            # checkpoint. Always the PLAIN, untagged path — the run_tag
+            # (if any) of the CURRENT run has no bearing on where the
+            # canonical 30s reference lives.
+            stage2_30s_ckpt = args.stage2_30s_checkpoint
+            if stage2_30s_ckpt is None:
+                _guess2 = results_dir / f"{task}_{head_type}" / "context_30s" / "best_model.pt"
+                if _guess2.exists():
+                    stage2_30s_ckpt = str(_guess2)
+                    print(f"  Auto-detected Stage 2 30s checkpoint: {stage2_30s_ckpt}")
+
+            if stage2_30s_ckpt is None and stage1_ckpt is None:
+                print(
+                    f"\n[ERROR] context={ctx}: no Stage 2 30s checkpoint found at "
+                    f"{results_dir / f'{task}_{head_type}' / 'context_30s' / 'best_model.pt'} "
+                    f"and no --stage1-checkpoint override given. Run the 30s context for "
+                    f"this (task, head) first (checklist 2.5d), or pass "
+                    f"--stage2-30s-checkpoint / --stage1-checkpoint explicitly to override."
+                )
+                any_failed = True
+                failure_reasons.append(f"{ctx}: no_stage2_30s_checkpoint_and_no_override")
+                continue
 
         try:
             metrics = train_one_context(
@@ -605,6 +694,7 @@ def main():
                 stage1_checkpoint=stage1_ckpt, limit=args.limit, max_items=args.max_items,
                 batch_size=train_batch_size, accum_steps=args.accum_steps,
                 exp_id=exp_id, cli_lr_set=_cli_lr_set,
+                stage2_30s_checkpoint=stage2_30s_ckpt,
             )
             if metrics is not None:
                 append_to_summary(summary_path, metrics)
