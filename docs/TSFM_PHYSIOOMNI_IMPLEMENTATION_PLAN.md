@@ -175,43 +175,11 @@ re-verify):
   `OSF-Open-Sleep-FM/`, `moment/`, same layout convention as `CLAUDE.md`'s
   "Cluster Execution Guidance" section describes)
 
-**Implementation now lives in `/home/boshra95/NSRR-tools-omni`** (a
-separate `git worktree`, set up 2026-08-17, checked out to the
-`physioomni-implementation` branch, forked from `osf-implementation` — not
-`main` — so it inherits the OSF context this plan references throughout).
-`/home/boshra95/NSRR-tools` remains a **separate worktree of the same
-repository**, checked out to `osf-implementation`, where OSF's own
-implementation continues in parallel. `PhysioOmni/` itself stays a
-read-only reference clone, sibling to both worktrees under
-`/home/boshra95/`.
-
-### Hard constraint: worktree/directory isolation (added 2026-08-17)
-
-**A session working on PhysioOmni operates *only* inside
-`/home/boshra95/NSRR-tools-omni`, on the `physioomni-implementation`
-branch. It never reads or writes anything under
-`/home/boshra95/NSRR-tools` (the `osf-implementation` worktree), and never
-intends a change for any branch other than `physioomni-implementation`.**
-Symmetrically, a session working on OSF operates only inside
-`/home/boshra95/NSRR-tools` on `osf-implementation`, and never touches
-`/home/boshra95/NSRR-tools-omni`. This is recorded identically in
-`CLAUDE.md` — see that file's "Working across parallel branches" section
-for the full table and reasoning (both worktrees share the same underlying
-git history/objects, but each has its own independent checkout and
-currently-checked-out branch — editing files in the wrong worktree either
-silently targets the wrong branch or creates conflicts neither session can
-see coming).
-
-**Practical consequence for this plan's own references**: every mention
-below of "OSF's finished file X" (§6-§15 read OSF's implementation as a
-structural template throughout) means "read `X` as it exists in this
-`physioomni-implementation` branch's own checkout" (present here because
-the branch forked from `osf-implementation`, so those files exist in this
-worktree's history too, just not to be *edited*) — not "go look in the
-`NSRR-tools` worktree." The file-isolation rule below (which files are
-read-only reference material vs. new PhysioOmni-specific files) still
-applies exactly as written; the worktree rule just adds *which directory*
-that discipline is enforced in.
+Implementation, when it starts, lives in **`NSRR-tools`** (this repo, on a
+`physioomni-implementation` branch forked from `osf-implementation` — not
+`main` — so it inherits the OSF context this plan references throughout,
+per `CLAUDE.md`'s current instruction) — `PhysioOmni/` itself stays a
+read-only reference clone.
 
 ### Hard constraint: total file isolation from OSF and SleepFM
 
