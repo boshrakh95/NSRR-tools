@@ -1,1 +1,2 @@
 {"ts":"2026-08-17T11:44:02-07:00","job_id":"55205684","node":"fc11016","status":"STARTED","task":"sleep_efficiency_binary","head":"transformer","contexts":"30s","split":"test","datasets":"apples shhs mros"}
+{"ts":"2026-08-17T14:36:22-07:00","job_id":"55224735","node":"fc11004","status":"STARTED","task":"sleep_efficiency_binary","head":"transformer","contexts":"30s","split":"test","datasets":"apples shhs mros"}

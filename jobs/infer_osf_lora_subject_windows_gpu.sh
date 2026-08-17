@@ -25,7 +25,12 @@
 # per-window probabilities for downstream majority-voting / mean-prob
 # aggregation — same schema as Stage 1's inference output.
 #
-# Already-done contexts are skipped automatically (safe to resubmit).
+# Already-done contexts (output parquet already exists) are skipped
+# automatically (safe to resubmit). WITHIN a context, progress is also
+# incrementally resumable as of 2026-08-17 (see infer_osf_lora_subject_
+# windows.py's RESUMABILITY docstring note) — a timeout no longer restarts
+# an "all windows" pass (millions of raw epochs, can take many hours) from
+# item 0; it picks up from the last periodic checkpoint (every 5 min).
 # Auto-resume on timeout: same mechanism as train_osf_lora_gpu.sh —
 #   --signal=B:USR1@120 fires 120s before wall time, Python is killed cleanly,
 #   and this script is resubmitted via sbatch "$0" with --export=ALL.
@@ -87,7 +92,8 @@ CONTEXTS=${CONTEXTS:-""}
 SPLIT=${SPLIT:-"test"}
 DATASETS=${DATASETS:-""}
 NO_ALL_WINDOWS=${NO_ALL_WINDOWS:-""}   # set to 1 to use K=5 (training eval mode)
-BATCH_SIZE=${BATCH_SIZE:-4}            # default in infer_osf_lora_subject_windows.py: 4
+BATCH_SIZE=${BATCH_SIZE:-32}           # default in infer_osf_lora_subject_windows.py: 32 (raised
+                                        # 2026-08-17 from 4 -- see that script's BATCH SIZE note)
 RUN_TAG=${RUN_TAG:-""}                 # must match RUN_TAG used during training
 
 # ── Job run tracking ──────────────────────────────────────────────────────────
