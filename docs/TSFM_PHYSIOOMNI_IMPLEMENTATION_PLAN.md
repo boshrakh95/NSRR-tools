@@ -175,11 +175,77 @@ re-verify):
   `OSF-Open-Sleep-FM/`, `moment/`, same layout convention as `CLAUDE.md`'s
   "Cluster Execution Guidance" section describes)
 
-Implementation, when it starts, lives in **`NSRR-tools`** (this repo, on a
-`physioomni-implementation` branch forked from `osf-implementation` — not
-`main` — so it inherits the OSF context this plan references throughout,
-per `CLAUDE.md`'s current instruction) — `PhysioOmni/` itself stays a
-read-only reference clone.
+**Implementation now lives in `/home/boshra95/NSRR-tools-omni`** (a
+separate `git worktree`, set up 2026-08-17, checked out to the
+`physioomni-implementation` branch, forked from `osf-implementation` — not
+`main` — so it inherits the OSF context this plan references throughout).
+`/home/boshra95/NSRR-tools` remains a **separate worktree of the same
+repository**, checked out to `osf-implementation`, where OSF's own
+implementation continues in parallel. `PhysioOmni/` itself stays a
+read-only reference clone, sibling to both worktrees under
+`/home/boshra95/`.
+
+### Hard constraint: worktree/directory isolation (added 2026-08-17,
+**not yet mirrored in `CLAUDE.md` — pending a decision on how to keep
+cross-branch status in sync without `CLAUDE.md` diverging per-branch; for
+now this is recorded here only**)
+
+**On Compute Canada Fir, this repository is checked out as two separate
+`git worktree`s at once**, one per active TSFM baseline implementation, so
+each can be worked on from its own VSCode window/Claude Code session
+without the two clobbering each other:
+
+| Directory | Branch | What it's for |
+|---|---|---|
+| `/home/boshra95/NSRR-tools` | `osf-implementation` | OSF baseline (Stage 1 done, Stage 2/LoRA in progress) |
+| `/home/boshra95/NSRR-tools-omni` | `physioomni-implementation` | PhysioOmni baseline (this plan) |
+
+**A session working on PhysioOmni operates *only* inside
+`/home/boshra95/NSRR-tools-omni`, on the `physioomni-implementation`
+branch. It never reads or writes anything under `/home/boshra95/NSRR-tools`
+(the `osf-implementation` worktree), and never intends a change for any
+branch other than `physioomni-implementation`.** Symmetrically, a session
+working on OSF should operate only inside `/home/boshra95/NSRR-tools` on
+`osf-implementation`, and never touch `/home/boshra95/NSRR-tools-omni` —
+**this expectation currently exists only in this plan doc, not (yet) as an
+equivalent note in the `osf-implementation` branch's own `CLAUDE.md`**,
+since that would require editing a file this session cannot touch; flag
+this to the user/other session directly if it matters before assuming it's
+already known there.
+
+**Why this needs care, not just a directory convention**: both worktrees
+share the same underlying git history/objects (same `.git`), but each has
+its own independent checkout and currently-checked-out branch — editing
+files in the wrong worktree either silently targets the wrong branch or
+creates conflicts neither session can see coming. **Do not `cd` out of your
+own worktree directory to peek at or edit the other one.** If reference
+material from OSF's branch is needed (e.g. reusing OSF's finished pipeline
+as a structural template, §6-§15 below do this throughout), read it from
+*within this worktree's own checkout* — it's already present here, since
+this branch forked from `osf-implementation` and inherited its file tree at
+that point — not by crossing into the other worktree's directory.
+
+**Why this note isn't also in `CLAUDE.md` right now, and what that
+implies**: `CLAUDE.md` exists independently in both branches' history, so
+an edit made here would not automatically appear in the `osf-implementation`
+worktree's copy until an explicit merge — and since `CLAUDE.md` is a living
+status doc both branches keep independently updating, inlining a growing
+"current status of both efforts" section into it would create a real,
+recurring merge-conflict surface, not a one-time cost. **This is an
+explicitly open, undecided question** (options discussed: a shared file
+outside git version control, a symlinked `CLAUDE.md`, a separate small
+git-tracked status repo) — until it's resolved, **this plan doc is the one
+place all of the above is recorded**; don't assume `CLAUDE.md` reflects any
+of it.
+
+**Practical consequence for this plan's own references**: every mention
+below of "OSF's finished file X" (§6-§15 read OSF's implementation as a
+structural template throughout) means "read `X` as it exists in this
+`physioomni-implementation` branch's own checkout," not "go look in the
+`NSRR-tools` worktree." The file-isolation rule below (which files are
+read-only reference material vs. new PhysioOmni-specific files) still
+applies exactly as written; the worktree rule above just adds *which
+directory* that discipline is enforced in.
 
 ### Hard constraint: total file isolation from OSF and SleepFM
 
