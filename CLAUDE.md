@@ -41,6 +41,49 @@ and on the cluster (for anything that needs to touch signal data). See
 
 ---
 
+## Working across parallel branches — worktree isolation (added 2026-08-17,
+read this before touching any file)
+
+**On Compute Canada Fir, this repository is checked out as more than one
+`git worktree` at once** — a separate working directory per active TSFM
+baseline implementation, so multiple Claude Code sessions (each in its own
+VSCode window) can work on different branches simultaneously without
+clobbering each other. As of 2026-08-17:
+
+| Directory | Branch | What it's for |
+|---|---|---|
+| `/home/boshra95/NSRR-tools` | `osf-implementation` | OSF baseline (Stage 1 done, Stage 2/LoRA in progress) |
+| `/home/boshra95/NSRR-tools-omni` | `physioomni-implementation` | PhysioOmni baseline (forked from `osf-implementation`; see `docs/TSFM_PHYSIOOMNI_IMPLEMENTATION_PLAN.md`) |
+
+**Hard rule: a session operates only inside its own worktree directory, and
+only intends changes for that worktree's own currently-checked-out branch.**
+A session running in `NSRR-tools` (on `osf-implementation`) must never read
+or write anything under `NSRR-tools-omni`, and a session running in
+`NSRR-tools-omni` (on `physioomni-implementation`) must never touch
+`NSRR-tools` — even though both directories are full checkouts of the same
+underlying repository (same `.git` object database, shared history) and
+many files, this one included, exist identically in both branches' history
+at the point they diverged. **Do not `cd` out of your own worktree
+directory to peek at or edit the other one** — if you need something the
+other branch already has (e.g. reusing OSF's finished pipeline as a
+structural reference for PhysioOmni), read it from *within your own
+worktree's own checkout* (it's already there, inherited from the fork
+point), not by crossing into the other worktree.
+
+**This file itself is a case in point**: `CLAUDE.md` exists independently
+in both branches' history, so an edit made in one worktree does **not**
+automatically appear in the other until the branches are explicitly
+merged. A note added here on `physioomni-implementation` is invisible to a
+session working on `osf-implementation` (and vice versa) until that
+happens — keep this in mind before assuming a cross-cutting update here is
+seen everywhere.
+
+If a third baseline (MOMENT) gets its own implementation branch later,
+extend the table above the same way — one worktree directory per active
+branch, same isolation rule.
+
+---
+
 ## Repository Map
 
 This section is a code-verified orientation map (read directly from source,
