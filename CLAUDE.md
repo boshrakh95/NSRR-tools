@@ -589,43 +589,92 @@ Emerging pattern worth tracking: OSF looks strong on tasks tied to
 static/structural subject characteristics (sex, age, BMI) and unproven on
 tasks tied to dynamic physiological events (sleep efficiency, apnea) — see
 `docs/TSFM_OSF_IMPLEMENTATION_PLAN.md`'s "Stage 1 Results" section for the
-full per-cohort tables. Do not start Stage 2 (LoRA) until explicitly asked.
+full per-cohort tables.
 
-**PhysioOmni (model #2 of 3) also has a written plan now, code-verified
-2026-08-13: [`docs/TSFM_PHYSIOOMNI_IMPLEMENTATION_PLAN.md`](docs/TSFM_PHYSIOOMNI_IMPLEMENTATION_PLAN.md)
-— plan only, nothing implemented.** Verdict: proceed, but with real
+**Stage 2 (LoRA fine-tuning) is now in progress, as of 2026-08-16/17.** Two
+engineering findings worth knowing before touching this code: (1) compute
+scales ~linearly with context length N (raw 30-second epochs per window) —
+`CombinedOSFLoRAModel.forward()` runs every epoch in a window through the
+full backbone individually, so 240m (480 epochs/window) costs ~480x what
+30s costs per training step, not a sub-linear fraction of it; the
+`3g.40gb` MIG GPU upgrade alone measured **zero** speedup over `1g.10gb`
+(real measured data, not guessed). (2) The actual bottleneck was
+`embedding.chunk_batch_size` (how many raw epochs get batched per backbone
+forward call within a window) — raising it 16→64 gave a confirmed,
+measured **3.28x speedup** (18.8 vs 61.6 min/epoch at 30s), since fewer,
+bigger forward calls amortize per-call overhead. Purely a GPU-scheduling
+knob — verified safe (OSF's backbone uses only per-sample-independent
+`nn.LayerNorm`, zero `nn.BatchNorm`), invisible to
+`batch_size`/`effective_batch_size` and the paper's "context length is the
+only variable" methodology claim.
+
+To make the long-context conditions tractable, every context length other
+than 30s warm-starts its LoRA+head weights from that same (task, head)'s
+own already-converged 30s LoRA checkpoint (branch, not a
+30s→10m→...→240m chain — see `docs/TSFM_OSF_IMPLEMENTATION_PLAN.md`
+checklist 2.5d for the full reasoning, grounded directly in
+`npj_main.tex`'s stated methodology). 30s itself still warm-starts from
+Stage 1's frozen-backbone head, as before.
+
+**30s tier complete as of 2026-08-17: all 5 Tier-1 tasks × lstm/transformer
+(10 runs) trained, evaluated, and inference'd (test split).** Headline
+val/test AUROC (kappa for age_class): apnea_binary lstm 0.724/0.719,
+transformer 0.716/0.711; sex_binary lstm 0.843/0.832, transformer
+0.838/0.831; sleep_efficiency_binary lstm 0.667/0.668, transformer
+0.673/0.669; bmi_binary lstm 0.745/0.755, transformer 0.742/0.747;
+age_class lstm 0.870/0.866, transformer 0.867/0.858. A 10m calibration
+pilot (apnea_binary/lstm, warm-started from its 30s checkpoint) is running
+now to get real per-epoch timing before batch-submitting the rest of the
+long-context sweep (10m/40m/80m/120m/240m × 5 tasks × 2 heads) —
+`mean_pool` head and threshold-tuning (val-split inference for the 4
+binary tasks) still pending too.
+
+**All of this OSF work (Stage 1 + Stage 2) lives on the
+`osf-implementation` branch, not yet merged to `main`** (29 commits /
+~16,700 lines as of 2026-08-17) — a fresh clone of `main` will not have any
+of it. Branch from `osf-implementation`, not `main`, for any work that
+needs this context.
+
+**PhysioOmni (model #2 of 3): implementation starting now, in parallel
+with OSF's remaining long-context sweep** (which from here is mostly
+cluster-side wait time) — no longer gated on OSF finishing first. Its plan
+doc (`docs/TSFM_PHYSIOOMNI_IMPLEMENTATION_PLAN.md`, written 2026-08-13)
+predates this decision and needs a fresh review-and-improve pass before
+real implementation starts. Verdict on proceeding (unchanged): real
 caveats stated up front, not softened — the paper is arXiv-only (never
 peer-reviewed), its sleep-relevant pretraining slice (CAP + Sleep-EDF,
-~305 recordings) is tiny next to our ~16,000-subject cohort and next to
-OSF's own pretraining scale, and **on its own best-fit downstream task
-(HMC sleep staging), PhysioOmni's own reported number (0.7377 balanced
-accuracy) does not beat its paper's own non-foundation-model baseline
-(FeatFusion, 0.7478)** — a real reason to keep expectations modest, not a
-reason to skip the comparison (a mixed/negative result here is still
-informative for a paper about *why* SleepFM was chosen). Apnea is excluded
-(no respiratory pathway anywhere in the model, confirmed at 4 independent
-code locations). License is split, not simply "missing": the GitHub code
-repo has no LICENSE file, but the HuggingFace weights repo
-(`Weibang/PhysioOmni`) declares **CC-BY-4.0** explicitly (verified live via
-the HF API) — both facts should be stated if this ships in the paper.
-Channel-coverage news is better than OSF's: PhysioOmni needs only
-EEG/EOG/ECG/EMG (no RESP), and the existing **fast-channel** `psg/` HDF5s
-(the paper-primary tree) already carry everything needed — confirmed both
-from `configs/preprocessing_params.yaml`/`modality_groups.yaml`'s
-priority-order caps and from real HDF5 key listings for all 4 cohorts, not
-assumed by analogy to OSF — so no reprocessing is needed, and the
-comparison baseline is `phase0_v3` (paper-primary), not `phase0_v3_full`.
-Normalization is the one place PhysioOmni is harder than OSF: it expects
-raw amplitude scaled by `/100`, not z-scored data, so extraction needs to
-invert our stored per-channel `normalization_stats` back to raw scale
-first — mechanically free (the stats are already saved in every HDF5) but
-**not a uniform V→µV conversion**: reading real stats shows `LOC`/`ROC`'s
+~305 recordings) is tiny next to our ~16,000-subject cohort and OSF's own
+pretraining scale, and **on its own best-fit downstream task (HMC sleep
+staging), PhysioOmni's own reported number (0.7377 balanced accuracy) does
+not beat its paper's own non-foundation-model baseline (FeatFusion,
+0.7478)** — a real reason to keep expectations modest, not a reason to
+skip the comparison. Apnea is excluded (no respiratory pathway anywhere in
+the model, confirmed at 4 independent code locations). License is split,
+not simply "missing": the GitHub code repo has no LICENSE file, but the
+HuggingFace weights repo (`Weibang/PhysioOmni`) declares **CC-BY-4.0**
+explicitly (verified live via the HF API) — both facts should be stated if
+this ships in the paper. Channel-coverage is better than OSF's: PhysioOmni
+needs only EEG/EOG/ECG/EMG (no RESP), and the existing **fast-channel**
+`psg/` HDF5s (the paper-primary tree) already carry everything needed, so
+the comparison baseline is `phase0_v3` (paper-primary), not
+`phase0_v3_full`. Normalization is the one place PhysioOmni is harder than
+OSF: it expects raw amplitude scaled by `/100`, not z-scored data, so
+extraction needs to invert our stored per-channel `normalization_stats`
+back to raw scale first — **not a uniform V→µV conversion** (`LOC`/`ROC`'s
 recovered scale looks like volts while other channels already look
-µV-scale, so the unit-correction has to be checked per channel, not
-applied as one flat rule. Not yet empirically validated either way.
-**Do not start implementing PhysioOmni until OSF's Stage 1 sweep and Stage
-2 LoRA are done** — MOMENT (model #3) still doesn't have a plan doc yet;
-write that only once asked, same rule.
+µV-scale), the unit-correction has to be checked per channel, not applied
+as one flat rule. Not yet empirically validated either way.
+
+**Hard constraint for the PhysioOmni implementation: it must happen
+entirely in new, PhysioOmni-specific files (own dataset class, own
+training/inference scripts, own config, own registry, own job scripts) —
+never edit any OSF or SleepFM file.** This is what let OSF's own
+implementation coexist cleanly alongside the original SleepFM pipeline,
+and it's what will let a `physioomni-implementation` branch (forked from
+`osf-implementation`, to inherit this context) stay easily mergeable in
+both directions despite `osf-implementation` continuing to move. MOMENT
+(model #3) still doesn't have a plan doc yet; write that only once asked,
+same rule.
 
 ---
 
