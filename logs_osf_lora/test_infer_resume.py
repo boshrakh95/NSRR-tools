@@ -17,7 +17,7 @@ device = torch.device('cpu')
 with warnings.catch_warnings():
     warnings.simplefilter('ignore')
     ds = m.build_dataset(cfg, split='test', context_length='30s', task='apnea_binary',
-                          datasets_filter=None, all_windows=True, limit=3)
+                          datasets_filter=None, all_windows=True, limit=1)
 print(f"dataset items: {len(ds)}")
 
 ckpt_path = '/scratch/boshra95/psg_full/unified/results/phase0_osf_lora/apnea_binary_lstm/context_30s/best_model.pt'
