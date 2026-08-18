@@ -295,7 +295,15 @@ below.
 
 ## 2. Status (revised 2026-08-17)
 
-**Planning only — nothing built.** Two research/planning passes so far:
+**Implementation started 2026-08-17, on its own worktree
+(`/home/boshra95/NSRR-tools-omni`).** Phase 0 (env + checkpoint) is real
+and verified, not just planned — see checklist 0.1/0.2 below and
+`PHYSIOOMNI_CLAUDE.md` (this branch's live status file, not auto-loaded —
+read it explicitly) for the full detail. Phase 1 (channel loader,
+extraction script) starts next, one step at a time with a VSCode debug
+config per step, mirroring the workflow OSF itself used.
+
+Two research/planning passes preceded implementation:
 
 1. **2026-08-13** — reading the PhysioOmni GitHub repo's code directly,
    fetching the arXiv paper and HuggingFace weights-repo metadata over the
@@ -1330,21 +1338,57 @@ starting now, in parallel with OSF's remaining sweep — no longer gated on
 OSF finishing first," but still gated on an explicit go-ahead for actual
 code/branch work, which this revision is not).
 
-### Phase 0 — Setup
-- [ ] 0.1 Build `physioomni_env` — check whether it can share `osf_env` or
-      needs its own venv (§14 item 6); verify the `nsrr_tools.core` eager
-      `pyedflib` import gotcha (§7) applies the same way before deciding
-      module placement
-- [ ] 0.2 Download `PhysioOmni.pt`, strict-or-partial-load-verify against
-      `FT.py`'s four `NeuralTransformer` encoders (§14 item 1) — do **not**
-      download `VQ.pt` unless this reveals it's actually needed
-- [ ] 0.3 Save the paper PDF locally (mirrors `related_work/OSF.pdf`)
-- [ ] 0.4 Confirm the SHHS EEG-duplication decision (§4.3) with the user
+### Phase 0 — Setup — ✅ mostly done 2026-08-17 (0.4-0.6 remain)
+- [x] 0.1 Build `physioomni_env` — **resolved: dedicated venv, not shared
+      with `osf_env`.** Package-wise `osf_env` was a near-perfect match
+      (`torch==2.5.1`/`torchvision==0.20.1`/`torchaudio==2.5.1` already
+      exactly right, plus `einops`/`pandas`/`scikit-learn`/`huggingface_hub`
+      already present), but `osf_env`'s `nsrr_tools_src.pth` points at
+      `/home/boshra95/NSRR-tools/src` (the OSF worktree) — reusing it
+      as-is would silently import OSF's branch's `nsrr_tools`, and
+      repointing that `.pth` would break OSF's own still-active
+      environment. Built `/home/boshra95/physioomni_env` fresh from
+      `/home/boshra95/osf_env_requirements.txt` (147 packages, no version
+      relaxation needed this time — already CC-wheelhouse-proven), own
+      `.pth` → `/home/boshra95/NSRR-tools-omni/src`, verified
+      `import nsrr_tools` resolves to this worktree. Confirmed
+      `nsrr_tools.core` still fails (`pyedflib` missing, same as
+      `osf_env`) — `nsrr_tools.datasets` placement (§7) confirmed correct.
+      `wandb` not installed (same known CC Go-toolchain issue OSF hit;
+      inert since our own training scripts will make it opt-in like
+      OSF's). Full detail: `PHYSIOOMNI_CLAUDE.md`.
+- [x] 0.2 Download `PhysioOmni.pt`, strict-load-verify — **done, real
+      script not a throwaway snippet**: `scripts/verify_physioomni_checkpoint.py`
+      (VSCode debug config "🫀 PhysioOmni Phase0 Step2: Verify Checkpoint").
+      **Result: zero missing keys on all 4 encoders** (one expected
+      `mask_token` unexpected-key per encoder, an MSM-pretraining-only
+      component `FT.py`'s own `strict=False` load already accounts for).
+      Resolves the previously-open checkpoint-key-prefix hypothesis (§2,
+      §18) — confirmed, not just inferred from code reading. **Bonus
+      finding**: the checkpoint's own `{modality}_encoder_args` dicts
+      contain the exact `NTConfig` kwargs per modality — read these at
+      runtime (mirroring OSF's `metadata` dict pattern) instead of
+      hardcoding §3's table when writing the extraction script (§7).
+      Total real encoder params: 13,871,304. `VQ.pt` confirmed **not**
+      downloaded/needed — the verification only ever touches
+      `*_encoder.`-prefixed keys, exactly as hypothesized.
+- [x] 0.3 Save the paper PDF locally — done,
+      `/home/boshra95/related_work/PhysioOmni.pdf` (arXiv 2504.19596v3, 15
+      pages), same shared non-git-tracked location as `OSF.pdf`.
+- [ ] 0.4 Confirm the SHHS EEG-duplication decision (§4.3) with the user —
+      **still open, asked explicitly, not assumed**
 - [ ] 0.5 Empirically validate the normalization approach (§5.2, §14 item 2)
+      — deferred to Phase 1's first real smoke test (needs real HDF5 data
+      + a forward pass, doesn't fit as a standalone Phase 0 step)
 - [ ] 0.6 Empirically validate the sample-rate resampling approach (§5.1,
-      §14 item 3)
-- [ ] 0.7 Create the `physioomni-implementation` branch, forked from
-      `osf-implementation` (§1) — not `main`
+      §14 item 3) — same, deferred to Phase 1's first smoke test
+- [x] 0.7 Create the `physioomni-implementation` branch, forked from
+      `osf-implementation` (§1) — not `main`. **Went further than
+      originally planned**: this branch now has its own `git worktree` at
+      `/home/boshra95/NSRR-tools-omni`, running in its own VSCode window,
+      completely isolated from the `osf-implementation` worktree at
+      `/home/boshra95/NSRR-tools` — see this section's own "Hard
+      constraint: worktree/directory isolation" note above.
 
 ### Phase 1 — Stage 1 (frozen encoders)
 - [ ] 1.1 Implement `src/nsrr_tools/datasets/physioomni_channel_loader.py`
@@ -1429,25 +1473,32 @@ code/branch work, which this revision is not).
 | Stage 2 raw-signal caching | Offline, from day one, not discovered after a stalled job | OSF's real Stage 2 lost 2+ hours to exactly this before fixing it (§15.2) |
 | Stage 2 split-matching | Filter by Stage-1-embedding-file existence, not raw-HDF5 existence | A live, previously-real bug in OSF's own Stage 2 — same fix applies here (§15.2) |
 | Stage 2 warm-start | Every context length other than the shortest branches from that (task, head)'s shortest-context LoRA checkpoint | Compute scales linearly with context length (§15.2); direct reuse of OSF's own resolved design |
-| Checkpoint needed | `PhysioOmni.pt` only, not `VQ.pt` | Traced `FT.py`'s loading code directly — only `*_encoder.`-prefixed keys are ever loaded; **still needs empirical confirmation once downloaded** (checklist 0.2) |
+| Checkpoint needed | `PhysioOmni.pt` only, not `VQ.pt` | **Confirmed 2026-08-17** — strict-load-verified via `scripts/verify_physioomni_checkpoint.py`: all 4 encoders load with zero missing keys from `PhysioOmni.pt` alone (checklist 0.2) |
+| `physioomni_env` vs. `osf_env` | **Dedicated venv**, not shared | `osf_env`'s `nsrr_tools_src.pth` points at the OSF worktree; sharing would either silently import OSF's branch's code or require repointing a still-in-use shared environment — neither acceptable (checklist 0.1, `PHYSIOOMNI_CLAUDE.md`) |
+| Per-modality `NTConfig` kwargs | Read from the checkpoint's own `{modality}_encoder_args` dicts at runtime | **Found 2026-08-17** while verifying the checkpoint — the exact kwargs are stored in the checkpoint itself, no need to hardcode §3's table (mirrors OSF's own `metadata`-dict pattern) |
 
 ---
 
 ## 18. Known open questions
 
-- **Checkpoint key-prefix hypothesis (§2, §17)** — not yet verified against
-  the real file.
+- ~~**Checkpoint key-prefix hypothesis**~~ — **✅ RESOLVED 2026-08-17**, see
+  checklist 0.2 and §17.
+- ~~**Whether `physioomni_env` can share `osf_env`'s environment**~~ — **✅
+  RESOLVED 2026-08-17: no, dedicated venv**, see checklist 0.1 and §17.
 - **Normalization mismatch (§5.2)** — a concrete inversion method is
   identified and the per-channel unit inconsistency is flagged, but neither
-  is empirically validated yet.
+  is empirically validated yet — deferred to Phase 1's first smoke test
+  (checklist 0.5).
 - **Sample-rate resampling method (§5.1)** — recommended (FFT-based or
   polyphase resampling for the non-integer 128→200/128→500 ratios) but not
-  yet empirically validated against real signal.
+  yet empirically validated against real signal — deferred to Phase 1's
+  first smoke test (checklist 0.6).
+- **SHHS EEG-duplication decision (§4.3)** — needs explicit user
+  confirmation before Phase 1.1's channel-candidate logic is written
+  (checklist 0.4) — **asked explicitly at the end of this Phase 0 pass, not
+  yet answered.**
 - **Multi-encoder LoRA-wrapping design (§15.1)** — genuinely undecided,
   needs a design conversation with the user before Phase 2 starts.
-- **Whether `physioomni_env` can share `osf_env`'s environment or needs its
-  own fresh build** — not checked yet; PhysioOmni's README pins are close
-  to but not identical to OSF's.
 - **GitHub code repo's missing LICENSE** — the weights are CC-BY-4.0 but
   the training/inference *code* has no stated license.
 - **Per-modality-missing degeneracy** (§8) — flagged as a real, distinct
@@ -1514,3 +1565,25 @@ against:
 9. **`docs/PHYSIOOMNI_PLANNING_HANDOFF.md`** — the prompt this revision
    follows; its "hard constraints" section is reproduced verbatim as this
    plan's §1 file-isolation constraint.
+
+**2026-08-17, Phase 0 execution pass** — real cluster actions, not
+research reading, all outputs captured in `PHYSIOOMNI_CLAUDE.md`:
+
+10. **`physioomni_env` built live** — `pip install -r
+    /home/boshra95/osf_env_requirements.txt` into a fresh venv, package
+    list and `.pth` contents inspected directly (not assumed) both before
+    (`osf_env`) and after (`physioomni_env`) the build.
+11. **`PhysioOmni.pt` downloaded live** from
+    `https://huggingface.co/Weibang/PhysioOmni/resolve/main/PhysioOmni.pt`
+    (267,795,410 bytes, matches the 2026-08-13 pass's HF-API size
+    exactly) and **strict-load-verified against the real
+    `NeuralTransformer`/`NTConfig` classes** from
+    `/home/boshra95/PhysioOmni/model/neural_transformer.py` via
+    `scripts/verify_physioomni_checkpoint.py` — the checkpoint's own
+    `torch.load(...)` output (top-level keys, per-modality
+    `*_encoder_args`, `load_state_dict(strict=False)` missing/unexpected
+    key lists, parameter counts) is the direct source for every claim in
+    checklist 0.2, not inference from code reading alone.
+12. **Paper PDF fetched live** from `arxiv.org/pdf/2504.19596v3` to
+    `/home/boshra95/related_work/PhysioOmni.pdf`, verified as a real
+    15-page PDF (`file` command), not just a successful HTTP status.
