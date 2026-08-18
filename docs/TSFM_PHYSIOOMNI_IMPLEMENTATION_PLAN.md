@@ -515,42 +515,161 @@ fast-channel tree, 2026-08-13):
 | Cohort | Real HDF5 keys found | PhysioOmni-relevant channels present |
 |---|---|---|
 | APPLES (`APL1373.h5`) | `Airflow, C3-M2, C4-M1, EKG, EMG, LOC, ROC` | EEG ✅, EOG ✅, ECG ✅, EMG ✅ (generic fallback) |
-| SHHS (`203805_v2.h5`) | `Airflow, EEG, EKG, EMG, LOC, ROC` | EEG ❌ (generic only, no C3/C4), EOG ✅, ECG ✅, EMG ✅ (generic fallback) |
+| SHHS (`203805_v2.h5`) | `Airflow, EEG, EKG, EMG, LOC, ROC` | EEG ⚠️ (has data — generic `EEG` only, no C3/C4 split, see §4.5), EOG ✅, ECG ✅, EMG ✅ (generic fallback) |
 | MrOS (`AA1449_v2.h5`) | `Airflow, C3-M2, C4-M1, CHIN, EKG, LLEG, LOC, ROC` | EEG ✅, EOG ✅, ECG ✅, EMG ✅ (real `CHIN`) |
 | STAGES (`STNF00032.h5`) | `Airflow, C3-M2, C4-M1, CHIN, EKG, LOC, ROC` | EEG ✅, EOG ✅, ECG ✅, EMG ✅ (real `CHIN`) |
 
-Cross-referenced against `docs/TSFM_OSF_IMPLEMENTATION_PLAN.md`'s larger
-50-subject-per-cohort audit for the overlapping channel set:
+**Recomputed 2026-08-17 directly against the full raw population** (not
+OSF's smaller 50-subject-per-cohort sample) — parsed
+`output/channel_analysis/{apples,shhs,mros,stages}_channels.csv` (1,104 /
+8,444 / 3,933 / 1,879 raw subjects respectively) against
+`configs/channel_definitions.yaml`'s real alias lists:
 
-| Channel | APPLES | SHHS | MrOS | STAGES |
+| Channel | APPLES (n=1,104) | SHHS (n=8,444) | MrOS (n=3,933) | STAGES (n=1,879) |
 |---|---|---|---|---|
-| `C3-M2`/`C4-M1` (EEG) | 100% | **0%** | 100% | 100% |
-| `LOC`/`ROC` (EOG, both needed for the derived HEO) | 100% | 100% | 100% | 100% |
-| `EKG`→`ECG-L` (ECG) | 100% | 100% | 100% | 90% |
-| `CHIN`→generic `EMG` (EMG) | 100%† | 100%† | 100% | 100% |
+| C3 (`C3-M2`) | 99.4% | **0%** | 100% | 99.9% |
+| C4 (`C4-M1`) | 99.4% | **0%** | 100% | 99.9% |
+| LOC (EOG) | 100% | 100% | 100% | 99.9% |
+| ROC (EOG) | 99.4% | 100% | 100% | 99.9% |
+| ECG (`EKG`→`ECG-L`) | 99.9% | 100% | 100% | **90.8%** |
+| EMG (`CHIN`→generic `EMG`) | 100% | 100% | 100% | 99.9% |
 
-†generic `EMG` fallback for APPLES/SHHS, real `CHIN` channel for MrOS/STAGES.
+STAGES's ECG gap (173/1,879 subjects, 9.2%) was traced directly, not left
+unexplained: those subjects have a channel named `Heartrate` where an ECG
+waveform would be — a derived beats-per-minute value, not a usable raw
+signal, and not fixable via any alias-list addition (genuinely absent
+data, same category as SHHS's C3/C4 gap below, not the same category as
+OSF's fixable STAGES/SHHS alias-list gaps). Not worth reprocessing over.
 
-**The one real gap: SHHS has no distinguishable C3/C4 EEG**, identical root
-cause to OSF's own SHHS finding. **Decision, mirroring OSF's own resolved
-SHHS decision**: duplicate SHHS's single generic `EEG` channel into both
-`'C3'` and `'C4'` position-lookup slots. This should be revisited together
-with OSF's own SHHS caveat if results look degraded, not decided
-independently per model. **Needs its own explicit re-confirmation with the
-user before Phase 1** (checklist 0.4) — the pattern matching OSF's decision
-is not the same as the user having actually confirmed it for PhysioOmni.
+**The one real gap: SHHS has no distinguishable C3/C4 EEG.** To be precise
+about what this means (a source of real confusion the first time this was
+reported, worth stating carefully): SHHS is **not** missing EEG signal —
+its `psg/` HDF5s carry a channel literally named `EEG` at 100% coverage,
+the exact channel OSF already reads today. What SHHS lacks is the *split*
+into two separately-labeled electrodes (`C3-M2`/`C4-M1`) the other three
+cohorts have. §4.5 below covers the full investigation and the final
+decision on how to handle this — **no reprocessing is needed either way.**
 
 ### 4.4 Reprocessing decision: **no raw EDF reprocessing needed, and no
 full-channel tree needed either**
 
 Every channel PhysioOmni needs is already present in the fast-channel
 `psg/` HDF5s — the same tree SleepFM's paper-primary `phase0_v3` results
-already use — except the one structural SHHS EEG gap above (which
-reprocessing can't fix either). `docs/OSF_CHANNEL_REPROCESSING_PLAN.md`'s
-three already-identified, already-deferred gaps (MrOS `ABD`, STAGES leg
-EMG `LAT`/`RAT`, SHHS `NEW AIR`/airflow) **do not apply to PhysioOmni at
-all** — none of those three channels are in PhysioOmni's input set. **No
-new reprocessing plan doc is needed for PhysioOmni.**
+already use — including SHHS's EEG (§4.5 below covers exactly how it's
+used). `docs/OSF_CHANNEL_REPROCESSING_PLAN.md`'s three already-identified,
+already-deferred gaps (MrOS `ABD`, STAGES leg EMG `LAT`/`RAT`, SHHS
+`NEW AIR`/airflow) **do not apply to PhysioOmni at all** — none of those
+three channels are in PhysioOmni's input set. **No new reprocessing plan
+doc is needed for PhysioOmni.**
+
+### 4.5 SHHS's single EEG channel — investigation, a documented future
+option, and the final decision (2026-08-17)
+
+**The problem, precisely.** SHHS's raw EDFs are recorded with a generic
+`EEG`/`EEG(sec)` naming convention instead of clinical `C3`/`C4` labels
+(a harmonized/de-identified NSRR release quirk). `configs/channel_definitions.yaml`
+currently aliases **both** `EEG` and every `EEG(sec)`-family variant
+(`EEG 2`, `EEG sec`, `EEG(SEC)`, `EEG(sec2)`, `EEG2`) to the **same single
+canonical `EEG` slot** — architecturally there is only one EEG channel to
+fill, so whichever name appears first in a given raw file wins and the
+other is silently discarded. This is exactly the same class of issue
+`docs/OSF_CHANNEL_REPROCESSING_PLAN.md` §4 already flagged for OSF, where
+it was left as an **explicitly unverified** "open research question, NOT a
+recommended fix" — worth checking whether `EEG`/`EEG(sec)` are genuinely
+two different electrode sites or just a redundant backup of the same one,
+before deciding whether pursuing a fix is worthwhile.
+
+**That follow-up was done this session, with real data — the question is
+no longer unverified:**
+1. **100% of SHHS subjects (8,444/8,444)** have *both* an `EEG` channel
+   and an `EEG(sec)`-family channel present in the same raw file
+   (`output/channel_analysis/shhs_channels.csv`, all 5 naming variants
+   checked) — not a naming difference across different files/recording
+   eras, genuinely two channels recorded in essentially every SHHS file.
+2. **Loaded a real raw SHHS EDF directly**
+   (`shhs1-203279.edf`, via `mne.io.read_raw_edf`) and computed the
+   correlation between its `EEG` and `EEG(sec)` channels: **r = 0.18.**
+   A duplicate/backup of the same electrode would correlate near 1.0; a
+   weak correlation is exactly what two genuinely different EEG
+   derivations (e.g. C3 vs. C4 — same brain, different hemisphere, some
+   shared global signal, mostly independent local activity) would produce.
+
+**Conclusion: `EEG(sec)` is very likely a real, informative second EEG
+channel that the current pipeline silently discards for essentially all of
+SHHS** — not a naming duplicate. This is a materially stronger finding
+than OSF's own doc had when it deferred the question.
+
+**A possible future fix exists, deliberately not pursued now — documented
+here so it doesn't need re-deriving.** Unlike `OSF_CHANNEL_REPROCESSING_PLAN.md`
+§5's fix (a full fork of the EDF→HDF5 pipeline, re-processing *every*
+channel for the affected cohorts, because those three fixes changed
+channel *selection* more broadly), this case only requires *adding* one
+already-well-understood channel: extract `EEG(sec)` per SHHS subject using
+the exact same `processing_params.eeg` block (bandpass/resample/z-score)
+the existing `EEG` channel already gets, and write it as a small,
+additive, non-destructive companion artifact — the existing SHHS HDF5s
+would not need to be touched or regenerated at all. This should be
+substantially cheaper than a full SHHS reprocessing (one channel × 8,444
+subjects, not seven-or-eight channels × 8,444), though it hasn't been
+timed. It would benefit **both** OSF and PhysioOmni, since both currently
+approximate SHHS's second EEG channel rather than having a real one — but
+wiring it into OSF's own extraction script is a change on the
+`osf-implementation` branch this session cannot make (worktree isolation,
+§1). **Revisit this only if SHHS's actual results (either model) come back
+meaningfully degraded on EEG-dependent tasks relative to the other
+cohorts** — not before, and not as a prerequisite for starting Phase 1.
+
+**Final decision for PhysioOmni, superseding this plan's earlier "duplicate
+into both slots" draft**: **feed SHHS's existing single `EEG` channel to
+the EEG branch as one real channel — not duplicated into two.** No
+reprocessing of any kind is involved; this uses the exact `EEG` channel
+already sitting in the existing `psg/` HDF5s.
+
+Why this is better than duplication here specifically (unlike OSF, where
+duplication was the right call — see below): PhysioOmni's `NeuralTransformer`
+takes a **variable-length token sequence per modality**, not a fixed
+channel-count tensor — there is no architectural requirement to supply
+exactly 2 EEG channels. `CAP`'s own pretraining data used anywhere from a
+few to 16 EEG channels per subject depending on the source recording, so a
+1-channel EEG branch for SHHS is a legitimate, natively-supported input,
+not a workaround. Duplicating the single channel would instead fabricate a
+second token stream at **r=1.0** correlation with its twin — nothing like
+the r=0.18 real channel pairs the encoder was pretrained on, contributing
+zero genuine information while risking looking like nothing in the
+pretraining distribution. **OSF's own duplication choice is unaffected by
+this reasoning and stays correct for OSF** — OSF's ViT takes a *fixed*
+`[B, 12, 1920]` tensor with no mechanism for a variably-sized channel set,
+so duplicating (real data in every slot) was already the better choice
+there over leaving a slot all-zero; PhysioOmni just doesn't have that
+constraint in the first place.
+
+**Mechanical consequence, not a design change**: this means SHHS's EEG
+branch produces a shorter token sequence than the other three cohorts (30
+one-second patches from 1 real channel, vs. 60 from 2) before CLS-pooling.
+This does **not** change the pooled output dimension — the CLS token is
+still 200-dim regardless of how many real tokens fed the forward pass — so
+§6.3's flat `[T, 500]` embedding design is entirely unaffected; only the
+channel loader's per-subject token-sequence-building step (§7) needs to
+branch on "does this subject have a second EEG channel," the same kind of
+per-subject conditional it already needs for any other missing channel.
+
+**On the broader "avoid repeating preprocessing per training job" question
+this ties into**: none of the above requires resolving separately from
+what's already planned. §6.3's embedding-extraction step (`scripts/extract_physioomni_embeddings.py`,
+Phase 1.2) is exactly the one-time, offline place where resampling (§5.1),
+normalization inversion (§5.2), and this SHHS single-vs-duplicated-channel
+handling all happen — **once per subject, producing a small `.npy`
+embedding file**. `scripts/train_physioomni_context_sweep.py` and
+`scripts/infer_physioomni_subject_windows.py` (§10/§11) never touch raw
+signal, never resample, never re-run the frozen encoder — they only read
+these precomputed embeddings, exactly mirroring OSF's own Stage 1 pattern
+(`extract_osf_embeddings.py` once → `train_osf_context_sweep.py`/
+`infer_osf_subject_windows.py` read cheaply, many times, across the full
+task × head × context sweep). There is no risk of this preprocessing being
+repeated inside a training job's GPU time — that would only become a
+concern for Stage 2 (LoRA), where the backbone runs live every training
+step on raw signal (§15.2 already covers why an offline raw-signal cache
+is planned for that stage specifically, for exactly this reason).
 
 ## 5. Sample-rate and normalization handling
 
@@ -691,10 +810,11 @@ forward pass per available branch" pattern from
    OSF's `[T, 2, 768]` two-subtoken design (no shared dimension across
    sub-tokens to preserve) — a flat `[T_epochs, 500]` array per subject is
    sufficient; there's no need for a 3D shape at all.
-3. **Log which modality was zero-filled per subject** (same
-   `_channel_fill_log.jsonl` convention as OSF's extraction script) — the
-   SHHS EEG-duplication case (§4.3) and any true per-subject absence both
-   need to be visible in this log before trusting results.
+3. **Log which modality was zero-filled per subject, and how many real
+   channels fed the EEG branch** (same `_channel_fill_log.jsonl` convention
+   as OSF's extraction script) — SHHS's single-real-EEG-channel case (§4.5)
+   and any true per-subject absence both need to be visible in this log
+   before trusting results.
 
 **Output**: `{output_dir}/{dataset}/{subject_id}.npy`, dtype float16, shape
 `[T_epochs, 500]`, under
@@ -731,7 +851,7 @@ a plan, not code):
 
 ```
 PHYSIOOMNI_CHANNEL_MAPPING = {   # PhysioOmni branch -> our HDF5 candidates (§4.2)
-    "EEG":  {"C3": ["C3-M2"], "C4": ["C4-M1"]},   # up to 2 channels, both fed
+    "EEG":  {"C3": ["C3-M2"], "C4": ["C4-M1"]},   # up to 2 channels — SHHS only has 1, see below
     "EOG":  {"HEO": ["LOC", "ROC"]},               # derived: LOC - ROC
     "ECG":  {"ECG": ["EKG", "ECG-L"]},
     "EMG":  {"EMG": ["CHIN", "EMG"]},
@@ -741,9 +861,14 @@ NATIVE_HZ = {"EEG": 200, "EOG": 200, "ECG": 500, "EMG": 500}   # §5.1
 PATCH_SAMPLES = {"EEG": 200, "EOG": 100, "ECG": 100, "EMG": 100}   # §3's table
 
 def build_channel_candidates(dataset: str, cfg_candidates: dict) -> dict:
-    """Same SHHS-special-case pattern as OSF's build_channel_candidates()
-    (§4.3) — for SHHS, EEG's C3/C4 candidates both resolve to the single
-    generic 'EEG' key instead of C3-M2/C4-M1."""
+    """SHHS special case (§4.5, final decision — NOT duplication): SHHS has
+    no C3-M2/C4-M1 keys at all, only a single generic 'EEG'. Returns EEG
+    candidates for SHHS as {"C3": ["EEG"]} ONLY — no "C4" entry at all, so
+    the token-sequence builder naturally feeds just 1 real EEG channel for
+    SHHS instead of 2, rather than duplicating one real channel into both
+    slots (§4.5 explains why duplication is the wrong choice here,
+    architecturally different from OSF's own — correct — choice to
+    duplicate)."""
 
 def load_and_resample_modality(h5_path, modality: str, candidates: dict) -> tuple[np.ndarray | None, dict]:
     """Load + resample ONE modality's channel(s) to its native rate (§5.1).
@@ -829,10 +954,14 @@ within a modality) produces a genuinely zero 100-or-200-dim *slice* of an
 otherwise-real embedding, not a zero-filled *channel* feeding into an
 otherwise-normal forward pass. Confirm during the Step 0 pilot (§14) that
 this doesn't produce degenerate downstream training (e.g. the sequence
-head learning to ignore the zero slice entirely in a way that's
-mathematically fine but worth being aware of when interpreting SHHS's
-results, since SHHS's EEG slice will be the *duplicated-generic-channel*
-case, not the *zero-filled* case — two different degeneracy risks, not one).
+head learning to ignore the zero slice entirely). SHHS's EEG slice is a
+**third, different case from either of those** (§4.5's final decision): its
+200-dim EEG slice is neither zero-filled nor duplicated — it's a genuine,
+real CLS output, just computed from a shorter (1-channel, 30-token) input
+sequence than the other three cohorts' (2-channel, 60-token) EEG branch.
+Worth keeping in mind when interpreting SHHS's results (a real, if
+information-poorer, EEG representation — not a degenerate one), distinct
+from both the zero-fill and duplication failure modes above.
 
 ---
 
@@ -1180,21 +1309,26 @@ PhysioOmni's open items:
 3. **Sample-rate resampling sanity check** (§5.1) — confirm the chosen
    128→200Hz/128→500Hz resampling method (FFT-based or polyphase) produces
    sane-looking waveforms on a real subject, not just correct shapes.
-4. **SHHS EEG-duplication decision** (§4.3) — explicit user re-confirmation
-   before writing extraction code, not assumed to carry over from OSF's
-   already-confirmed decision just because the pattern matches.
+4. ~~**SHHS EEG-duplication decision**~~ — **✅ RESOLVED 2026-08-17, see
+   §4.5**: not duplication — SHHS feeds the EEG branch one real,
+   non-duplicated channel. No reprocessing involved, no further
+   confirmation needed before writing extraction code.
 5. **Small-scale pilot, end-to-end** — `--limit 5` extraction on one
    dataset, inspect `.npy` shape/values, then a tiny Stage 1 training run
    (`--context 30s`, one task, one head) before submitting a full sweep.
-6. **`physioomni_env` compatibility check** — confirm whether it can share
-   `osf_env` or needs its own build (checklist 0.1); confirm the
-   `nsrr_tools.core` eager-import gotcha (§7) applies the same way.
+   Include SHHS specifically, to confirm its shorter (1-channel) EEG token
+   sequence runs cleanly through the encoder (§4.5).
+6. **`physioomni_env` compatibility check** — **✅ RESOLVED 2026-08-17**:
+   dedicated venv, does not share `osf_env` (checklist 0.1); the
+   `nsrr_tools.core` eager-import gotcha (§7) confirmed to apply the same
+   way in `physioomni_env`.
 7. **Cohort filter unit check** — confirm `min_recording_patches: 480` is
    applied in epoch units, same discipline OSF's own Step 0 checklist used.
 8. **Per-modality-missing degeneracy check** (§8) — confirm a subject with
    an entire modality zero-filled doesn't produce a pathological (not just
-   suboptimal) training signal, distinct from SHHS's duplicated-channel
-   case.
+   suboptimal) training signal. Distinct from SHHS's real-but-shorter EEG
+   case (§4.5) — that one isn't a degeneracy risk in the same sense, but
+   still worth confirming it trains sensibly.
 
 ---
 
@@ -1375,8 +1509,21 @@ code/branch work, which this revision is not).
 - [x] 0.3 Save the paper PDF locally — done,
       `/home/boshra95/related_work/PhysioOmni.pdf` (arXiv 2504.19596v3, 15
       pages), same shared non-git-tracked location as `OSF.pdf`.
-- [ ] 0.4 Confirm the SHHS EEG-duplication decision (§4.3) with the user —
-      **still open, asked explicitly, not assumed**
+- [x] 0.4 SHHS EEG channel decision — **✅ RESOLVED 2026-08-17, see §4.5.**
+      Investigated the dual-EEG-channel question `docs/OSF_CHANNEL_REPROCESSING_PLAN.md`
+      §4 had left open (confirmed live: 100% of SHHS subjects carry both
+      `EEG` and an `EEG(sec)`-family channel; correlation between them in a
+      real file is r=0.18, confirming they're genuinely distinct
+      electrodes, not a duplicate). **Decided against duplicating** SHHS's
+      single available `EEG` channel into two slots (unlike OSF, which
+      correctly does duplicate, for its own different architectural
+      reasons) — PhysioOmni's variable-length token sequence per modality
+      means SHHS can legitimately be fed **one real EEG channel, not two**,
+      requiring zero reprocessing. A lightweight future option (recover the
+      currently-discarded `EEG(sec)` channel via an additive, non-destructive
+      patch job, not a full SHHS reprocessing) is documented in §4.5 but
+      deliberately not pursued now — revisit only if SHHS results look
+      degraded.
 - [ ] 0.5 Empirically validate the normalization approach (§5.2, §14 item 2)
       — deferred to Phase 1's first real smoke test (needs real HDF5 data
       + a forward pass, doesn't fit as a standalone Phase 0 step)
@@ -1397,8 +1544,9 @@ code/branch work, which this revision is not).
 - [ ] 1.2 Implement `scripts/extract_physioomni_embeddings.py` +
       `configs/phase0_physioomni_config.yaml` (§6.3, §9)
 - [ ] 1.3 Smoke-test on real APPLES + SHHS subjects (small `--limit`, CPU),
-      verify no NaNs, verify SHHS's EEG-duplication and any true zero-fills
-      match §4.3's expected pattern — **user checkpoint**
+      verify no NaNs, verify SHHS's EEG branch correctly receives only 1
+      real channel (not duplicated, not zero-filled — §4.5) and any true
+      zero-fills match §4.3's expected pattern — **user checkpoint**
 - [ ] 1.4 Implement `src/nsrr_tools/datasets/physioomni_context_window_dataset.py`
       (§8) — fork `ContextWindowDataset`, following OSF's fork pattern
 - [ ] 1.5 Smoke-test the dataset class at 30s/10m/full_night contexts,
@@ -1464,8 +1612,9 @@ code/branch work, which this revision is not).
 | Embedding storage | Concatenated per-modality CLS vectors, `[T, 500]` per epoch, flat | No unified fusion module exists in the pretrained weights (§3); simpler than a 3D shape since there's no shared dim across modalities to preserve |
 | Channel loader placement | `src/nsrr_tools/datasets/`, not `src/nsrr_tools/core/` | Avoids `nsrr_tools.core`'s eager `pyedflib` import, a real gotcha confirmed in `osf_env` (§7) — verify holds for `physioomni_env` too, don't assume |
 | Channel loader design | Shared module from day one, built before the extraction script depends on it | OSF only factored this out after Stage 2 needed it, then had to regression-test the refactor; building it shared from the start avoids that extra step (§7) |
-| Reprocessing | **No** — reuse existing fast-channel `psg/` HDF5s | Every PhysioOmni-needed channel already exists except SHHS's structural EEG gap |
-| SHHS EEG handling | Duplicate generic `EEG` into both `'C3'`/`'C4'` lookup slots | Same approximation as OSF's already-user-confirmed decision — **needs its own explicit re-confirmation before Phase 1** (checklist 0.4) |
+| Reprocessing | **No** — reuse existing fast-channel `psg/` HDF5s, including SHHS's | Every PhysioOmni-needed channel already exists; SHHS's single `EEG` channel is used as-is, not reprocessed (§4.5) |
+| SHHS EEG handling | **One real, non-duplicated channel** — not OSF's duplicate-into-both-slots approximation | **Decided 2026-08-17, see §4.5.** Verified `EEG`/`EEG(sec)` are genuinely distinct (100% co-occurrence, r=0.18 correlation) but not pursuing the fix to recover the second channel now. PhysioOmni's variable-length token sequence per modality (unlike OSF's fixed-tensor ViT) makes 1-channel EEG a legitimate input, not a workaround — duplicating would fabricate an r=1.0 fake "second channel" unlike anything in pretraining |
+| SHHS `EEG(sec)` recovery (deferred) | **Documented, not implemented** — a lightweight additive patch job (not full SHHS reprocessing) could recover a genuine second EEG channel for SHHS, benefiting both OSF and PhysioOmni | Not needed for correctness now that duplication is off the table; revisit only if SHHS results look degraded on EEG-dependent tasks (§4.5) |
 | Sample rate | Resample to PhysioOmni's own native per-modality rates (200Hz EEG/EOG, 500Hz ECG/EMG) | Matches the reference prep scripts exactly (§5.1); patch duration is a fraction of real time that depends on this choice |
 | Normalization | Invert each channel's stored `normalization_stats`, correcting for the per-channel unit inconsistency (µV vs. volts), then `/100` | `/100` raw-scale expectation vs. our already-z-scored HDF5 data is a real mismatch; still needs an empirical Step 0 check (§14) |
 | LoRA target modules | `c_attn`, `c_proj` (per encoder, up to 4 encoders) | The only two Linear layers in PhysioOmni's `Attention` block (§3) — genuinely new code, no existing LoRA precedent in the repo |
@@ -1493,17 +1642,19 @@ code/branch work, which this revision is not).
   polyphase resampling for the non-integer 128→200/128→500 ratios) but not
   yet empirically validated against real signal — deferred to Phase 1's
   first smoke test (checklist 0.6).
-- **SHHS EEG-duplication decision (§4.3)** — needs explicit user
-  confirmation before Phase 1.1's channel-candidate logic is written
-  (checklist 0.4) — **asked explicitly at the end of this Phase 0 pass, not
-  yet answered.**
+- ~~**SHHS EEG-duplication decision**~~ — **✅ RESOLVED 2026-08-17, see
+  §4.5 and checklist 0.4**: not duplication, one real channel.
 - **Multi-encoder LoRA-wrapping design (§15.1)** — genuinely undecided,
   needs a design conversation with the user before Phase 2 starts.
 - **GitHub code repo's missing LICENSE** — the weights are CC-BY-4.0 but
   the training/inference *code* has no stated license.
-- **Per-modality-missing degeneracy** (§8) — flagged as a real, distinct
-  failure mode from SHHS's duplicated-channel case, not yet empirically
-  checked.
+- **Per-modality-missing degeneracy** (§8) — flagged as a real failure mode
+  (whole modality zero-filled), distinct from SHHS's real-but-shorter EEG
+  case (§4.5), not yet empirically checked.
+- **SHHS `EEG(sec)` recovery** (§4.5) — a lightweight, additive future fix
+  is documented and estimated cheaper than a full SHHS reprocessing, but
+  not timed or implemented — deliberately deferred until/unless SHHS
+  results look degraded enough to justify it.
 - **PhysioOmni Stage 1's own wall-time/compute profile** — genuinely
   unknown, architecturally different from OSF's (four small transformers ×
   up to 4 forward passes per epoch during extraction vs. one ViT) — do not
@@ -1587,3 +1738,26 @@ research reading, all outputs captured in `PHYSIOOMNI_CLAUDE.md`:
 12. **Paper PDF fetched live** from `arxiv.org/pdf/2504.19596v3` to
     `/home/boshra95/related_work/PhysioOmni.pdf`, verified as a real
     15-page PDF (`file` command), not just a successful HTTP status.
+
+**2026-08-17, SHHS EEG channel investigation (§4.5)** — a direct follow-up
+on `docs/OSF_CHANNEL_REPROCESSING_PLAN.md` §4's explicitly-unverified
+question, this time with real measurements:
+
+13. **`output/channel_analysis/shhs_channels.csv` parsed directly**
+    (pandas, all 8,444 rows) — checked for co-occurrence of `EEG` and each
+    of the 5 `EEG(sec)`-family alias variants
+    (`configs/channel_definitions.yaml`'s own `EEG:` list) within the same
+    row's `channels` field. Result: 8,444/8,444 (100%).
+14. **A real raw SHHS EDF loaded directly** (`mne.io.read_raw_edf`,
+    `shhs1-203279.edf`) — both channels extracted via `raw.get_data()`,
+    correlation computed via `np.corrcoef`. Result: r=0.18, not
+    numerically identical (`np.allclose` → `False`).
+15. **Full-population channel coverage recomputed for every channel
+    PhysioOmni needs, all 4 cohorts**, directly against
+    `output/channel_analysis/{apples,shhs,mros,stages}_channels.csv` using
+    the real alias lists from `configs/channel_definitions.yaml` — the
+    §4.3 table's numbers (this revision) are computed this way, not
+    carried over from OSF's smaller 50-subject-per-cohort sample. Also
+    traced STAGES's ECG gap (9.2% of subjects) to a genuine cause (a
+    `Heartrate`-only channel, not a raw ECG waveform) rather than a
+    fixable alias-list oversight.

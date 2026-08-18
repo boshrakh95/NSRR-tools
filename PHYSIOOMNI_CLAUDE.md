@@ -96,14 +96,36 @@ not a replacement for it.
   2504.19596v3, 15 pages) — same shared, non-git-tracked location OSF's
   own paper PDF lives in.
 
+## SHHS EEG channel — decision (2026-08-17)
+
+**Full investigation and reasoning: `docs/TSFM_PHYSIOOMNI_IMPLEMENTATION_PLAN.md`
+§4.5 — this is the short version.** SHHS's `psg/` HDF5s carry one generic
+`EEG` channel (100% coverage — SHHS isn't missing EEG, just the C3/C4
+split the other 3 cohorts have). Followed up on
+`docs/OSF_CHANNEL_REPROCESSING_PLAN.md` §4's unverified lead: **100% of
+SHHS subjects (8,444/8,444) have both `EEG` and an `EEG(sec)`-family
+channel in the raw file**, and a real-EDF correlation check gave **r=0.18**
+— confirming these are genuinely distinct electrodes, not a duplicate.
+
+**Decision**: feed SHHS's EEG branch **one real channel, not duplicated
+into two** (reversing this plan's earlier draft, which mirrored OSF's own
+duplication approach). PhysioOmni's variable-length per-modality token
+sequence makes this a legitimate input, unlike OSF's fixed-tensor ViT
+where duplication was the right (and still correct, for OSF) choice.
+**Zero reprocessing involved either way** — uses the exact `EEG` channel
+already in the existing HDF5s.
+
+A lightweight future option (additive patch job to recover the currently-
+discarded `EEG(sec)` channel, cheaper than a full SHHS reprocessing,
+benefits OSF too) is documented but **not pursued now** — revisit only if
+SHHS results look degraded.
+
 ## Phase 0 status (per `docs/TSFM_PHYSIOOMNI_IMPLEMENTATION_PLAN.md` §16)
 
 - [x] 0.1 `physioomni_env` built and verified
 - [x] 0.2 Checkpoint downloaded, strict-load-verified
 - [x] 0.3 Paper PDF saved locally
-- [ ] 0.4 **SHHS EEG-duplication decision — still needs explicit user
-      confirmation**, not assumed to carry over from OSF's precedent
-      automatically (plan doc's own stated discipline)
+- [x] 0.4 SHHS EEG decision — **resolved, see section above**
 - [ ] 0.5 Normalization approach — not yet empirically validated (needs
       real HDF5 data + a forward pass; natural to fold into Phase 1's
       first smoke test rather than a standalone step)
@@ -115,5 +137,6 @@ not a replacement for it.
 ## Open questions carried over from the plan doc, still open
 
 See `docs/TSFM_PHYSIOOMNI_IMPLEMENTATION_PLAN.md` §18 for the full list —
-not duplicating it here. The `physioomni_env`-vs-`osf_env` question is now
-resolved (§ above); everything else in that section is still open.
+not duplicating it here. The `physioomni_env`-vs-`osf_env` question and the
+SHHS EEG decision are now resolved (§§ above); everything else in that
+section is still open.
