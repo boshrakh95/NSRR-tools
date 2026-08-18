@@ -1550,11 +1550,14 @@ code/branch work, which this revision is not).
       patch job, not a full SHHS reprocessing) is documented in §4.5 but
       deliberately not pursued now — revisit only if SHHS results look
       degraded.
-- [ ] 0.5 Empirically validate the normalization approach (§5.2, §14 item 2)
-      — deferred to Phase 1's first real smoke test (needs real HDF5 data
-      + a forward pass, doesn't fit as a standalone Phase 0 step)
-- [ ] 0.6 Empirically validate the sample-rate resampling approach (§5.1,
-      §14 item 3) — same, deferred to Phase 1's first smoke test
+- [x] 0.5 Empirically validate the normalization approach (§5.2, §14 item 2)
+      — **✅ RESOLVED 2026-08-18 via checklist 1.3's real smoke test**: 3
+      real subjects (2 APPLES + 1 SHHS) through the actual frozen encoder,
+      zero NaNs, non-degenerate CLS output std (~0.8-1.3) across every
+      modality slice.
+- [x] 0.6 Empirically validate the sample-rate resampling approach (§5.1,
+      §14 item 3) — **✅ RESOLVED 2026-08-18**, same evidence as 0.5 (both
+      checks share the same real-data pipeline).
 - [x] 0.7 Create the `physioomni-implementation` branch, forked from
       `osf-implementation` (§1) — not `main`. **Went further than
       originally planned**: this branch now has its own `git worktree` at
@@ -1596,12 +1599,38 @@ code/branch work, which this revision is not).
       µV-scale, SHHS's `ECG` is volts-scale, same canonical channel name).
       `invert_normalization()` self-calibrates per channel via its own
       stored `std` instead of a hardcoded table — see §5.2's revised text.
-- [ ] 1.2 Implement `scripts/extract_physioomni_embeddings.py` +
-      `configs/phase0_physioomni_config.yaml` (§6.3, §9)
-- [ ] 1.3 Smoke-test on real APPLES + SHHS subjects (small `--limit`, CPU),
-      verify no NaNs, verify SHHS's EEG branch correctly receives only 1
-      real channel (not duplicated, not zero-filled — §4.5) and any true
-      zero-fills match §4.3's expected pattern — **user checkpoint**
+- [x] 1.2 Implement `scripts/extract_physioomni_embeddings.py` +
+      `configs/phase0_physioomni_config.yaml` (§6.3, §9) — **done
+      2026-08-18.** Runs each of the 4 frozen encoders independently per
+      subject (no unified fusion model exists, §3) and concatenates their
+      CLS outputs into the flat `[T, 500]` embedding. VSCode debug configs
+      added: "🫀 PhysioOmni Phase1 Step2" (APPLES 2-subject and SHHS
+      1-subject variants).
+- [x] 1.3 Smoke-test on real APPLES + SHHS subjects (CPU) — **done
+      2026-08-18, real results not just a dry run**:
+      - APPLES (`APL0001`, `APL0003`): shapes `(1143, 500)`/`(970, 500)`
+        — exactly matching checklist 1.1's channel-loader-only epoch
+        counts for the same subjects — zero NaNs, `eeg_channel_count: 2`,
+        `modalities_zero_filled: []`. Non-degenerate CLS output std across
+        every 100-dim block (~0.8–1.3), confirming the encoder isn't
+        producing collapsed/saturated output.
+      - SHHS (`200001_v1`): shape `(1084, 500)`, again exactly matching
+        checklist 1.1's prediction, zero NaNs, **`eeg_channel_count: 1`**
+        — confirms §4.5's final decision (one real EEG channel, not
+        duplicated) works correctly all the way through the actual frozen
+        encoder forward pass, not just the channel loader in isolation.
+        EEG block std (~0.89–1.12) is in the same range as APPLES's,
+        not degenerate despite the shorter (30 vs. 60 token) input
+        sequence.
+      - **This also resolves checklist 0.5/0.6** (normalization +
+        resampling empirical validation) — sane, non-NaN, non-degenerate
+        encoder output on real data is exactly the check those items
+        called for.
+      - **CPU timing, for planning purposes**: ~584-938s/subject
+        (~10-16 min) — confirms CPU is debug-only, real extraction needs
+        a GPU job (checklist 1.9); no GPU timing yet.
+      - **User checkpoint** — re-verify via the "🫀 PhysioOmni Phase1
+        Step2" debug configs before continuing to 1.4.
 - [ ] 1.4 Implement `src/nsrr_tools/datasets/physioomni_context_window_dataset.py`
       (§8) — fork `ContextWindowDataset`, following OSF's fork pattern
 - [ ] 1.5 Smoke-test the dataset class at 30s/10m/full_night contexts,
@@ -1689,14 +1718,10 @@ code/branch work, which this revision is not).
   checklist 0.2 and §17.
 - ~~**Whether `physioomni_env` can share `osf_env`'s environment**~~ — **✅
   RESOLVED 2026-08-17: no, dedicated venv**, see checklist 0.1 and §17.
-- **Normalization mismatch (§5.2)** — a concrete inversion method is
-  identified and the per-channel unit inconsistency is flagged, but neither
-  is empirically validated yet — deferred to Phase 1's first smoke test
-  (checklist 0.5).
-- **Sample-rate resampling method (§5.1)** — recommended (FFT-based or
-  polyphase resampling for the non-integer 128→200/128→500 ratios) but not
-  yet empirically validated against real signal — deferred to Phase 1's
-  first smoke test (checklist 0.6).
+- ~~**Normalization mismatch**~~ — **✅ RESOLVED 2026-08-18**, see §5.2's
+  revised self-calibrating method and checklist 0.5/1.3.
+- ~~**Sample-rate resampling method**~~ — **✅ RESOLVED 2026-08-18**, see
+  checklist 0.6/1.3.
 - ~~**SHHS EEG-duplication decision**~~ — **✅ RESOLVED 2026-08-17, see
   §4.5 and checklist 0.4**: not duplication, one real channel.
 - **Multi-encoder LoRA-wrapping design (§15.1)** — genuinely undecided,

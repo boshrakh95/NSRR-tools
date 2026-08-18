@@ -1,0 +1,150 @@
+# ============================================================
+# Phase 0 — PhysioOmni Baseline Config
+# ============================================================
+# PhysioOmni (arXiv:2504.19596) as a frozen/LoRA-fine-tuned encoder
+# baseline against SleepFM's phase0_v3 (paper-primary) results. See
+# docs/TSFM_PHYSIOOMNI_IMPLEMENTATION_PLAN.md for the full plan this
+# config implements (§9 in particular).
+#
+# Compared against phase0_v3 (paper-primary, fast-channel SleepFM), NOT
+# phase0_v3_full — decision recorded in the plan doc §4 (PhysioOmni needs
+# no RESP channels, so the fast-channel tree's own priority-order caps
+# already carry everything needed).
+
+# ── Embedding Extraction ─────────────────────────────────────────────────────
+embedding:
+  checkpoint_dir: "/home/boshra95/PhysioOmni/checkpoints/PhysioOmni.pt"
+  output_dir: "/scratch/boshra95/psg/unified/embeddings/physioomni_30sec"
+  chunk_batch_size: 16   # epochs-per-forward-pass batch, per modality — start
+                          # here, tune empirically (plan §13's GPU-sizing note:
+                          # OSF found this was its real Stage-2 GPU bottleneck,
+                          # not raw compute headroom)
+  datasets:
+    - apples
+    - shhs
+    - mros
+    - stages
+
+# ── HDF5 Signal Data ─────────────────────────────────────────────────────────
+data:
+  hdf5_dir: "/scratch/boshra95/psg"     # FAST-CHANNEL tree, not psg_full (plan §4)
+  # PhysioOmni slot -> our HDF5 channel name(s), priority order. SHHS is a
+  # special case handled in code (build_channel_candidates() in
+  # physioomni_channel_loader.py, plan §4.5 FINAL DECISION): EEG_C3 maps to
+  # the generic 'EEG' channel and EEG_C4 is entirely omitted (not
+  # duplicated, not zero-filled) — SHHS gets 1 real EEG channel, not 2.
+  channel_candidates:
+    EEG_C3: [C3-M2]
+    EEG_C4: [C4-M1]
+    EOG_LOC: [LOC]
+    EOG_ROC: [ROC]
+    ECG: [EKG, ECG-L]
+    EMG: [CHIN, EMG]
+
+# ── Context-Window Dataset (Phase 1.4, not yet implemented) ─────────────────
+dataset:
+  embedding_dir: "/scratch/boshra95/psg/unified/embeddings/physioomni_30sec"
+
+  # SAME labels/splits as SleepFM phase0_v3 — required for a fair
+  # comparison on identical subjects/splits, not just an optimization.
+  # NOTE (per OSF's own documented footnote, likely applies here too —
+  # confirm when the dataset class is written): label_source itself may be
+  # documentation-only, never read at runtime; task_subject_dir +
+  # split_seed + the split ratios below are what actually matter.
+  label_source: "/scratch/boshra95/psg/unified/targets_v2/master_targets.parquet"
+  task_subject_dir: "/scratch/boshra95/psg/unified/targets_v2/task_subjects"
+
+  sleep_stage_dir: "/scratch/boshra95/psg"
+
+  context_lengths:
+    - "30s"
+    - "10m"
+    - "40m"
+    - "80m"
+    - "120m"
+    - "240m"
+
+  task: "sex_binary"
+  task_type: "seq2label"
+
+  datasets:
+    - apples
+    - shhs
+    - mros
+    - stages
+
+  train_split: 0.70
+  val_split:   0.15
+  test_split:  0.15
+  split_seed:  42          # SAME seed as SleepFM phase0_v3 runs
+
+  windows_per_subject: 5
+
+  # seq2seq params carried for config-shape parity — NOT used by the first
+  # pass (Tier-1 tasks are all seq2label, apnea already excluded).
+  seq2seq_context_mode: "centered"
+  seq2seq_padding_policy: "complete_only"
+  seq2seq_max_padding_fraction: 0.5
+  min_past_denom:       8
+  max_min_past_patches: 40    # 20-minute cap in 30s-epoch units, same as OSF
+
+  # Cohort consistency filter, 30s-epoch units (same as OSF's — both are
+  # 30s-epoch-granularity embeddings). 240m * 60s/m / 30s = 480.
+  min_recording_patches: 480
+
+# ── Sequence Head Model (Phase 1.4+, not yet implemented) ───────────────────
+# hidden_dim/num_layers held constant at phase0_v3's seq2label values — only
+# input_dim changes (500 = concatenated per-modality CLS dims, vs SleepFM's
+# 512 = 4*128 and OSF's 1536 = 2*768). Preserves the "architecture held
+# constant, only encoder/channels change" comparison principle.
+model:
+  input_dim: 500
+  head_type: "lstm"
+  hidden_dim: 128
+  num_layers: 1
+  num_heads:  8
+  dropout:    0.3
+  num_classes: 2
+
+# ── Training (Phase 1.6+, not yet implemented) ───────────────────────────────
+# Held identical to OSF/SleepFM's placeholder values as a starting point —
+# don't pre-emptively tune before a real pilot shows a reason to.
+training:
+  epochs: 40
+  lr: 1.0e-4
+  weight_decay: 1.0e-3
+  optimizer: "adamw"    # NOTE: likely not read if train_physioomni_context_sweep.py
+                         # mirrors train_context_sweep.py's hardcoded-Adam pattern —
+                         # confirm when that script is written, don't assume.
+  scheduler: "cosine"
+  early_stopping_patience: 10
+  device: "cuda"
+  mixed_precision: false
+  class_weights: "auto"
+  early_stopping_monitor: "val_auroc"
+  weighted_sampler: false
+
+  windows_strategy: "fixed"
+  token_budget_minutes: 240
+  k_max: 50
+
+  context_lr_overrides:
+    "120m": 5.0e-5
+    "240m": 5.0e-5
+
+  overfit_epochs: 0
+
+  save_snapshots: true
+  snapshot_interval: 5
+
+# ── Analysis ─────────────────────────────────────────────────────────────────
+analysis:
+  bootstrap_samples: 0
+
+# ── Logging & Output ─────────────────────────────────────────────────────────
+# REQUIRED — train_context_sweep.py-pattern scripts read
+# cfg["logging"]["results_dir"] via bare bracket access, no default. OSF's
+# plan draft originally missed this section and it would have KeyError'd on
+# the very first run — include it from the start.
+logging:
+  results_dir: "/scratch/boshra95/psg/unified/results/phase0_physioomni"

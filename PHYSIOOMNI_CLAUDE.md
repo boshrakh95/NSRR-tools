@@ -126,19 +126,16 @@ SHHS results look degraded.
 - [x] 0.2 Checkpoint downloaded, strict-load-verified
 - [x] 0.3 Paper PDF saved locally
 - [x] 0.4 SHHS EEG decision — **resolved, see section above**
-- [~] 0.5 Normalization approach — **channel-loader-level validation done
-      2026-08-18** (no NaNs, sane recovered scale for all channels/cohorts,
-      see Phase 1 status below); still needs the frozen-encoder-forward-pass
-      check (CLS output sanity), deferred to Phase 1.2/1.3 as planned.
-      **Real correction found this step**: the original per-channel-type
-      unit table (LOC/ROC=volts, rest=µV) was wrong — traced
-      `signal_processor.py` directly, confirmed the unit is file/cohort-
-      dependent (APPLES's ECG is µV-scale, SHHS's ECG is volts-scale).
-      Fixed with a self-calibrating per-channel check instead of a
-      hardcoded table — see plan §5.2.
-- [~] 0.6 Sample-rate resampling approach — same partial-validation status
-      as 0.5 (loader-level shapes/values confirmed correct; encoder-level
-      check still pending)
+- [x] 0.5 Normalization approach — **fully resolved 2026-08-18** (3 real
+      subjects through the actual frozen encoder, zero NaNs, non-degenerate
+      CLS output, see Phase 1 status below). **Real correction found along
+      the way**: the original per-channel-type unit table (LOC/ROC=volts,
+      rest=µV) was wrong — traced `signal_processor.py` directly, confirmed
+      the unit is file/cohort-dependent (APPLES's ECG is µV-scale, SHHS's
+      ECG is volts-scale). Fixed with a self-calibrating per-channel check
+      instead of a hardcoded table — see plan §5.2.
+- [x] 0.6 Sample-rate resampling approach — **fully resolved 2026-08-18**,
+      same real-encoder-forward-pass evidence as 0.5
 - [x] 0.7 Branch created — **and now also has its own worktree**
       (`/home/boshra95/NSRR-tools-omni`), a step further than the plan's
       original checklist envisioned
@@ -154,7 +151,22 @@ SHHS results look degraded.
       and fixed a real bug in the *test itself* (wrong expected-length
       formula, surfaced only on STAGES) — see the plan doc's checklist 1.1
       entry for the full story.
-- [ ] 1.2 `scripts/extract_physioomni_embeddings.py` + `configs/phase0_physioomni_config.yaml` — next step
+- [x] 1.2 `scripts/extract_physioomni_embeddings.py` + `configs/phase0_physioomni_config.yaml`
+      — **done 2026-08-18**, smoke-tested on real data (APPLES ×2 + SHHS
+      ×1, CPU). Runs each of the 4 frozen encoders independently per
+      subject (no unified fusion model exists in the checkpoint) and
+      concatenates CLS outputs into `[T, 500]`. Real results: APPLES
+      shapes `(1143,500)`/`(970,500)` (2 EEG channels), SHHS shape
+      `(1084,500)` (**1 EEG channel, confirmed** — §4.5's decision working
+      end-to-end through the real encoder, not just the loader). Zero
+      NaNs, non-degenerate CLS std (~0.8-1.3) across every modality slice
+      in all 3 subjects — resolves 0.5/0.6 above. CPU timing:
+      ~584-938s/subject (~10-16 min) — GPU needed for any real-scale run
+      (checklist 1.9). VSCode debug configs: "🫀 PhysioOmni Phase1 Step2"
+      (APPLES 2-subject and SHHS 1-subject variants).
+- [x] 1.3 Smoke test — folded into 1.2's entry above (same real-data run
+      covers both)
+- [ ] 1.4 `src/nsrr_tools/datasets/physioomni_context_window_dataset.py` — next step
 
 ## Open questions carried over from the plan doc, still open
 
