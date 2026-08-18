@@ -694,42 +694,68 @@ pipeline's resample choice exactly" principle already applied to OSF
 existing preprocessing already uses elsewhere for non-integer-ratio
 resampling, for consistency; verify empirically in the Step 0 pilot (§14).
 
-### 5.2 Normalization — concrete method identified, needs empirical
-validation before trusting extraction output
+### 5.2 Normalization — method confirmed, self-calibrating by design
+(revised 2026-08-18, corrects the earlier per-channel-type assumption)
 
 PhysioOmni's `dataset.py` divides raw signal by 100 (`EEG/100`, `EOG/100`,
 etc., not z-score) before feeding the model — **different from OSF's
 expectation of already-z-scored input.** Our `signal_processor.py`
 z-scores per-channel during EDF→HDF5 preprocessing, but **every HDF5 file
 stores the exact per-channel pre-normalization statistics needed to invert
-this**, confirmed by reading a real file's root attributes directly
-(`/scratch/boshra95/psg/apples/derived/hdf5_signals/APL1373.h5`): a
-`normalization_stats` JSON attribute with `{mean, std, min, max}` per
-channel, e.g. `"C3-M2": {"mean": -0.00155, "std": 15.25, "min": -221.6,
-"max": 219.9}`. **Recommended approach**: `x_original = x_zscored * std +
-mean` per channel (using each channel's own stored stats), then scale to
-match whatever raw unit PhysioOmni's own prep scripts assume, then divide
-by 100.
+this**: a `normalization_stats` JSON root attribute with `{mean, std, min,
+max}` per channel. **Method**: `x_original = x_zscored * std + mean` per
+channel (using that channel's own stored stats), then a scale correction
+(below) to reach µV, then divide by 100.
 
-**One real wrinkle found while reading these stats, worth flagging
-explicitly**: the stored pre-normalization scales are **not uniform across
-channels** — `C3-M2`/`C4-M1`/`EKG`/`EMG`/`Airflow` have `std` in the
-~15-25 range (consistent with already-µV-scale raw amplitudes), but
-`LOC`/`ROC` have `std` around `1.6e-5` and min/max around `±0.0002`
-(consistent with raw **volts**, not µV — roughly 4-5 orders of magnitude
-smaller). **A single flat "convert V→µV" rule applied uniformly would be
-wrong** — the unit-inversion step needs to check each channel's actual
-recovered scale (or track it explicitly per channel from the original EDF
-units) rather than assuming every channel was in the same unit before
-z-scoring. Confirm against `signal_processor.py`'s unit handling directly
-before writing the extraction script, not just from the stored stats'
-magnitudes alone.
+**Traced the actual source of the unit inconsistency directly in
+`signal_processor.py`, not just inferred from stats magnitudes** —
+`_process_channel()` reads raw amplitude via plain MNE indexing
+(`raw[ch_idx, :]`, `signal_processor.py:378`), with **no explicit unit
+conversion anywhere in the file** (confirmed: no `units=` argument to
+`mne.io.read_raw_edf`, no scaling call in `_process_channel`/
+`_normalize_signal`). `stats['std']` is the std of this raw-indexed,
+bandpass-filtered, resampled signal — i.e., **whatever unit MNE's default
+EDF reader happens to return for that specific channel**, which turns out
+to depend on the source EDF file's own header declarations, not a fixed
+system-wide convention.
 
-**Still flagged as a Step 0 pilot check (§14), not assumed to work
-correctly on the first attempt**: after inverting to raw scale and
-applying the `/100` convention, run a handful of real epochs through the
-frozen encoder and check for NaNs/degenerate (near-zero or saturated) CLS
-outputs before trusting any extraction at scale.
+**This was verified with real data across two cohorts, and the original
+"LOC/ROC = volts, everything else = µV" hypothesis (this section's
+2026-08-17 draft) turned out to be wrong — the real pattern is
+cohort/file-dependent, not a fixed per-channel-type rule:**
+- **APPLES** (`apples-560232.edf`, loaded directly with `mne.io.read_raw_edf`,
+  same bandpass params `signal_processor.py` uses): `C3_M2` std≈15.6→14.5
+  (before→after bandpass), `ECG` std≈18.7, `EMG` std≈34.9 — all µV-scale —
+  but `LOC`/`ROC` std≈1.9-2.1e-5 — volts-scale. Matches the original
+  hypothesis, for this cohort.
+- **SHHS** (two real files, `shhs1-203279.edf`/`shhs1-200709.edf`): `EEG`
+  std≈1.4-3.3e-5 (volts-scale, as expected) **but `ECG` std≈1.3-2.2e-4 —
+  also volts-scale**, unlike APPLES's µV-scale `ECG`. **The same canonical
+  channel (`ECG`) is in a different unit depending on cohort.**
+
+**Design consequence: don't hardcode a per-channel-name unit table — detect
+and correct per subject/channel at runtime instead.** Real physiological
+signal amplitudes are µV-scale (std roughly 1-100s, confirmed above) or,
+equivalently, volts-scale (std roughly 1e-6-1e-3) — the two regimes are
+separated by several orders of magnitude with a wide, safe gap between
+them, so a simple runtime check on each channel's own stored `stats['std']`
+is a robust, self-calibrating detector, no hardcoded table needed:
+
+```python
+def invert_normalization(x_zscored, stats):
+    x = x_zscored * stats["std"] + stats["mean"]   # undo z-score
+    if abs(stats["std"]) < 1.0:      # this channel's raw scale was volts, not uV
+        x = x * 1e6                  # -> uV, matching PhysioOmni's own convention
+    return x / 100.0                 # PhysioOmni's own dataset.py convention
+```
+
+**Still a Step 0 pilot check (§14), not assumed correct on the first
+attempt**: run a handful of real epochs through the frozen encoder after
+this conversion and check for NaNs/degenerate (near-zero or saturated) CLS
+outputs before trusting any extraction at scale — the self-calibrating
+threshold (`1.0`) is a reasoned choice given the observed ~5-order-of-
+magnitude gap between regimes, not empirically swept against many
+channels/cohorts yet.
 
 ---
 
@@ -1538,9 +1564,38 @@ code/branch work, which this revision is not).
       constraint: worktree/directory isolation" note above.
 
 ### Phase 1 — Stage 1 (frozen encoders)
-- [ ] 1.1 Implement `src/nsrr_tools/datasets/physioomni_channel_loader.py`
-      (§7) — the shared utility, built first so both the extraction script
-      and (eventually) Stage 2 import from it
+- [x] 1.1 Implement `src/nsrr_tools/datasets/physioomni_channel_loader.py`
+      (§7) — **done 2026-08-18.** Built as the shared utility from day
+      one, per §7's design. Smoke-tested via a new
+      `scripts/test_physioomni_channel_loader.py` (VSCode debug config
+      "🫀 PhysioOmni Phase1 Step1: Test Channel Loader") against 2 real
+      subjects × all 4 cohorts: zero NaNs, all resampled lengths exactly
+      match `round(n_samples_128hz * native_hz / source_hz)`, and —
+      the one thing checked explicitly, not just implicitly — **SHHS gets
+      exactly 1 real EEG channel, non-SHHS cohorts get 2**, confirming
+      §4.5's final decision is correctly implemented. **A real bug was
+      caught and fixed during this step, not in the loader itself but in
+      its own test**: the test's first draft computed "expected length"
+      via `get_epoch_count()*30*native_hz`, which truncates to whole 30s
+      epochs — wrong, since `load_subject_signals()` deliberately returns
+      the *full* resampled night (epoch truncation is a later, separate
+      step, matching OSF's own `load_and_resample_channels()` design).
+      This only surfaced on STAGES (`BOGN00004.h5`: 4,884,352 raw samples
+      at 128Hz isn't an exact 30s-epoch multiple), not the other 3
+      cohorts' sampled subjects, whose sample counts happened to divide
+      evenly — a reminder that a 2-subject smoke test can miss real
+      test-logic gaps a slightly different sample would have caught.
+      Fixed by computing the expected length the same way the loader
+      itself does, not via the (correctly epoch-truncating, but not the
+      right comparison here) `get_epoch_count()`.
+      **Also resolved during this step, a real correction to §5.2's own
+      2026-08-17 draft**: traced `signal_processor.py` directly (not
+      inferred) and found the earlier "LOC/ROC = volts, everything else =
+      µV" hypothesis was wrong — the actual unit depends on the source
+      EDF file's own header, confirmed cohort-dependent (APPLES's `ECG` is
+      µV-scale, SHHS's `ECG` is volts-scale, same canonical channel name).
+      `invert_normalization()` self-calibrates per channel via its own
+      stored `std` instead of a hardcoded table — see §5.2's revised text.
 - [ ] 1.2 Implement `scripts/extract_physioomni_embeddings.py` +
       `configs/phase0_physioomni_config.yaml` (§6.3, §9)
 - [ ] 1.3 Smoke-test on real APPLES + SHHS subjects (small `--limit`, CPU),
@@ -1616,7 +1671,7 @@ code/branch work, which this revision is not).
 | SHHS EEG handling | **One real, non-duplicated channel** — not OSF's duplicate-into-both-slots approximation | **Decided 2026-08-17, see §4.5.** Verified `EEG`/`EEG(sec)` are genuinely distinct (100% co-occurrence, r=0.18 correlation) but not pursuing the fix to recover the second channel now. PhysioOmni's variable-length token sequence per modality (unlike OSF's fixed-tensor ViT) makes 1-channel EEG a legitimate input, not a workaround — duplicating would fabricate an r=1.0 fake "second channel" unlike anything in pretraining |
 | SHHS `EEG(sec)` recovery (deferred) | **Documented, not implemented** — a lightweight additive patch job (not full SHHS reprocessing) could recover a genuine second EEG channel for SHHS, benefiting both OSF and PhysioOmni | Not needed for correctness now that duplication is off the table; revisit only if SHHS results look degraded on EEG-dependent tasks (§4.5) |
 | Sample rate | Resample to PhysioOmni's own native per-modality rates (200Hz EEG/EOG, 500Hz ECG/EMG) | Matches the reference prep scripts exactly (§5.1); patch duration is a fraction of real time that depends on this choice |
-| Normalization | Invert each channel's stored `normalization_stats`, correcting for the per-channel unit inconsistency (µV vs. volts), then `/100` | `/100` raw-scale expectation vs. our already-z-scored HDF5 data is a real mismatch; still needs an empirical Step 0 check (§14) |
+| Normalization | Invert each channel's stored `normalization_stats`, then a **self-calibrating** V→µV correction (`if abs(std) < 1.0: ×1e6`) based on that channel's own stored `std`, then `/100` | Traced `signal_processor.py` directly: no explicit unit conversion anywhere, so the unit MNE returns is file/cohort-dependent, not a fixed per-channel-name rule (confirmed: APPLES's `ECG` is µV-scale, SHHS's `ECG` is volts-scale) — a hardcoded per-channel table would be wrong; still needs an empirical Step 0 check (§14) |
 | LoRA target modules | `c_attn`, `c_proj` (per encoder, up to 4 encoders) | The only two Linear layers in PhysioOmni's `Attention` block (§3) — genuinely new code, no existing LoRA precedent in the repo |
 | Multi-encoder LoRA wrapping | **Undecided** — one `get_peft_model()` call over all 4 vs. 4 independent calls | Needs a design conversation before Phase 2 starts (§15.1) |
 | Stage 2 raw-signal caching | Offline, from day one, not discovered after a stalled job | OSF's real Stage 2 lost 2+ hours to exactly this before fixing it (§15.2) |

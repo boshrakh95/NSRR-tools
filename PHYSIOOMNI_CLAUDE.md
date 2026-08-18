@@ -126,13 +126,35 @@ SHHS results look degraded.
 - [x] 0.2 Checkpoint downloaded, strict-load-verified
 - [x] 0.3 Paper PDF saved locally
 - [x] 0.4 SHHS EEG decision — **resolved, see section above**
-- [ ] 0.5 Normalization approach — not yet empirically validated (needs
-      real HDF5 data + a forward pass; natural to fold into Phase 1's
-      first smoke test rather than a standalone step)
-- [ ] 0.6 Sample-rate resampling approach — same as above
+- [~] 0.5 Normalization approach — **channel-loader-level validation done
+      2026-08-18** (no NaNs, sane recovered scale for all channels/cohorts,
+      see Phase 1 status below); still needs the frozen-encoder-forward-pass
+      check (CLS output sanity), deferred to Phase 1.2/1.3 as planned.
+      **Real correction found this step**: the original per-channel-type
+      unit table (LOC/ROC=volts, rest=µV) was wrong — traced
+      `signal_processor.py` directly, confirmed the unit is file/cohort-
+      dependent (APPLES's ECG is µV-scale, SHHS's ECG is volts-scale).
+      Fixed with a self-calibrating per-channel check instead of a
+      hardcoded table — see plan §5.2.
+- [~] 0.6 Sample-rate resampling approach — same partial-validation status
+      as 0.5 (loader-level shapes/values confirmed correct; encoder-level
+      check still pending)
 - [x] 0.7 Branch created — **and now also has its own worktree**
       (`/home/boshra95/NSRR-tools-omni`), a step further than the plan's
       original checklist envisioned
+
+## Phase 1 status
+
+- [x] 1.1 `src/nsrr_tools/datasets/physioomni_channel_loader.py` — **done
+      2026-08-18**, smoke-tested via `scripts/test_physioomni_channel_loader.py`
+      (VSCode debug config "🫀 PhysioOmni Phase1 Step1") against 2 real
+      subjects × all 4 cohorts. Zero NaNs, correct resampled lengths,
+      SHHS confirmed getting exactly 1 real EEG channel (not 2, not 0) —
+      the core §4.5 decision, verified working, not just designed. Caught
+      and fixed a real bug in the *test itself* (wrong expected-length
+      formula, surfaced only on STAGES) — see the plan doc's checklist 1.1
+      entry for the full story.
+- [ ] 1.2 `scripts/extract_physioomni_embeddings.py` + `configs/phase0_physioomni_config.yaml` — next step
 
 ## Open questions carried over from the plan doc, still open
 
