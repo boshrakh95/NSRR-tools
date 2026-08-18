@@ -166,7 +166,20 @@ SHHS results look degraded.
       (APPLES 2-subject and SHHS 1-subject variants).
 - [x] 1.3 Smoke test — folded into 1.2's entry above (same real-data run
       covers both)
-- [ ] 1.4 `src/nsrr_tools/datasets/physioomni_context_window_dataset.py` — next step
+- [x] 1.4/1.5 `src/nsrr_tools/datasets/physioomni_context_window_dataset.py`
+      + smoke test — **done 2026-08-18.** Genuinely simpler fork than
+      OSF's, not just renamed: since embeddings are 2D `[T,500]` (no
+      sub-token dimension), every 3D pad-block shape and reshape call in
+      OSF's version is dropped. Tested against the 3 real subjects
+      extracted so far: correct 2/0/1 train/val/test split (val=0 is
+      arithmetic at this population size, not a bug), correct
+      `(N,500)` shapes at `30s`/`10m`/`full_night`, zero NaN, zero
+      unexpected padding. **Known gap, flagged not hidden**: this small a
+      population doesn't exercise the padding branch or realistic
+      K-sampling — re-test with more extracted subjects before trusting
+      at full-sweep scale. VSCode debug config: "🫀 PhysioOmni Phase1
+      Step3".
+- [ ] 1.6 `scripts/train_physioomni_context_sweep.py` — next step
 
 ## Open questions carried over from the plan doc, still open
 

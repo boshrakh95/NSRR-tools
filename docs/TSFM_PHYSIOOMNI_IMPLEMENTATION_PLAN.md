@@ -1631,11 +1631,41 @@ code/branch work, which this revision is not).
         a GPU job (checklist 1.9); no GPU timing yet.
       - **User checkpoint** — re-verify via the "🫀 PhysioOmni Phase1
         Step2" debug configs before continuing to 1.4.
-- [ ] 1.4 Implement `src/nsrr_tools/datasets/physioomni_context_window_dataset.py`
-      (§8) — fork `ContextWindowDataset`, following OSF's fork pattern
-- [ ] 1.5 Smoke-test the dataset class at 30s/10m/full_night contexts,
-      including the per-modality-missing degeneracy check (§14 item 8) —
-      **user checkpoint**
+- [x] 1.4 Implement `src/nsrr_tools/datasets/physioomni_context_window_dataset.py`
+      (§8) — **done 2026-08-18.** Forked from
+      `osf_context_window_dataset.py`. **One real simplification beyond a
+      rename, not just cosmetic**: since the saved embeddings are
+      genuinely 2D `[T, 500]` (§6.3's design — PhysioOmni has no
+      meaningful sub-token dimension the way OSF's CLS+mean-pooled-patch
+      pair does), every 3D `(N_SUBTOKENS, EMBED_DIM)` pad-block shape and
+      the post-hoc `.reshape(N, FLAT_DIM)` call in OSF's fork are dropped
+      entirely — pad blocks are plain `(n, EMBED_DIM)` and windows are
+      already the right shape with no reshape needed. `PATCH_SECONDS=30`,
+      `PATCHES_PER_EPOCH=1`, `min_recording_patches=480` all carried over
+      unchanged (same 30s-epoch units as OSF, no recomputation needed).
+- [x] 1.5 Smoke-test the dataset class — **done 2026-08-18, with an honest
+      population-size caveat.** Formalized as
+      `scripts/test_physioomni_context_window_dataset.py` (VSCode debug
+      config "🫀 PhysioOmni Phase1 Step3"). Real results against the 3
+      subjects extracted so far (checklist 1.3): train/val/test correctly
+      split to 2/0/1 subjects (val landing empty is arithmetic —
+      `int(3*0.15)==0` — not a bug, confirmed by inspection); item
+      retrieval at `30s`/`10m`/`full_night` all produced correctly-shaped
+      `(N, 500)` float32 tensors, zero NaNs, correct dtypes, zero
+      unexpected padding. **What this does NOT yet cover, flagged
+      explicitly rather than glossed over**: with only 3 subjects (all
+      with T well above every non-full_night context tested), no padding
+      branch was exercised, and K-sampling wasn't tested at a realistic
+      pool size the way OSF's own dataset-class smoke test used (10
+      subjects/cohort specifically to get this right). The
+      per-modality-missing degeneracy check (§14 item 8) is really a
+      downstream sequence-head-training concern, not something the
+      dataset class itself behaves differently for (it reads whatever
+      values are in the `.npy`, zero-filled or not, uniformly) — deferred
+      to Phase 1.6+'s real training smoke test, not applicable here.
+      **Re-run this test with more extracted subjects before trusting it
+      at full-sweep scale** — a real, open follow-up, not resolved by this
+      pass. **User checkpoint.**
 - [ ] 1.6 Implement `scripts/train_physioomni_context_sweep.py` (§10) +
       job script (§13), written with clean `run_epoch`/`compute_metrics`
       function boundaries from the start (§10's reuse principle) —
