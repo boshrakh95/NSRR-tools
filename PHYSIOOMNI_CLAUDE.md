@@ -228,6 +228,12 @@ SHHS results look degraded.
       OSF where this knob was the real bottleneck (16→64 gave 3.28x there).
       Kept at 16 (original default). ~14,994 subjects total → ~17h serial
       on one GPU; will shard into parallel jobs for checklist 1.10.
+- [x] 1.13 `docs/PHYSIOOMNI_EXPERIMENTS_GUIDE.md` — **initial version done
+      2026-08-18**, covering Steps 0-7 with real commands/paths/measured
+      numbers (not placeholders). Written now rather than fully
+      incrementally since 1.1-1.9 were already all done — same shape as
+      `docs/OSF_EXPERIMENTS_GUIDE.md`. Step 8 (LoRA) is a placeholder.
+      **Living document — keep updated as 1.10/1.11/1.12 progress.**
 - [ ] 1.10 Run full embedding extraction, all 4 datasets — next step
 
 ## Native context ceiling / Plan A decision (2026-08-18)

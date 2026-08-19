@@ -1816,10 +1816,23 @@ code/branch work, which this revision is not).
       training runs), then inference, then analysis
 - [ ] 1.12 Re-run the channel-completeness audit against real extraction
       output, confirm it matches §4.3's expectations
-- [ ] 1.13 Write `docs/PHYSIOOMNI_EXPERIMENTS_GUIDE.md` incrementally as
+- [x] 1.13 Write `docs/PHYSIOOMNI_EXPERIMENTS_GUIDE.md` incrementally as
       each step above is built and verified, mirroring
       `docs/OSF_EXPERIMENTS_GUIDE.md`'s Step 0-7 structure — the concrete
-      "how to actually run it" counterpart to this plan doc's "why"
+      "how to actually run it" counterpart to this plan doc's "why" —
+      **initial version done 2026-08-18**, covering Steps 0-7 (all real,
+      verified content — real commands, real measured numbers, real
+      output paths, not placeholders) since checklist 1.1-1.9 were all
+      already done and verified by the time this was written. Step 8
+      (LoRA) is a placeholder pointing at OSF's own Step 8 by analogy,
+      since Phase 2 hasn't started. Includes an explicit scope note
+      (per the user, 2026-08-18): unlike SleepFM (the main model, full
+      protocol including channel ablation), PhysioOmni gets exactly two
+      rounds — frozen backbone + seq head (this guide), then LoRA + seq
+      head (Step 8) — no channel ablation, no full-channel round, no
+      sleep staging. **Living document — keep updated alongside this plan
+      doc as 1.10/1.11/1.12 progress and as problems get found/fixed**,
+      same convention as `docs/OSF_EXPERIMENTS_GUIDE.md`.
 
 ### Phase 2 — Stage 2 (LoRA), outline only per §15 — refine once Phase 1 runs
 - [ ] 2.1 Resolve the multi-encoder LoRA-wrapping design question (§15.1)
