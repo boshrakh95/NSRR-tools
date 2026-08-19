@@ -219,7 +219,16 @@ SHHS results look degraded.
       Verified live against checklist 1.6's real checkpoint: `list` shows
       `sex_binary_lstm` correctly as `trained (1/6)`, `train`/`infer`
       generate correct sbatch commands.
-- [ ] 1.9 `jobs/extract_physioomni_embeddings_gpu.sh` — next step
+- [x] 1.9 `jobs/extract_physioomni_embeddings_gpu.sh` — **done 2026-08-18,
+      real GPU-verified.** Fork of `jobs/extract_osf_embeddings_gpu.sh`
+      (same sharding/auto-resume pattern). **Real measured throughput:
+      ~4.1s/subject** on an H100 MIG `1g.10gb` slice — 15-100x faster than
+      the CPU path. **Ran a controlled `chunk_batch_size` A/B (16 vs 64) on
+      matched shhs batches — found no meaningful difference here**, unlike
+      OSF where this knob was the real bottleneck (16→64 gave 3.28x there).
+      Kept at 16 (original default). ~14,994 subjects total → ~17h serial
+      on one GPU; will shard into parallel jobs for checklist 1.10.
+- [ ] 1.10 Run full embedding extraction, all 4 datasets — next step
 
 ## Native context ceiling / Plan A decision (2026-08-18)
 

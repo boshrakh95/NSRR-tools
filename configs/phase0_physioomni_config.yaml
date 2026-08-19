@@ -15,10 +15,15 @@
 embedding:
   checkpoint_dir: "/home/boshra95/PhysioOmni/checkpoints/PhysioOmni.pt"
   output_dir: "/scratch/boshra95/psg/unified/embeddings/physioomni_30sec"
-  chunk_batch_size: 16   # epochs-per-forward-pass batch, per modality — start
-                          # here, tune empirically (plan §13's GPU-sizing note:
-                          # OSF found this was its real Stage-2 GPU bottleneck,
-                          # not raw compute headroom)
+  chunk_batch_size: 16   # epochs-per-forward-pass batch, per modality —
+                          # A/B'd on GPU against 64 on matched 20-subject
+                          # shhs batches (checklist 1.9, 2026-08-18): 16 gave
+                          # 4.05s/subject, 64 gave 4.15s/subject — no
+                          # meaningful difference. Unlike OSF (where this
+                          # knob was the real Stage-2 bottleneck),
+                          # per-subject GPU throughput here (~4.1s/subject,
+                          # ~15-100x faster than CPU) is not chunk_batch_size
+                          # -bound — kept at 16, no reason to change it.
   datasets:
     - apples
     - shhs

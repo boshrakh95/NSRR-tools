@@ -1775,10 +1775,42 @@ code/branch work, which this revision is not).
       `trained (1/6 contexts)` (picking up checklist 1.6's 30s checkpoint);
       `train`/`infer`/`status` all produce correct sbatch commands and
       paths against the real registry and job scripts.
-- [ ] 1.9 Implement `jobs/extract_physioomni_embeddings_gpu.sh`, test via a
-      small real GPU allocation before trusting it for the full run —
-      apply the `chunk_batch_size`-first tuning lesson (§13) if throughput
-      looks off
+- [x] 1.9 Implement `jobs/extract_physioomni_embeddings_gpu.sh` — **done
+      2026-08-18, verified with real GPU allocations, including an
+      empirical `chunk_batch_size` A/B test.** Fork of
+      `jobs/extract_osf_embeddings_gpu.sh` — same `--start-idx`/`--end-idx`
+      sharding, SIGUSR1 auto-resume, skip-if-exists convention.
+
+      **Test 1** (job 55499713, `END=20 DATASETS="apples shhs"`): 20
+      subjects (12 new, 8 already-cached skipped correctly), completed in
+      3m40s wall / 1.5 min extraction time on a real H100 MIG `1g.10gb`
+      slice — first real signal that GPU is dramatically faster than the
+      CPU path (checklist 1.6's extraction logs: 50-450s/subject on CPU).
+
+      **Test 2** (the `chunk_batch_size` question): rather than assuming
+      OSF's own finding (`chunk_batch_size` 16→64 gave a measured 3.28x
+      speedup — CLAUDE.md's OSF section) transfers here, ran a controlled
+      A/B on matched, same-dataset, same-size batches — 20 fresh shhs
+      subjects at `chunk_batch_size=64` (job 55500731, 1.4 min = 84s →
+      4.2s/subject) vs. the next 20 fresh shhs subjects at
+      `chunk_batch_size=16` (job 55500915, 1.4 min = 81s → 4.05s/subject).
+      **Result: no meaningful difference** — unlike OSF, PhysioOmni's
+      per-subject extraction here is not `chunk_batch_size`-bound (likely
+      because per-subject fixed overhead dominates at these window sizes,
+      not per-call GPU compute). Kept `chunk_batch_size: 16` (the original
+      default, no reason to change it) — documented directly in
+      `configs/phase0_physioomni_config.yaml`'s comment and the job
+      script's own header, both with the real measured numbers rather than
+      an assumption borrowed from OSF.
+
+      **Real measured throughput: ~4.1s/subject** on a single H100 MIG
+      `1g.10gb` slice (apples + shhs; mros/stages not yet tested, expected
+      similar — same channel-loading path) — 15-100x faster than CPU.
+      Across the ~14,994-subject population (apples 1104 + shhs 8444 +
+      mros 3933 + stages 1513), that's ~17 hours serial on one GPU;
+      checklist 1.10 will shard into parallel jobs (~2500 subjects/job,
+      ~2.85h each) rather than one long run, mirroring OSF's own sharding
+      convention. **User checkpoint.**
 - [ ] 1.10 Run full embedding extraction, all 4 datasets
 - [ ] 1.11 Run the Stage 1 sweep (4 tasks × 3 heads × 6 contexts = up to 72
       training runs), then inference, then analysis
