@@ -157,8 +157,20 @@ def _build_shape_cache(embedding_dir: Path) -> dict:
     rel_key = "{dataset}/{subject_id}".
 
     The result is written to {embedding_dir}/shape_cache.json so subsequent
-    calls return immediately. The cache is invalidated (rebuilt) only if
-    new files appear that are not in the stored cache.
+    calls return immediately — skips a full filesystem scan, not just the
+    shape reads.
+
+    ⚠️ Cache invalidation is MANUAL, not automatic: if the cache file
+    exists, it is trusted as-is even if new .npy files have appeared since
+    it was written. Delete shape_cache.json by hand any time you extract
+    more embeddings (e.g. after a partial/debug extraction followed by a
+    full run) — same convention as osf_context_window_dataset.py's own
+    _build_shape_cache(). Forgetting this silently caps every dataset
+    construction at the old, smaller subject population instead of
+    erroring — found the hard way 2026-08-19: a 16-subject debug-era cache
+    survived a full ~15,000-subject extraction and silently produced a
+    5-item val split (NaN AUROC, no best_model.pt ever saved) on the first
+    real training attempt.
     """
     cache_path = embedding_dir / "shape_cache.json"
 
