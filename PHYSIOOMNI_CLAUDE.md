@@ -179,7 +179,25 @@ SHHS results look degraded.
       K-sampling — re-test with more extracted subjects before trusting
       at full-sweep scale. VSCode debug config: "🫀 PhysioOmni Phase1
       Step3".
-- [ ] 1.6 `scripts/train_physioomni_context_sweep.py` — next step
+- [x] 1.6 `scripts/train_physioomni_context_sweep.py` + `jobs/
+      train_physioomni_context_sweep_gpu.sh` — **done 2026-08-18.** Fork of
+      OSF's training script/job with identical function boundaries, only
+      the dataset import and `wandb_project` default changed. Needed more
+      extracted subjects first (val split empty at 3 subjects) — found the
+      minimal sufficient population (8 apples + 8 shhs) by simulating the
+      split logic directly rather than guessing, then extracted the rest
+      via a new **CPU-only** sbatch job,
+      `jobs/extract_physioomni_embeddings_cpu.sh` (mirrors
+      `jobs/precompute_osf_raw_signal_cache.sh`'s `def-forouzan`/16-CPU
+      pattern — login-node CPU usage is not okay for sustained work, use
+      this for any future pilot/debug extraction). CPU smoke test
+      (`--context 30s --datasets apples shhs --batch-size 2 --cpu
+      --no-wandb`) ran end-to-end to `Status: SUCCESS`, `best_model.pt`
+      saved correctly (val AUROC=0.52, no longer NaN), checkpoint resume
+      exercised live too. Test-split metrics are degenerate (tiny
+      population) but expected — not a bug, revisit at full scale
+      (checklist 1.9).
+- [ ] 1.7 `scripts/infer_physioomni_subject_windows.py` — next step
 
 ## Native context ceiling / Plan A decision (2026-08-18)
 

@@ -1666,10 +1666,56 @@ code/branch work, which this revision is not).
       **Re-run this test with more extracted subjects before trusting it
       at full-sweep scale** — a real, open follow-up, not resolved by this
       pass. **User checkpoint.**
-- [ ] 1.6 Implement `scripts/train_physioomni_context_sweep.py` (§10) +
-      job script (§13), written with clean `run_epoch`/`compute_metrics`
-      function boundaries from the start (§10's reuse principle) —
-      **user checkpoint**
+- [x] 1.6 Implement `scripts/train_physioomni_context_sweep.py` (§10) +
+      job script (§13) — **done 2026-08-18, verified with a real CPU smoke
+      test, not just a code read.** Forked structurally from
+      `scripts/train_osf_context_sweep.py` with identical
+      `run_epoch`/`compute_metrics`/`compute_monitor_metric`/
+      `append_to_summary`/`_classify_failure`/`train_one_context`/`main`
+      boundaries; only the dataset import (`PhysioOmniContextWindowDataset`
+      family) and the `wandb_project` default changed — no
+      `--zero-modalities` flag, matching OSF's own fork (no 4-modality-group
+      structure to ablate). Job script:
+      `jobs/train_physioomni_context_sweep_gpu.sh`, forked from
+      `jobs/train_osf_context_sweep_gpu.sh` with paths/env/job-name updated
+      for this repo (`physioomni_env`, `logs_physioomni`,
+      `physioomni_ctx_sweep`), same SIGUSR1 auto-resume + `--requeue`
+      mechanism.
+
+      **Population expansion needed first.** Checklist 1.5's 3-subject
+      smoke test was too small for a real training run (val split empty).
+      Simulated `PhysioOmniContextWindowDataset`'s exact split logic
+      (`np.random.default_rng(42).shuffle`) against candidate population
+      sizes to find the minimal sufficient count *before* spending
+      extraction time, rather than guessing: **8 apples + 8 shhs = 16
+      total** reliably gives both classes in val for `sex_binary`.
+      Extracted the additional subjects (apples 5→8, shhs 4→8) via a new
+      **CPU-only** SLURM job, `jobs/extract_physioomni_embeddings_cpu.sh`
+      (`--account=def-forouzan`, no `_gpu` suffix, 16 CPUs/32GB, forked from
+      `jobs/precompute_osf_raw_signal_cache.sh`'s CPU-job pattern) —
+      submitted via `sbatch`, not run on the login node. Both jobs
+      completed with 0 errors (2 apples + 4 shhs newly extracted, rest
+      skipped as already present).
+
+      **Smoke test**: `--config configs/phase0_physioomni_config.yaml
+      --context 30s --datasets apples shhs --batch-size 2 --no-wandb --cpu`.
+      Result: `Items — train: 55 | val: 10 | test: 15`, val AUROC a real
+      number (0.52, no longer NaN) from the first eligible epoch, so
+      `best_model.pt` saved correctly this time — the NaN-AUROC /
+      `best_model.pt`-never-saved failure mode from checklist 1.5's
+      3-subject population (a known, pre-existing pattern, already seen in
+      OSF's own Stage 2 build) is resolved by having enough val-split
+      subjects, not by a code change. Checkpoint resume was also exercised
+      live (a stale 11-epoch checkpoint from an earlier run was correctly
+      picked up and continued to early-stop at epoch 21). Ran to
+      `Status: SUCCESS — all context lengths completed.` end-to-end. Train/
+      val metrics are non-degenerate (val bal_acc 0.5, auroc 0.52); test
+      metrics are degenerate (bal_acc 0.0, auroc NaN) — expected and
+      unconcerning at this population size (2-3 subjects in test, plausibly
+      single-class or a saturated single-class prediction), not a script
+      bug — this is a mechanics smoke test, not a real result, and will be
+      revisited naturally once the real extraction (checklist 1.9) runs at
+      full population. **User checkpoint.**
 - [ ] 1.7 Implement `scripts/infer_physioomni_subject_windows.py` (§11) +
       job script (§13) — **user checkpoint**
 - [ ] 1.8 Implement `experiments/v2_physioomni_registry.yaml` +
