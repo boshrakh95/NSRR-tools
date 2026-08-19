@@ -197,7 +197,20 @@ SHHS results look degraded.
       exercised live too. Test-split metrics are degenerate (tiny
       population) but expected — not a bug, revisit at full scale
       (checklist 1.9).
-- [ ] 1.7 `scripts/infer_physioomni_subject_windows.py` — next step
+- [x] 1.7 `scripts/infer_physioomni_subject_windows.py` + `jobs/
+      infer_physioomni_subject_windows_gpu.sh` — **done 2026-08-18.** Fork
+      of OSF's infer script/job, same structure, dataset import + batch-
+      size reference kept as OSF's (same 30s-epoch token unit, so no
+      re-derivation needed). **Found and fixed a `physioomni_env`
+      environment gap along the way**: `pyarrow` was a non-functional CC
+      "dummy" stub wheel — fixed by copying `osf_env`'s working
+      `pyarrow_arrow_module.pth` (points at the `arrow/18.1.0` module's own
+      site-packages) into `physioomni_env`. This fixes `pyarrow` for the
+      whole env, not just this script. CPU smoke test against checklist
+      1.6's checkpoint ran end-to-end: `Dataset items: 1,796` → parquet
+      saved, correct 7-column schema, zero NaNs, `Segment accuracy: 50.84%`.
+- [ ] 1.8 `experiments/v2_physioomni_registry.yaml` +
+      `scripts/gen_commands_physioomni.py` — next step
 
 ## Native context ceiling / Plan A decision (2026-08-18)
 

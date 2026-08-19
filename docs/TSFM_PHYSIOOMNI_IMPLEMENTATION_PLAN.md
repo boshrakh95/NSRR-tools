@@ -1716,8 +1716,43 @@ code/branch work, which this revision is not).
       bug — this is a mechanics smoke test, not a real result, and will be
       revisited naturally once the real extraction (checklist 1.9) runs at
       full population. **User checkpoint.**
-- [ ] 1.7 Implement `scripts/infer_physioomni_subject_windows.py` (§11) +
-      job script (§13) — **user checkpoint**
+- [x] 1.7 Implement `scripts/infer_physioomni_subject_windows.py` (§11) +
+      job script (§13) — **done 2026-08-18, verified with a real CPU smoke
+      test.** Fork of `scripts/infer_osf_subject_windows.py` with identical
+      structure; only the dataset import changed and the batch-size
+      auto-scaling reference (`_ref_bs=64`, `_ref_N=480`) was kept
+      unchanged rather than re-derived, since PhysioOmni's dataset uses the
+      exact same token unit as OSF's (one row per 30s epoch,
+      `PATCHES_PER_EPOCH=1`) — not a re-verified-on-GPU number, same open
+      caveat OSF's own script already carries. Job script:
+      `jobs/infer_physioomni_subject_windows_gpu.sh`, forked from
+      `jobs/infer_osf_subject_windows_gpu.sh` with paths/env/job-name
+      updated.
+
+      **Environment fix needed along the way**: `physioomni_env` had no
+      working `pyarrow`, so `df.to_parquet()` failed
+      (`ImportError: ... pyarrow or fastparquet`) even though the rest of
+      the pipeline (dataset build, checkpoint auto-detection from state-dict
+      shapes, forward pass) ran correctly. Root cause: Compute Canada
+      ships `pyarrow` as a "dummy" stub wheel that only registers metadata
+      — the real compiled package lives under the `arrow` environment
+      module's own site-packages and has to be exposed via a `.pth` file
+      (found the working pattern already present in `osf_env`:
+      `pyarrow_arrow_module.pth` pointing at
+      `.../easybuild/software/2023/x86-64-v4/Compiler/gcccore/arrow/18.1.0/lib/python3.10/site-packages`).
+      Copied the same `.pth` into `physioomni_env` — fixes `pyarrow` for
+      every script in this env going forward, not just this one, with no
+      `module load` needed at runtime (the `.pth` path is absolute).
+
+      **Smoke test**: `--config configs/phase0_physioomni_config.yaml
+      --task sex_binary --task-type seq2label --head lstm --context 30s
+      --datasets apples shhs --split val --cpu`, against checklist 1.6's
+      trained checkpoint. Result: `Dataset items: 1,796 (subjects: 2)` →
+      `Saved 1,796 rows → .../val_windows.parquet`,
+      `Segment accuracy: 50.84%`. Verified the parquet directly: correct
+      7-column schema (`subject_id, dataset, true_label, pred_label,
+      prob_class0, prob_class1, window_idx`), zero NaNs. Ran to
+      `All contexts processed successfully.` **User checkpoint.**
 - [ ] 1.8 Implement `experiments/v2_physioomni_registry.yaml` +
       `scripts/gen_commands_physioomni.py` (§12)
 - [ ] 1.9 Implement `jobs/extract_physioomni_embeddings_gpu.sh`, test via a
