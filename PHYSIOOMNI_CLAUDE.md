@@ -181,6 +181,22 @@ SHHS results look degraded.
       Step3".
 - [ ] 1.6 `scripts/train_physioomni_context_sweep.py` — next step
 
+## Native context ceiling / Plan A decision (2026-08-18)
+
+**Full reasoning, exact numbers, and the 3-way SleepFM/OSF/PhysioOmni
+comparison table: plan doc §19-§20 — this is paper-facing content, read
+it directly rather than a summary here.** Short version: PhysioOmni
+*could* architecturally support more than 30s per native call (unlike
+SleepFM/OSF, which are hard-fixed at 300s/30s) — up to ~512s for EEG,
+~102s for ECG/EMG at its own reference resample rates — but even that
+best case falls short of every sweep point except 30s itself (10m alone
+is already 600s > EEG's 512s ceiling). **Decision: kept 30-second epochs
+(Option 1)** — no pipeline change — which turns out to match not just
+SleepFM's/OSF's own epoch unit but PhysioOmni's *own* HMC downstream
+fine-tuning convention too (verified: `prepare_HMC_downstream.py` hard-
+filters to exactly 30s samples). Nothing in the already-implemented
+Phase 1.1/1.2/1.4 code changes because of this.
+
 ## Open questions carried over from the plan doc, still open
 
 See `docs/TSFM_PHYSIOOMNI_IMPLEMENTATION_PLAN.md` §18 for the full list —

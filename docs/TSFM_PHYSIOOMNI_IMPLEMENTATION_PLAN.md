@@ -1773,6 +1773,169 @@ code/branch work, which this revision is not).
 
 ---
 
+## 19. Native context ceiling and the Plan A/B/C decision (2026-08-18 —
+write straight into the paper's Methods/Limitations, this section exists
+for that purpose)
+
+### What we wanted
+
+The project's standing preference, stated in `CLAUDE.md`'s "three usage
+modes" section: **Plan A (native long context, no sequence head) is the
+fairest comparison whenever a backbone can actually support it** — it
+tests the backbone's own long-context capability rather than our own
+aggregation machinery. Plan B (short-segment embedder + our sequence head)
+is the documented fallback, used for SleepFM and OSF only because their
+architectures leave no other option (SleepFM: hard 300s chunk requirement;
+OSF: hard 30s chunk requirement, zero cross-epoch attention in the model).
+PhysioOmni's `NeuralTransformer` is architecturally different from both —
+a variable-length token sequence per modality, no fixed native window —
+so before defaulting to Plan B again, it was worth asking concretely: how
+far could Plan A actually go here, and is it far enough to matter for a
+30s→240m sweep?
+
+### The ceiling, precisely (not the flat "512 seconds" first estimated)
+
+The `time_embed` table caps any single forward pass at 512 *tokens*, not
+512 seconds — the real-world duration one call can span depends on that
+modality's own patch size (samples) and resample rate (Hz), both fixed by
+the pretrained checkpoint (changing either would require retraining the
+`TemporalConv` weights). Using PhysioOmni's own reference resample rates
+(§5.1 — the rates its own prep scripts use, not a rate we invented):
+
+| Modality | Patch size | Resample rate | Seconds/patch | **Native ceiling (512 patches)** |
+|---|---|---|---|---|
+| EEG | 200 samples | 200Hz | 1.0s | **512s ≈ 8.5 min** |
+| EOG | 100 samples | 200Hz | 0.5s | **256s ≈ 4.3 min** |
+| ECG | 100 samples | 500Hz | 0.2s | **102.4s ≈ 1.7 min** |
+| EMG | 100 samples | 500Hz | 0.2s | **102.4s ≈ 1.7 min** |
+
+**These are theoretical single-channel maxima, not what pretraining
+typically used — a real, verified nuance worth stating precisely in the
+paper rather than the simpler-but-misleading "8.5-minute ceiling"
+framing.** Traced the actual pretraining window-construction logic
+directly (`prepare_dataset/prepare_CAP.py:178`, identical formula in
+`prepare_tuh.py`/`prepare_DEAP.py`):
+```python
+time = 512 // len(eegCh)   # seconds per sample, applied to ALL 4 modalities
+```
+i.e. pretraining **deliberately saturates the 512-token EEG budget every
+time**, splitting it across however many EEG channels a given source
+montage has (CAP/TUH montages typically carry anywhere from ~8 to ~26 EEG
+channels — exact tally not exhaustively counted, but multi-channel is the
+norm, not the single-channel edge case). A 16-channel montage gets
+`512/16=32` real seconds per sample; a 26-channel montage gets `512/26≈19`
+seconds. **The model's typical pretraining exposure was tens of seconds
+of real time across many simultaneous channels, not minutes of real time
+on one channel** — the 8.5-minute figure is a real, valid upper bound
+(useful for stating "how far could this architecture go at all"), but not
+representative of what the encoder actually learned to expect.
+
+**Downstream fine-tuning (HMC, the model's own validated sleep-staging
+task) uses a different, fixed convention**: exactly 30 real seconds per
+sample regardless of channel count
+(`prepare_dataset/prepare_HMC_downstream.py`, `row[' Duration'] != 30:
+continue` — a hard AASM-epoch filter, not a computed value) — the *same*
+30-second unit this plan already uses for embedding extraction (§6.3).
+**This is a genuine point of confidence for Option 1 below, not just an
+arbitrary convenience choice**: 30 seconds is not an unfamiliar duration
+to this encoder — it's literally the unit PhysioOmni's own authors used to
+fine-tune and validate it on a real sleep-staging task.
+
+### Why 240m (or even most of the sweep) is not reachable via Plan A
+
+240 minutes = 14,400 seconds. Even EEG's best-case theoretical ceiling
+(512s) is short by ~28×. Closing that gap would require resampling EEG
+down to ~7Hz and ECG/EMG down to ~3.6Hz to fit 14,400s into 512 patches —
+not "more efficient use of capacity," but destruction of the signal (EEG
+below ~30Hz loses essentially all clinically meaningful frequency content;
+3.6Hz can't resolve an ECG waveform). No resample-rate choice makes 240m
+native. **More consequentially for the sweep as a whole**: converting the
+six sweep points to seconds (30s, 600s, 2400s, 4800s, 7200s, 14400s)
+against the ceiling table above shows **10m (600s) already exceeds even
+EEG's theoretical 512s maximum** — so every sweep point except the
+trivial 30s one already requires aggregation beyond a single native
+forward pass, for every modality, regardless of resample-rate tuning.
+Plan A is architecturally inapplicable to this study's sweep beyond its
+very first point.
+
+### Options considered
+
+1. **Keep 30-second epochs** (matches SleepFM's and OSF's own epoch-unit
+   convention exactly, and — per the finding above — matches PhysioOmni's
+   *own* HMC downstream fine-tuning convention too, not just our other two
+   backbones'). Simplest, most directly comparable across all three
+   models on the same epoch unit. Zero rework of already-built/tested
+   Phase 1.1/1.2/1.4 code.
+2. **Grow the native chunk size toward PhysioOmni's own ceiling** (up to
+   ~90-100s, bound by ECG/EMG — the shortest of the four, since a single
+   chunk spanning all 4 modalities over the same real-world duration is
+   capped by whichever modality's ceiling is smallest). Uses more of the
+   architecture's per-chunk attention span, at the cost of moving away
+   from the SleepFM/OSF-shared 30-second convention and requiring real
+   rework across the already-implemented pipeline (`EPOCH_SECONDS` is a
+   module constant threaded through the channel loader, extraction
+   script, and dataset class).
+3. **A standalone supplementary experiment** (not a sweep point): feed
+   each modality its own true maximum native window as a single item, no
+   sequence head, straight to a classification head — a "PhysioOmni's own
+   best native representation" reference number, analogous in spirit to
+   OSF's Plan A discussion but capped at ~1.7-8.5 min instead of a long
+   context. Not a substitute for the sweep (one fixed condition, not a
+   function of context length), and not decided against permanently —
+   just not pursued now.
+
+### What we chose, and why (for the paper)
+
+**Option 1 — 30-second epochs, unchanged from the rest of this plan.**
+State this plainly in the Methods/Limitations section: PhysioOmni is
+evaluated via Plan B (short-segment embedder + our sequence head) at
+every context length in the sweep, **the same as SleepFM and OSF** — not
+because Plan A wasn't considered or because PhysioOmni's architecture is
+as rigid as the other two (it genuinely isn't — see the ceiling table
+above), but because even its own best-case native ceiling (8.5 minutes
+for EEG, materially less for the other three modalities) falls short of
+every sweep point except the shortest. The 30-second unit chosen is not
+arbitrary relative to PhysioOmni itself, either — it matches the model's
+*own* downstream fine-tuning convention (HMC), a fact worth citing
+directly if this comparison is challenged in review. Growing the native
+chunk size (Option 2) was considered and set aside: the achievable gain
+(30s → ~100s, bound by ECG/EMG) is small relative to the sweep's own span
+(up to 240m) and would break the "same epoch unit across all three
+backbones" comparison principle for a benefit that doesn't change the
+fundamental Plan B conclusion. The standalone native-max-window reference
+experiment (Option 3) remains a live option for later, not implemented as
+part of this plan.
+
+---
+
+## 20. Three-way model comparison: SleepFM vs. OSF vs. PhysioOmni (for
+the paper — everything here is code-verified in this repo, not recalled
+from memory, except where explicitly flagged as unverified)
+
+| | SleepFM | OSF | PhysioOmni |
+|---|---|---|---|
+| **Native per-call window — hard requirement** | Exactly 300s (5 min); incomplete trailing chunks dropped (`scripts/extract_sleepfm_embeddings.py`: `chunk_size = sampling_freq*300`, "model requires full 5-min chunks") | Exactly 30s; no cross-epoch attention exists anywhere in the model (`osf/backbone/vit1d_cls.py`'s positional table is sized to exactly one epoch) | **No fixed requirement** — variable-length token sequence; real ceiling is per-modality (§19 table: 512s EEG / 256s EOG / 102s ECG / 102s EMG at PhysioOmni's own reference rates) |
+| **Internal sub-patch (within one native call)** | 5s (640 samples @ 128Hz) — 60 sub-patches per 300s call | 1s (64 samples @ 64Hz) — 90 tokens (30 time-steps × 3 channel-groups) per 30s call | Per-modality: EEG 1s/patch, EOG 0.5s/patch, ECG/EMG 0.2s/patch (all at PhysioOmni's own reference resample rates) |
+| **Channel handling per call** | All 4 modality groups (BAS/RESP/EKG/EMG) in one joint tensor | All 12 channels in one joint tensor | **Each of the 4 modalities is a fully separate forward call** — no shared tensor, no cross-modal attention anywhere in the pretrained weights |
+| **What pretraining actually saw (real-world duration)** | 300s fixed, always (same as inference — no separate shorter-window pretraining regime found) | 30s fixed, always | **Variable, saturating a 512-EEG-token budget per sample**: `time = 512 // n_eeg_channels` (`prepare_CAP.py:178`, same formula in `prepare_tuh.py`/`prepare_DEAP.py`) — typically tens of seconds across many (8-26) simultaneous EEG channels, not minutes on one channel (§19) |
+| **What the model's own downstream fine-tuning used** | N/A in this repo's scope (SleepFM is used frozen throughout) | N/A (OSF's own downstream benchmarks not the focus here) | **Fixed 30 real seconds**, matching AASM epoch length exactly (`prepare_HMC_downstream.py`, hard `Duration==30` filter) — the *same* unit this plan uses (§19) |
+| **What our own extraction uses** | 5s (our stored granularity) inside 300s calls, batched | 30s (fixed by the architecture itself) | **30s** — a deliberate choice (§19 Option 1), not an architectural requirement; matches SleepFM's/OSF's own epoch unit *and* PhysioOmni's own HMC fine-tuning unit |
+| **Output per native call** | 4 × 128-dim (one per modality group), at 5s granularity within the call | 1 × [CLS(768) ⊕ mean-pooled-patches(768)] — fully fused, no per-channel structure survives | 4 × independent CLS (200-dim EEG, 100-dim each EOG/ECG/EMG) — **no fusion in the pretrained weights at all**, concatenation happens only in our own extraction script |
+| **Saved embedding shape (this project's convention)** | `[T, 4, 128]`, T = 5s patches/night, flat dim 512 | `[T, 2, 768]`, T = 30s epochs/night, flat dim 1536 | `[T, 500]`, T = 30s epochs/night — genuinely 2D, no sub-token axis needed (§6.3/§8) |
+| **Sequence head input_dim** | 512 | 1536 | 500 |
+| **Encoder parameter count** | Not verified in this repo this session (would need reading SleepFM's own model-loading code with the same rigor OSF/PhysioOmni got — flagged as a gap, not asserted) | 85,325,568 (strict-load-verified, `docs/TSFM_OSF_IMPLEMENTATION_PLAN.md` §5) | 13,871,304 total across all 4 encoders (strict-load-verified, checklist 0.2) — EEG alone 7,839,576; EOG/ECG/EMG ~2,010,576 each |
+| **Fusion mechanism in released weights** | Contrastive alignment across the 4 modality-group encoders during pretraining, but each still outputs its own 128-dim vector — not fused into one shared vector | Single unified ViT — full fusion, one representation | **None** — four independent tokenizers/encoders, no cross-modal attention or shared parameters anywhere; fusion (if any) is entirely downstream-constructed, by us or by PhysioOmni's own `FT.py` machinery (not part of the released checkpoint) |
+| **Plan actually used for the sweep** | B (only option — architecture leaves no other choice) | B (only option — architecture leaves no other choice) | **B** (chosen — §19; architecture could theoretically support Plan A up to ~1.7-8.5 min, but that's short of every sweep point except 30s) |
+
+**One clarifying note for the paper, since the table above could be
+read as implying otherwise**: PhysioOmni is the only one of the three
+where Plan B was a *choice* rather than an architectural inevitability —
+worth stating explicitly, since it's a materially different (and more
+favorable, from a "we gave this model a fair shot" standpoint) situation
+than SleepFM's and OSF's genuinely-forced Plan B.
+
+---
+
 ## Appendix: source citations for this plan's factual claims
 
 **2026-08-13 pass** — verified directly against three sources:
@@ -1871,3 +2034,21 @@ question, this time with real measurements:
     traced STAGES's ECG gap (9.2% of subjects) to a genuine cause (a
     `Heartrate`-only channel, not a raw ECG waveform) rather than a
     fixable alias-list oversight.
+
+**2026-08-18, native-context-ceiling investigation (§19-§20)**:
+
+16. **`scripts/extract_sleepfm_embeddings.py` read directly** — confirmed
+    SleepFM's hard 300s chunk requirement (`chunk_size =
+    sampling_freq*300 = 38400` samples, "model requires full 5-min chunks"
+    stated in the script's own docstring) and the 4-modality-group output
+    structure (`[T,4,128]`, "BAS, RESP, EKG, EMG").
+17. **`prepare_dataset/{prepare_CAP,prepare_tuh,prepare_DEAP}.py` read
+    directly** — confirmed the exact pretraining window-construction
+    formula (`time = 512 // len(eegCh)`, identical across all three
+    scripts) behind §19's "pretraining typically saw tens of seconds
+    across many channels, not minutes on one channel" finding.
+18. **`prepare_dataset/prepare_HMC_downstream.py` re-read for this
+    specific question** (already read once for §4.2's EOG-derivation
+    finding) — confirmed the hard `row[' Duration'] != 30: continue`
+    filter, establishing that PhysioOmni's own downstream fine-tuning
+    (not just our own extraction choice) uses a fixed 30-second epoch.
