@@ -1753,8 +1753,28 @@ code/branch work, which this revision is not).
       7-column schema (`subject_id, dataset, true_label, pred_label,
       prob_class0, prob_class1, window_idx`), zero NaNs. Ran to
       `All contexts processed successfully.` **User checkpoint.**
-- [ ] 1.8 Implement `experiments/v2_physioomni_registry.yaml` +
-      `scripts/gen_commands_physioomni.py` (§12)
+- [x] 1.8 Implement `experiments/v2_physioomni_registry.yaml` +
+      `scripts/gen_commands_physioomni.py` (§12) — **done 2026-08-18,
+      verified against the real checklist-1.6 checkpoint.**
+      `v2_physioomni_registry.yaml` mirrors `experiments/v2_registry.yaml`
+      (fast-channel, paper-primary — not `v2_full_registry.yaml`, since
+      PhysioOmni only needs EEG/EOG/ECG/EMG and the fast-channel `psg/`
+      tree already carries all of it, unlike OSF) for the same 4 tasks
+      (sex, sleep efficiency, BMI, age) × 3 heads = 12 experiments.
+      **apnea_binary is deliberately absent** — no respiratory pathway in
+      PhysioOmni, confirmed at 4 independent code locations (see
+      CLAUDE.md's PhysioOmni section). `gen_commands_physioomni.py` is a
+      structural fork of `gen_commands_osf.py` (itself unmodified in
+      pipeline logic — `list`/`train`/`infer`/`analyze`/`build-heatmap`/
+      `collect`/`threshold-tuning`/`status`/`runs`), pointed at the new
+      registry, `jobs/{train,infer}_physioomni_*_gpu.sh`, and
+      `physioomni_env`; wall-time tables are placeholder copies of OSF's
+      own (themselves not yet calibrated), to revisit after the first real
+      GPU sweep (checklist 1.11) — same open caveat OSF's generator already
+      carries. Verified live: `list` correctly shows `sex_binary_lstm` as
+      `trained (1/6 contexts)` (picking up checklist 1.6's 30s checkpoint);
+      `train`/`infer`/`status` all produce correct sbatch commands and
+      paths against the real registry and job scripts.
 - [ ] 1.9 Implement `jobs/extract_physioomni_embeddings_gpu.sh`, test via a
       small real GPU allocation before trusting it for the full run —
       apply the `chunk_batch_size`-first tuning lesson (§13) if throughput

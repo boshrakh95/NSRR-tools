@@ -209,8 +209,17 @@ SHHS results look degraded.
       whole env, not just this script. CPU smoke test against checklist
       1.6's checkpoint ran end-to-end: `Dataset items: 1,796` → parquet
       saved, correct 7-column schema, zero NaNs, `Segment accuracy: 50.84%`.
-- [ ] 1.8 `experiments/v2_physioomni_registry.yaml` +
-      `scripts/gen_commands_physioomni.py` — next step
+- [x] 1.8 `experiments/v2_physioomni_registry.yaml` +
+      `scripts/gen_commands_physioomni.py` — **done 2026-08-18.** Registry
+      mirrors `v2_registry.yaml` (fast-channel/paper-primary) for 4 of the
+      5 Tier-1 tasks — sex, sleep efficiency, BMI, age — **apnea
+      deliberately excluded** (no respiratory pathway in PhysioOmni).
+      Generator is a structural fork of `gen_commands_osf.py`, same
+      pipeline logic, pointed at the new registry/job scripts/env.
+      Verified live against checklist 1.6's real checkpoint: `list` shows
+      `sex_binary_lstm` correctly as `trained (1/6)`, `train`/`infer`
+      generate correct sbatch commands.
+- [ ] 1.9 `jobs/extract_physioomni_embeddings_gpu.sh` — next step
 
 ## Native context ceiling / Plan A decision (2026-08-18)
 
