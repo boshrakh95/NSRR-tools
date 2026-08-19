@@ -197,9 +197,13 @@ config default). At this rate, the full ~14,994-subject population
 GPU — shard into parallel jobs (~2500 subjects/job, ~2.85h each) rather
 than running it in one job, per the examples above.
 
-**As of 2026-08-18**: apples 20/1104, shhs 48/8444, mros 0/3933,
-stages 0/1513 — enough for dataset-class/training/inference smoke tests
-(the full frozen-round sweep needs the full population, checklist 1.10).
+**Full extraction complete as of 2026-08-19** (checklist 1.10): apples
+1104/1104, shhs 8444/8444, mros 3933/3933, stages 1512/1513 —
+14,993/14,994 (99.99%), zero errors elsewhere. The 1 gap
+(`stages/STLK00096`) has no PhysioOmni-relevant channels at all in its
+HDF5 — a known outlier, already flagged in `CLAUDE.md`'s OSF section too
+(same subject is SleepFM-only there), not a pipeline bug. **Ready for the
+full Stage 1 sweep (Step 7 below).**
 
 ---
 
@@ -394,15 +398,16 @@ notebooks the same way SleepFM's/OSF's are.
 
 ## Step 7 — Running the Full Stage 1 Sweep
 
-**This is the actual next step once 1.10 (full extraction) is done — pure
-job submission from here, no code left to write for the frozen round.**
-Mirrors `docs/EXPERIMENTS_GUIDE.md`'s "Submitting Jobs" pattern exactly,
-just pointed at `gen_commands_physioomni.py` and looped over all 12
-tier-1 experiments instead of one.
+**Prerequisite done (checklist 1.10, 2026-08-19) — this is the actual next
+step, pure job submission from here, no code left to write for the frozen
+round.** Mirrors `docs/EXPERIMENTS_GUIDE.md`'s "Submitting Jobs" pattern
+exactly, just pointed at `gen_commands_physioomni.py` and looped over all
+12 tier-1 experiments instead of one.
 
-**Prerequisite:** checklist 1.10 done (full embeddings extracted for all 4
-datasets — verify with
-`find .../physioomni_30sec -name '*.npy' | wc -l`).
+Full embeddings extracted for all 4 datasets — 14,993/14,994 subjects
+(99.99%, see Step 1 above for the one known gap). Verify any time with
+`find /scratch/boshra95/psg/unified/embeddings/physioomni_30sec -name '*.npy' | wc -l`
+(should read 14,993).
 
 ```bash
 cd /home/boshra95/NSRR-tools-omni

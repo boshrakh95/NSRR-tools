@@ -234,7 +234,13 @@ SHHS results look degraded.
       incrementally since 1.1-1.9 were already all done — same shape as
       `docs/OSF_EXPERIMENTS_GUIDE.md`. Step 8 (LoRA) is a placeholder.
       **Living document — keep updated as 1.10/1.11/1.12 progress.**
-- [ ] 1.10 Run full embedding extraction, all 4 datasets — next step
+- [x] 1.10 Run full embedding extraction, all 4 datasets — **done
+      2026-08-19.** Final: apples 1104/1104, shhs 8444/8444, mros
+      3933/3933, stages 1512/1513 = 14,993/14,994 (99.99%), zero errors
+      elsewhere. The 1 gap (`stages/STLK00096`) has no PhysioOmni-relevant
+      channels at all — a known outlier already flagged for OSF too, not
+      a bug. Ready for 1.11 (the real Stage 1 sweep).
+- [ ] 1.11 Run the Stage 1 sweep — next step
 
 ## Native context ceiling / Plan A decision (2026-08-18)
 

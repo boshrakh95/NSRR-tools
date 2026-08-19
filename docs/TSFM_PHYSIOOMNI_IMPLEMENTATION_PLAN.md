@@ -1811,7 +1811,17 @@ code/branch work, which this revision is not).
       checklist 1.10 will shard into parallel jobs (~2500 subjects/job,
       ~2.85h each) rather than one long run, mirroring OSF's own sharding
       convention. **User checkpoint.**
-- [ ] 1.10 Run full embedding extraction, all 4 datasets
+- [x] 1.10 Run full embedding extraction, all 4 datasets — **done
+      2026-08-19.** Sharded across 6 GPU jobs (`--start-idx`/`--end-idx`
+      ranges spanning the full 14,994-subject concatenated list) plus the
+      earlier small test-batch jobs. Final counts: apples 1104/1104, shhs
+      8444/8444, mros 3933/3933, stages 1512/1513 — **14,993/14,994
+      (99.99%)**, zero errors across 8 of 9 extraction jobs. The 1 gap is
+      `stages/STLK00096`: "No PhysioOmni-relevant channels found at all"
+      — not a pipeline bug, this exact subject is already flagged in
+      `CLAUDE.md`'s OSF section as a known data-quality outlier
+      (SleepFM-only, missing from OSF's own population too). No further
+      action needed — proceed to 1.11 with this population as final.
 - [ ] 1.11 Run the Stage 1 sweep (4 tasks × 3 heads × 6 contexts = up to 72
       training runs), then inference, then analysis
 - [ ] 1.12 Re-run the channel-completeness audit against real extraction
