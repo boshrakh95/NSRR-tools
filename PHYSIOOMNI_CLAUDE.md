@@ -240,7 +240,56 @@ SHHS results look degraded.
       elsewhere. The 1 gap (`stages/STLK00096`) has no PhysioOmni-relevant
       channels at all — a known outlier already flagged for OSF too, not
       a bug. Ready for 1.11 (the real Stage 1 sweep).
-- [ ] 1.11 Run the Stage 1 sweep — next step
+- [ ] 1.11 Run the Stage 1 sweep — in progress (user is submitting jobs
+      directly via `gen_commands_physioomni.py`)
+
+## Phase 2 (LoRA) status — design done, implementation done, not yet run
+
+**Full detailed design: plan doc §15 (rewritten 2026-08-19, previously
+outline-only).** The one genuinely open design question (§15.1 — how to
+LoRA-wrap 4 independent encoders) is now resolved and live-verified
+against the real checkpoint: a single `CombinedPhysioOmniLoRAModel` +
+single `get_peft_model()` call correctly wraps all 4x12=48 attention
+blocks (96 LoRA Linear layers) — `peft`'s target-module matching is
+name-suffix-based across the whole tree, so this needed no per-encoder
+special-casing.
+
+**All Phase 2 code is written and checklist 2.1-2.5 are done** (see plan
+doc for full detail):
+- `physioomni_channel_loader.py` extended with a raw-signal cache
+  (per-subject-per-slot `.npy` files + `meta.json` — NOT a single unified
+  matrix like OSF's, since PhysioOmni's channels are genuinely
+  present-or-absent per subject at 2 different native rates).
+- `scripts/precompute_physioomni_raw_signal_cache.py` +
+  `jobs/precompute_physioomni_raw_signal_cache.sh` (CPU-only,
+  apples+shhs+mros only — 13,481 subjects, no stages needed).
+- `src/nsrr_tools/datasets/physioomni_raw_epoch_dataset.py` —
+  `PhysioOmniRawEpochWindowDataset` + `physioomni_lora_collate_fn` +
+  `PhysioOmniLoRABatch` (a tiny `.to()`/`.size(0)`-only wrapper that lets
+  Stage 2's per-modality-grouped batches flow through
+  `train_physioomni_context_sweep.py`'s `run_epoch()` completely
+  unmodified).
+- `scripts/train_physioomni_lora.py` + `jobs/train_physioomni_lora_gpu.sh`
+  — **a full synthetic forward+backward pass against the REAL checkpoint
+  was run and verified**: correct logits, finite loss, LoRA gradients
+  flowed into all target modules, sequence_head gradients flowed too —
+  tested with a batch mixing 1-/2-channel EEG subjects and missing
+  EOG/EMG subjects, exercising the hardest part of the design (the
+  batch-level present-mask scatter that preserves Stage 1's exact
+  zero-fill contract).
+- `scripts/infer_physioomni_lora_subject_windows.py` +
+  `jobs/infer_physioomni_lora_subject_windows_gpu.sh`.
+- `experiments/v2_physioomni_lora_registry.yaml` (8 experiments: 4 tasks x
+  lstm/transformer — **mean_pool deferred**, matching OSF's own Stage 2
+  scoping) + `scripts/gen_commands_physioomni_lora.py` — verified live
+  (`list`/`train`/`status` against the real registry).
+
+**Not yet done**: checklist 2.6 (real wall-time pilot — prerequisite: run
+the CPU precompute job for real first, it hasn't been executed against
+real data yet), 2.7 (three-way config/argparse audit), 2.8 (the full
+sweep). **User is submitting Phase 1 jobs now; Phase 2 (LoRA) training has
+not started** — code is ready, waiting on the precompute + pilot before
+any real LoRA training job runs.
 
 ## Native context ceiling / Plan A decision (2026-08-18)
 

@@ -29,7 +29,8 @@ full protocol — modality/channel ablations, full vs. fast-channel rounds,
 sleep staging, all task tiers. PhysioOmni (like OSF, and like MOMENT
 whenever that starts) is a *comparison baseline*, not the main model — it
 gets exactly **two rounds**: one frozen-backbone round (this guide, Steps
-0–7) and one LoRA-fine-tuned round (Step 8, not yet started). No channel
+0–7) and one LoRA-fine-tuned round (Step 8, code done and verified, not
+yet run for real). No channel
 ablation, no full-channel round, no sleep staging (not yet ported to any of
 the TSFM baselines' dataset classes) — just the 4 Tier-1 seq2label tasks ×
 3 heads × 6 context lengths, frozen then LoRA, compared against SleepFM's
@@ -49,7 +50,7 @@ the TSFM baselines' dataset classes) — just the 4 Tier-1 seq2label tasks ×
 8. [Step 5 — Inference](#step-5--inference)
 9. [Step 6 — Command Generator (`gen_commands_physioomni.py`)](#step-6--command-generator-gen_commands_physioomnipy)
 10. [Step 7 — Running the Full Stage 1 Sweep](#step-7--running-the-full-stage-1-sweep)
-11. [Step 8 — Stage 2 (LoRA fine-tuning)](#step-8--stage-2-lora-fine-tuning-not-yet-implemented)
+11. [Step 8 — Stage 2 (LoRA fine-tuning)](#step-8--stage-2-lora-fine-tuning)
 12. [Checkpoint Resume and Auto-Requeue](#checkpoint-resume-and-auto-requeue)
 13. [Job Run History and Tracking](#job-run-history-and-tracking)
 
@@ -114,7 +115,7 @@ reasoning and the 3-way SleepFM/OSF/PhysioOmni comparison table).
 | **W&B project** | `nsrr-phase0` (or per-script default) | `nsrr-phase0-osf` | `nsrr-phase0-physioomni` — **but wandb is not installed in `physioomni_env`** (same known gap as `osf_env`); training/inference scripts fall back gracefully with a warning, not a crash, so `--no-wandb` is optional, not required. |
 | **Task scope** | All Tier 1/2 tasks | Tier 1 only: sex, sleep efficiency, BMI, age, apnea (5 tasks) | Tier 1 minus apnea: sex, sleep efficiency, BMI, age (**4 tasks** — apnea excluded, no respiratory pathway) |
 | **Channel ablation** | Yes (main model, full protocol) | No (comparison baseline) | No (comparison baseline) |
-| **Rounds** | Full protocol | Frozen + LoRA (2 rounds) | Frozen (this guide) + LoRA (not yet started) — 2 rounds, same as OSF |
+| **Rounds** | Full protocol | Frozen + LoRA (2 rounds) | Frozen (Steps 0-7) + LoRA (Step 8, code done, not yet run) — 2 rounds, same as OSF |
 | **Status** | **DONE** | Frozen round in progress, LoRA in progress | **Frozen round in progress** — see checklist in `docs/TSFM_PHYSIOOMNI_IMPLEMENTATION_PLAN.md` |
 
 ---
@@ -470,27 +471,169 @@ notebooks the same way SleepFM's/OSF's collected results are.
 
 ---
 
-## Step 8 — Stage 2 (LoRA fine-tuning) (not yet implemented)
+## Step 8 — Stage 2 (LoRA fine-tuning)
 
-**Status: not started.** Corresponds to
-`docs/TSFM_PHYSIOOMNI_IMPLEMENTATION_PLAN.md`'s Phase 2 checklist
-(2.1–2.6), all still unchecked as of 2026-08-18. Do not start this without
-being asked — the frozen round (Steps 0–7 above) needs to finish first.
+**Status: code done and verified (checklist 2.1-2.5), not yet run for
+real (checklist 2.6-2.8 pending).** Full design: plan doc §15 (rewritten
+2026-08-19 — the previously-open multi-encoder-wrapping question is now
+resolved and live-verified, not outline-only).
 
-**Expected shape, by analogy with OSF's own Stage 2**
-(`docs/OSF_EXPERIMENTS_GUIDE.md` Step 8 — read that section for the full
-detail of what this will look like): wrap PhysioOmni's 4 encoders with
-`peft` LoRA adapters, train them jointly with the sequence head on raw
-signal loaded live per window (no precomputed-embeddings step), staged
-LP-FT (warm-start head from Stage 1, then fine-tune LoRA+head together).
-**Open design question not yet resolved** (plan checklist 2.1): PhysioOmni
-has 4 *independent* encoders, not OSF's single backbone — how LoRA wraps
-across 4 separate `NeuralTransformer` instances needs its own design pass,
-not a direct copy of OSF's single-encoder wrapping.
+**Architecture, in one paragraph**: PhysioOmni's 4 encoders + sequence
+head are wrapped as ONE combined module
+(`CombinedPhysioOmniLoRAModel`), then a SINGLE `peft.get_peft_model()`
+call injects LoRA into all 4×12=48 attention blocks (96 `c_attn`/`c_proj`
+Linear layers) — live-verified against the real checkpoint (not assumed):
+`peft`'s target-module matching is name-suffix-based across the whole
+module tree, so one call naturally wraps all 4 parallel encoder branches.
+Same staged LP-FT procedure as OSF (Stage 1's head warm-starts Stage 2;
+every context length other than 30s warm-starts from that same
+(task,head)'s own 30s LoRA checkpoint). The one genuinely new engineering
+problem PhysioOmni's Stage 2 has that OSF's didn't: different subjects
+have different *sets* of present modalities/channels (not a uniform
+12-channel case) — handled via a batch-level present/absent mask that
+preserves Stage 1's exact zero-fill contract (an absent modality's
+embedding slice stays exactly zero, no encoder forward pass run for it).
 
-This section will be filled in with real commands/paths/verified output
-once Phase 2 implementation actually starts, same as every other section
-in this guide.
+### Step 8.1 — Raw signal cache (offline, CPU-only)
+
+**Status: code done, NOT yet run for real.**
+`scripts/precompute_physioomni_raw_signal_cache.py` +
+`jobs/precompute_physioomni_raw_signal_cache.sh`. Unlike OSF's raw signal
+cache (one fixed-shape `[12, n_samples_64]` matrix per subject), this is
+one small `.npy` per PRESENT channel-slot plus a `meta.json` — PhysioOmni's
+channels are genuinely present-or-absent per subject (not zero-filled) at
+2 different native rates (EEG/EOG 200Hz, ECG/EMG 500Hz), so no single
+fixed-shape array works.
+
+```bash
+# Small test
+python scripts/precompute_physioomni_raw_signal_cache.py \
+    --config configs/phase0_physioomni_lora_config.yaml --datasets apples --limit 5
+
+# Sharded full run — apples+shhs+mros only (13,481 subjects, NOT stages —
+# no PhysioOmni Tier-1 task needs it, apnea is excluded entirely):
+sbatch --export=ALL,START=0,END=4500       jobs/precompute_physioomni_raw_signal_cache.sh
+sbatch --export=ALL,START=4500,END=9000    jobs/precompute_physioomni_raw_signal_cache.sh
+sbatch --export=ALL,START=9000,END=13481   jobs/precompute_physioomni_raw_signal_cache.sh
+```
+
+**Output:** `{raw_signal_cache_dir}/{dataset}/{subject_id}/{EEG_C3,EEG_C4,EOG_HEO,ECG,EMG}.npy`
+(only present ones) + `meta.json` (`t_epochs` + fill info).
+`raw_signal_cache_dir` = `/scratch/boshra95/psg/unified/physioomni_raw_signal_cache`.
+
+**Wall-time NOT calibrated** — PhysioOmni's FFT-based resample (needed for
+128→200/500Hz) is plausibly slower per-sample than OSF's exact 128→64Hz
+2:1 decimation (OSF: 1104 APPLES subjects in 5.1 min at `--num-workers 8`).
+Time the first real shard before assuming a total budget.
+
+**Verified (2026-08-19)**: the cache save/load round-trip itself (not the
+bulk job) was tested directly against a synthetic signals dict — shapes,
+labels, dtypes, and values all round-tripped correctly through
+`save_signal_cache`/`load_signal_cache`/`load_meta`/`get_cached_t_epochs`.
+
+### Step 8.2 — Dataset class
+
+**Status: done, live-verified against the real config/task CSV.**
+`src/nsrr_tools/datasets/physioomni_raw_epoch_dataset.py` —
+`PhysioOmniRawEpochWindowDataset` + `SubjectGroupedSampler` +
+`physioomni_lora_collate_fn` + `PhysioOmniLoRABatch`. Filters subjects by
+Stage-1-embedding existence first (same split-matching discipline as
+OSF's own real, previously-fixed bug).
+
+Verified live (2026-08-19, real config + real `sex_binary` task CSV, not
+synthetic): 11,400 total subjects → correctly filtered to 9,548 by
+Stage-1-embedding existence (exactly matching apples 1104 + shhs 8444) →
+correct 70% train split (6,683) → correctly raised `FileNotFoundError`
+with a clear, actionable message once it checked for the (not-yet-built)
+raw-signal cache — exactly the designed fail-loud behavior.
+
+The custom `collate_fn`'s channel-count grouping (EEG has 1 channel for
+SHHS, 2 elsewhere, §4.5 — different sequence lengths can't share one
+batched tensor) was also verified with a synthetic 3-subject batch mixing
+1-/2-channel EEG and missing EOG/EMG — correct grouping, shapes, and
+`batch_idx` assignment.
+
+### Step 8.3 — Training
+
+**Status: code done, full end-to-end forward+backward VERIFIED against
+the real checkpoint — not yet trained for real (needs Step 8.1's cache
+first).** `scripts/train_physioomni_lora.py` + `jobs/train_physioomni_lora_gpu.sh`.
+
+```bash
+python scripts/train_physioomni_lora.py \
+    --config configs/phase0_physioomni_lora_config.yaml \
+    --task sex_binary --head lstm --context 30s \
+    --stage1-checkpoint /scratch/boshra95/psg/unified/results/phase0_physioomni/sex_binary_lstm/context_30s/best_model.pt
+```
+
+**Verified 2026-08-19** (real `PhysioOmni.pt` checkpoint, synthetic
+3-subject batch — mixed 1-/2-channel EEG, mixed EOG/ECG/EMG presence):
+correct logits shape, finite loss, **LoRA gradients confirmed flowing
+into all target modules, sequence_head gradients confirmed flowing too**
+— the hardest, most novel part of this design (reshape/position-ID
+construction duplicated from `extract_physioomni_embeddings.py`'s
+`_modality_forward()`, plus the gradient-preserving scatter-write into
+the shared embedding tensor) is real-checkpoint-verified, not just
+reasoned about.
+
+**Output:** same shape as Stage 1's, under `phase0_physioomni_lora`'s
+`results_dir` — `best_model.pt` is a `peft` state dict (LoRA deltas +
+sequence_head), not the ~13.9M-param base encoders.
+
+**GPU job:**
+```bash
+sbatch --export=ALL,TASK=sex_binary,HEAD=lstm jobs/train_physioomni_lora_gpu.sh
+```
+GPU size: `3g.40gb`, matching OSF's own Stage 2 (not yet independently
+validated as necessary for PhysioOmni). **Wall-time NOT calibrated at
+all** — the 14h default is copied from OSF's own (itself provisional)
+number. Run a real pilot at 30s before trusting any `--time` budget for
+longer contexts (checklist 2.6).
+
+### Step 8.4 — Inference
+
+**Status: code done, not yet run for real** (needs a real trained
+checkpoint first). `scripts/infer_physioomni_lora_subject_windows.py` +
+`jobs/infer_physioomni_lora_subject_windows_gpu.sh` — same resumable
+periodic-checkpointing design as OSF's Stage 2 inference script.
+
+```bash
+sbatch --export=ALL,TASK=sex_binary,HEAD=lstm,CONTEXTS="30s 10m 40m 80m 120m 240m" \
+    jobs/infer_physioomni_lora_subject_windows_gpu.sh
+```
+
+### Step 8.5 — Command Generator (`gen_commands_physioomni_lora.py`)
+
+**Status: done, verified live against the real registry.**
+`experiments/v2_physioomni_lora_registry.yaml` — **8 experiments** (4
+tasks × lstm/transformer — **`mean_pool` deferred** for this first Stage 2
+pass, matching OSF's own Stage 2 scoping decision, real LoRA compute
+cost). `scripts/gen_commands_physioomni_lora.py` is a structural fork of
+`gen_commands_osf_lora.py`.
+
+```bash
+python scripts/gen_commands_physioomni_lora.py list
+python scripts/gen_commands_physioomni_lora.py train sex_binary_lstm --context 30s
+python scripts/gen_commands_physioomni_lora.py status sex_binary_lstm
+```
+
+Verified 2026-08-19: `list` correctly shows all 8 experiments as
+`pending` (no Stage 2 training has run yet); `train`/`status` produce
+correct commands/output against the real registry.
+
+### Not yet done
+
+- **Checklist 2.6** — run the raw-signal cache precompute (Step 8.1) for
+  real, then a short wall-time pilot at 30s. **User checkpoint** before
+  the full sweep.
+- **Checklist 2.7** — full three-way config/argparse audit against Stage
+  1 and OSF's Stage 2, same discipline that caught two real bugs in OSF's
+  own Stage 2 build (missing `context_lr_overrides`, missing gradient
+  accumulation).
+- **Checklist 2.8** — the full Stage 2 sweep: 8 `(task,head)` pairs × 6
+  contexts = 48 training runs (not 8×6=48 independent full trainings —
+  only 30s is independently trained per pair, the rest branch from it,
+  per the warm-start design above).
 
 ---
 

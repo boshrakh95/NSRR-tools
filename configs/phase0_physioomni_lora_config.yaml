@@ -1,0 +1,184 @@
+# ============================================================
+# Phase 0 — PhysioOmni Stage 2 (LoRA fine-tuning) Config
+# ============================================================
+# Forked from configs/phase0_physioomni_config.yaml (Phase 2, plan §15) —
+# Stage 2's own config, never edited in place alongside Stage 1's, so the
+# two never overwrite each other. Everything not called out below is
+# identical to Stage 1 by design (same channel mapping, same labels/
+# splits, same head architecture) — only what's genuinely different for
+# LoRA fine-tuning changes.
+#
+# KEY DIFFERENCE FROM STAGE 1: no precomputed-embeddings step.
+# `embedding.checkpoint_dir` is still used (to load the 4 base frozen
+# encoders before wrapping them with LoRA). The per-modality RESAMPLED
+# SIGNAL (not embeddings — the encoders still run live, LoRA-adapted,
+# every training step) IS precomputed once, offline, to
+# `data.raw_signal_cache_dir` (plan §15.3) — see
+# scripts/precompute_physioomni_raw_signal_cache.py. Run that script
+# before any real training; PhysioOmniRawEpochWindowDataset raises a clear
+# error if a subject's cache entry is missing, rather than silently
+# falling back to a slow raw-HDF5 read.
+
+# ── Base checkpoint (loaded fresh, then wrapped with LoRA) ──────────────────
+embedding:
+  checkpoint_dir: "/home/boshra95/PhysioOmni/checkpoints/PhysioOmni.pt"
+  # Confirmed NOT the bottleneck for PhysioOmni's extraction (checklist
+  # 1.9's A/B: 16 vs 64 gave no meaningful difference) — kept at 16 here
+  # too as a starting point. Re-check with a real Stage 2 pilot (plan
+  # §15.9) since Stage 2's live per-step cost profile (backward pass
+  # through LoRA-adapted layers) differs from Stage 1's forward-only
+  # extraction; not assumed to transfer automatically.
+  chunk_batch_size: 16
+
+# ── HDF5 Signal Data — identical to Stage 1's data: section, plus the
+# Stage-2-only raw_signal_cache_dir (plan §15.3) ─────────────────────────────
+data:
+  hdf5_dir: "/scratch/boshra95/psg"     # FAST-CHANNEL tree, same as Stage 1
+  raw_signal_cache_dir: "/scratch/boshra95/psg/unified/physioomni_raw_signal_cache"
+  channel_candidates:
+    EEG_C3: [C3-M2]
+    EEG_C4: [C4-M1]
+    EOG_LOC: [LOC]
+    EOG_ROC: [ROC]
+    ECG: [EKG, ECG-L]
+    EMG: [CHIN, EMG]
+  # Datasets the raw-signal cache actually needs to cover (plan §15.3) —
+  # NOT stages (no PhysioOmni Tier-1 task uses it; apnea, the only task
+  # that would, is excluded entirely — no respiratory pathway).
+  datasets:
+    - apples
+    - shhs
+    - mros
+
+# ── Raw-Epoch Window Dataset ─────────────────────────────────────────────────
+# Same subject/split/task/context settings as Stage 1's dataset: section —
+# same task_subject_dir + split_seed, required for a fair comparison on
+# identical subjects/splits. Raw signal itself comes from
+# data.raw_signal_cache_dir (plan §15.3), not embeddings.
+#
+# stage1_embedding_dir (plan §15.4, NOT used to load any signal data —
+# existence-check ONLY): PhysioOmniContextWindowDataset (Stage 1) filters
+# subjects by "has embedding .npy" BEFORE computing the train/val/test
+# split; Stage 2 filters by this SAME criterion first (existence check
+# only), guaranteeing identical splits, then separately checks its own
+# raw_signal_cache_dir for actually reading signal — two different checks
+# for two different purposes. Same fix OSF's own Stage 2 needed after a
+# real, previously-live split-mismatch bug (docs/TSFM_OSF_IMPLEMENTATION_PLAN.md
+# checklist 2.5b) — applied here from the start, not discovered later.
+dataset:
+  label_source: "/scratch/boshra95/psg/unified/targets_v2/master_targets.parquet"
+  task_subject_dir: "/scratch/boshra95/psg/unified/targets_v2/task_subjects"
+  stage1_embedding_dir: "/scratch/boshra95/psg/unified/embeddings/physioomni_30sec"
+
+  sleep_stage_dir: "/scratch/boshra95/psg"
+
+  context_lengths:
+    - "30s"
+    - "10m"
+    - "40m"
+    - "80m"
+    - "120m"
+    - "240m"
+
+  task: "sex_binary"
+  task_type: "seq2label"
+
+  # apnea deliberately absent (no respiratory pathway) — same 4-task scope
+  # as Stage 1's registry. stages deliberately absent too (no Tier-1 task
+  # uses it for PhysioOmni).
+  datasets:
+    - apples
+    - shhs
+    - mros
+
+  train_split: 0.70
+  val_split:   0.15
+  test_split:  0.15
+  split_seed:  42          # SAME seed as Stage 1 / SleepFM phase0_v3 runs
+
+  windows_per_subject: 5
+
+  # seq2seq params carried for config-shape parity — NOT implemented in
+  # PhysioOmniRawEpochWindowDataset yet (scoped to seq2label only, matching
+  # Stage 1's own current sweep scope).
+  seq2seq_context_mode: "centered"
+  seq2seq_padding_policy: "complete_only"
+  seq2seq_max_padding_fraction: 0.5
+  min_past_denom:       8
+  max_min_past_patches: 40
+
+  min_recording_patches: 480
+
+# ── Sequence Head Model — identical architecture to Stage 1 ─────────────────
+# Warm-started from the matching Stage 1 checkpoint at training start
+# (train_physioomni_lora.py, plan §15.6) — architecture must match exactly
+# for the warm-start state_dict to load.
+model:
+  input_dim: 500
+  head_type: "lstm"
+  hidden_dim: 128
+  num_layers: 1
+  num_heads:  8
+  dropout:    0.3
+  num_classes: 2
+
+# ── LoRA ──────────────────────────────────────────────────────────────────────
+# Target modules confirmed live against the real checkpoint 2026-08-19
+# (plan §15.1): a SINGLE get_peft_model() call over a combined module
+# holding all 4 encoders + sequence_head injects LoRA into 96 Linear
+# layers total (4 encoders x 12 blocks x 2 target modules), 289,002 /
+# 14,161,308 trainable (2.04%) in the live-verified test (a placeholder
+# tiny head — the real lstm/transformer head will be a larger fraction).
+# r/lora_alpha/lora_dropout/lr are NOT yet calibrated against a real pilot
+# run — starting values match Stage 1's own untuned defaults / OSF's
+# original (pre-pilot) LoRA starting point, not independently tuned.
+# Revisit after the wall-time/quality pilot (plan §15.9, checklist 2.6).
+lora:
+  r: 8
+  lora_alpha: 16
+  lora_dropout: 0.05
+  target_modules: ["c_attn", "c_proj"]
+  modules_to_save: ["sequence_head"]
+
+# ── Training ─────────────────────────────────────────────────────────────────
+# Kept at Stage 1's own original placeholder values (NOT OSF's already-
+# pilot-tuned numbers — those were derived from OSF's own real training
+# curve, not a universal LoRA recipe) — revisit once PhysioOmni's own
+# pilot (checklist 2.6) shows a real curve, same discipline OSF's plan
+# already documents for itself.
+training:
+  epochs: 40
+  lr: 1.0e-4
+  weight_decay: 1.0e-3
+  optimizer: "adamw"    # NOTE: not actually read by train_physioomni_lora.py — hardcoded to plain Adam, same as train_physioomni_context_sweep.py.
+  scheduler: "cosine"   # NOTE: not actually read either — hardcoded to CosineAnnealingLR (same as Stage 1).
+  early_stopping_patience: 10
+  device: "cuda"         # NOTE: not actually read — device comes from --cpu / torch.cuda.is_available() (same as Stage 1).
+  mixed_precision: false
+  class_weights: "auto"
+  early_stopping_monitor: "val_auroc"
+  weighted_sampler: false
+
+  windows_strategy: "fixed"
+  token_budget_minutes: 240
+  k_max: 50
+
+  context_lr_overrides:
+    "120m": 5.0e-5
+    "240m": 5.0e-5
+
+  overfit_epochs: 0
+
+  save_snapshots: true
+  snapshot_interval: 5
+
+# ── Analysis ─────────────────────────────────────────────────────────────────
+analysis:
+  bootstrap_samples: 0
+
+# ── Logging & Output ─────────────────────────────────────────────────────────
+# Separate results_dir from Stage 1 — sibling directory, never overlaps.
+# logs_dir is set at the registry level (experiments/v2_physioomni_lora_registry.yaml),
+# not here, matching Stage 1's convention.
+logging:
+  results_dir: "/scratch/boshra95/psg/unified/results/phase0_physioomni_lora"

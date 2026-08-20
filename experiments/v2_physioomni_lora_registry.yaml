@@ -1,0 +1,172 @@
+# ============================================================
+# V2 PhysioOmni LoRA Registry — Stage 2 (LoRA fine-tuning of PhysioOmni's 4 encoders)
+# ============================================================
+# Forked from experiments/v2_physioomni_registry.yaml (Stage 1) — same 4
+# Tier-1 tasks (apnea excluded, no respiratory pathway), same datasets/
+# contexts/tier/notes per task, same gradient_accumulation/
+# effective_batch=32 convention as Stage 1/SleepFM/OSF — required for a
+# fair Stage 1 vs Stage 2 comparison on identical subjects/splits AND
+# identical training dynamics. Only what's genuinely different for LoRA
+# fine-tuning changes:
+#
+#   - config/results_dir/inference_dir/logs_dir point at Stage 2's isolated
+#     paths (phase0_physioomni_lora), never overlapping Stage 1's.
+#   - **mean_pool head is absent** (plan §15.10) — lstm/transformer only
+#     for this first pass, matching OSF's own Stage 2 scoping decision
+#     (real LoRA compute cost, not worth tripling the sweep before the
+#     first two heads' numbers exist). 4 tasks x 2 heads = 8 experiments,
+#     not 12.
+#   - `batch_size: 32` + `gradient_accumulation` (effective_batch=32,
+#     context_micro_batch all at 32 -> accum_steps=1 everywhere as a
+#     starting point) — same schema and same NOT-YET-GPU-CALIBRATED
+#     caveat as Stage 1's registry / OSF's own Stage 2 registry.
+#   - `task_type` is informational only here — train_physioomni_lora.py has
+#     no --task-type flag (PhysioOmniRawEpochWindowDataset is seq2label-only
+#     for now). Kept for side-by-side readability against
+#     v2_physioomni_registry.yaml, not read by gen_commands_physioomni_lora.py.
+#
+# Use gen_commands_physioomni_lora.py (not gen_commands_physioomni.py or
+# gen_commands.py) to generate commands from this file.
+
+config: configs/phase0_physioomni_lora_config.yaml
+results_dir: /scratch/boshra95/psg/unified/results/phase0_physioomni_lora
+inference_dir: /scratch/boshra95/psg/unified/results/phase0_physioomni_lora/inference
+logs_dir: /home/boshra95/NSRR-tools-omni/logs_physioomni
+python_bin: /home/boshra95/physioomni_env/bin/python
+
+# ── Training protocol ────────────────────────────────────────────────────────
+# NOT YET GPU-CALIBRATED (plan §15.9) — starting every context at
+# micro_batch=32 (same as Stage 1/SleepFM/OSF) is an assumption, not a
+# verified fit; revisit after the first real GPU pilot (checklist 2.6) if
+# OOM is observed, lowering micro-batch and raising accum_steps to keep
+# effective_batch=32.
+gradient_accumulation:
+  enabled: true
+  effective_batch: 32
+  context_micro_batch:
+    "30s":  32
+    "10m":  32
+    "40m":  32
+    "80m":  32
+    "120m": 32
+    "240m": 32
+
+# ── Tier 1: 4 Tier-1 tasks × 2 heads = 8 experiments (apnea + mean_pool excluded) ──
+
+experiments:
+
+  # ── sex_binary (N=13,163 — APPLES, SHHS) ─────────────────────────────────
+  sex_binary_lstm:
+    task: sex_binary
+    task_type: seq2label
+    num_classes: 2
+    head: lstm
+    datasets: [apples, shhs]
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
+    batch_size: 32
+    lr: 1.0e-4
+    run_tag: ""
+    n_size: large
+    tier: 1
+    notes: "Female=1, Male=0. MrOS excluded (all-male cohort, zero variance)."
+
+  sex_binary_transformer:
+    task: sex_binary
+    task_type: seq2label
+    num_classes: 2
+    head: transformer
+    datasets: [apples, shhs]
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
+    batch_size: 32
+    lr: 1.0e-4
+    run_tag: ""
+    n_size: large
+    tier: 1
+    notes: ""
+
+  # ── sleep_efficiency_binary (N=13,615 — APPLES, SHHS, MrOS) ─────────────
+  sleep_efficiency_binary_lstm:
+    task: sleep_efficiency_binary
+    task_type: seq2label
+    num_classes: 2
+    head: lstm
+    datasets: [apples, shhs, mros]
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
+    batch_size: 32
+    lr: 1.0e-4
+    run_tag: ""
+    n_size: large
+    tier: 1
+    notes: "Sleep efficiency < 85% = 1. STAGES excluded (no eff. score available)."
+
+  sleep_efficiency_binary_transformer:
+    task: sleep_efficiency_binary
+    task_type: seq2label
+    num_classes: 2
+    head: transformer
+    datasets: [apples, shhs, mros]
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
+    batch_size: 32
+    lr: 1.0e-4
+    run_tag: ""
+    n_size: large
+    tier: 1
+    notes: ""
+
+  # ── bmi_binary (APPLES, SHHS, MrOS) ─────────────────────────────────────
+  bmi_binary_lstm:
+    task: bmi_binary
+    task_type: seq2label
+    num_classes: 2
+    head: lstm
+    datasets: [apples, shhs, mros]
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
+    batch_size: 32
+    lr: 1.0e-4
+    run_tag: ""
+    n_size: large
+    tier: 1
+    notes: "BMI >= 30 = obese (WHO definition). MrOS: visit-1 labels only."
+
+  bmi_binary_transformer:
+    task: bmi_binary
+    task_type: seq2label
+    num_classes: 2
+    head: transformer
+    datasets: [apples, shhs, mros]
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
+    batch_size: 32
+    lr: 1.0e-4
+    run_tag: ""
+    n_size: large
+    tier: 1
+    notes: ""
+
+  # ── age_class (3-class — APPLES, SHHS, MrOS) ────────────────────────────
+  age_class_lstm:
+    task: age_class
+    task_type: seq2label
+    num_classes: 3
+    head: lstm
+    datasets: [apples, shhs, mros]
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
+    batch_size: 32
+    lr: 1.0e-4
+    run_tag: ""
+    n_size: large
+    tier: 1
+    notes: "3-class: <50=0, 50-64=1, >=65=2. MrOS all class 2 (65+ cohort)."
+
+  age_class_transformer:
+    task: age_class
+    task_type: seq2label
+    num_classes: 3
+    head: transformer
+    datasets: [apples, shhs, mros]
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
+    batch_size: 32
+    lr: 1.0e-4
+    run_tag: ""
+    n_size: large
+    tier: 1
+    notes: ""

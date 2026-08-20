@@ -1358,33 +1358,268 @@ PhysioOmni's open items:
 
 ---
 
-## 15. Stage 2 (LoRA) — outline, informed by OSF's real Stage 2 lessons
+## 15. Stage 2 (LoRA) — detailed design, resolved and live-verified 2026-08-19
 
-**Per the hand-off's explicit scope, this section stays at outline level —
-target modules and staging approach, not full file specs.** What's new
-this revision is folding in real, hard-won lessons from OSF's own
-(still-in-progress) Stage 2, so PhysioOmni's eventual Stage 2 doesn't
-rediscover the same problems from scratch.
+**This revision replaces the earlier outline-only version.** Every
+previously-open design question (§15.1's "genuinely undecided" multi-
+encoder wrapping question, in particular) is now resolved below, with the
+resolution live-verified against the real checkpoint (not just reasoned
+about) before being written down. Written after re-reading
+`scripts/train_osf_lora.py`/`osf_raw_epoch_dataset.py`/
+`osf_channel_loader.py` in full (not just their docstrings) and PhysioOmni's
+own `model/neural_transformer.py`/`model/transformer.py` source directly —
+see the per-decision "verified" notes below for exactly what was checked
+and how.
 
-### 15.1 What's architecturally harder here than for OSF
+### 15.0 What we're building — one-paragraph summary (for the paper later)
 
-- **No single backbone to wrap.** OSF's Stage 2 wraps one ViT; PhysioOmni's
-  needs up to 4 separate `NeuralTransformer` instances LoRA-wrapped (either
-  independently or together under one `get_peft_model()` call over a
-  parent module holding all four) — **genuinely undecided, needs a design
-  conversation before Phase 2 starts**, not resolved by this plan.
-- **No pretrained fusion to warm-start from.** OSF's combined model is
-  `(ViT, sequence_head)` — nothing else to build. PhysioOmni needs its own
-  fusion step (the flat-concatenation from §6.3, or a small learned fusion
-  layer) between the four LoRA-adapted encoders and the sequence head —
-  genuinely new code, not a fork of anything PhysioOmni ships.
-- **LoRA target modules**: `c_attn`, `c_proj` (§3) — the natural PEFT
-  choice, but applied across up to 4×12=48 attention modules instead of
-  OSF's 12, with no existing `get_peft_model()` call anywhere in
-  PhysioOmni's repo to reference (OSF at least had the checkpoint's own
-  naming conventions as an implicit hint; PhysioOmni has nothing analogous).
+Stage 2 fine-tunes PhysioOmni's 4 frozen encoders via LoRA adapters
+(`c_attn`, `c_proj` in every attention block — the same staged LP-FT
+procedure used for OSF: Stage 1's already-trained sequence head warm-starts
+Stage 2, then LoRA-adapted encoders and the head are fine-tuned jointly).
+Architecturally, PhysioOmni's 4 independent encoders are wrapped as ONE
+combined `nn.Module` and passed through a SINGLE `peft.get_peft_model()`
+call — `peft`'s target-module matching is name-suffix-based across the
+whole module tree, so one call correctly finds and wraps all 4×12=48
+attention blocks (96 `c_attn`/`c_proj` Linear layers total) without any
+per-encoder special-casing. This was live-verified against the real
+checkpoint, not assumed. The one genuine engineering complication unique to
+PhysioOmni (not present in OSF's single-backbone case) is that different
+subjects have different *sets* of present modalities/channels (e.g. some
+STAGES subjects are missing EMG or ECG) — Stage 2 preserves Stage 1's exact
+zero-fill contract (a missing modality's encoder is never called for that
+subject; its embedding slice stays exactly zero) via a batch-level
+present/absent mask, rather than running the encoder on zero-padded input
+(which would silently change the model's behavior relative to Stage 1).
 
-### 15.2 Lessons from OSF's real Stage 2 build, applicable here
+### 15.1 Multi-encoder LoRA wrapping — RESOLVED, live-verified 2026-08-19
+
+**Decision: one `CombinedPhysioOmniLoRAModel(nn.Module)` holding all 4
+encoders (`self.eeg_encoder`, `self.eog_encoder`, `self.ecg_encoder`,
+`self.emg_encoder`) + `self.sequence_head` as submodules, wrapped by a
+SINGLE `peft.get_peft_model(combined, LoraConfig(target_modules=["c_attn",
+"c_proj"], modules_to_save=["sequence_head"], ...))` call** — direct
+extension of OSF's `CombinedOSFLoRAModel(backbone, sequence_head)` pattern
+to 4 backbones instead of 1, not a different mechanism.
+
+**Why this works (verified, not assumed):** `peft`'s `target_modules`
+matching operates on each submodule's full dotted name, matching by suffix
+— `"c_attn"` matches `eeg_encoder.blocks.3.attn.c_attn` exactly as readily
+as it matches `eog_encoder.blocks.7.attn.c_attn`. There's no
+backbone-count-awareness in the matching logic, so a single call over a
+module tree containing 4 parallel encoder branches naturally wraps all of
+them. Live-verified 2026-08-19 by constructing the real 4-encoder combined
+module from the actual `PhysioOmni.pt` checkpoint and calling
+`get_peft_model()` once:
+```
+trainable params: 289,002 || all params: 14,161,308 || trainable%: 2.04
+LoRA modules per encoder: {'eeg_encoder': 24, 'eog_encoder': 24, 'ecg_encoder': 24, 'emg_encoder': 24}
+```
+24 = 12 blocks × 2 target modules (`c_attn`, `c_proj`) per encoder, ×4
+encoders = 96 total LoRA-wrapped Linear layers — exactly the expected
+count, confirmed live. (`n_layer=12` for all 4 encoders, also confirmed
+directly from the checkpoint's `{mod}_encoder_args` — not assumed to match
+EEG's value.) Four independent `get_peft_model()` calls would produce the
+same wrapped modules with more bookkeeping (4 separate wrapped submodels,
+4 state dicts to merge) for zero functional benefit — rejected.
+
+**No separate learned fusion layer** — considered and rejected. PhysioOmni
+ships no native cross-modality fusion (the flat 500-dim concatenation from
+§6.3 is entirely our own construction, not something the checkpoint
+provides), which might suggest Stage 2 should add one. But the sequence
+head (LSTM/Transformer/MeanPool) already sits on the concatenated 500-dim
+vector and already performs cross-modality fusion at every timestep before
+temporal aggregation — a separate fusion layer would be redundant and
+would blur what "the LoRA condition" means (adapting the pretrained model
+vs. adding a new randomly-initialized component). Concatenation stays
+exactly as-is from Stage 1.
+
+### 15.2 Missing-modality handling — batch-level present-mask, not zero-input-forward
+
+**The one genuinely new engineering problem PhysioOmni's Stage 2 has that
+OSF's didn't**: OSF's raw signal is always exactly `[12, n_samples]` per
+subject (missing channels are zero-filled at the raw level, see
+`osf_channel_loader.load_and_resample_channels`), so every subject in a
+batch has an identical tensor shape and the combined model's `forward()`
+can naively reshape `[B,N,C,T] -> [B*N,C,T]` and run everything through one
+backbone call. PhysioOmni's raw channels are NOT zero-filled at Stage 1 —
+a modality with zero real channels is skipped entirely (`if not
+channel_list: ... continue`, `extract_physioomni_embeddings.py` line ~248),
+leaving that modality's embedding slice at literal zero with no encoder
+forward pass ever run. Different subjects have genuinely different
+*channel-presence patterns* (confirmed in the real extraction logs —
+e.g. some STAGES subjects logged `zero-filled: ['EMG']` or `['ECG']`),
+which a batched `[B,...]` tensor can't represent directly the way OSF's
+uniform 12-channel case can.
+
+**Decision: preserve Stage 1's exact zero-fill contract via a batch-level
+presence mask, not by feeding zero-valued raw signal through the encoder.**
+For each modality, `CombinedPhysioOmniLoRAModel.forward()`:
+1. Builds a boolean `present[b]` for each subject `b` in the batch (True if
+   that subject has ≥1 real channel for this modality — a per-subject,
+   whole-recording property, constant across all of that subject's windows,
+   so it's attached once per subject by the raw-signal cache/dataset, not
+   recomputed per window).
+2. Selects only the present subjects' epochs (`x[present]`), runs them
+   through that modality's LoRA-adapted encoder (chunk-batched exactly like
+   Stage 1's `chunk_batch_size` pattern), and scatters the resulting CLS
+   outputs into the correct rows/columns of the `[B, N, 500]` embedding
+   tensor.
+3. Leaves `emb[~present, :, slot_start:slot_end]` at exactly zero — no
+   forward pass, no gradient, identical behavior to Stage 1's embeddings
+   for that modality/subject.
+
+This is more engineering than OSF's case needed (a real instance of what
+§15.1's old text flagged as "genuinely harder here"), but it's the
+correct thing to do — feeding zero-valued raw signal through the encoder
+instead would produce a *non-zero* learned output (transformers with
+position embeddings and a CLS token don't map all-zero input to all-zero
+output), silently diverging from what Stage 1's embeddings — and every
+frozen-condition result already computed — actually represent for that
+subject.
+
+### 15.3 Raw signal cache — per-subject, per-slot files (not a single unified matrix)
+
+**OSF's raw signal cache is one `[12, n_samples_64]` array per subject**
+(`osf_channel_loader.save_signal_cache`/`load_signal_cache`) because every
+subject has the same 12 channels (zero-filled if actually missing) at the
+same 64Hz rate. **This doesn't transfer to PhysioOmni directly**: channels
+are genuinely present-or-absent (not zero-filled) per subject, channel
+*count* varies (EEG has 1 or 2 channels depending on cohort — SHHS gets 1,
+per §4.5's final decision), and different modalities run at different
+native rates (EEG/EOG at 200Hz, ECG/EMG at 500Hz, per §5.1) — no single
+fixed-shape array covers all of that.
+
+**Decision: one cache directory per subject, one `.npy` file per present
+channel-slot, plus a small `meta.json`.**
+```
+{raw_cache_dir}/{dataset}/{subject_id}/
+    EEG_C3.npy      (float16, 200Hz, only if present)
+    EEG_C4.npy      (float16, 200Hz, only if present — omitted for SHHS, §4.5)
+    EOG_HEO.npy     (float16, 200Hz, only if both LOC and ROC were present)
+    ECG.npy         (float16, 500Hz, only if present)
+    EMG.npy         (float16, 500Hz, only if present)
+    meta.json       {"t_epochs": <int>, "slots_found": {...}, "slots_missing": [...]}
+```
+Directly mirrors `physioomni_channel_loader.load_subject_signals()`'s
+existing return structure (`{"EEG": [(label, arr), ...], ...}`) — the
+cache IS that structure, persisted, so building/reading it needs no new
+data-shape design, just serialization. `t_epochs` (the same `min(...)`
+computation Stage 1's extraction already does) is stored directly in
+`meta.json` so shape lookups never need to open an array (cheaper than
+even OSF's own `get_cached_epoch_count`, which still does a shape-only
+`np.load(mmap_mode="r")`).
+
+**Scope: apples + shhs + mros only (13,481 subjects), NOT stages.** None
+of PhysioOmni's 4 Tier-1 tasks (`v2_physioomni_registry.yaml`) use STAGES
+— apnea (the only task that would need it) is already excluded for
+PhysioOmni entirely (no respiratory pathway). Building the cache for
+STAGES' 1,513 subjects would be pure wasted compute. This is a real,
+concrete scope reduction relative to OSF's own cache (which covers all 4
+datasets since OSF's apnea task does use STAGES).
+
+**Precompute is CPU-only, offline, built BEFORE any training job** — direct
+answer to the standing instruction not to bury slow preprocessing inside
+GPU training jobs (many training jobs would each redo it otherwise).
+`load_subject_signals()` is pure `h5py`/`numpy`/`scipy.signal.resample` —
+no GPU dependency at all, same as OSF's precompute script. Sharded via CPU
+SLURM jobs (`--account=def-forouzan`, matching every other CPU-only job in
+this project), NOT run on the login node.
+**Wall-time is not assumed to match OSF's own precompute numbers** (OSF:
+1104 APPLES subjects in 5.1 min at `--num-workers 8`, CPU-only) —
+PhysioOmni's FFT-based `scipy.signal.resample` (needed since 128→200Hz and
+128→500Hz have no exact-decimation shortcut, unlike OSF's clean 128→64Hz
+2:1 case) is more expensive per sample than OSF's array-slice
+decimation, so this could plausibly be slower. Time the first real shard
+before assuming a total wall-time budget for the rest.
+
+### 15.4 Raw-signal dataset class
+
+`PhysioOmniRawEpochWindowDataset` — same split-matching discipline as
+`OSFRawEpochWindowDataset` (§15.7 below), same windowing arithmetic
+(`_build_seq2label_index`, `SubjectGroupedSampler`, K-sampling by split),
+copied near-verbatim from that file since it's pure integer arithmetic
+over `T`/`N`, unrelated to what's actually stored per epoch. The real
+difference from OSF's version: `__getitem__` returns a dict of per-modality
+raw windows (not one `[N,12,1920]` tensor), since channel presence varies
+per subject:
+```python
+{
+  "EEG": (x_eeg, chan_labels_eeg),   # x_eeg: [n_eeg_chans, N, 200] or None if absent
+  "EOG": (x_eog, ["HEO"]) or None,
+  "ECG": (x_ecg, ["ECG"]) or None,
+  "EMG": (x_emg, ["EMG"]) or None,
+  "mask": bool[N],                    # True = right-padded position (recording too short)
+}, label
+```
+`collate_fn` (custom, like `PhysioOmniContextWindowDataset`'s own) batches
+this into the `present[b]`-masked structure §15.2's `forward()` expects —
+NOT `torch.utils.data.default_collate`, which can't handle the
+per-subject-varying tuple/`None` structure. Reads only from the §15.3
+cache — never the raw HDF5 — same as `OSFRawEpochWindowDataset`.
+
+**Split-matching discipline — copied from OSF's real, previously-live bug
+fix (§15.7), not theoretical here either**: filter subjects by "has a
+Stage 1 PhysioOmni embedding file" FIRST (existence check only, contents
+never read), before separately checking the Stage 2 raw-signal cache for
+actually reading data. `np.random.default_rng(split_seed).shuffle()`
+produces a completely different permutation if the filtered population
+differs by even one subject — this must exactly match
+`PhysioOmniContextWindowDataset`'s (Stage 1's) subject pool at
+split-computation time, for the frozen-vs-LoRA comparison to be valid.
+
+### 15.5 Combined model forward() — position-ID construction is duplicated, not shared
+
+`CombinedPhysioOmniLoRAModel.forward()` needs the same per-modality
+patch-reshape + `input_chans`/`input_times` position-ID construction
+`extract_physioomni_embeddings.py`'s `_modality_forward()` already does —
+but that function wraps its encoder call in `with torch.no_grad():`,
+which is wrong for Stage 2 (LoRA gradients must flow through it).
+
+**Decision: duplicate the ~20-line patch/position-ID logic into
+`train_physioomni_lora.py` directly, rather than factor it into the shared
+channel-loader module.** This deliberately follows OSF's own stated
+precedent (`train_osf_lora.py`'s `load_osf_backbone()` docstring: "single
+~15-line function... duplicated rather than imported... unlike the
+channel-loading logic, which was genuinely at risk of drifting out of
+sync") — a small, single-purpose function used in exactly two places (one
+`no_grad`, one not) is lower total risk to duplicate carefully than to
+factor out and thread a `grad_enabled` flag through, especially since
+`extract_physioomni_embeddings.py` is an already-verified, already-in-
+production script actively feeding real completed training runs
+(checklist 1.10) — not touching it at all is the safest choice here.
+**Also chunk-batches epochs the identical way Stage 1 does** (`chunk_batch_size`
+epochs at a time as the batch dimension, each epoch independently
+patchified with its own position-ID sequence reset per channel) — this is
+load-bearing, not a style choice: PhysioOmni's positional-embedding tables
+(`pos_embed = nn.Embedding(256, ...)`, `time_embed = nn.Embedding(512,
+...)`) are sized for one epoch's own token layout, never a multi-epoch
+concatenated sequence (confirmed directly from `neural_transformer.py`,
+consistent with §19's already-documented native-context-ceiling finding).
+Concatenating multiple epochs into one long per-item token sequence
+instead of batching them would both exceed these tables' sizes for longer
+contexts AND not match how the pretrained model was ever used.
+
+### 15.6 Warm-start / LP-FT staging — identical to OSF's resolved design
+
+Same mechanism as OSF's `warm_start_head_from_stage1()` /
+`warm_start_from_stage2_30s()`, reused conceptually (own PhysioOmni
+implementation, not imported — different checkpoint format): **30s always
+warm-starts the sequence head from Stage 1's frozen-backbone checkpoint**
+(`configs/phase0_physioomni_config.yaml`'s `results_dir`); **every other
+context length warm-starts LoRA+head together from that same (task,
+head)'s own already-converged 30s Stage 2 checkpoint** (branch, not a
+chain — compute scales ~linearly with context length here too, likely
+worse than OSF's given up to 4 encoder forward passes per epoch instead of
+1, not yet measured). `peft`'s `modules_to_save` wraps `sequence_head` in a
+`ModulesToSaveWrapper` (`.original_module` + `.modules_to_save["default"]`)
+— the Stage-1-checkpoint warm-start must load into both copies explicitly,
+exactly the gotcha OSF's checklist 2.3 already found and fixed; the
+Stage-2-30s warm-start is already in `peft`'s own state-dict format
+(`get_peft_model_state_dict`/`set_peft_model_state_dict` round-trip), no
+special handling needed, same as OSF.
+
+### 15.7 Lessons from OSF's real Stage 2 build, applicable here
 
 Read directly from `docs/TSFM_OSF_IMPLEMENTATION_PLAN.md`'s Phase 2
 checklist (items 2.1-2.5d) and `docs/OSF_EXPERIMENTS_GUIDE.md`'s Step 8 —
@@ -1469,7 +1704,7 @@ concrete, dated findings, not speculation:
   side-by-side-diff it against Stage 1's own config/script for every
   training-loop option**, not just the ones that seem architecture-relevant.
 
-### 15.3 Memory mitigation ladder (unchanged from OSF's, apply in this order)
+### 15.8 Memory mitigation ladder (unchanged from OSF's, apply in this order)
 
 1. Gradient checkpointing through each encoder's transformer blocks.
 2. Request a larger GPU memory allocation.
@@ -1477,7 +1712,7 @@ concrete, dated findings, not speculation:
    context length, keep the frozen condition (Stage 1) at all 6 lengths,
    state the compute ceiling explicitly.
 
-### 15.4 Wall-time/compute budget — unknown, do not assume, do not
+### 15.9 Wall-time/compute budget — unknown, do not assume, do not
 extrapolate from OSF's numbers
 
 OSF's own Stage 2 wall-time tables are themselves still uncalibrated
@@ -1487,6 +1722,38 @@ one that accounts for PhysioOmni's up-to-4-encoder structure. Run a short
 real pilot (few epochs, smallest context, actual GPU allocation) before
 committing to any `--time` budget, same discipline OSF's own plan already
 states for itself.
+
+### 15.10 Scope for this round
+
+Same 4 Tier-1 tasks as Stage 1 (sex, sleep efficiency, BMI, age — apnea
+still excluded, no respiratory pathway). **`lstm`/`transformer` heads only
+for the first pass, `mean_pool` deferred** — matches OSF's own Stage 2
+scoping decision (real LoRA compute cost, not worth tripling the sweep
+before the first two heads' numbers exist). All 6 context lengths per
+(task, head), but only 30s is independently trained from Stage 1's
+warm-start — 10m/40m/80m/120m/240m all branch from that same (task,
+head)'s own 30s LoRA checkpoint (§15.6), so the "12 experiments" from
+Stage 1's registry becomes effectively "8 (task,head) pairs × 6 contexts =
+48 training runs" here, not 12×6=72 — `mean_pool`'s absence and the
+warm-start branching both reduce real compute relative to a naive reading
+of the registry.
+
+**New files this phase** (mirrors the file list style already in this
+plan's earlier sections):
+
+| File | Role |
+|---|---|
+| `src/nsrr_tools/datasets/physioomni_channel_loader.py` (extended, not replaced) | Add `cache_path_for`/`save_signal_cache`/`load_signal_cache`/`load_meta`-equivalent functions (§15.3) alongside the existing Stage 1 functions — same file, since both stages' loading logic must never drift apart |
+| `scripts/precompute_physioomni_raw_signal_cache.py` | Offline, CPU-only, builds §15.3's per-subject-per-slot cache — run before any Stage 2 training job |
+| `jobs/precompute_physioomni_raw_signal_cache.sh` | CPU-only SLURM job (`--account=def-forouzan`, mirrors `jobs/precompute_osf_raw_signal_cache.sh` / this repo's own `extract_physioomni_embeddings_cpu.sh`) |
+| `src/nsrr_tools/datasets/physioomni_raw_epoch_dataset.py` | `PhysioOmniRawEpochWindowDataset` + `SubjectGroupedSampler` + custom `collate_fn` (§15.4) |
+| `configs/phase0_physioomni_lora_config.yaml` | Forked from `phase0_physioomni_config.yaml`, adds `lora:` section + `data.raw_signal_cache_dir` + `dataset.stage1_embedding_dir` |
+| `scripts/train_physioomni_lora.py` | `CombinedPhysioOmniLoRAModel` (§15.1/15.2/15.5) + warm-start logic (§15.6) + sweep `main()`, reusing `run_epoch`/`compute_metrics`/`compute_monitor_metric`/`append_to_summary`/`_classify_failure` imported from `train_physioomni_context_sweep.py` (same reuse pattern as `train_osf_lora.py`) |
+| `jobs/train_physioomni_lora_gpu.sh` | GPU job script, same auto-resume mechanism as every other job script in this project |
+| `scripts/infer_physioomni_lora_subject_windows.py` | Live-backbone inference (raw signal in, not precomputed embeddings) |
+| `jobs/infer_physioomni_lora_subject_windows_gpu.sh` | GPU job script |
+| `experiments/v2_physioomni_lora_registry.yaml` | 8 `(task, head)` entries (4 tasks × lstm/transformer) |
+| `scripts/gen_commands_physioomni_lora.py` | Structural fork of `gen_commands_osf_lora.py`, pointed at the new registry/job scripts |
 
 ---
 
@@ -1844,21 +2111,76 @@ code/branch work, which this revision is not).
       doc as 1.10/1.11/1.12 progress and as problems get found/fixed**,
       same convention as `docs/OSF_EXPERIMENTS_GUIDE.md`.
 
-### Phase 2 — Stage 2 (LoRA), outline only per §15 — refine once Phase 1 runs
-- [ ] 2.1 Resolve the multi-encoder LoRA-wrapping design question (§15.1)
-      with the user before writing code
-- [ ] 2.2 Implement the shared raw-signal-cache extension to the channel
-      loader (§15.2) and an offline precompute script, from the start —
-      do not wait for a stalled-job discovery the way OSF did
-- [ ] 2.3 Implement `scripts/train_physioomni_lora.py`, filtering subjects
-      by Stage-1-embedding-file existence first (§15.2's split-matching
-      lesson), reusing Stage 1's `run_epoch`/etc. functions per §10
-- [ ] 2.4 Short wall-time pilot at the smallest context length —
-      **user checkpoint** before the full sweep
-- [ ] 2.5 Full three-way config/argparse audit against Stage 1 and OSF's
-      Stage 2 (§15.2's lesson) before trusting the config's stated options
-- [ ] 2.6 Run the full Stage 2 sweep, applying the memory-mitigation
-      ladder (§15.3) and warm-start-from-shortest-context pattern (§15.2)
+### Phase 2 — Stage 2 (LoRA), detailed design per §15 (2026-08-19)
+- [x] 2.1 Resolve the multi-encoder LoRA-wrapping design question (§15.1)
+      — **done 2026-08-19, live-verified** against the real checkpoint
+      (single `CombinedPhysioOmniLoRAModel` + single `get_peft_model()`
+      call, 96 LoRA-wrapped Linear layers across all 4 encoders confirmed
+      by direct construction, not reasoned about in the abstract). No user
+      design conversation was needed in the end — `peft`'s name-suffix
+      matching resolved it mechanically once actually tested.
+- [x] 2.2 Implement the shared raw-signal-cache extension to the channel
+      loader (§15.3) and an offline precompute script + CPU-only job —
+      **done 2026-08-19.** Added `cache_subject_dir`/`save_signal_cache`/
+      `load_signal_cache`/`load_meta`/`get_cached_t_epochs`/`cache_exists`
+      to `physioomni_channel_loader.py`, live round-trip tested (synthetic
+      signals dict → save → load, shapes/values/dtypes verified byte-exact
+      modulo float16 precision). `scripts/precompute_physioomni_raw_signal_cache.py`
+      + `jobs/precompute_physioomni_raw_signal_cache.sh` (CPU-only,
+      `--account=def-forouzan`, mirrors `precompute_osf_raw_signal_cache.sh`).
+      Scope: apples+shhs+mros only (13,481 subjects), not stages (§15.3) —
+      not yet run for real (that's checklist 2.6's prerequisite).
+- [x] 2.3 Implement `src/nsrr_tools/datasets/physioomni_raw_epoch_dataset.py`
+      (§15.4) — **done 2026-08-19.** `PhysioOmniRawEpochWindowDataset` +
+      `SubjectGroupedSampler` + `physioomni_lora_collate_fn` +
+      `PhysioOmniLoRABatch` (a tiny wrapper implementing only `.to(device)`/
+      `.size(0)`, so Stage 2's per-modality-grouped raw batches — genuinely
+      not a fixed-shape tensor, §15.2 — flow through
+      `train_physioomni_context_sweep.py`'s `run_epoch()` completely
+      unmodified: that function's only two touches on its `x` argument are
+      exactly those two calls). Filters subjects by Stage-1-embedding-file
+      existence first (§15.7's split-matching lesson). `collate_fn`'s
+      channel-count grouping (EEG: 1 vs. 2 channels, §4.5) live-tested with
+      synthetic batches — verified correct grouping/shapes/batch_idx
+      assignment for a 3-subject batch with mixed EEG channel counts and
+      mixed EOG/ECG/EMG presence. **The subject-list/split logic itself
+      also live-verified against the real config and real `sex_binary`
+      task CSV** (not synthetic): 11,400 total subjects in the CSV,
+      correctly filtered to 9,548 by Stage-1-embedding existence (exactly
+      matching apples 1104 + shhs 8444, checklist 1.10's real population),
+      correct 70% train split (6,683) — then correctly raised
+      `FileNotFoundError` with a clear, actionable message once it checked
+      for the (not-yet-built) raw-signal cache, exactly the designed
+      fail-loud behavior rather than a silent wrong-data bug.
+- [x] 2.4 Implement `scripts/train_physioomni_lora.py` (§15.5/15.6) —
+      **done 2026-08-19, live-verified end-to-end against the real
+      checkpoint** (not just unit-tested pieces). `CombinedPhysioOmniLoRAModel`
+      with batch-level present-mask handling (§15.2: absent modalities get
+      zero embedding slices with no encoder forward pass, matching Stage
+      1's exact contract) and warm-start logic (§15.6). A full synthetic
+      forward+backward pass (3 subjects, mixed 1-/2-channel EEG, mixed
+      EOG/ECG/EMG presence, real 4-encoder `peft`-wrapped model) produced
+      correctly-shaped logits, a finite loss, **and confirmed LoRA
+      gradients flowed into all target modules and sequence_head
+      gradients flowed too** — the hardest, most novel part of this
+      design (reshape/position-ID construction + gradient-preserving
+      scatter-write into the embedding tensor) is real-checkpoint-verified,
+      not just reasoned about.
+- [x] 2.5 `experiments/v2_physioomni_lora_registry.yaml` +
+      `scripts/gen_commands_physioomni_lora.py` (§15.10 scope: 8
+      `(task,head)` pairs, lstm/transformer only, mean_pool deferred) —
+      **done 2026-08-19**, verified live: `list` shows all 8 experiments
+      correctly (all `pending`, as expected — no Stage 2 training has run
+      yet), `train`/`status` produce correct commands/output.
+- [ ] 2.6 Short wall-time pilot at the smallest context length (§15.9) —
+      **user checkpoint** before the full sweep. Prerequisite: run
+      `jobs/precompute_physioomni_raw_signal_cache.sh` for real first
+      (checklist 2.2's script, not yet executed against real data).
+- [ ] 2.7 Full three-way config/argparse audit against Stage 1 and OSF's
+      Stage 2 (§15.7's lesson) before trusting the config's stated options
+- [ ] 2.8 Run the full Stage 2 sweep (§15.10: 48 training runs — 8
+      `(task,head)` × 6 contexts, only 30s independently trained per
+      pair), applying the memory-mitigation ladder (§15.8) if needed
 
 ### Phase 3 — Results
 - [ ] 3.1 Compile Stage 1 + Stage 2 results against `phase0_v3`

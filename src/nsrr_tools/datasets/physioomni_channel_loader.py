@@ -55,6 +55,7 @@ self-calibrates per channel using that channel's own stored std, rather
 than a hardcoded per-channel-name table.
 """
 
+import json
 from pathlib import Path
 
 import h5py
@@ -185,7 +186,6 @@ def load_subject_signals(h5_path, channel_candidates: dict) -> tuple[dict, dict]
 
     with h5py.File(h5_path, "r") as hf:
         available = set(hf.keys())
-        import json
         norm_stats = json.loads(hf.attrs["normalization_stats"])
         source_hz = float(hf.attrs.get("sampling_rate", 128))
 
@@ -258,3 +258,117 @@ def get_epoch_count(h5_path, source_hz_attr: str = "sampling_rate") -> int:
         n_samples = hf[keys[0]].shape[0]
         source_hz = float(hf.attrs.get(source_hz_attr, 128))
     return int(n_samples / source_hz / EPOCH_SECONDS)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Raw signal cache (Phase 2/Stage 2 — plan §15.3) — precomputed once, offline,
+# reused by every Stage 2 training/inference job instead of re-reading the
+# raw HDF5 + re-resampling on every __getitem__.
+#
+# Unlike OSF's raw signal cache (osf_channel_loader.save_signal_cache/
+# load_signal_cache — one fixed-shape [12, n_samples_64] matrix per subject,
+# since every subject has the same 12 channels at the same rate, zero-filled
+# if actually missing), PhysioOmni's channels are genuinely PRESENT-OR-ABSENT
+# per subject (never zero-filled at this stage — see load_subject_signals'
+# docstring), channel COUNT varies (EEG: 1 or 2), and different modalities
+# run at different native rates (EEG/EOG 200Hz, ECG/EMG 500Hz) — no single
+# fixed-shape array can hold all of that. Instead: one small .npy per PRESENT
+# channel-slot, plus a meta.json — directly mirrors load_subject_signals()'s
+# own {modality: [(label, arr), ...]} return structure, persisted, so
+# building/reading the cache needs no new data-shape design.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# (modality, label) -> cache filename. Fixed order matters: iterating this
+# dict in insertion order reproduces load_subject_signals()' own EEG
+# ordering (C3 before C4) when reconstructing the signals dict on load.
+_CACHE_SLOT_FILENAMES = {
+    ("EEG", "C3"):  "EEG_C3.npy",
+    ("EEG", "C4"):  "EEG_C4.npy",
+    ("EOG", "HEO"): "EOG_HEO.npy",
+    ("ECG", "ECG"): "ECG.npy",
+    ("EMG", "EMG"): "EMG.npy",
+}
+
+
+def cache_subject_dir(cache_dir, dataset: str, subject_id: str) -> Path:
+    """Path convention for one subject's cached signals:
+    {cache_dir}/{dataset}/{subject_id}/ (a directory, not a single file —
+    holds one .npy per present channel-slot plus meta.json)."""
+    return Path(cache_dir) / dataset / subject_id
+
+
+def save_signal_cache(cache_dir, dataset: str, subject_id: str,
+                       signals: dict, fill_info: dict) -> int:
+    """Persist one subject's already-loaded/resampled/denormalized signals
+    (load_subject_signals()' own return value) to the cache, as float16
+    (halves storage; PhysioOmni-ready signal is not raw-amplitude-precision-
+    sensitive at the ~3-decimal-digit level, same precedent as Stage 1's
+    own float16 embedding storage and OSF's float16 raw-signal cache).
+
+    Returns t_epochs (min epoch count across present channels — the same
+    `min(...)` computation extract_physioomni_embeddings.py's
+    extract_subject_embeddings() already does), also written into meta.json
+    so shape lookups never need to open an array (cheaper than even OSF's
+    own get_cached_epoch_count, which still does a shape-only mmap read).
+    """
+    subj_dir = cache_subject_dir(cache_dir, dataset, subject_id)
+    subj_dir.mkdir(parents=True, exist_ok=True)
+
+    epoch_counts = []
+    for modality, chans in signals.items():
+        for label, arr in chans:
+            fname = _CACHE_SLOT_FILENAMES.get((modality, label))
+            if fname is None:
+                raise ValueError(
+                    f"Unexpected (modality, label) from load_subject_signals: "
+                    f"({modality!r}, {label!r}) — not in _CACHE_SLOT_FILENAMES."
+                )
+            np.save(subj_dir / fname, arr.astype(np.float16))
+            epoch_counts.append(len(arr) // (EPOCH_SECONDS * NATIVE_HZ[modality]))
+
+    t_epochs = min(epoch_counts) if epoch_counts else 0
+    meta = {"t_epochs": t_epochs, **fill_info}
+    with open(subj_dir / "meta.json", "w") as f:
+        json.dump(meta, f)
+    return t_epochs
+
+
+def load_meta(cache_dir, dataset: str, subject_id: str) -> dict:
+    """Read one subject's meta.json (t_epochs + fill_info) — no array
+    touched at all, cheapest possible shape/fill-info lookup."""
+    subj_dir = cache_subject_dir(cache_dir, dataset, subject_id)
+    with open(subj_dir / "meta.json") as f:
+        return json.load(f)
+
+
+def get_cached_t_epochs(cache_dir, dataset: str, subject_id: str) -> int:
+    """Fast epoch-count lookup for a cached subject — reads only meta.json."""
+    return load_meta(cache_dir, dataset, subject_id)["t_epochs"]
+
+
+def load_signal_cache(cache_dir, dataset: str, subject_id: str) -> dict:
+    """Reconstruct one subject's signals dict — SAME shape
+    load_subject_signals() returns ({"EEG": [(label, arr), ...], "EOG": [...],
+    "ECG": [...], "EMG": [...]}) — from the cache, instead of re-reading the
+    raw HDF5. Arrays are read fully into memory as float32 (matching
+    load_subject_signals' own return dtype) — same design as OSF's
+    load_signal_cache: the win is avoiding repeated HDF5-read + channel-
+    mapping + FFT-resample work across every window of the same subject,
+    not out-of-core streaming, so a full per-subject read (not a lazy mmap
+    slice) is the right tradeoff here, same as OSF's own precedent.
+    """
+    subj_dir = cache_subject_dir(cache_dir, dataset, subject_id)
+    signals = {"EEG": [], "EOG": [], "ECG": [], "EMG": []}
+    for (modality, label), fname in _CACHE_SLOT_FILENAMES.items():
+        p = subj_dir / fname
+        if p.exists():
+            arr = np.load(p).astype(np.float32)
+            signals[modality].append((label, arr))
+    return signals
+
+
+def cache_exists(cache_dir, dataset: str, subject_id: str) -> bool:
+    """Whether a subject's cache is complete enough to use — meta.json is
+    written last by save_signal_cache, so its presence implies every
+    channel .npy for that subject was already written successfully."""
+    return (cache_subject_dir(cache_dir, dataset, subject_id) / "meta.json").exists()
