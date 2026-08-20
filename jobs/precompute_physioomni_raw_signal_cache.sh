@@ -1,9 +1,9 @@
 #!/bin/bash
 #SBATCH --job-name=physioomni_raw_signal_cache
 #SBATCH --account=def-forouzan
-#SBATCH --time=08:00:00
+#SBATCH --time=02:00:00
 #SBATCH --cpus-per-task=16
-#SBATCH --mem=32000M
+#SBATCH --mem=64000M
 #SBATCH --signal=B:USR1@120
 #SBATCH --output=/home/boshra95/NSRR-tools-omni/logs_physioomni/precompute_cache_%x_%j.out
 #SBATCH --error=/home/boshra95/NSRR-tools-omni/logs_physioomni/precompute_cache_%x_%j.err
@@ -44,6 +44,14 @@
 # is plausibly slower per-sample than OSF's own precompute (1104 APPLES
 # subjects in 5.1 min at --num-workers 8). Time the first real shard
 # before assuming a total budget for the rest (plan §15.3).
+#
+# --mem=64000M (raised 2026-08-20 from 32000M): the [9000:13481] shard
+# (mostly MrOS — longer recordings than apples/shhs) OOM-killed twice at
+# 32000M/16 workers, once even running completely alone on its node (no
+# co-located sibling job) — confirmed a real per-job memory-sizing issue,
+# not just cross-job filesystem contention. Node capacity is 768GB, so
+# there's plenty of room; 16 workers' concurrent scipy.signal.resample
+# buffers on MrOS's longer signals were exceeding the old 32GB request.
 
 set -e
 
