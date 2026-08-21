@@ -141,18 +141,36 @@ lora:
   modules_to_save: ["sequence_head"]
 
 # ── Training ─────────────────────────────────────────────────────────────────
-# Kept at Stage 1's own original placeholder values (NOT OSF's already-
-# pilot-tuned numbers — those were derived from OSF's own real training
-# curve, not a universal LoRA recipe) — revisit once PhysioOmni's own
-# pilot (checklist 2.6) shows a real curve, same discipline OSF's plan
-# already documents for itself.
+# Revised 2026-08-21 based on PhysioOmni's OWN real pilot curve (30s,
+# sex_binary/lstm, jobs 55842503+55861216), NOT copied from OSF's numbers.
+# OSF's epochs=18/lr=5e-5/patience=5 revision was grounded in OSF's own
+# curve (overfitting: best at epoch 9, declining through 16). PhysioOmni's
+# curve looked different — still improving every epoch through epoch 4
+# (val_auroc 0.6615->0.6679->0.6721->0.6743, all new-best, patience 0/10),
+# with epoch 5 posting the first (small) decline (0.6723, patience 1/10) —
+# no overfitting signature, just per-epoch gains already shrinking fast
+# (+0.0064, +0.0042, +0.0022, -0.0020). That trend, not OSF's curve, is
+# what justifies epochs/patience below.
+#
+# The real driver for this revision is wall-clock time, not overfitting:
+# at ~1hr/epoch observed for 30s (the fastest context, most items/epoch),
+# epochs=40/patience=10 could run 25-40+ hours per single (task, head,
+# context) combo across dozens of combos — not sustainable. epochs=25 caps
+# the pathological case; patience=5 will likely be the actual binding
+# constraint well before 25, given the shrinking-gains trend above.
+#
+# lr is DELIBERATELY left at 1e-4, NOT halved to OSF's 5e-5: a lower lr
+# would need MORE epochs to converge, working against the time-reduction
+# goal here, and unlike OSF we have no evidence yet of an lr-driven
+# instability problem to fix. Revisit lr only if a future run's curve
+# shows real noise/instability rather than a clean plateau.
 training:
-  epochs: 40
+  epochs: 25
   lr: 1.0e-4
   weight_decay: 1.0e-3
   optimizer: "adamw"    # NOTE: not actually read by train_physioomni_lora.py — hardcoded to plain Adam, same as train_physioomni_context_sweep.py.
   scheduler: "cosine"   # NOTE: not actually read either — hardcoded to CosineAnnealingLR (same as Stage 1).
-  early_stopping_patience: 10
+  early_stopping_patience: 5
   device: "cuda"         # NOTE: not actually read — device comes from --cpu / torch.cuda.is_available() (same as Stage 1).
   mixed_precision: false
   class_weights: "auto"

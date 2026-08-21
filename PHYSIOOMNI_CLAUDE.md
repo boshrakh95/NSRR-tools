@@ -337,6 +337,34 @@ found and fixed** (see plan doc checklist 2.6 for full detail):
    240m (the context with real evidence it's needed) via an explicit
    `--gpus=` override — every other context keeps the cheaper `2g.20gb`
    default the user had already set.
+7. **Training budget revised 2026-08-21** (`epochs: 40->25`,
+   `early_stopping_patience: 10->5` in
+   `configs/phase0_physioomni_lora_config.yaml`) — grounded in
+   PhysioOmni's OWN 30s pilot curve, not copied from OSF's revision
+   (OSF's 40->18/10->5/1e-4->5e-5 was grounded in OSF's own overfitting
+   curve, best at epoch 9, declining through 16). PhysioOmni's 30s curve
+   (sex_binary/lstm) was still improving every epoch through epoch 4
+   (val_auroc 0.6615->0.6743, all new-bests, patience 0/10), with only a
+   small first decline at epoch 5 (0.6723, patience 1/10) — no
+   overfitting signature, but per-epoch gains were already shrinking fast
+   (+0.0064, +0.0042, +0.0022, -0.0020). The real driver for revising was
+   wall-clock time (~1hr/epoch observed at 30s, the fastest context —
+   unsustainable at 40 epochs/patience-10 across ~48 runs), not
+   overfitting. `lr` deliberately left at `1.0e-4` (NOT halved like
+   OSF's) — a lower lr needs more epochs, working against the
+   time-reduction goal, and there's no PhysioOmni evidence yet of an
+   lr-driven instability problem. Full reasoning: plan doc §15.11.
+   **Applies to the already-running 30s job on its next auto-resubmit**
+   (config re-read fresh via `--config` each time), not just new jobs.
+
+**Known open bug, not yet fixed**: the warm-start readiness check in
+`train_physioomni_lora.py` (auto-detecting whether a 30s LoRA checkpoint
+is ready for other contexts to warm-start from) checks `best_model.pt`
+existence, which is written incrementally from epoch 1 — should check
+`metrics.json` existence instead (written once, only at true completion).
+Confirmed real via a live incident where a longer context started
+warm-starting from an unconverged, still-early 30s checkpoint. Fix
+recommended, not yet applied.
 
 ## Native context ceiling / Plan A decision (2026-08-18)
 

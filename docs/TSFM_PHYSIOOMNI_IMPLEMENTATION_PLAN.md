@@ -1755,6 +1755,55 @@ Stage 1's registry becomes effectively "8 (task,head) pairs × 6 contexts =
 warm-start branching both reduce real compute relative to a naive reading
 of the registry.
 
+### 15.11 Training budget (epochs/lr/patience) — REVISED 2026-08-21, grounded
+in PhysioOmni's own curve, not copied from OSF
+
+OSF's own Stage 2 revised its placeholder training budget
+(`epochs: 40->18, lr: 1.0e-4->5.0e-5, early_stopping_patience: 10->5`,
+`configs/phase0_osf_lora_config.yaml`) based on OSF's own real pilot curve:
+best val_auroc at epoch 9, declining/noisy through epoch 16 while train
+kept climbing — a clear overfitting signature. **PhysioOmni's own 30s
+pilot (sex_binary/lstm, jobs 55842503+55861216) does NOT show the same
+signature** — copying OSF's numbers here would not have been justified by
+evidence:
+
+```
+Epoch 1: val_auroc=0.6615*  patience=0/10
+Epoch 2: val_auroc=0.6679*  patience=0/10
+Epoch 3: val_auroc=0.6721*  patience=0/10
+Epoch 4: val_auroc=0.6743*  patience=0/10
+Epoch 5: val_auroc=0.6723   patience=1/10  (first, small decline)
+```
+
+Still improving every epoch through epoch 4, all new-bests, patience never
+above 0 until epoch 5's small dip — no train/val divergence like OSF's.
+What the curve does show: per-epoch gains shrinking fast (+0.0064, +0.0042,
++0.0022, -0.0020), consistent with an approaching plateau even without
+overfitting yet.
+
+**The actual driver for revising this config was wall-clock time, not
+overfitting**: at the observed ~1hr/epoch for 30s (the fastest context,
+most items/epoch of the sweep), `epochs=40, patience=10` risks 25-40+
+hours per single (task, head, context) combo across ~48 runs — not
+sustainable. Applied to `configs/phase0_physioomni_lora_config.yaml`:
+
+- `epochs: 40 -> 25` — caps the pathological (never-plateaus) case;
+  patience is expected to be the actual binding constraint in practice
+  given the shrinking-gains trend above.
+- `early_stopping_patience: 10 -> 5` — same number OSF landed on, but
+  justified independently here by the shrinking-gains trend, not copied
+  because OSF used it.
+- `lr` deliberately left at `1.0e-4`, **NOT** halved to OSF's `5.0e-5`: a
+  lower lr would need *more* epochs to converge, working against the
+  time-reduction goal, and unlike OSF there is no PhysioOmni evidence yet
+  of an lr-driven instability/overfitting problem to fix. Revisit only if
+  a future run's curve shows real noise/instability rather than a clean
+  plateau.
+
+This change applies on the next auto-resubmit of any already-running LoRA
+job (config is re-read fresh via `--config` on every resubmit), not only
+to newly-submitted jobs.
+
 **New files this phase** (mirrors the file list style already in this
 plan's earlier sections):
 
@@ -2291,6 +2340,25 @@ code/branch work, which this revision is not).
          (2) gradient checkpointing only if that's still not enough; (3)
          cap the LoRA condition at the longest tractable context,** not
          the order originally written in §15.8 above.
+      7. **Training budget revised 2026-08-21** (§15.11) — `epochs: 40->25`,
+         `early_stopping_patience: 10->5` in
+         `configs/phase0_physioomni_lora_config.yaml`, grounded in
+         PhysioOmni's own 30s pilot curve (still improving through epoch 4,
+         first small decline at epoch 5 — no OSF-style overfitting yet, but
+         wall-clock time was the actual driver: ~1hr/epoch observed at 30s
+         makes the old 40/10 budget unworkable across ~48 runs). `lr` left
+         at `1.0e-4`, deliberately NOT halved like OSF's — see §15.11 for
+         the full reasoning. **Known open item, not yet fixed as of this
+         revision**: the warm-start readiness check
+         (`train_physioomni_lora.py`'s auto-detection of "is the 30s LoRA
+         checkpoint ready to warm-start other contexts from") currently
+         checks `best_model.pt` existence, which is written incrementally
+         from epoch 1 — should check `metrics.json` existence instead
+         (written once, only at true training completion). Confirmed real
+         via a live incident: a 120m+ context started warm-starting from an
+         unconverged, still-early 30s checkpoint. Recommended fix, not yet
+         applied — do before submitting long-context runs off of a 30s run
+         that hasn't reached `metrics.json` yet.
 - [ ] 2.7 Full three-way config/argparse audit against Stage 1 and OSF's
       Stage 2 (§15.7's lesson) before trusting the config's stated options
 - [ ] 2.8 Run the full Stage 2 sweep (§15.10: 48 training runs — 8
