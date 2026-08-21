@@ -304,6 +304,19 @@ found and fixed** (see plan doc checklist 2.6 for full detail):
    job both trained `sex_binary_lstm`/30s and corrupted each other's
    persistent `.log`/status `.jsonl` files. Fixed: Stage 2 now has its own
    `logs_physioomni_lora/` (registry + all 3 Stage 2 job scripts).
+4. **Real OOM once training actually ran** (`sex_binary_lstm`/10m,
+   `micro_batch=32`) — the 30s pilot had worked fine. Root cause:
+   `chunk_batch_size` only bounds each encoder call's size, not peak
+   memory (every chunk stays in the same autograd graph for one shared
+   backward). The real driver is `micro_batch × N`: `32×1=32` (30s) was
+   fine, `32×20=640` (10m) was right at the ~19.6GB ceiling. Fixed: the
+   registry's `context_micro_batch` is now nested by head
+   (lstm/transformer) with a schedule targeting ~150-250 "epoch-units" for
+   lstm, roughly half that for transformer (its own sequence head adds a
+   second O(N²) cost lstm's O(N) head doesn't have) — both converge to
+   `micro_batch=1` once that's the floor. First-pass estimate from one
+   data point; if 120m/240m still OOM, next lever is gradient
+   checkpointing (§15.8), not further batch cuts.
 
 ## Native context ceiling / Plan A decision (2026-08-18)
 

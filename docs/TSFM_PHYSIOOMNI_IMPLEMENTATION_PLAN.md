@@ -2203,6 +2203,30 @@ code/branch work, which this revision is not).
          stages' job-history tracking. Fixed: Stage 2 now gets its own
          `logs_physioomni_lora/` directory (registry + all three Stage 2
          job scripts).
+      4. **Real OOM on the actual pilot** (job 55846947,
+         `sex_binary_lstm`/10m, `micro_batch=32`): failed with only 13 MiB
+         free out of ~19.6GB, inside the backbone's own forward pass. 30s
+         (`micro_batch=32`, N=1 epoch/window) had already trained fine.
+         Key realization: `chunk_batch_size` only bounds each individual
+         encoder call's size — it does NOT reduce peak memory, since every
+         chunk's activations stay in the SAME autograd graph until one
+         shared `backward()` call. The real driver is `micro_batch × N`
+         (total raw epochs processed per training step): `32×1=32` was
+         fine, `32×20=640` was right at the ceiling. Fixed:
+         `v2_physioomni_lora_registry.yaml`'s `context_micro_batch` is now
+         nested by head (`lstm`/`transformer`), not one flat table —
+         targets ~150-250 "epoch-units" for lstm (~3-4x margin under the
+         observed 640-unit failure), roughly half that for transformer
+         (its own sequence head adds a SECOND, head-specific O(N²)
+         self-attention cost on top of the shared backbone cost lstm's
+         O(N) head doesn't have); both converge to `micro_batch=1` once
+         that's the practical floor. `gen_commands_physioomni_lora.py`'s
+         `resolve_batch_accum()` now looks up the per-head table.
+         **First-pass estimate from ONE real data point, not fully
+         calibrated per context** — if 120m/240m (the closest remaining
+         margin, ~2.7x/~1.3x under the observed ceiling) still OOM, the
+         next lever is gradient checkpointing (§15.8), not further batch
+         cuts (already at the floor).
 - [ ] 2.7 Full three-way config/argparse audit against Stage 1 and OSF's
       Stage 2 (§15.7's lesson) before trusting the config's stated options
 - [ ] 2.8 Run the full Stage 2 sweep (§15.10: 48 training runs — 8
