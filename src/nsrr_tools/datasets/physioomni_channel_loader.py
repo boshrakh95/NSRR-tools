@@ -56,6 +56,7 @@ than a hardcoded per-channel-name table.
 """
 
 import json
+import os
 from pathlib import Path
 
 import h5py
@@ -328,8 +329,20 @@ def save_signal_cache(cache_dir, dataset: str, subject_id: str,
 
     t_epochs = min(epoch_counts) if epoch_counts else 0
     meta = {"t_epochs": t_epochs, **fill_info}
-    with open(subj_dir / "meta.json", "w") as f:
+    # Atomic write (temp file + rename) — a worker killed mid-write (SIGTERM,
+    # OOM) must never leave a truncated/empty meta.json sitting where
+    # cache_exists() would treat it as "done": found live 2026-08-20, several
+    # precompute jobs were OOM-killed / SIGTERM'd, leaving 81 zero-byte
+    # meta.json files (all with fully-written, valid .npy siblings — only
+    # the plain `open(...,"w")` + json.dump was non-atomic) that then broke
+    # training with a JSONDecodeError. Same fix pattern already used
+    # elsewhere in this project for exactly this risk (e.g.
+    # infer_osf_lora_subject_windows.py's _save_resume_checkpoint).
+    meta_path = subj_dir / "meta.json"
+    tmp_path = meta_path.with_suffix(".json.tmp")
+    with open(tmp_path, "w") as f:
         json.dump(meta, f)
+    os.replace(tmp_path, meta_path)
     return t_epochs
 
 

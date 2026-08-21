@@ -31,7 +31,7 @@
 config: configs/phase0_physioomni_lora_config.yaml
 results_dir: /scratch/boshra95/psg/unified/results/phase0_physioomni_lora
 inference_dir: /scratch/boshra95/psg/unified/results/phase0_physioomni_lora/inference
-logs_dir: /home/boshra95/NSRR-tools-omni/logs_physioomni
+logs_dir: /home/boshra95/NSRR-tools-omni/logs_physioomni_lora
 python_bin: /home/boshra95/physioomni_env/bin/python
 
 # ── Training protocol ────────────────────────────────────────────────────────
