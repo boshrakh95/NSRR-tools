@@ -284,12 +284,26 @@ doc for full detail):
   scoping) + `scripts/gen_commands_physioomni_lora.py` — verified live
   (`list`/`train`/`status` against the real registry).
 
-**Not yet done**: checklist 2.6 (real wall-time pilot — prerequisite: run
-the CPU precompute job for real first, it hasn't been executed against
-real data yet), 2.7 (three-way config/argparse audit), 2.8 (the full
-sweep). **User is submitting Phase 1 jobs now; Phase 2 (LoRA) training has
-not started** — code is ready, waiting on the precompute + pilot before
-any real LoRA training job runs.
+**Not yet done**: checklist 2.6 (real wall-time pilot), 2.7 (three-way
+config/argparse audit), 2.8 (the full sweep).
+
+**Real precompute + first LoRA train attempt, 2026-08-20 — 2 real bugs
+found and fixed** (see plan doc checklist 2.6 for full detail):
+1. **OOM** on the `[9000:13481]` (mostly-MrOS) shard — 16 workers'
+   `scipy.signal.resample` buffers exceeded the 32GB job request, even
+   running alone on its node. Fixed: `--mem` 32000M → 64000M.
+2. **Non-atomic `meta.json` write** — workers killed by #1's OOM/SIGTERM
+   events left 81 zero-byte `meta.json` files with fully-intact `.npy`
+   siblings; `cache_exists()` only checks existence, so these silently
+   blocked reprocessing and broke the first real LoRA training attempt
+   (`JSONDecodeError`). Fixed: atomic temp-file+rename write in
+   `save_signal_cache()`. Deleted the 81 corrupt files for reprocessing.
+3. Also found (not from a crash, from asking "why can't I find the
+   logs"): `v2_physioomni_lora_registry.yaml`'s `logs_dir` was pointed at
+   the SAME directory as Stage 1's — a Stage 1 job and the first Stage 2
+   job both trained `sex_binary_lstm`/30s and corrupted each other's
+   persistent `.log`/status `.jsonl` files. Fixed: Stage 2 now has its own
+   `logs_physioomni_lora/` (registry + all 3 Stage 2 job scripts).
 
 ## Native context ceiling / Plan A decision (2026-08-18)
 

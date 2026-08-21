@@ -2175,7 +2175,34 @@ code/branch work, which this revision is not).
 - [ ] 2.6 Short wall-time pilot at the smallest context length (§15.9) —
       **user checkpoint** before the full sweep. Prerequisite: run
       `jobs/precompute_physioomni_raw_signal_cache.sh` for real first
-      (checklist 2.2's script, not yet executed against real data).
+      (checklist 2.2's script) — **first real attempt in progress
+      2026-08-20, two real bugs found and fixed along the way:**
+      1. **OOM on the `[9000:13481]` shard** (mostly MrOS — longer
+         recordings than apples/shhs): 16 workers' concurrent
+         `scipy.signal.resample` buffers exceeded the job's 32GB request,
+         confirmed even running completely alone on its node (ruling out
+         cross-job contention as the sole cause). Fixed: `--mem` raised
+         32000M → 64000M (node capacity is 768GB, plenty of room).
+      2. **Non-atomic `meta.json` write**: workers killed by the OOM/
+         SIGTERM events above left 81 zero-byte `meta.json` files (their
+         `.npy` siblings were all fully intact) — `cache_exists()` treats
+         mere existence as "done," so these silently blocked reprocessing
+         and broke the first real LoRA training attempt with a
+         `JSONDecodeError` the moment one was read. Fixed:
+         `save_signal_cache()` now writes `meta.json` via temp-file +
+         `os.replace` (same pattern already used elsewhere in this
+         project, e.g. `infer_osf_lora_subject_windows.py`'s resume
+         checkpoint). The 81 corrupt files were deleted so they get
+         reprocessed on the next run.
+      3. **Separately, `v2_physioomni_lora_registry.yaml`'s `logs_dir` was
+         pointed at the same directory as Stage 1's** (unlike OSF's clean
+         `logs_osf`/`logs_osf_lora` split) — real consequence, not just a
+         findability annoyance: a Stage 1 job and the first Stage 2 LoRA
+         job both trained `sex_binary_lstm`/30s and appended to the exact
+         same persistent `.log` and status `.jsonl` files, corrupting both
+         stages' job-history tracking. Fixed: Stage 2 now gets its own
+         `logs_physioomni_lora/` directory (registry + all three Stage 2
+         job scripts).
 - [ ] 2.7 Full three-way config/argparse audit against Stage 1 and OSF's
       Stage 2 (§15.7's lesson) before trusting the config's stated options
 - [ ] 2.8 Run the full Stage 2 sweep (§15.10: 48 training runs — 8
