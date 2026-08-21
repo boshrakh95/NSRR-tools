@@ -246,9 +246,19 @@ def exp_status(exp: dict, registry: dict) -> str:
 
 def resolve_batch_accum(exp: dict, registry: dict, context: str,
                         override_batch_size: int = None):
-    """Return (micro_batch, accum_steps) for this context. Same grad_accum
-    logic as gen_commands_physioomni.py's resolve_batch_accum — the memory_bounded
-    branch is dropped (no PhysioOmni-LoRA experiment uses it, no probing script
+    """Return (micro_batch, accum_steps) for this context.
+
+    Unlike gen_commands_physioomni.py's (Stage 1's) resolve_batch_accum,
+    `context_micro_batch` here is nested by head
+    (`{lstm: {...}, transformer: {...}}`), not a single flat
+    context->batch table shared by every experiment — real OOM evidence
+    (2026-08-20, sex_binary_lstm/10m at micro_batch=32) showed peak memory
+    scales with micro_batch x N (raw epochs per window), and the
+    transformer head's own O(N^2) self-attention needs a more aggressive
+    reduction than lstm's O(N) head at the same context length. See the
+    registry's own `gradient_accumulation` comment for the full numbers
+    this schedule was calibrated against. The memory_bounded branch is
+    dropped (no PhysioOmni-LoRA experiment uses it, no probing script
     exists yet, see module docstring)."""
     if override_batch_size is not None:
         return override_batch_size, 1
@@ -256,8 +266,8 @@ def resolve_batch_accum(exp: dict, registry: dict, context: str,
     ga = registry.get("gradient_accumulation", {})
     if ga.get("enabled", False):
         effective_batch = int(ga.get("effective_batch", 32))
-        ctx_map = ga.get("context_micro_batch", {})
-        micro_batch = int(ctx_map.get(context, effective_batch))
+        head_map = ga.get("context_micro_batch", {}).get(exp["head"], {})
+        micro_batch = int(head_map.get(context, effective_batch))
         accum_steps = max(1, effective_batch // micro_batch)
         return micro_batch, accum_steps
     else:
@@ -429,9 +439,12 @@ def cmd_train(args, registry):
           f"{stage1_ckpt or '(auto-detected per context by train_physioomni_lora.py)'}")
     print(f"# Logs → {registry.get('logs_dir', 'logs_physioomni/')}")
     print(f"# NOTE: wall-time estimates are placeholder, NOT GPU-calibrated for PhysioOmni-LoRA yet")
-    print(f"# NOTE: micro-batch=32 is NOT verified to fit on GPU yet — if a run OOMs, "
-          f"lower context_micro_batch in the registry and re-generate (accum_steps "
-          f"auto-adjusts to keep effective_batch=32)")
+    print(f"# NOTE: context_micro_batch schedule (per-head, in the registry) is a "
+          f"first-pass estimate from ONE real OOM data point (2026-08-20), not fully "
+          f"calibrated per context — if a run still OOMs, lower that context's entry "
+          f"further (accum_steps auto-adjusts to keep effective_batch=32); if already "
+          f"at micro_batch=1, the next lever is gradient checkpointing (plan §15.8), "
+          f"not further batch cuts")
     print()
     # Checklist 2.5d: every context other than 30s warm-starts from this
     # (task, head)'s OWN 30s Stage 2 checkpoint by default — always the

@@ -16,10 +16,14 @@
 #     (real LoRA compute cost, not worth tripling the sweep before the
 #     first two heads' numbers exist). 4 tasks x 2 heads = 8 experiments,
 #     not 12.
-#   - `batch_size: 32` + `gradient_accumulation` (effective_batch=32,
-#     context_micro_batch all at 32 -> accum_steps=1 everywhere as a
-#     starting point) — same schema and same NOT-YET-GPU-CALIBRATED
-#     caveat as Stage 1's registry / OSF's own Stage 2 registry.
+#   - `batch_size: 32` + `gradient_accumulation`, effective_batch=32 —
+#     BUT `context_micro_batch` is now nested by head (`lstm`/`transformer`),
+#     not a single flat table shared by both, because the real OOM below
+#     showed the dominant memory cost scales with `micro_batch x N` (raw
+#     epochs per window), independent of head, PLUS the transformer head's
+#     own O(N^2) self-attention adds a second, head-specific cost on longer
+#     contexts — see the schedule's own comment for the real numbers this
+#     was calibrated against.
 #   - `task_type` is informational only here — train_physioomni_lora.py has
 #     no --task-type flag (PhysioOmniRawEpochWindowDataset is seq2label-only
 #     for now). Kept for side-by-side readability against
@@ -35,21 +39,48 @@ logs_dir: /home/boshra95/NSRR-tools-omni/logs_physioomni_lora
 python_bin: /home/boshra95/physioomni_env/bin/python
 
 # ── Training protocol ────────────────────────────────────────────────────────
-# NOT YET GPU-CALIBRATED (plan §15.9) — starting every context at
-# micro_batch=32 (same as Stage 1/SleepFM/OSF) is an assumption, not a
-# verified fit; revisit after the first real GPU pilot (checklist 2.6) if
-# OOM is observed, lowering micro-batch and raising accum_steps to keep
-# effective_batch=32.
+# Real OOM, 2026-08-20 (job 55846947, sex_binary_lstm/10m,
+# micro_batch=32): failed with only 13 MiB free out of a ~19.6GB usable
+# budget, inside the BACKBONE's own forward pass (scaled_dot_product_attention).
+# 30s (micro_batch=32, N=1 epoch/window) trained fine. The key realization:
+# chunk_batch_size (16) only bounds the size of each individual encoder
+# call — it does NOT reduce peak memory, since every chunk's activations
+# stay part of the SAME autograd graph until one shared backward() call,
+# so the real memory driver is the TOTAL raw epochs processed per training
+# step: micro_batch x N. 32x1=32 fit easily; 32x20=640 was right at (just
+# past) the ceiling. This table targets roughly 150-250 "epoch-units"
+# (micro_batch x N) for lstm — a ~3-4x safety margin under the observed
+# 640-unit failure, to absorb GPU-sharing variance and fragmentation — and
+# roughly half that for transformer, since its own sequence head adds a
+# SECOND, head-specific O(N^2) self-attention cost on top of the shared
+# backbone cost that lstm's O(N) head doesn't have. Once micro_batch hits
+# 1 (the practical floor — no further reduction possible without gradient
+# checkpointing, plan §15.8's next mitigation-ladder rung, not applied
+# yet), lstm and transformer converge to the same schedule for the
+# remaining long contexts. **First-pass estimate from ONE real data point,
+# not fully calibrated per context** — same "don't assume, verify"
+# discipline as everywhere else in this project. If 120m/240m still OOM
+# (they're the closest remaining margin, ~2.7x/~1.3x under the observed
+# ceiling), the next step is gradient checkpointing, not further batch
+# cuts (already at the micro_batch=1 floor).
 gradient_accumulation:
   enabled: true
   effective_batch: 32
   context_micro_batch:
-    "30s":  32
-    "10m":  32
-    "40m":  32
-    "80m":  32
-    "120m": 32
-    "240m": 32
+    lstm:
+      "30s":  32   # 32x1=32 units — real, verified working (checklist 2.6 pilot)
+      "10m":  8    # 8x20=160 units (~4x margin under the 640-unit failure)
+      "40m":  2    # 2x80=160 units
+      "80m":  1    # 1x160=160 units (floor)
+      "120m": 1    # 1x240=240 units (~2.7x margin)
+      "240m": 1    # 1x480=480 units (~1.3x margin — riskiest tier)
+    transformer:
+      "30s":  32   # same as lstm — trivial N, no reason to differ
+      "10m":  4    # 4x20=80 units (~8x margin, extra caution for O(N^2) head)
+      "40m":  1    # 1x80=80 units (floor)
+      "80m":  1    # 1x160=160 units
+      "120m": 1    # 1x240=240 units
+      "240m": 1    # 1x480=480 units — same as lstm once at the floor
 
 # ── Tier 1: 4 Tier-1 tasks × 2 heads = 8 experiments (apnea + mean_pool excluded) ──
 
