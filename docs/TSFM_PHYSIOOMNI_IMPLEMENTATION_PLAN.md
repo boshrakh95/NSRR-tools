@@ -2227,6 +2227,28 @@ code/branch work, which this revision is not).
          margin, ~2.7x/~1.3x under the observed ceiling) still OOM, the
          next lever is gradient checkpointing (§15.8), not further batch
          cuts (already at the floor).
+      5. **240m still OOM'd at `micro_batch=1`** (the floor #4 above
+         already reached — there was no further batch-size lever left).
+         Applied §15.8's next mitigation-ladder rung: gradient
+         checkpointing. Root cause confirmed precisely: `chunk_batch_size`
+         only bounds each individual encoder call's size, not peak memory
+         — every chunk's activations stay in the SAME autograd graph until
+         one shared `backward()` call, so a 240m window (480 epochs / 16
+         per chunk = 30 sequential calls) was retaining 30 chunks' worth of
+         full 12-block activations simultaneously. Fixed:
+         `CombinedPhysioOmniLoRAModel._run_group()` now wraps each chunk's
+         `encoder.forward_features()` call in
+         `torch.utils.checkpoint.checkpoint(..., use_reentrant=False)`
+         whenever there's more than one chunk and only during training (no
+         backward pass to recompute for during eval) — applies
+         automatically based on chunk count, no new config knob needed.
+         **Verified two ways against the real checkpoint**: a full
+         forward+backward pass completes with finite, non-zero LoRA
+         gradients, and — the real correctness guarantee, not just
+         "doesn't crash" — checkpointed vs. non-checkpointed runs on
+         identical input/seed produced **bit-identical** loss and
+         gradients (max abs diff: 0.0), confirming the technique is
+         mathematically lossless here, exactly as the theory predicts.
 - [ ] 2.7 Full three-way config/argparse audit against Stage 1 and OSF's
       Stage 2 (§15.7's lesson) before trusting the config's stated options
 - [ ] 2.8 Run the full Stage 2 sweep (§15.10: 48 training runs — 8

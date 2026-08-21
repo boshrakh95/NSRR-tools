@@ -315,8 +315,16 @@ found and fixed** (see plan doc checklist 2.6 for full detail):
    lstm, roughly half that for transformer (its own sequence head adds a
    second O(N²) cost lstm's O(N) head doesn't have) — both converge to
    `micro_batch=1` once that's the floor. First-pass estimate from one
-   data point; if 120m/240m still OOM, next lever is gradient
-   checkpointing (§15.8), not further batch cuts.
+   data point.
+5. **240m still OOM'd at `micro_batch=1`** — no batch-size lever left, so
+   applied §15.8's next mitigation-ladder rung: gradient checkpointing.
+   `CombinedPhysioOmniLoRAModel._run_group()` now wraps each chunk's
+   encoder call in `torch.utils.checkpoint.checkpoint(use_reentrant=False)`
+   whenever there's more than one chunk, training only (no config knob
+   needed, applies automatically). **Verified against the real checkpoint
+   two ways**: works end-to-end with real gradients, and — the actual
+   correctness guarantee — checkpointed vs. non-checkpointed runs on
+   identical input produced bit-identical loss/gradients (max diff: 0.0).
 
 ## Native context ceiling / Plan A decision (2026-08-18)
 
