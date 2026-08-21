@@ -101,6 +101,9 @@ ACCUM_STEPS=${ACCUM_STEPS:-1}
 LR=${LR:-""}
 RUN_TAG=${RUN_TAG:-""}
 STAGE1_CHECKPOINT=${STAGE1_CHECKPOINT:-""}   # empty = auto-detect matching Stage 1 checkpoint
+GRADIENT_CHECKPOINTING=${GRADIENT_CHECKPOINTING:-""}   # set to 1 to trade compute for memory
+                                                        # (plan §15.8) — OPT-IN, prefer a larger
+                                                        # GPU allocation first (zero speed cost)
 
 # ── Job run tracking ──────────────────────────────────────────────────────────
 _EXP_TAG="${TASK}_${HEAD}"
@@ -174,6 +177,7 @@ CMD="$CMD --accum-steps $ACCUM_STEPS"
 [ -n "$LR"                ] && CMD="$CMD --lr $LR"
 [ -n "$RUN_TAG"           ] && CMD="$CMD --run-tag $RUN_TAG"
 [ -n "$STAGE1_CHECKPOINT" ] && CMD="$CMD --stage1-checkpoint $STAGE1_CHECKPOINT"
+[ -n "$GRADIENT_CHECKPOINTING" ] && CMD="$CMD --gradient-checkpointing"
 
 echo "Running: $CMD"
 echo ""

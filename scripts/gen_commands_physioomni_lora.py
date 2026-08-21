@@ -274,6 +274,20 @@ def resolve_batch_accum(exp: dict, registry: dict, context: str,
         return exp["batch_size"], 1
 
 
+# Per-context GPU-size override (real evidence, 2026-08-20): the training
+# job script's own default (2g.20gb, ~19.6GB usable) OOM'd on 240m even at
+# micro_batch=1 (the batch-size floor — see v2_physioomni_lora_registry.yaml's
+# gradient_accumulation comment for the full diagnosis). Bumping to 3g.40gb
+# for that one context has ZERO speed cost (MIG partitions scale compute
+# proportionally to memory, so this is strictly more headroom, not a
+# tradeoff) — preferred over gradient checkpointing (which trades compute
+# for memory) wherever it's sufficient. Other contexts stay on the
+# job script's cheaper, faster-to-schedule default; only override where
+# there's real evidence it's needed.
+_LARGE_GPU_CONTEXTS = {"240m"}
+_LARGE_GPU = "nvidia_h100_80gb_hbm3_3g.40gb:1"
+
+
 def build_train_cmd(exp: dict, registry: dict, context: str,
                     override_time: str = None, override_batch_size: int = None,
                     stage1_checkpoint: str = None) -> str:
@@ -307,6 +321,8 @@ def build_train_cmd(exp: dict, registry: dict, context: str,
         f"--output={logs_dir}/{stem}_%j.out "
         f"--error={logs_dir}/{stem}_%j.err"
     )
+    if context in _LARGE_GPU_CONTEXTS:
+        sbatch_opts = f"--gpus={_LARGE_GPU} {sbatch_opts}"
     return f"{env_str} sbatch {sbatch_opts} {JOBS_DIR}/{_TRAIN_SCRIPT}"
 
 
@@ -441,10 +457,11 @@ def cmd_train(args, registry):
     print(f"# NOTE: wall-time estimates are placeholder, NOT GPU-calibrated for PhysioOmni-LoRA yet")
     print(f"# NOTE: context_micro_batch schedule (per-head, in the registry) is a "
           f"first-pass estimate from ONE real OOM data point (2026-08-20), not fully "
-          f"calibrated per context — if a run still OOMs, lower that context's entry "
-          f"further (accum_steps auto-adjusts to keep effective_batch=32); if already "
-          f"at micro_batch=1, the next lever is gradient checkpointing (plan §15.8), "
-          f"not further batch cuts")
+          f"calibrated per context — if a run still OOMs, try (in order): a bigger "
+          f"--gpus= override (zero speed cost, see _LARGE_GPU_CONTEXTS above — 240m "
+          f"already gets this), a lower micro_batch for that context, then "
+          f"GRADIENT_CHECKPOINTING=1 as a last resort (real compute cost — opt-in "
+          f"only, see train_physioomni_lora.py's --gradient-checkpointing, plan §15.8)")
     print()
     # Checklist 2.5d: every context other than 30s warm-starts from this
     # (task, head)'s OWN 30s Stage 2 checkpoint by default — always the

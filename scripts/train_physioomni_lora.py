@@ -191,7 +191,8 @@ class CombinedPhysioOmniLoRAModel(nn.Module):
     the full reasoning.
     """
 
-    def __init__(self, encoders: dict, sequence_head: nn.Module, chunk_batch_size: int = 16):
+    def __init__(self, encoders: dict, sequence_head: nn.Module, chunk_batch_size: int = 16,
+                 use_gradient_checkpointing: bool = False):
         super().__init__()
         self.eeg_encoder = encoders["EEG"]
         self.eog_encoder = encoders["EOG"]
@@ -199,6 +200,13 @@ class CombinedPhysioOmniLoRAModel(nn.Module):
         self.emg_encoder = encoders["EMG"]
         self.sequence_head = sequence_head
         self.chunk_batch_size = chunk_batch_size
+        # OPT-IN, default OFF (plan §15.8) — trades compute for memory (an
+        # extra forward pass per chunk during backward), so it's only
+        # worth paying for contexts that actually need the memory
+        # headroom. Prefer a larger GPU allocation first (zero speed
+        # cost, MIG partitions scale compute with memory too) — this is
+        # the fallback for whichever context still doesn't fit.
+        self.use_gradient_checkpointing = use_gradient_checkpointing
 
     def _encoder_for(self, modality: str) -> nn.Module:
         return {
@@ -236,23 +244,20 @@ class CombinedPhysioOmniLoRAModel(nn.Module):
         chan_ids_t = torch.tensor(chan_ids, dtype=torch.long, device=device)
         time_ids_t = torch.tensor(time_ids, dtype=torch.long, device=device)
 
-        # Gradient checkpointing (plan §15.8, applied 2026-08-20 after a
-        # real OOM at the micro_batch=1 floor — see §15.9's checklist 2.6
-        # entry for the full diagnosis): chunk_batch_size bounds each
-        # individual encoder call's size, but every chunk's activations
-        # stay in the SAME autograd graph until one shared backward() call
-        # — for a long window (e.g. 240m = 480 epochs / 16 per chunk = 30
-        # sequential calls), that's 30 chunks' worth of full 12-block
-        # activations retained simultaneously, which is what actually
-        # exhausted the GPU even after micro_batch hit its floor of 1.
-        # Recomputing each chunk's forward pass during backward instead of
-        # storing it turns that into O(1) chunks' activations at a time —
-        # only worth the extra compute when there's more than one chunk to
-        # begin with, and only during training (eval has no backward pass
-        # to recompute for, so checkpointing there would be pure overhead
-        # for zero benefit).
+        # Gradient checkpointing (plan §15.8) — OPT-IN, default OFF (see
+        # __init__). Only engages when explicitly requested AND there's
+        # more than one chunk to begin with AND we're training (eval has
+        # no backward pass to recompute for). See __init__'s docstring for
+        # why this isn't automatic: it trades compute for memory, so a
+        # larger GPU allocation (zero speed cost) is the preferred fix
+        # whenever it's sufficient — this is the fallback for whichever
+        # context still doesn't fit even at the largest GPU size available.
         n_items = x.shape[0]
-        use_checkpoint = self.training and n_items > self.chunk_batch_size
+        use_checkpoint = (
+            self.use_gradient_checkpointing
+            and self.training
+            and n_items > self.chunk_batch_size
+        )
 
         cls_chunks = []
         for i in range(0, n_items, self.chunk_batch_size):
@@ -311,7 +316,8 @@ def load_physioomni_encoders(checkpoint_path: str, device: torch.device) -> dict
     return encoders
 
 
-def build_combined_lora_model(cfg: dict, num_classes: int, head_type: str, device: torch.device):
+def build_combined_lora_model(cfg: dict, num_classes: int, head_type: str, device: torch.device,
+                               gradient_checkpointing: bool = False):
     encoders = load_physioomni_encoders(cfg["embedding"]["checkpoint_dir"], device)
 
     m_cfg = dict(cfg["model"])
@@ -320,7 +326,8 @@ def build_combined_lora_model(cfg: dict, num_classes: int, head_type: str, devic
     sequence_head = build_head({**cfg, "model": m_cfg})
 
     chunk_bs = cfg["embedding"].get("chunk_batch_size", 16)
-    combined = CombinedPhysioOmniLoRAModel(encoders, sequence_head, chunk_batch_size=chunk_bs)
+    combined = CombinedPhysioOmniLoRAModel(encoders, sequence_head, chunk_batch_size=chunk_bs,
+                                            use_gradient_checkpointing=gradient_checkpointing)
 
     lora_cfg = cfg["lora"]
     lora_config = LoraConfig(
@@ -386,6 +393,7 @@ def train_one_context(
     exp_id: str = None,
     cli_lr_set: bool = False,
     stage2_30s_checkpoint: str = None,
+    gradient_checkpointing: bool = False,
 ):
     if exp_id is None:
         exp_id = f"{task}_{head_type}"
@@ -472,7 +480,8 @@ def train_one_context(
                               collate_fn=physioomni_lora_collate_fn)
 
     # ── Model — build fresh, warm-start head, resume LoRA state if present ─
-    model = build_combined_lora_model(cfg, num_classes, head_type, device)
+    model = build_combined_lora_model(cfg, num_classes, head_type, device,
+                                       gradient_checkpointing=gradient_checkpointing)
     n_trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
     n_total = sum(p.numel() for p in model.parameters())
     print(f"  Trainable params: {n_trainable:,} / {n_total:,} ({100*n_trainable/n_total:.2f}%)")
@@ -664,6 +673,12 @@ def main():
     parser.add_argument("--accum-steps", default=1, type=int, dest="accum_steps")
     parser.add_argument("--lr", default=None, type=float)
     parser.add_argument("--run-tag", default="", dest="run_tag")
+    parser.add_argument("--gradient-checkpointing", action="store_true", dest="gradient_checkpointing",
+                         help="Trade compute for memory (plan §15.8) — recompute each encoder "
+                              "chunk's forward pass during backward instead of storing it. OPT-IN, "
+                              "default OFF: only worth it for a context that still OOMs at "
+                              "micro_batch=1 on the largest available GPU — a larger GPU allocation "
+                              "is the preferred fix first (zero speed cost, unlike this flag).")
     args = parser.parse_args()
 
     with open(args.config) as f:
@@ -738,6 +753,7 @@ def main():
                 batch_size=train_batch_size, accum_steps=args.accum_steps,
                 exp_id=exp_id, cli_lr_set=_cli_lr_set,
                 stage2_30s_checkpoint=stage2_30s_ckpt,
+                gradient_checkpointing=args.gradient_checkpointing,
             )
             if metrics is not None:
                 append_to_summary(summary_path, metrics)
