@@ -1,8 +1,8 @@
 #!/bin/bash
 #SBATCH --job-name=physioomni_lora_sweep
 #SBATCH --account=def-forouzan_gpu
-#SBATCH --time=14:00:00
-#SBATCH --gpus=nvidia_h100_80gb_hbm3_3g.40gb:1
+#SBATCH --time=4:00:00
+#SBATCH --gpus=nvidia_h100_80gb_hbm3_2g.20gb:1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32000M
 #SBATCH --exclude=fc11006,fc11013,fc11010
