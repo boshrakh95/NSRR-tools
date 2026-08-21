@@ -1704,10 +1704,27 @@ concrete, dated findings, not speculation:
   side-by-side-diff it against Stage 1's own config/script for every
   training-loop option**, not just the ones that seem architecture-relevant.
 
-### 15.8 Memory mitigation ladder (unchanged from OSF's, apply in this order)
+### 15.8 Memory mitigation ladder — REVISED 2026-08-20, order corrected
 
-1. Gradient checkpointing through each encoder's transformer blocks.
-2. Request a larger GPU memory allocation.
+**Original order below was OSF's own, copied without re-deriving it for
+PhysioOmni's specific tradeoffs — corrected after a real OOM (checklist
+2.6) and a direct question about training-time impact.** MIG partitions
+scale compute proportionally to memory, so a larger GPU allocation is not
+a tradeoff the way gradient checkpointing is (checkpointing trades compute
+for memory; a bigger GPU gives more of both). The revised order:
+
+1. **Request a larger GPU memory allocation first** — zero speed cost.
+   Implemented as a per-context override in `gen_commands_physioomni_lora.py`
+   (`_LARGE_GPU_CONTEXTS`), not a blanket change — only the specific
+   context with real evidence it's needed gets the bigger, scarcer-to-
+   schedule allocation; everything else keeps the cheaper default.
+2. **Gradient checkpointing, only if #1 is still not enough.** Real
+   compute cost (an extra forward pass per chunk during backward) — kept
+   OPT-IN, default OFF (`CombinedPhysioOmniLoRAModel`'s
+   `use_gradient_checkpointing` flag / `--gradient-checkpointing` CLI /
+   `GRADIENT_CHECKPOINTING=1` env var), verified to never activate unless
+   explicitly requested, so it can never silently slow down a context that
+   didn't ask for it.
 3. Only if both fail: cap the LoRA condition at the longest tractable
    context length, keep the frozen condition (Stage 1) at all 6 lengths,
    state the compute ceiling explicitly.
@@ -2249,6 +2266,31 @@ code/branch work, which this revision is not).
          identical input/seed produced **bit-identical** loss and
          gradients (max abs diff: 0.0), confirming the technique is
          mathematically lossless here, exactly as the theory predicts.
+      6. **Reconsidered the ladder's own ordering after user pushback**
+         (correctly — "would this make training longer" wasn't answered
+         up front): checkpointing trades compute for memory, but a larger
+         GPU allocation does NOT — MIG partitions scale compute
+         proportionally to memory, so requesting more memory is strictly
+         better wherever it's sufficient, not a tradeoff. The training job
+         script's GPU size had separately been turned down by the user to
+         `2g.20gb` (~19.6GB usable, confirmed — that's the exact figure in
+         the OOM logs) from this plan's original `3g.40gb` suggestion; the
+         240m failure happened at that smaller size. Fixed properly: (a)
+         gradient checkpointing is now OPT-IN, default OFF
+         (`CombinedPhysioOmniLoRAModel(..., use_gradient_checkpointing=False)`
+         by default — verified via a monkeypatched `checkpoint()` call
+         count that it's genuinely never invoked unless requested, so
+         every other context's speed is completely unaffected), exposed
+         via `--gradient-checkpointing` / `GRADIENT_CHECKPOINTING=1` as a
+         last-resort fallback; (b) `gen_commands_physioomni_lora.py` now
+         requests `3g.40gb` specifically for 240m (the one context with
+         real evidence it's needed) via an explicit `--gpus=` override at
+         `sbatch` submission time — every other context keeps the
+         cheaper, faster-to-schedule `2g.20gb` default. **Revised
+         ladder order: (1) bigger GPU allocation first, zero speed cost;
+         (2) gradient checkpointing only if that's still not enough; (3)
+         cap the LoRA condition at the longest tractable context,** not
+         the order originally written in §15.8 above.
 - [ ] 2.7 Full three-way config/argparse audit against Stage 1 and OSF's
       Stage 2 (§15.7's lesson) before trusting the config's stated options
 - [ ] 2.8 Run the full Stage 2 sweep (§15.10: 48 training runs — 8

@@ -317,14 +317,26 @@ found and fixed** (see plan doc checklist 2.6 for full detail):
    `micro_batch=1` once that's the floor. First-pass estimate from one
    data point.
 5. **240m still OOM'd at `micro_batch=1`** — no batch-size lever left, so
-   applied §15.8's next mitigation-ladder rung: gradient checkpointing.
-   `CombinedPhysioOmniLoRAModel._run_group()` now wraps each chunk's
-   encoder call in `torch.utils.checkpoint.checkpoint(use_reentrant=False)`
-   whenever there's more than one chunk, training only (no config knob
-   needed, applies automatically). **Verified against the real checkpoint
-   two ways**: works end-to-end with real gradients, and — the actual
-   correctness guarantee — checkpointed vs. non-checkpointed runs on
-   identical input produced bit-identical loss/gradients (max diff: 0.0).
+   applied gradient checkpointing (`torch.utils.checkpoint.checkpoint`,
+   `use_reentrant=False`, wrapping each chunk's encoder call). **Verified
+   against the real checkpoint two ways**: works end-to-end with real
+   gradients, and — the actual correctness guarantee — checkpointed vs.
+   non-checkpointed runs on identical input produced bit-identical
+   loss/gradients (max diff: 0.0).
+6. **User correctly pushed back**: "would this make training longer?" —
+   my first version auto-activated checkpointing whenever a window needed
+   >1 chunk, which (given `chunk_batch_size=16`) actually covered nearly
+   every context including 30s, not just the long ones that needed it.
+   **Ladder order corrected** (§15.8 in the plan): a bigger GPU allocation
+   is NOT a tradeoff the way checkpointing is — MIG partitions scale
+   compute proportionally to memory, so more memory also means more
+   compute, not slower. Fixed properly: checkpointing is now OPT-IN,
+   default OFF (verified via a monkeypatched call-count check that it's
+   genuinely never invoked by default), and
+   `gen_commands_physioomni_lora.py` requests `3g.40gb` specifically for
+   240m (the context with real evidence it's needed) via an explicit
+   `--gpus=` override — every other context keeps the cheaper `2g.20gb`
+   default the user had already set.
 
 ## Native context ceiling / Plan A decision (2026-08-18)
 
