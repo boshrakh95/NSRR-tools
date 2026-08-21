@@ -109,6 +109,7 @@ from pathlib import Path
 import numpy as np
 import torch
 import torch.nn as nn
+from torch.utils.checkpoint import checkpoint
 import yaml
 from torch.utils.data import DataLoader, WeightedRandomSampler
 
@@ -164,6 +165,15 @@ _off = 0
 for _m in MODALITIES:
     SLOT_RANGE[_m] = (_off, _off + MODALITY_DIM[_m])
     _off += MODALITY_DIM[_m]
+
+
+def _checkpointed_encoder_forward(encoder, chunk, chan_ids, time_ids):
+    """Module-level (not a closure) so torch.utils.checkpoint.checkpoint()
+    re-runs exactly this call during backward — mask/return_all_tokens are
+    fixed, non-tensor arguments, kept out of checkpoint's own arg list
+    (plan §15.8's gradient-checkpointing mitigation, see
+    CombinedPhysioOmniLoRAModel._run_group)."""
+    return encoder.forward_features(chunk, chan_ids, time_ids, mask=None, return_all_tokens=False)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -226,13 +236,35 @@ class CombinedPhysioOmniLoRAModel(nn.Module):
         chan_ids_t = torch.tensor(chan_ids, dtype=torch.long, device=device)
         time_ids_t = torch.tensor(time_ids, dtype=torch.long, device=device)
 
+        # Gradient checkpointing (plan §15.8, applied 2026-08-20 after a
+        # real OOM at the micro_batch=1 floor — see §15.9's checklist 2.6
+        # entry for the full diagnosis): chunk_batch_size bounds each
+        # individual encoder call's size, but every chunk's activations
+        # stay in the SAME autograd graph until one shared backward() call
+        # — for a long window (e.g. 240m = 480 epochs / 16 per chunk = 30
+        # sequential calls), that's 30 chunks' worth of full 12-block
+        # activations retained simultaneously, which is what actually
+        # exhausted the GPU even after micro_batch hit its floor of 1.
+        # Recomputing each chunk's forward pass during backward instead of
+        # storing it turns that into O(1) chunks' activations at a time —
+        # only worth the extra compute when there's more than one chunk to
+        # begin with, and only during training (eval has no backward pass
+        # to recompute for, so checkpointing there would be pure overhead
+        # for zero benefit).
+        n_items = x.shape[0]
+        use_checkpoint = self.training and n_items > self.chunk_batch_size
+
         cls_chunks = []
-        for i in range(0, x.shape[0], self.chunk_batch_size):
+        for i in range(0, n_items, self.chunk_batch_size):
             chunk = x[i : i + self.chunk_batch_size]
             n = chunk.shape[0]
             ic = chan_ids_t.unsqueeze(0).expand(n, -1)
             it = time_ids_t.unsqueeze(0).expand(n, -1)
-            cls = encoder.forward_features(chunk, ic, it, mask=None, return_all_tokens=False)
+            if use_checkpoint:
+                cls = checkpoint(_checkpointed_encoder_forward, encoder, chunk, ic, it,
+                                  use_reentrant=False)
+            else:
+                cls = encoder.forward_features(chunk, ic, it, mask=None, return_all_tokens=False)
             cls_chunks.append(cls)
         cls_all = torch.cat(cls_chunks, dim=0)  # [k*N, modality_dim]
         return cls_all.reshape(k, N, -1)
