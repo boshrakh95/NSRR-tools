@@ -1,0 +1,7 @@
+{"ts":"2026-08-20T23:29:43-07:00","job_id":"55863570","node":"fc11009","status":"STARTED","task":"sex_binary","head":"transformer","context":"30s","lr":"1e-4","datasets":"apples shhs"}
+{"ts":"2026-08-21T00:19:10-07:00","job_id":"55863570","node":"fc11009","status":"FAILED","reason":"30s: error: RuntimeError: Parent directory /scratch/boshra95/psg/unified/results/phase0_physioomni_lora/sex_binary_transformer/context_30s does no","task":"sex_binary","head":"transformer","context":"30s","lr":"1e-4","datasets":"apples shhs"}
+{"ts":"2026-08-21T00:41:50-07:00","job_id":"55868748","node":"fc10910","status":"STARTED","task":"sex_binary","head":"transformer","context":"30s","lr":"1e-4","datasets":"apples shhs"}
+{"ts":"2026-08-21T06:38:22-07:00","job_id":"55868748","node":"fc10910","status":"TIMEOUT_REQUEUED","task":"sex_binary","head":"transformer","context":"30s","lr":"1e-4","datasets":"apples shhs"}
+{"ts":"2026-08-21T06:40:07-07:00","job_id":"55891054","node":"fc10910","status":"STARTED","task":"sex_binary","head":"transformer","context":"30s","lr":"1e-4","datasets":"apples shhs"}
+{"ts":"2026-08-21T12:36:54-07:00","job_id":"55891054","node":"fc10910","status":"TIMEOUT_REQUEUED","task":"sex_binary","head":"transformer","context":"30s","lr":"1e-4","datasets":"apples shhs"}
+{"ts":"2026-08-21T12:39:59-07:00","job_id":"55926073","node":"fc11011","status":"STARTED","task":"sex_binary","head":"transformer","context":"30s","lr":"1e-4","datasets":"apples shhs"}
