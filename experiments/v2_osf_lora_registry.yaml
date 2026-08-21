@@ -51,13 +51,23 @@ python_bin: /home/boshra95/osf_env/bin/python
 gradient_accumulation:
   enabled: true
   effective_batch: 32
+  # 30s/10m confirmed OK at micro_batch=32 (30s*32=32, 10m*32=640 raw
+  # epochs/step, both trained successfully). 40m/80m/120m/240m all OOM'd at
+  # micro_batch=32 -- confirmed real, not a fluke (38.05/39.5 GiB
+  # allocated, deep in the backbone's attention layer -- retained
+  # activations across all chunks scale with batch_size x raw_epochs, not
+  # just chunk_batch_size). Values below target the same ~640 raw-epoch
+  # ceiling as the known-good 10m case (2026-08-18) -- an extrapolation,
+  # not yet independently measured; validate with a real pilot before
+  # trusting for the full sweep. accum_steps auto-adjusts to keep
+  # effective_batch=32 exactly (all values below are divisors of 32).
   context_micro_batch:
     "30s":  32
     "10m":  32
-    "40m":  32
-    "80m":  32
-    "120m": 32
-    "240m": 32
+    "40m":  8
+    "80m":  4
+    "120m": 2
+    "240m": 1
 
 # ── Tier 1: 5 Tier-1 tasks × 3 heads = 15 experiments ──────────────────────
 

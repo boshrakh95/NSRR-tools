@@ -1,0 +1,12 @@
+{"ts":"2026-08-18T11:39:33-07:00","job_id":"55366943","node":"fc10914","status":"STARTED","task":"sex_binary","head":"lstm","context":"40m","lr":"1e-4","datasets":"apples shhs"}
+{"ts":"2026-08-18T11:51:16-07:00","job_id":"55366943","node":"fc10914","status":"FAILED","reason":"40m: oom","task":"sex_binary","head":"lstm","context":"40m","lr":"1e-4","datasets":"apples shhs"}
+{"ts":"2026-08-18T12:46:45-07:00","job_id":"55378427","node":"fc10918","status":"STARTED","task":"sex_binary","head":"lstm","context":"40m","lr":"1e-4","datasets":"apples shhs"}
+{"ts":"2026-08-18T18:43:06-07:00","job_id":"55378427","node":"fc10918","status":"TIMEOUT_REQUEUED","task":"sex_binary","head":"lstm","context":"40m","lr":"1e-4","datasets":"apples shhs"}
+{"ts":"2026-08-18T18:47:06-07:00","job_id":"55481023","node":"fc11008","status":"STARTED","task":"sex_binary","head":"lstm","context":"40m","lr":"1e-4","datasets":"apples shhs"}
+{"ts":"2026-08-19T00:43:49-07:00","job_id":"55481023","node":"fc11008","status":"TIMEOUT_REQUEUED","task":"sex_binary","head":"lstm","context":"40m","lr":"1e-4","datasets":"apples shhs"}
+{"ts":"2026-08-19T00:46:08-07:00","job_id":"55526521","node":"fc11008","status":"STARTED","task":"sex_binary","head":"lstm","context":"40m","lr":"1e-4","datasets":"apples shhs"}
+{"ts":"2026-08-19T06:42:47-07:00","job_id":"55526521","node":"fc11008","status":"TIMEOUT_REQUEUED","task":"sex_binary","head":"lstm","context":"40m","lr":"1e-4","datasets":"apples shhs"}
+{"ts":"2026-08-19T06:43:59-07:00","job_id":"55554793","node":"fc11008","status":"STARTED","task":"sex_binary","head":"lstm","context":"40m","lr":"1e-4","datasets":"apples shhs"}
+{"ts":"2026-08-19T12:40:29-07:00","job_id":"55554793","node":"fc11008","status":"TIMEOUT_REQUEUED","task":"sex_binary","head":"lstm","context":"40m","lr":"1e-4","datasets":"apples shhs"}
+{"ts":"2026-08-19T12:44:19-07:00","job_id":"55603403","node":"fc11012","status":"STARTED","task":"sex_binary","head":"lstm","context":"40m","lr":"1e-4","datasets":"apples shhs"}
+{"ts":"2026-08-19T16:08:20-07:00","job_id":"55603403","node":"fc11012","status":"SUCCESS","task":"sex_binary","head":"lstm","context":"40m","lr":"1e-4","datasets":"apples shhs"}

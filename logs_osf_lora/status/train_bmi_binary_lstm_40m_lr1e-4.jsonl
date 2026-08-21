@@ -1,0 +1,6 @@
+{"ts":"2026-08-18T11:39:33-07:00","job_id":"55366947","node":"fc10707","status":"STARTED","task":"bmi_binary","head":"lstm","context":"40m","lr":"1e-4","datasets":"apples shhs mros"}
+{"ts":"2026-08-18T11:51:29-07:00","job_id":"55366947","node":"fc10707","status":"FAILED","reason":"40m: oom","task":"bmi_binary","head":"lstm","context":"40m","lr":"1e-4","datasets":"apples shhs mros"}
+{"ts":"2026-08-18T16:09:45-07:00","job_id":"55453722","node":"fc11008","status":"STARTED","task":"bmi_binary","head":"lstm","context":"40m","lr":"1e-4","datasets":"apples shhs mros"}
+{"ts":"2026-08-19T08:07:33-07:00","job_id":"55453722","node":"fc11008","status":"TIMEOUT_REQUEUED","task":"bmi_binary","head":"lstm","context":"40m","lr":"1e-4","datasets":"apples shhs mros"}
+{"ts":"2026-08-19T08:17:19-07:00","job_id":"55568370","node":"fc11017","status":"STARTED","task":"bmi_binary","head":"lstm","context":"40m","lr":"1e-4","datasets":"apples shhs mros"}
+{"ts":"2026-08-19T19:48:28-07:00","job_id":"55568370","node":"fc11017","status":"SUCCESS","task":"bmi_binary","head":"lstm","context":"40m","lr":"1e-4","datasets":"apples shhs mros"}
