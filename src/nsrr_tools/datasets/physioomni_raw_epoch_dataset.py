@@ -361,7 +361,15 @@ class PhysioOmniRawEpochWindowDataset(Dataset):
                 if real_len > 0:
                     s0 = window_start * epoch_samples
                     s1 = (window_start + real_len) * epoch_samples
-                    real = arr[s0:s1].reshape(real_len, epoch_samples)
+                    # `arr` is a LAZY _NpySliceReader (load_signal_cache,
+                    # 2026-08-22): this slice is what actually seeks and
+                    # reads ONLY this window's bytes off disk. Keep the
+                    # float32 conversion here, on the slice — hoisting it
+                    # back onto the whole array would read the entire
+                    # ~87 MB full-night file and undo the change entirely.
+                    real = np.asarray(
+                        arr[s0:s1], dtype=np.float32
+                    ).reshape(real_len, epoch_samples)
                 else:
                     real = np.empty((0, epoch_samples), dtype=np.float32)
                 if pad_len > 0:

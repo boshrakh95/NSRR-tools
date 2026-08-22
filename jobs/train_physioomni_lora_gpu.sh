@@ -2,8 +2,8 @@
 #SBATCH --job-name=physioomni_lora_sweep
 #SBATCH --account=def-forouzan_gpu
 #SBATCH --time=4:00:00
-#SBATCH --gpus=nvidia_h100_80gb_hbm3_2g.20gb:1
-#SBATCH --cpus-per-task=4
+#SBATCH --gpus=h100:1
+#SBATCH --cpus-per-task=8
 #SBATCH --mem=32000M
 #SBATCH --exclude=fc11006,fc11013,fc11010
 #SBATCH --signal=B:USR1@120            # send SIGUSR1 to bash 120s before wall time
@@ -31,13 +31,27 @@
 # train_physioomni_context_sweep_gpu.sh (--signal=B:USR1@120 + bash trap +
 # resume.pt, saved every epoch).
 #
-# GPU size: 3g.40gb, matching OSF's own Stage 2 upgrade (MIG partitions
-# compute proportionally to memory) — PhysioOmni's Stage 2 wall-time is
-# NOT yet measured at any GPU size (plan §15.9); this is a starting point,
-# not a validated choice. Re-check after the first real pilot (checklist
-# 2.6) whether 1g.10gb is actually sufficient (Stage 1's own extraction
-# ran comfortably on 1g.10gb — Stage 2's live backward pass through
-# LoRA-adapted layers is a different cost profile, don't assume either way).
+# GPU: FULL, NON-MIG H100 (`--gpus=h100:1`) as of 2026-08-22, up from the
+# 2g.20gb MIG slice. `sinfo` confirms Fir has whole-card h100 nodes
+# (`gpu:h100:4`) alongside the MIG nodes. 2g.20gb is ~2/7 of the SMs, so a
+# whole card is ~3.5x the compute AND 80 GB instead of 19.6 GB — which
+# also lets micro_batch climb back off the =1 floor the long contexts are
+# pinned to (see experiments/v2_physioomni_lora_registry.yaml), cutting
+# accumulation steps and improving utilization on top of the raw SM gain.
+# This is the single biggest lever for the long contexts, which measured
+# ~96% COMPUTE-bound (see below). Cost: whole cards are scarcer, so expect
+# longer queue waits than the MIG slices had.
+#
+# cpus-per-task raised 4 -> 8 to match: the raw-signal cache read is Lustre
+# PER-OPERATION LATENCY bound (~20 ms/open, ~12 ms/read-op — measured, see
+# physioomni_channel_loader.load_signal_cache's docstring), and that kind
+# of I/O parallelizes near-linearly across DataLoader workers.
+# train_physioomni_lora.py derives num_workers from SLURM_CPUS_PER_TASK.
+#
+# ⚠️ WHERE THE TIME ACTUALLY GOES (measured 2026-08-22, don't re-guess):
+# I/O is ~50% of a 30s epoch but only ~3.5% of an 80m epoch. Long contexts
+# are ~96% compute, so GPU size / TF32 / precision are the only levers that
+# matter there — no amount of DataLoader tuning will help them.
 #
 # ⚠️ COMPUTE SCALES ~LINEARLY WITH CONTEXT LENGTH, NOT SUB-LINEARLY, same
 # as OSF's own Stage 2 (plan §15.6/15.9) — CombinedPhysioOmniLoRAModel.

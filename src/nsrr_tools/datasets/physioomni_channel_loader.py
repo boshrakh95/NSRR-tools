@@ -359,24 +359,131 @@ def get_cached_t_epochs(cache_dir, dataset: str, subject_id: str) -> int:
     return load_meta(cache_dir, dataset, subject_id)["t_epochs"]
 
 
+class _NpySliceReader:
+    """Lazy 1-D .npy reader that fetches ONLY the requested sample range,
+    via seek + one sequential read (added 2026-08-22).
+
+    Quacks like the 1-D array it replaces for the two operations
+    PhysioOmniRawEpochWindowDataset.__getitem__ actually performs on it:
+    `len(arr)` and `arr[s0:s1]` (contiguous slice). The returned slice is a
+    real in-memory np.ndarray in the file's stored dtype (float16), which
+    the caller converts to float32 exactly as before.
+
+    MEASURED on /scratch (Lustre), disjoint cold subject groups, 2026-08-22
+    — read the numbers before "optimizing" this further, because the
+    intuitive answers are wrong here twice over:
+
+      stat only (5x exists())        11.6 ms/subject
+      + open & parse npy header     104.5 ms/subject   (~20 ms per open!)
+      + 5 window reads, N=1  (30s)  374.0 ms/subject
+      + 5 window reads, N=160 (80m) 399.8 ms/subject
+      full np.load of all channels  366.9 ms/subject
+
+    1. mmap_mode="r" is SLOWER than the full read it would replace —
+       0.68x at 30s, 0.32x at 80m — because Lustre turns each page fault
+       into a small separate RPC with no effective readahead, while
+       np.load streams at ~220 MB/s. Do not "fix" this back to mmap.
+    2. This cache holds FULL-NIGHT signal (~87 MB/subject) while training
+       reads one CONTEXT WINDOW (at 30s: 1 epoch of ~1084), so a full read
+       is ~200x byte amplification — but cutting those bytes buys far less
+       than it looks like, only ~1.1x at 30s / ~1.3x at 80m end-to-end.
+       The table above shows why: this workload is Lustre PER-OPERATION
+       LATENCY bound (~20 ms/open, ~12 ms/read-op), not bandwidth bound.
+       N=1 and N=160 cost nearly the same despite ~170x different bytes.
+
+    So the win here is real but modest. Its bigger payoff is MEMORY: the
+    old path materialized ~174 MB of float32 per subject per worker, which
+    is what made a low num_workers necessary; holding only the live window
+    is what lets num_workers rise, and parallelism is the actual lever on
+    latency-bound I/O. If per-subject I/O ever needs to drop further, the
+    remaining lever is FEWER FILES (consolidating the 4-5 per-channel .npy
+    into one per subject would save ~80 ms/subject of open latency) — not
+    fewer bytes. That needs a cache rebuild, so it is not done here.
+
+    KEEP THIS IN PROPORTION (measured against the real runs): I/O is ~50%
+    of a 30s epoch (8,096 subjects x ~0.4 s / 2 workers ~= 27 min of an
+    observed ~55 min), but only ~3.5% of an 80m epoch (11,439 subjects
+    ~= 38 min of an observed ~18 h). Long contexts are ~96% COMPUTE —
+    nothing in this file is the answer for them.
+    """
+
+    __slots__ = ("_path", "_offset", "_dtype", "_n", "_fh")
+
+    def __init__(self, path):
+        self._path = path
+        self._fh = open(path, "rb")
+        version = np.lib.format.read_magic(self._fh)
+        shape, _fortran, dtype = np.lib.format._read_array_header(self._fh, version)
+        if len(shape) != 1:
+            raise ValueError(
+                f"{path}: _NpySliceReader supports 1-D cache arrays only, got shape {shape}"
+            )
+        self._offset = self._fh.tell()
+        self._dtype = dtype
+        self._n = shape[0]
+
+    def __len__(self):
+        return self._n
+
+    @property
+    def dtype(self):
+        return self._dtype
+
+    def __getitem__(self, key):
+        if not isinstance(key, slice):
+            raise TypeError(
+                f"_NpySliceReader supports contiguous slice reads only, got {type(key).__name__}"
+            )
+        start, stop, step = key.indices(self._n)
+        if step != 1:
+            raise ValueError("_NpySliceReader supports step=1 slices only")
+        count = max(0, stop - start)
+        if count == 0:
+            return np.empty(0, dtype=self._dtype)
+        self._fh.seek(self._offset + start * self._dtype.itemsize)
+        return np.fromfile(self._fh, dtype=self._dtype, count=count)
+
+    def close(self):
+        fh = getattr(self, "_fh", None)
+        if fh is not None and not fh.closed:
+            fh.close()
+
+    def __del__(self):
+        try:
+            self.close()
+        except Exception:
+            pass
+
+
 def load_signal_cache(cache_dir, dataset: str, subject_id: str) -> dict:
-    """Reconstruct one subject's signals dict — SAME shape
+    """Open one subject's cached signals — SAME dict shape
     load_subject_signals() returns ({"EEG": [(label, arr), ...], "EOG": [...],
-    "ECG": [...], "EMG": [...]}) — from the cache, instead of re-reading the
-    raw HDF5. Arrays are read fully into memory as float32 (matching
-    load_subject_signals' own return dtype) — same design as OSF's
-    load_signal_cache: the win is avoiding repeated HDF5-read + channel-
-    mapping + FFT-resample work across every window of the same subject,
-    not out-of-core streaming, so a full per-subject read (not a lazy mmap
-    slice) is the right tradeoff here, same as OSF's own precedent.
+    "ECG": [...], "EMG": [...]}) — instead of re-reading the raw HDF5.
+
+    Values are LAZY _NpySliceReader handles, not materialized float32
+    arrays (changed 2026-08-22 — see that class for the measured reasoning
+    and the mmap approach it rejects). Callers slice the window they need
+    and convert it; PhysioOmniRawEpochWindowDataset.__getitem__ does
+    `np.asarray(arr[s0:s1], dtype=np.float32)`, producing an array
+    byte-identical to what the old full-read path returned (verified
+    against real cached subjects across all 3 datasets, 1- and 2-channel
+    EEG, at start/middle/end windows for N=1 and N=160).
+
+    NOTE this deliberately supersedes the reasoning in the previous
+    version of this docstring ("a full per-subject read, not a lazy mmap
+    slice, is the right tradeoff here, same as OSF's own precedent"). That
+    conflated two separate things: the cache's real purpose is avoiding
+    repeated HDF5-read + channel-mapping + FFT-resample work, which this
+    change preserves completely. OSF's precedent also does not transfer —
+    OSF stores one unified matrix and reads a much larger fraction of it
+    per window than PhysioOmni does.
     """
     subj_dir = cache_subject_dir(cache_dir, dataset, subject_id)
     signals = {"EEG": [], "EOG": [], "ECG": [], "EMG": []}
     for (modality, label), fname in _CACHE_SLOT_FILENAMES.items():
         p = subj_dir / fname
         if p.exists():
-            arr = np.load(p).astype(np.float32)
-            signals[modality].append((label, arr))
+            signals[modality].append((label, _NpySliceReader(p)))
     return signals
 
 

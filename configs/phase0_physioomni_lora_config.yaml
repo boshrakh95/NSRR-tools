@@ -28,7 +28,7 @@ embedding:
   # §15.9) since Stage 2's live per-step cost profile (backward pass
   # through LoRA-adapted layers) differs from Stage 1's forward-only
   # extraction; not assumed to transfer automatically.
-  chunk_batch_size: 16
+  chunk_batch_size: 64
 
 # ── HDF5 Signal Data — identical to Stage 1's data: section, plus the
 # Stage-2-only raw_signal_cache_dir (plan §15.3) ─────────────────────────────

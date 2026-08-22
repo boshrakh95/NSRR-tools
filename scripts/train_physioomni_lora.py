@@ -157,6 +157,24 @@ try:
 except ImportError:
     HAS_SKLEARN = False
 
+# ── TF32 tensor cores (2026-08-22) ──────────────────────────────────────────
+# PyTorch 2.5 defaults BOTH of these OFF (allow_tf32=False,
+# float32_matmul_precision="highest"), so every matmul in the 4 encoders +
+# sequence head was running at true FP32 on an H100 — verified live in
+# physioomni_env, and visible in the training logs as `dtype=float32`.
+# H100 throughput: FP32 non-tensor ~67 TFLOPS vs TF32 tensor core ~495
+# TFLOPS. TF32 keeps FP32's exponent range and reduces only mantissa bits
+# (10 vs 23) on the matmul inputs, accumulating in FP32 — the standard
+# A100/H100 default for deep learning, and unlike autocast it needs no
+# GradScaler, changes no stored dtype, and leaves every checkpoint
+# byte-compatible. Deliberately NOT torch.autocast here: autocast on CUDA
+# defaults to float16 (not bfloat16), which this 12-layer transformer has
+# not been validated under — TF32 is the free, low-risk rung.
+if torch.cuda.is_available():
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
+    torch.set_float32_matmul_precision("high")
+
 MODALITIES = ["EEG", "EOG", "ECG", "EMG"]
 MODALITY_DIM = {"EEG": 200, "EOG": 100, "ECG": 100, "EMG": 100}
 FLAT_DIM = sum(MODALITY_DIM.values())  # 500
@@ -394,6 +412,7 @@ def train_one_context(
     cli_lr_set: bool = False,
     stage2_30s_checkpoint: str = None,
     gradient_checkpointing: bool = False,
+    num_workers: int = None,
 ):
     if exp_id is None:
         exp_id = f"{task}_{head_type}"
@@ -451,9 +470,28 @@ def train_one_context(
     else:
         criterion = nn.CrossEntropyLoss()
 
-    # ── DataLoaders — small num_workers default: raw-signal windows are far
-    # larger tensors per item than Stage 1's precomputed embeddings ────────
-    num_workers = min(2, max(0, len(train_ds) // 64))
+    # ── DataLoaders ─────────────────────────────────────────────────────────
+    # Raised from the old hard cap of 2 (2026-08-22). Two things changed:
+    #
+    #  1. Per-subject RAM dropped from ~174 MB (the old full-night float32
+    #     materialization) to just the live window, because
+    #     load_signal_cache now returns lazy _NpySliceReader handles. The
+    #     old cap of 2 existed because of that ~174 MB/worker footprint.
+    #  2. Measured on Lustre, this I/O is PER-OPERATION LATENCY bound
+    #     (~20 ms/open, ~12 ms/read-op — see load_signal_cache's docstring
+    #     for the full table), not bandwidth bound. Latency-bound I/O
+    #     parallelizes close to linearly, so workers are the real lever.
+    #
+    # Honest scope: this matters at SHORT contexts (I/O is ~50% of a 30s
+    # epoch) and is nearly irrelevant at long ones (~3.5% of an 80m epoch,
+    # which is ~96% compute). Capped by the job's actual CPU allocation —
+    # SLURM_CPUS_PER_TASK, minus one for the main process — so it can never
+    # oversubscribe a job that asked for fewer cores. Override with
+    # --num-workers.
+    if num_workers is None:
+        _cpus = int(os.environ.get("SLURM_CPUS_PER_TASK", 0) or os.cpu_count() or 2)
+        num_workers = max(0, min(_cpus - 1, len(train_ds) // 64, 8))
+    print(f"  DataLoader workers: {num_workers}")
 
     use_weighted_sampler = t_cfg.get("weighted_sampler", False) and w_auto is not None
     if use_weighted_sampler:
@@ -679,6 +717,12 @@ def main():
                               "default OFF: only worth it for a context that still OOMs at "
                               "micro_batch=1 on the largest available GPU — a larger GPU allocation "
                               "is the preferred fix first (zero speed cost, unlike this flag).")
+    parser.add_argument("--num-workers", default=None, type=int, dest="num_workers",
+                         help="DataLoader worker processes. Default: SLURM_CPUS_PER_TASK-1, "
+                              "capped at 8. Raise --cpus-per-task alongside this — the cache "
+                              "read is Lustre-latency-bound and parallelizes near-linearly, "
+                              "but only matters much at short contexts (see "
+                              "load_signal_cache's docstring for the measured breakdown).")
     args = parser.parse_args()
 
     with open(args.config) as f:
@@ -754,6 +798,7 @@ def main():
                 exp_id=exp_id, cli_lr_set=_cli_lr_set,
                 stage2_30s_checkpoint=stage2_30s_ckpt,
                 gradient_checkpointing=args.gradient_checkpointing,
+                num_workers=args.num_workers,
             )
             if metrics is not None:
                 append_to_summary(summary_path, metrics)
