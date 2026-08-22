@@ -8,3 +8,5 @@
 {"ts":"2026-08-20T19:51:40-07:00","job_id":"55720280","node":"fc11015","status":"TIMEOUT_REQUEUED","task":"sex_binary","head":"lstm","context":"80m","lr":"1e-4","datasets":"apples shhs"}
 {"ts":"2026-08-20T19:57:42-07:00","job_id":"55846699","node":"fc11019","status":"STARTED","task":"sex_binary","head":"lstm","context":"80m","lr":"1e-4","datasets":"apples shhs"}
 {"ts":"2026-08-21T11:54:38-07:00","job_id":"55846699","node":"fc11019","status":"TIMEOUT_REQUEUED","task":"sex_binary","head":"lstm","context":"80m","lr":"1e-4","datasets":"apples shhs"}
+{"ts":"2026-08-21T18:24:58-07:00","job_id":"55921205","node":"fc11009","status":"STARTED","task":"sex_binary","head":"lstm","context":"80m","lr":"1e-4","datasets":"apples shhs"}
+{"ts":"2026-08-22T04:16:14-07:00","job_id":"55921205","node":"fc11009","status":"SUCCESS","task":"sex_binary","head":"lstm","context":"80m","lr":"1e-4","datasets":"apples shhs"}
