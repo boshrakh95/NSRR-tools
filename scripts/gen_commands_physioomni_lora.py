@@ -213,9 +213,24 @@ def _log_stem(exp: dict, step: str, context: str = "", split: str = "") -> str:
 # ── Status checks ─────────────────────────────────────────────────────────────
 
 def trained_contexts(exp: dict, registry: dict) -> list:
+    """Contexts whose training has actually FINISHED.
+
+    Keyed on metrics.json, NOT best_model.pt (fixed 2026-08-22). best_model.pt
+    is rewritten every time val improves — so it exists from epoch 1 onward
+    and means "a run started", not "a run finished". metrics.json is written
+    exactly once, after the training loop completes (train_physioomni_lora.py),
+    which is the same signal that script's own [SKIP] check already uses;
+    these two now agree instead of contradicting each other.
+
+    This was a live bug, not a hypothetical: a context showed as
+    "# already trained" while still on epoch 2, and — worse, via
+    stage2_30s_ready below — long contexts were cleared to warm-start from a
+    30s checkpoint that had only reached an early, unconverged epoch, which
+    silently violates the LP-FT staging plan §15.6 depends on.
+    """
     folder = exp_folder(exp, registry)
     return [ctx for ctx in exp["contexts"]
-            if (folder / context_dir_name(ctx) / "best_model.pt").exists()]
+            if (folder / context_dir_name(ctx) / "metrics.json").exists()]
 
 
 def inferred_contexts(exp: dict, registry: dict, split: str = "test") -> list:
@@ -274,18 +289,23 @@ def resolve_batch_accum(exp: dict, registry: dict, context: str,
         return exp["batch_size"], 1
 
 
-# Per-context GPU-size override (real evidence, 2026-08-20): the training
-# job script's own default (2g.20gb, ~19.6GB usable) OOM'd on 240m even at
-# micro_batch=1 (the batch-size floor — see v2_physioomni_lora_registry.yaml's
-# gradient_accumulation comment for the full diagnosis). Bumping to 3g.40gb
-# for that one context has ZERO speed cost (MIG partitions scale compute
-# proportionally to memory, so this is strictly more headroom, not a
-# tradeoff) — preferred over gradient checkpointing (which trades compute
-# for memory) wherever it's sufficient. Other contexts stay on the
-# job script's cheaper, faster-to-schedule default; only override where
-# there's real evidence it's needed.
-_LARGE_GPU_CONTEXTS = {"240m"}
-_LARGE_GPU = "nvidia_h100_80gb_hbm3_3g.40gb:1"
+# Per-context GPU-size override — RETIRED 2026-08-22, deliberately empty.
+#
+# History: this existed because the job script's old default (2g.20gb,
+# ~19.6 GB usable) OOM'd on 240m even at micro_batch=1, so 240m alone was
+# bumped to 3g.40gb. As of 2026-08-22 jobs/train_physioomni_lora_gpu.sh
+# requests a FULL, non-MIG H100 (`--gpus=h100:1`, 80 GB) for every context,
+# which is strictly larger than that override — leaving it in place would
+# now DOWNGRADE 240m from 80 GB to 40 GB, i.e. reintroduce the exact
+# constraint it was written to relieve.
+#
+# Kept as an empty hook rather than deleted: the mechanism is still the
+# right first rung of plan §15.8's memory ladder if some future context
+# needs a size the default doesn't give it. Add entries here only with
+# real OOM evidence, and only for sizes LARGER than the job script's own
+# default.
+_LARGE_GPU_CONTEXTS = set()
+_LARGE_GPU = None
 
 
 def build_train_cmd(exp: dict, registry: dict, context: str,
@@ -321,7 +341,7 @@ def build_train_cmd(exp: dict, registry: dict, context: str,
         f"--output={logs_dir}/{stem}_%j.out "
         f"--error={logs_dir}/{stem}_%j.err"
     )
-    if context in _LARGE_GPU_CONTEXTS:
+    if _LARGE_GPU and context in _LARGE_GPU_CONTEXTS:
         sbatch_opts = f"--gpus={_LARGE_GPU} {sbatch_opts}"
     return f"{env_str} sbatch {sbatch_opts} {JOBS_DIR}/{_TRAIN_SCRIPT}"
 
@@ -455,11 +475,12 @@ def cmd_train(args, registry):
           f"{stage1_ckpt or '(auto-detected per context by train_physioomni_lora.py)'}")
     print(f"# Logs → {registry.get('logs_dir', 'logs_physioomni/')}")
     print(f"# NOTE: wall-time estimates are placeholder, NOT GPU-calibrated for PhysioOmni-LoRA yet")
-    print(f"# NOTE: context_micro_batch schedule (per-head, in the registry) is a "
-          f"first-pass estimate from ONE real OOM data point (2026-08-20), not fully "
-          f"calibrated per context — if a run still OOMs, try (in order): a bigger "
-          f"--gpus= override (zero speed cost, see _LARGE_GPU_CONTEXTS above — 240m "
-          f"already gets this), a lower micro_batch for that context, then "
+    print(f"# NOTE: context_micro_batch schedule (per-head, in the registry) was "
+          f"calibrated against the OLD 2g.20gb MIG slice (~19.6GB). Since 2026-08-22 "
+          f"the job script requests a FULL H100 (80GB), so these micro_batch values "
+          f"are now very conservative — raising them (keeping micro_batch*accum=32) "
+          f"should improve GPU utilisation, but has NOT been re-measured yet. "
+          f"If a run OOMs: lower micro_batch for that context, then "
           f"GRADIENT_CHECKPOINTING=1 as a last resort (real compute cost — opt-in "
           f"only, see train_physioomni_lora.py's --gradient-checkpointing, plan §15.8)")
     print()
@@ -468,12 +489,25 @@ def cmd_train(args, registry):
     # plain, untagged path (matches train_physioomni_lora.py's own auto-detection
     # exactly). Pre-flight check here so a missing 30s run is caught at
     # command-generation time, not job runtime.
-    stage2_30s_path = Path(registry["results_dir"]) / f"{exp['task']}_{exp['head']}" / "context_30s" / "best_model.pt"
-    stage2_30s_ready = stage2_30s_path.exists()
+    stage2_30s_dir = Path(registry["results_dir"]) / f"{exp['task']}_{exp['head']}" / "context_30s"
+    stage2_30s_path = stage2_30s_dir / "best_model.pt"
+    # Readiness is keyed on metrics.json — written ONCE, at true completion —
+    # not on best_model.pt, which exists from epoch 1 (fixed 2026-08-22; see
+    # trained_contexts()). §15.6's staging assumes the 30s run has CONVERGED
+    # before other contexts branch from it; the old best_model.pt check
+    # cleared them to start against a 30s checkpoint that was only a couple
+    # of epochs in, which is exactly what happened live.
+    stage2_30s_ready = (stage2_30s_dir / "metrics.json").exists()
     if any(ctx != "30s" for ctx in contexts) and not stage2_30s_ready and not stage1_ckpt:
-        print(f"# ⚠ WARNING: no Stage 2 30s checkpoint at {stage2_30s_path} yet — "
-              f"non-30s contexts below will fail at runtime with a clear error "
-              f"unless you run 30s first (checklist 2.5d) or pass --stage1-checkpoint.")
+        if stage2_30s_path.exists():
+            print(f"# ⚠ WARNING: 30s checkpoint exists at {stage2_30s_path} but its run has "
+                  f"NOT finished (no metrics.json) — it is still mid-training, so its weights "
+                  f"are not converged. Warm-starting other contexts from it now violates "
+                  f"§15.6's LP-FT staging. Wait for the 30s run to complete.")
+        else:
+            print(f"# ⚠ WARNING: no Stage 2 30s checkpoint at {stage2_30s_path} yet — "
+                  f"non-30s contexts below will fail at runtime with a clear error "
+                  f"unless you run 30s first (checklist 2.5d) or pass --stage1-checkpoint.")
         print()
 
     for ctx in contexts:
