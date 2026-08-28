@@ -132,14 +132,37 @@ three constants changed (`N_MODALITIES→n_channels`, `EMBED_DIM=256`,
 `FLAT_DIM=n_channels*256`). This is by far the smallest adapter of the three
 baselines.
 
-**Do not average or majority-vote across channels.** Keep per-channel
-embeddings and let our existing `LSTMHead`/`TransformerHead` combine them —
-exactly what the SleepFM pipeline already does with its 4 modality
-embeddings. Averaging discards information the head is designed to use and
-breaks the paper's "architecture held constant, only the encoder changes"
-claim. Published evidence supports this: the Mantis-on-EEG study found its
-channel-independent design *outperformed* CBraMod's multivariate
-pretraining in the low-channel-count regime that sleep PSG occupies.
+**Do not average or majority-vote across channels.** Concatenate them and
+flatten to one vector per epoch — `[T, C, 256] -> [T, C*256]` — then feed
+`(B, N, input_dim)` to the head. That is **exactly** what all three existing
+models do; verified in code, they all call `x = w.reshape(N, FLAT_DIM)`
+before the head, and the head never sees a channel axis:
+
+| Model | Per-timestep structure | head `input_dim` |
+|---|---|---|
+| SleepFM | 4 modality embeddings x 128 | 512 |
+| OSF | 2 subtokens x 768 | 1536 |
+| PhysioOmni | EEG 200 + EOG 100 + ECG 100 + EMG 100 | 500 |
+| **Mantis** | **6 channels x 256** | **1536** |
+
+`input_dim` already differs per backbone, so a fourth value is established
+practice, not a new inconsistency. Averaging or voting would instead discard
+information the head's first linear layer is there to learn.
+
+**One real architectural difference to state in the paper** (not a choice we
+make — inherent to each model): how much cross-channel mixing happens inside
+the backbone before the head sees anything. OSF attends across all 12 leads
+jointly; SleepFM fuses 6 physical channels into 4 modality groups;
+PhysioOmni fuses within each modality but never across them (4 independent
+encoders); **Mantis does none at all** — every channel is encoded in
+isolation, so all cross-channel structure must be learned by the head. A
+second asymmetry worth a methods sentence: Mantis keeps all 6 channels
+separate where SleepFM collapses them into 4 groups, so its head receives
+more per-channel detail.
+
+Published evidence says this is not a handicap: the Mantis-on-EEG study
+found its channel-independent design *outperformed* CBraMod's multivariate
+pretraining in exactly the low-channel-count regime sleep PSG occupies.
 
 ### LoRA targets — same names as OSF, verified
 
