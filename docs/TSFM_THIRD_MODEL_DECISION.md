@@ -7,8 +7,12 @@
 > HDF5 data, be tractable to implement, and satisfy a supervisor who asked
 > about "recent general-purpose TSFMs, e.g. Chronos"?*
 >
-> **Recommendation: switch the primary pick from MOMENT to Mantis, and keep
-> MOMENT-small as the documented secondary.** The reasoning is below; §2 and
+> **DECIDED 2026-08-22: Mantis is the third baseline.** MOMENT-small is kept
+> as the documented secondary, to run only if a reviewer asks. The
+> `moment-implementation` branch was removed and replaced by
+> `mantis-implementation`; see `docs/TSFM_MANTIS_IMPLEMENTATION_PLAN.md`.
+>
+> **Original recommendation: switch the primary pick from MOMENT to Mantis.** The reasoning is below; §2 and
 > §6 are the parts that actually decide it. Nothing here is committed — this
 > document exists so the decision is made on evidence rather than by
 > inheriting the first draft's pick.
@@ -28,8 +32,9 @@
 | Can ingest a full 30 s epoch? | Yes — `num_patches=240` (regen pos buffer) | **Yes — 480 patches, zero surgery** | n/a |
 | Multi-channel | **Channel-independent, built in** | Channel-independent, built in | Varies; Chronos-2 group attention (forecasting) |
 | Frozen-embedding API | `transform(X, three_dim=True)` → `(N, C, 256)` | `embed(reduction="none")` → `(N, C, P, D)` | **None first-class** — research-grade only |
-| Size | **8.1 M** | 40 M / 125 M / **385 M** | 28–120 M+ |
-| Est. extraction cost (§5) | **~1 GPU-h** | 10 / 32 / **100 GPU-h** | n/a |
+| Size (**verified from checkpoints**) | **8.11 M** (V2: **4.19 M**) | **37.9 / 113.5 / 346.4 M** | 28–120 M+ |
+| GFLOP per 30 s epoch, 6 ch (§5) | **31.1** | 143 / 540 / **1912** | n/a |
+| Tensor-core friendly? | **Yes** — d=256 | Yes — d=512–1024 | n/a |
 | License | Apache-2.0 | MIT | Apache-2.0 |
 | **Published sleep-staging evidence** | **Yes — 8 NSRR-family datasets, beat CBraMod + EEGNet** | **No — explicitly excluded from that study** | No |
 | LoRA precedent | None (but tiny → full FT viable) | Own tutorial, **has a real bug** | TimesFM has the best first-party support |
@@ -388,30 +393,100 @@ framing in §6. Note it as considered; don't pick it.
 
 ---
 
-## 5. Compute — the practical argument
+## 5. Compute — rewritten 2026-08-22 with measured data
 
-Order-of-magnitude estimate for Stage 1 embedding extraction over the full
-cohort. **These are FLOP-counting estimates (`2 · params · tokens`), not
-measurements** — treat them as ratios, not absolute wall-times.
+The first version of this section used a crude `2·params·tokens` estimate.
+Replaced here with per-layer FLOP counts and, more importantly, a **real
+measured anchor** — which changes the conclusion in an interesting way.
 
-Scale: ~15,000 subjects × ~1,080 epochs × 6 channels = **97 M channel-epochs**.
-Under Option B (8 × 512-sample windows per epoch) that is ~729 M forward
-passes. **Option D (§3.2) costs the same to within 0.1 %** — 1 pass of 480
-patches ≈ 8 passes of 64 — so this table stands unchanged either way, and the
-model-size ratios below are what actually matter.
+### 5.1 Verified parameter counts (read from the checkpoints, not the papers)
 
-| Model | GFLOP / window | Total | ≈ GPU-h @ 100 TFLOP/s eff. |
+| Model | Params | Note |
+|---|---|---|
+| **MantisV2** | **4.19 M** | |
+| **Mantis-8M / MantisPlus** | **8.11 M** | |
+| PhysioOmni (4 encoders) | 13.87 M | EEG 7.84 + EOG/ECG/EMG 2.01 each |
+| MOMENT-small | 37.90 M | flan-t5-small, d=512, 8 layers |
+| OSF vit_base | 85.33 M | d=768, depth 12, 12 leads |
+| MOMENT-base | 113.48 M | flan-t5-base, d=768, 12 layers |
+| MOMENT-large | 346.37 M | flan-t5-large, d=1024, 24 layers |
+
+The papers quote 40/125/385 M for MOMENT; the real checkpoints are
+38/113/346 M.
+
+### 5.2 Cost to encode one 30-second epoch (all 6 channels)
+
+| Model | Tokens/epoch | GFLOP/epoch | vs PhysioOmni |
 |---|---|---|---|
-| **Mantis-8M** | 0.52 | 0.38 EFLOP | **~1** |
-| MOMENT-small | 5.12 | 3.7 EFLOP | ~10 |
-| MOMENT-base | 16.0 | 11.7 EFLOP | ~32 |
-| MOMENT-large | 49.3 | 35.9 EFLOP | ~100 |
+| PhysioOmni | 30+60+150+150, **4 separate** encoders | 1.62 | 1.0× |
+| OSF | 90 (12 leads, one pass, 64 Hz) | 15.6 | 9.6× |
+| **Mantis (all versions)** | **240 × 6 ch** | **31.1** | **19×** |
+| MOMENT-small | 480 × 6 ch | 143 | 88× |
+| MOMENT-base | 480 × 6 ch | 540 | 333× |
+| MOMENT-large | 480 × 6 ch | 1912 | **1177×** |
 
-You have already lived the consequences of underestimating this: PhysioOmni's
-Stage 2 is currently running ~18 h per epoch at 80m context. Mantis's 8M
-parameters are not a compromise here — given that the published evidence says
-it *outperforms* a 385M-parameter-class alternative's peer group on our exact
-task, the small size is close to free.
+Note **MantisV2 (4.19 M) has identical FLOPs to Mantis-8M** — the difference
+is in the token generator, not the transformer. Choose on quality, not speed.
+
+### 5.3 The measured anchor, and why FLOPs alone mislead
+
+Calibrated against the real PhysioOmni 80m transformer run (18 h/epoch,
+57,195 items, N=160):
+
+```
+9.2 M epoch-forwards  ->  ~44.6 PFLOP per training epoch (fwd+bwd)
+18 h  ->  0.69 TFLOP/s effective  =  0.14 % of an H100's ~989 TFLOP/s peak
+```
+
+**The current training is not compute-bound. It is running at 0.14 % of
+peak.** Three multiplicative causes, all quantified:
+
+| | Factor | Ceiling |
+|---|---|---|
+| H100 bf16 peak, whole card | — | 989 TFLOP/s |
+| fp32 with TF32 disabled (PyTorch 2.5 default) | ÷8 | 124 |
+| `2g.20gb` MIG slice = 2/7 of the SMs | ÷3.5 | 35 |
+| hidden dim 100–200 — too small for tensor cores | ÷5–10 | 3.5–7 |
+
+The first two were fixed for PhysioOmni on 2026-08-22 (TF32 + `--gpus=h100:1`).
+**The third is architectural and unfixable**: PhysioOmni's EOG/ECG/EMG
+encoders use `hidden_dim=100`, which is not even a multiple of 8, spread over
+four separate small encoders.
+
+**This is what actually decides the compute argument.** Projected hours per
+training epoch at 80m:
+
+| Model | @0.7 TF/s (PhysioOmni's measured efficiency) | @10 TF/s | @30 TF/s |
+|---|---|---|---|
+| PhysioOmni | 17.9 h ← **measured** | 1.2 h | 0.4 h |
+| OSF | 172 h | 11.9 h | 4.0 h |
+| **Mantis** | 344 h | **23.7 h** | **7.9 h** |
+| MOMENT-small | 1,585 h | 109 h | 36.5 h |
+| MOMENT-base | 5,970 h | 412 h | 137 h |
+| MOMENT-large | 21,127 h | 1,458 h | **486 h** |
+
+**Read the columns, not the rows.** Mantis costs 19× PhysioOmni's FLOPs but
+has far better-shaped work — `hidden_dim=256` (multiple of 8, attention
+`inner_dim=1024`), **one** encoder, all channels batchable into a single call.
+If it reaches even 30 TFLOP/s it runs 80m in ~8 h/epoch, *faster than
+PhysioOmni does today* despite the extra FLOPs. MOMENT-large is untenable at
+any plausible utilization — ~486 h/epoch at 6 % is 20 days for one epoch of
+one context of one task.
+
+**Caveat**: the utilization column for Mantis/MOMENT is an **estimate from
+tensor shapes, not a measurement**, and it is the dominant uncertainty here.
+A short pilot should pin it down before committing to a sweep. The
+PhysioOmni row is real.
+
+### 5.4 What this means for the choice
+
+- **Mantis is the only version-agnostic safe pick** — all three variants cost
+  the same to run.
+- **MOMENT-large is off the table**; MOMENT-base is marginal; only
+  `MOMENT-small` is defensible as a secondary, and it is still ~4.6× Mantis.
+- **The biggest lever is not model choice — it is GPU utilization**, and the
+  Mantis implementation should be written to get that right from day one.
+  See `docs/TSFM_MANTIS_IMPLEMENTATION_PLAN.md` §4.
 
 ---
 
@@ -465,24 +540,19 @@ completed unremarkable cell in a table.
    headroom, but the memory still scales with
    `batch_size × raw-epochs-per-context-window`.
 
-### If you accept this
-The two skeleton files need renaming and revising, and the branch name no
-longer matches. Least disruptive path: **keep the `moment-implementation`
-branch and worktree names** (renaming a pushed branch and a worktree is more
-disruptive than the mismatch is worth) and treat them as "third TSFM
-baseline". Rename only the *files* — `MOMENT_CLAUDE.md` →
-`TSFM3_CLAUDE.md` (or `MANTIS_CLAUDE.md`), likewise the plan doc — and record
-the decision at the top of both. Alternatively, if you would rather the names
-match exactly, delete and recreate the branch/worktree now, before any
-MOMENT-specific code exists; that is cheapest today and only gets more
-expensive.
+### Decision taken, 2026-08-22
 
-**This is your call, not mine to make** — §2's evidence is strong but comes
-with the authorship caveat noted there, and "MOMENT is the better-known name
-to a reviewer" is a legitimate reason to overrule it that I can't weigh for
-you.
+Mantis is the third baseline. The `moment-implementation` branch and worktree
+were removed and replaced by `mantis-implementation` /
+`/home/boshra95/NSRR-tools-mantis` — done before any MOMENT-specific code
+existed, which was the cheapest possible moment. `MOMENT_CLAUDE.md` and
+`docs/TSFM_MOMENT_IMPLEMENTATION_PLAN.md` were replaced by their Mantis
+equivalents; the MOMENT technical findings survive in §4.2 here and in
+`docs/TSFM_BASELINE_CANDIDATES.md` §2.3, so nothing verified was lost.
 
----
+MOMENT-small remains the documented secondary. If a reviewer asks for a
+larger/better-known general TSFM, run it and state plainly why `-large` was
+not run (§5.3).
 
 ## Sources
 
