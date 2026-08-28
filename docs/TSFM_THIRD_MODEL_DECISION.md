@@ -25,6 +25,7 @@
 |---|---|---|---|
 | Task it was pretrained for | **Classification** (contrastive) | Reconstruction, classification-capable | **Forecasting only** |
 | Native window | 512 samples (32 patches × 16) | 512 samples (64 patches × 8) | 1000s of steps, but forecasting-shaped |
+| Can ingest a full 30 s epoch? | Yes — `num_patches=240` (regen pos buffer) | **Yes — 480 patches, zero surgery** | n/a |
 | Multi-channel | **Channel-independent, built in** | Channel-independent, built in | Varies; Chronos-2 group attention (forecasting) |
 | Frozen-embedding API | `transform(X, three_dim=True)` → `(N, C, 256)` | `embed(reduction="none")` → `(N, C, P, D)` | **None first-class** — research-grade only |
 | Size | **8.1 M** | 40 M / 125 M / **385 M** | 28–120 M+ |
@@ -179,7 +180,45 @@ MOMENT / Mantis window   =  512 samples  = 4.0 s
                            -> 7.5 windows per epoch
 ```
 
-Three ways to bridge it:
+**⚠️ CORRECTION (2026-08-22, after review).** An earlier version of this
+section called 512 a "hard wall" for both models and told the implementer to
+"treat 512 as a hard constraint in practice". **That was an overstatement and
+it is wrong.** `docs/TSFM_BASELINE_CANDIDATES.md` §2.3 was actually more
+careful than I was — it said longer sequences were *untested*, not
+*impossible*, and I hardened that into a constraint it never claimed.
+
+Verified against the real `AutonLab/MOMENT-1-large` checkpoint (safetensors
+header read directly, not inferred):
+
+```
+patch_embedding.value_embedding.weight   shape=[1024, 8]      <- patch_len IS baked in at 8
+patch_embedding.position_embedding.pe    shape=[1, 5000, 1024] <- sinusoidal buffer, 5000 positions
+```
+
+Two consequences, and they point in opposite directions:
+
+- **Sequence length is NOT architecturally capped at 64 patches.** The
+  positional embedding is a non-learned sinusoidal buffer covering 5000
+  positions (`register_buffer`, `require_grad=False`,
+  `momentfm/models/layers/embed.py:10-28`), and the backbone is T5 with
+  *relative* attention bias. Feeding many more than 64 patches is fine.
+  The "512" in the repo's `classification_dataset.py` and the tutorial's
+  *"currently only support 512"* argparse help are statements about the
+  **tested path**, not the architecture.
+- **But `patch_len` cannot be changed on a pretrained checkpoint.**
+  `PatchEmbedding` builds `nn.Linear(patch_len, d_model)`
+  (`embed.py:200`), so the pretrained weight is literally `[1024, 8]`.
+  Setting `patch_len=64` makes that layer `[1024, 64]` — a shape mismatch,
+  so those weights cannot load. You would get a **randomly initialised input
+  projection feeding a pretrained 24-layer T5 encoder in a basis it has never
+  seen**, which discards the tokenizer and almost certainly destroys frozen
+  performance. Any advice to "set `patch_len = 64`" is wrong for this reason,
+  even though its underlying intuition (let MOMENT read a whole 30 s epoch and
+  attend across it) is right.
+
+The correct way to get that intuition is **Option D** below.
+
+Four ways to bridge it:
 
 **Option A — downsample the 30 s epoch to 512 samples.**
 Effective rate 17.07 Hz, **Nyquist 8.5 Hz**. This destroys sleep spindles
@@ -189,25 +228,67 @@ reviewer an easy objection that the baseline was crippled before it started.
 **Do not do this.**
 
 **Option B — split each 30 s epoch into 512-sample windows, embed each, pool
-→ one 30 s embedding.** *(recommended)*
-Keeps the full 128 Hz bandwidth. Keeps the 30-second epoch as the atomic
-unit, so the context-length sweep stays **directly comparable to OSF and
-PhysioOmni**, which both already work in 30 s epochs. Cost: 7.5× more forward
-passes (§5 — fine for Mantis, punishing for MOMENT-large).
-Practical detail: resample the epoch 3840 → 4096 samples (a mild 1.067×
-interpolation, no information lost) to get exactly **8 clean windows**,
-rather than 7 windows plus an awkward remainder.
+→ one 30 s embedding.**
+Keeps the full 128 Hz bandwidth and the 30-second epoch as the atomic unit.
+Resample 3840 → 4096 for exactly 8 clean windows. Workable, but strictly
+worse than Option D: the model never sees across window boundaries, so an
+event spanning two windows is split, and the pooling step is an arbitrary
+heuristic we would have to justify.
 
 **Option C — abandon the 30 s epoch; treat the 512-sample (4 s) window as the
 atomic unit.**
 Closest to SleepFM's *own* design (5 s / 640-sample patches at 128 Hz — only
-20% longer than MOMENT's 4 s). Arguably the most faithful "let each model use
-its native granularity" framing. But it makes the context sweep's units
-differ from OSF and PhysioOmni, so cross-baseline comparison needs care.
-Worth considering as a secondary analysis, not the primary.
+20 % longer than MOMENT's 4 s). Arguably the most faithful "let each model use
+its native granularity" framing. But it makes the context sweep's units differ
+from OSF and PhysioOmni, so cross-baseline comparison needs care. Worth
+considering as a secondary analysis, not the primary.
 
-**Recommendation: Option B**, with Option C noted in the paper as the
-alternative framing that was considered.
+**Option D — feed the whole 3840-sample epoch at native `patch_len=8`,
+giving 480 patches.** ***(recommended)***
+This is the correct implementation of the "let MOMENT read the whole epoch"
+idea. **Every pretrained weight stays valid** — `patch_len` is untouched at 8,
+so `value_embedding` loads normally, and 480 < 5000 so the sinusoidal
+positional buffer already covers it with no surgery at all. Self-attention
+then spans the entire 30 s epoch, so an event that straddles what would have
+been a window boundary in Option B (a spindle, a K-complex, an arousal) is
+modelled as one continuous waveform. It yields **one embedding per epoch
+naturally**, with no pooling heuristic to defend.
+
+**And it is free.** Measured by FLOP count for MOMENT-large
+(`8·n·d² + 4·n²·d + 6·n·d·d_ff`, 24 layers, d=1024, d_ff=2816):
+
+| | per channel-epoch |
+|---|---|
+| Option B — 8 passes × 64 patches | 318.9 GFLOP |
+| **Option D — 1 pass × 480 patches** | **318.6 GFLOP (1.00×)** |
+
+Identical, because the linear-in-`n` projection and MLP terms dominate over
+the quadratic attention term at these lengths. So Option D is a strictly
+better design at the same cost — §5's model-size comparison is unaffected.
+
+**One real caveat, worth stating in the paper**: `flan-t5-large` has
+`relative_attention_num_buckets=32`, `relative_attention_max_distance=128`
+(verified from the checkpoint config). At `patch_len=8` and 128 Hz, 128
+patches = **8 seconds**. So relative position is resolved finely *within*
+~8 s and bucket-saturates beyond it — the model can tell "2 patches apart"
+from "10 patches apart", but not "300 apart" from "400 apart". For the
+events that matter at this scale (spindles 0.5–2 s, K-complexes, arousals)
+that is comfortably fine. It does mean the intra-epoch attention is
+genuinely local, not global, and 480 patches is 7.5× longer than anything
+MOMENT saw in pretraining — an out-of-distribution risk that a pilot should
+check rather than assume away.
+
+**Mantis can do the same thing**, with one extra step: set `seq_len=3840,
+num_patches=240`, which keeps `patch_window_size = 3840/240 = 16` and hence
+`kernel_size=17`, identical to pretraining, so the conv tokenizer weights
+stay valid (`architecture/version1.py:25-40`). Its positional encoding is
+also sinusoidal (`transformer_v1_utils/positional_encoding.py`), but it is a
+`register_buffer` sized `num_patches+1`, so it appears in the state dict and
+will size-mismatch on load — it is deterministic, so regenerate rather than
+load it. Slightly more surgery than MOMENT needs, but sound.
+
+**Recommendation: Option D**, for whichever model is chosen, with Option C
+noted in the paper as the alternative framing that was considered.
 
 ### 3.3 Why the forecasting-native models are worse for this specifically
 
@@ -236,10 +317,12 @@ real, defensible reason — much stronger than "we ran out of time".
 - Architecture (`src/mantis/architecture/version1.py:218-241`): `seq_len=512`,
   `num_patches=32` → `patch_window_size=16`, `hidden_dim=256`.
   `assert (seq_len % num_patches) == 0`.
-  **Note**: longer `seq_len` keeps 32 patches and just makes each patch
-  bigger — so feeding 3840 samples gives patch size 120 vs. the pretrained
-  16, badly out of distribution. Treat 512 as a hard constraint in practice,
-  the same as MOMENT.
+  **Note**: `num_patches` is fixed at construction, so naively raising
+  `seq_len` alone just makes each patch bigger (3840 → patch size 120 vs. the
+  pretrained 16 — badly out of distribution). The fix is to raise *both*:
+  `seq_len=3840, num_patches=240` keeps `patch_window_size=16` and the conv
+  `kernel_size=17` exactly as pretrained. See §3.2 Option D — an earlier
+  version of this doc wrongly called 512 a hard constraint here.
 - Four checkpoints: `Mantis-8M`, `MantisPlus`, `Utica`, `MantisV2`.
 - **A purely synthetic-pretrained variant exists** (CauKer, 1M synthetic
   samples) that matches real-data pretraining performance. For our paper this
@@ -312,8 +395,10 @@ cohort. **These are FLOP-counting estimates (`2 · params · tokens`), not
 measurements** — treat them as ratios, not absolute wall-times.
 
 Scale: ~15,000 subjects × ~1,080 epochs × 6 channels = **97 M channel-epochs**.
-Under Option B (8 × 512-sample windows per epoch) that is **~729 M forward
-passes**.
+Under Option B (8 × 512-sample windows per epoch) that is ~729 M forward
+passes. **Option D (§3.2) costs the same to within 0.1 %** — 1 pass of 480
+patches ≈ 8 passes of 64 — so this table stands unchanged either way, and the
+model-size ratios below are what actually matter.
 
 | Model | GFLOP / window | Total | ≈ GPU-h @ 100 TFLOP/s eff. |
 |---|---|---|---|
