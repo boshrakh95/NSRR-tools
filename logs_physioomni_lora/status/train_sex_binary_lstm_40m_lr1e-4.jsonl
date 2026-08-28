@@ -2,3 +2,10 @@
 {"ts":"2026-08-20T20:05:25-07:00","job_id":"55846948","node":"fc10704","status":"FAILED","reason":"40m: oom","task":"sex_binary","head":"lstm","context":"40m","lr":"1e-4","datasets":"apples shhs"}
 {"ts":"2026-08-20T21:37:23-07:00","job_id":"55854280","node":"fc11011","status":"STARTED","task":"sex_binary","head":"lstm","context":"40m","lr":"1e-4","datasets":"apples shhs"}
 {"ts":"2026-08-22T08:17:56-07:00","job_id":"56116547","node":"fc10907","status":"STARTED","task":"sex_binary","head":"lstm","context":"40m","lr":"1e-4","datasets":"apples shhs"}
+{"ts":"2026-08-22T23:15:21-07:00","job_id":"56116547","node":"fc10907","status":"TIMEOUT_REQUEUED","task":"sex_binary","head":"lstm","context":"40m","lr":"1e-4","datasets":"apples shhs"}
+{"ts":"2026-08-22T23:19:07-07:00","job_id":"56326810","node":"fc10919","status":"STARTED","task":"sex_binary","head":"lstm","context":"40m","lr":"1e-4","datasets":"apples shhs"}
+{"ts":"2026-08-23T14:15:53-07:00","job_id":"56326810","node":"fc10919","status":"TIMEOUT_REQUEUED","task":"sex_binary","head":"lstm","context":"40m","lr":"1e-4","datasets":"apples shhs"}
+{"ts":"2026-08-23T14:19:46-07:00","job_id":"56397948","node":"fc10913","status":"STARTED","task":"sex_binary","head":"lstm","context":"40m","lr":"1e-4","datasets":"apples shhs"}
+{"ts":"2026-08-24T05:16:45-07:00","job_id":"56397948","node":"fc10913","status":"TIMEOUT_REQUEUED","task":"sex_binary","head":"lstm","context":"40m","lr":"1e-4","datasets":"apples shhs"}
+{"ts":"2026-08-24T08:27:23-07:00","job_id":"56566489","node":"fc11015","status":"STARTED","task":"sex_binary","head":"lstm","context":"40m","lr":"1e-4","datasets":"apples shhs"}
+{"ts":"2026-08-24T20:24:32-07:00","job_id":"56566489","node":"fc11015","status":"SUCCESS","task":"sex_binary","head":"lstm","context":"40m","lr":"1e-4","datasets":"apples shhs"}
