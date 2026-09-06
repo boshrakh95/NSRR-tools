@@ -836,7 +836,21 @@ throughout via `accum_steps = 32 // micro_batch`.
 - **`micro_batch=1` is a last resort**, not a default. On a whole 80 GB H100
   the short contexts should sit well above it.
 
-### 4.5 Ask for a whole H100, not a MIG slice
+### 4.5 Ask for a whole H100, not a MIG slice — **Stage 2 only, not Stage 1**
+
+**Correction, 2026-09-06, after a real pilot mis-applied this section**: this
+entire section's "request a whole card" argument is about **Stage 2's
+backward-pass activation memory** (§4.3's 240 MB/epoch-unit), which **Stage 1
+extraction never has** — extraction runs entirely under `torch.no_grad()`, no
+`backward()`, no optimizer state, no gradient checkpointing concern at all.
+There is no memory argument for a whole card at Stage 1. **Decided (user,
+2026-09-06): request a MIG slice (`1g.10gb`, matching OSF's/PhysioOmni's own
+extraction jobs) for Stage 1, and only escalate to a bigger allocation if a
+real `OOM` actually happens — never pre-emptively for throughput.** This
+mirrors the memory-first mitigation ladder below, just applied one rung
+earlier: try the smallest allocation first, on real evidence, not by default.
+The rest of this section's reasoning stands **as written for Stage 2**, where
+the memory argument is real and unavoidable (below).
 
 `sinfo` confirms Fir has whole-card nodes (`gpu:h100:4` on `fc[10101-10120,
 10201,10203,10405,10611-10620]`, 48 cores / 1.15 TB each) alongside the MIG
@@ -1021,6 +1035,29 @@ Latency-bound I/O parallelizes near-linearly: derive `num_workers` from
   never run in parallel "for speed" on a login node — that is exactly the
   "don't run anything long here" rule this project already has, just
   triggered by concurrency rather than a single long job.
+- **`/tmp` is NODE-LOCAL on this cluster, not shared storage.** Found
+  2026-09-06 submitting the Pilot 3 GPU job: config files written to
+  `/tmp/...` on the **login node** were invisible from the **compute node**
+  the job actually ran on — `nvidia-smi` (queries the node's own hardware,
+  no filesystem needed) printed fine, then the very next line
+  (`open(args.config)`) raised `FileNotFoundError`, because that path
+  simply doesn't exist on that node's own local `/tmp`. **Any file an
+  `sbatch` job reads at runtime must live on shared storage** — `/scratch/
+  boshra95/...` or `/home/boshra95/...`, never `/tmp/...` — including
+  ephemeral/scratch files that were never meant to be committed to the
+  repo. The job script itself is fine to keep in `/tmp` (SLURM reads and
+  stages it at submission time from the submitting node), but nothing it
+  later opens with a runtime path can be.
+- **`nvidia-smi --query-gpu=memory.total` cannot be trusted to report a MIG
+  slice's own size — it reports the physical card's total.** Found in the
+  same Pilot 3 job: a `--gpus=nvidia_h100_80gb_hbm3_1g.10gb:1` allocation
+  (nominally 10 GB) printed `81559 MiB` (~80 GB, the whole card) from
+  inside the job. **Do not build any GPU-size auto-detection on this kind
+  of device query** — it will silently report the wrong number. Where the
+  actual slice size matters (e.g. computing % of the GPU's real peak
+  TFLOP/s), take it from what was explicitly requested (`--gpus=`), not
+  from anything queried at runtime — see `extract_mantis_embeddings.py`'s
+  `--gpu-fraction` flag, added for exactly this reason.
 
 ---
 
@@ -1753,18 +1790,65 @@ worth acting on. Then we would switch, use layer 2 for **both** checkpoints
 
 ### 13.3 Pilot 3 — measurement, not a decision
 
-Nothing to choose. Four numbers that go straight into config files, and one
-gate.
+Four numbers that go straight into config files, and one gate. **Items 1-2
+(Stage 1 extraction throughput) are DONE, real numbers below. Items 3-4 are
+Stage-2-specific (a real LoRA training step, 40m context) and belong at
+checklist 2.6, not here.**
 
 1. **Achieved TFLOP/s vs the H100's ~495 TF32 peak** (§4.1), logged by the
    script itself. **This is a gate**: if extraction comes back under ~5 % of
    peak, stop and diagnose before launching a 90-run sweep. That single check
    would have saved weeks on PhysioOmni.
+
+   **✅ DONE 2026-09-06, real GPU** (`def-egranger_gpu`, 1g.10gb MIG slice,
+   apples[0:20], `chunk_batch_size=192`): **4.370 TFLOP/s**, 119,514
+   channel-epochs in 144.7s.
+
+   **A real bug was found and fixed in the measurement itself, not just the
+   model.** The script's own first printout said "0.88% of H100 peak" —
+   comparing against the *full card's* 495 TFLOP/s while running on a **1/7
+   slice**. Against what was actually allocated (~70.7 TFLOP/s), the true
+   figure is **6.18%** — past the 5% gate, not badly under it. Auto-detecting
+   the slice size was considered and rejected: the same job's own `nvidia-smi
+   --query-gpu=memory.total` reported the **full 80GB** from inside a 10GB
+   MIG allocation, so a device query can't be trusted to self-report slice
+   size on this cluster. Fixed with an explicit, operator-set
+   `--gpu-fraction` CLI flag (default `1/7`, matching this project's usual
+   extraction-job MIG size) rather than a guessed auto-detection heuristic —
+   `extract_mantis_embeddings.py` now reports both "% of what was actually
+   allocated" (the number that matters for the gate) and "% of a full card"
+   (for reference/comparability across runs at different sizes).
+
+   **Verdict: 6.18% is real progress, not a red flag.** For scale:
+   PhysioOmni's real historical number was **0.14%** — Mantis here is
+   **~44× better utilization**, and in the same range as OSF's own numbers
+   on comparable hardware (§4.1's box, ~2–19 TFLOP/s depending on context
+   length and slice size). Not spectacular, but nowhere near the "something
+   is badly broken" territory the raw pre-fix 0.88% number suggested.
+
+   **One open question, deliberately not chased further per user instruction
+   (2026-09-06: "I won't request whole gpu if there is not OOM error")**:
+   whether this number changes on a full, non-MIG card. Stage 1 has no
+   memory argument for a bigger allocation (§4.5's correction) — if this is
+   ever checked, it would be purely a throughput curiosity, not a
+   requirement, and only worth spending GPU-hours on if something later
+   makes it actually matter.
+
 2. **`chunk_batch_size` A/B**: 192 vs 48, matched fresh subject batches, same
    cohort. OSF measured **3.28×** from this knob; PhysioOmni measured
    **nothing**. Ours is unknown, and §4.4 predicts Mantis should be *less*
    sensitive than OSF at short contexts because the 6-channel axis already
    gives 6× more items per forward call.
+
+   **✅ DONE 2026-09-06, real GPU, same job**: `192` → 4.370 TFLOP/s (20
+   subjects, apples[0:20]); `48` → 4.341 TFLOP/s (20 **different**, fresh
+   subjects, apples[20:40], avoiding any OS-page-cache warm bias). **A
+   0.7% difference — noise, not a real effect.** Matches §4.4's prediction:
+   Mantis is *not* sensitive to `chunk_batch_size` the way OSF was, much
+   closer to PhysioOmni's "no difference" finding than OSF's 3.28×. **192
+   stays the config default** (§9) — no measured reason to prefer either,
+   and 192 is the more conservative choice per §4.4's "few, large,
+   evenly-sized calls" guidance.
 3. **`torch.profiler` over a handful of batches at 40m** (not 30s — OSF's
    `docs/LORA_GPU_THROUGHPUT_INVESTIGATION.md` §6 is explicit that profiling at
    30s measures the overhead-bound regime and answers the wrong question).
@@ -2155,9 +2239,32 @@ the next one starts. Do not chain steps.**
       `fallback_used: {"EEG": "EEG", "EMG": "EMG", "RESP": "Thor"}`, zero
       NaN/Inf. All three fill logs and shapes match step 1.1's loader-only
       predictions for these exact subjects. **User checkpoint.**
-- [ ] **1.4** `jobs/extract_mantis_embeddings_{gpu,cpu}.sh`; run **Pilot 3**
-      (§13.3) — throughput, achieved TFLOP/s vs peak, `chunk_batch_size` A/B.
-      **Stop here if under ~5 % of peak.** **User checkpoint.**
+- [x] **1.4** Pilot 3 items 1-2 (§13.3) — **done 2026-09-06.** **Scope
+      revised per explicit user instruction**: the real `jobs/*.sh` files
+      (`extract_mantis_embeddings_{gpu,cpu}.sh`) are deferred until the
+      step-by-step implementation is finished, mirroring OSF's/PhysioOmni's
+      own final job scripts — not written piecemeal mid-implementation.
+      The pilot itself ran via an **ephemeral, uncommitted** SLURM script
+      (`/scratch/boshra95/tmp_mantis_pilot3/pilot3_job.sh`, not part of the
+      repo) submitted to **`def-egranger_gpu`** (not `def-forouzan_gpu`,
+      reserved for the real sweep; not the login node, since this is real
+      GPU work, not few-subject debugging — see the standing workflow
+      split this session established).
+
+      Real results: achieved TFLOP/s (6.18% of the actually-allocated
+      1g.10gb slice, ~44× PhysioOmni's historical 0.14%) and the
+      `chunk_batch_size` A/B (192 vs 48: 0.7% difference, noise) both
+      **pass the gate** — no stop-and-diagnose triggered. Along the way,
+      fixed a real measurement bug (the script compared against a
+      full-card denominator while running on a 1/7 slice, understating
+      utilization ~7×) with an explicit `--gpu-fraction` CLI flag rather
+      than device auto-detection, which a live test showed can't be
+      trusted on this cluster (`nvidia-smi` reports the full card's memory
+      even inside a MIG job). Also **corrected §4.5**: its "request a whole
+      card" argument is Stage-2-specific (backward-pass activation memory);
+      Stage 1 has no such constraint, and per explicit user instruction,
+      Stage 1 stays on a MIG slice unless a real OOM forces otherwise —
+      never pre-emptively for throughput. **User checkpoint.**
 - [ ] **1.5** `scripts/probe_mantis_staging.py` (§13.4) — the single-epoch
       sleep-staging probe: ~100 subjects (50 APPLES + 50 SHHS), multinomial
       logistic regression on `[6 × D]` epoch embeddings, subject-wise held-out

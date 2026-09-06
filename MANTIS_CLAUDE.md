@@ -458,6 +458,50 @@ Append dated entries here as work happens (newest last).
   NaN/Inf, per-slot std 1.68–2.23; `STLK00151` → `(1148,6,512)`,
   `slots_missing:['ECG']`, that slot's mean AND std both exactly 0.0, every
   other slot non-degenerate; `200001_v1` → `(1084,6,512)`, `resp_source:
-  Thor`, correct fallback log, zero NaN/Inf. **User checkpoint — test via
-  VSCode launch.json "🦗 Mantis Phase1 Step2: Extract Embeddings" before
-  continuing to 1.4 (job scripts + Pilot 3).**
+  Thor`, correct fallback log, zero NaN/Inf. **User confirmed, proceeded to
+  1.4.**
+
+  **Phase 1.4 — Pilot 3 (throughput + `chunk_batch_size` A/B), done
+  2026-09-06 with a real H100.** Scope was revised on explicit user
+  instruction mid-step: the real `jobs/extract_mantis_embeddings_{gpu,cpu}.sh`
+  files are **deferred until the whole step-by-step implementation is
+  finished** (matching OSF's/PhysioOmni's own final job scripts, not written
+  piecemeal) — this project now runs three distinct paths: (1) few-subject
+  CPU debug stays on `launch.json` + login node, (2) heavier one-off checks
+  like this pilot go through a quick `sbatch --account=def-egranger_gpu` job
+  (never `def-forouzan_gpu`, reserved for the real sweep, and never the
+  login node), (3) full production `jobs/*.sh` come only at the end. The
+  pilot itself ran via an ephemeral, **uncommitted** script
+  (`/scratch/boshra95/tmp_mantis_pilot3/`), first mistakenly requesting a
+  whole card (`--gpus=h100:1`) — queued 30+ min with no clear resource win
+  for a quick test — corrected to a `1g.10gb` MIG slice per direct user
+  feedback ("get minimal for your test"), which scheduled and ran in ~6
+  minutes total.
+
+  **Two real operational bugs found and fixed along the way, both now in
+  plan §4.10**: (1) `/tmp` is **node-local** on this cluster — config files
+  written there from the login node were invisible to the compute node the
+  job actually ran on, a `FileNotFoundError` one line after a successful
+  `nvidia-smi` call. Fixed by moving everything to `/scratch`. (2)
+  `nvidia-smi --query-gpu=memory.total` reported the **full 80GB** from
+  inside a 10GB MIG job — device queries can't be trusted to self-report
+  slice size on this cluster.
+
+  **Real measured results**: 4.370 TFLOP/s (`chunk_batch_size=192`) vs
+  4.341 TFLOP/s (`=48`) — a 0.7% difference, i.e. **no measurable
+  sensitivity to this knob**, unlike OSF's real 3.28× — confirms plan
+  §4.4's prediction and keeps 192 as the config default. The achieved-TFLOP/s
+  gate itself needed a real fix, not just a number: the script's first
+  printout said "0.88% of H100 peak," comparing against the *full card*
+  while running on a **1/7 slice** — the true figure, against what was
+  actually allocated, is **6.18%**, past the 5% gate, ~44× PhysioOmni's
+  historical 0.14%. Fixed with an explicit `--gpu-fraction` CLI flag
+  (default `1/7`) rather than auto-detection, since (2) above shows
+  auto-detection can't be trusted here. **Also corrected plan §4.5**: its
+  "request a whole card" argument is Stage-2-specific (backward-pass
+  activation memory) — Stage 1 has no such constraint and, per explicit
+  user instruction, stays on a MIG slice unless a real OOM forces
+  otherwise, never pre-emptively for throughput. No new launch.json entry
+  needed — this was GPU-only pilot work, not something to hand to
+  interactive login-node debugging. **Next: checklist 1.5, the
+  single-epoch sleep-staging probe (Pilots 1/2).**

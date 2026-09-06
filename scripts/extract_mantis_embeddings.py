@@ -79,6 +79,36 @@ if torch.cuda.is_available():
     torch.backends.cudnn.allow_tf32 = True
     torch.set_float32_matmul_precision("high")
 
+# ── Achieved-FLOP/s instrumentation (plan §4.1, §13.3 Pilot 3 item 1) ────────
+# "Compute achieved FLOP/s and compare to peak on the first real run" — the
+# single check that would have caught PhysioOmni's 0.14%-of-peak Stage 2 run
+# weeks earlier. GFLOP_PER_CHANNEL_EPOCH is plan §4.8's hand-derived count for
+# OUR EXACT config (241 tokens = Option D, full 6-layer depth = return_transf_
+# layer=-1, forward-only since Stage 1 has no backward pass) — not a generic
+# estimate. If seq_len/num_patches/return_transf_layer ever change, this
+# constant must be re-derived, not reused.
+GFLOP_PER_CHANNEL_EPOCH = 5.29
+H100_TF32_PEAK_TFLOPS = 495.0
+
+
+def _timed_backbone_forward(backbone, x: torch.Tensor, device: torch.device) -> tuple[torch.Tensor, float]:
+    """Runs backbone(x) and returns (output, wall_seconds), timed correctly
+    for GPU: CUDA kernel launches are ASYNCHRONOUS, so a naive
+    time.time()-around-the-call would stop the clock before the GPU actually
+    finishes and silently under-report elapsed time — exactly the kind of
+    measurement mistake that let TF32-off go unnoticed for weeks on OSF/
+    PhysioOmni. `torch.cuda.synchronize()` blocks until all queued GPU work
+    is actually done before the second timestamp is taken."""
+    if device.type == "cuda":
+        torch.cuda.synchronize()
+    t0 = time.perf_counter()
+    with torch.no_grad():
+        out = backbone(x)
+    if device.type == "cuda":
+        torch.cuda.synchronize()
+    return out, time.perf_counter() - t0
+
+
 # ── Graceful-stop flag (set by SIGTERM handler) ───────────────────────────────
 # Mirrors extract_osf_embeddings.py's / extract_physioomni_embeddings.py's
 # pattern (finish current subject, then stop) — no per-subject resume
@@ -107,7 +137,7 @@ def extract_subject_embeddings(
     windowing: str,
     embed_dim: int,
     channel_candidates: dict,
-) -> tuple[np.ndarray, dict]:
+) -> tuple[np.ndarray, dict, float, int]:
     """Extract [T, 6, embed_dim] float16 embeddings for one subject.
 
     Batches channels into ONE forward per chunk (plan §4.6): reshapes
@@ -120,6 +150,12 @@ def extract_subject_embeddings(
     `chunk_batch_size` counts CHANNEL-epochs of PRESENT slots (plan §4.4) —
     derived per-subject from `chunk_batch_size // n_present`, since most
     subjects have all 6 slots present but some (chiefly STAGES) have fewer.
+
+    Returns (embeddings, fill_info, forward_seconds, channel_epochs_processed).
+    The last two are ONLY meaningful for `windowing == "full_epoch"` — see
+    `GFLOP_PER_CHANNEL_EPOCH`'s docstring for why `subwindow` isn't counted
+    the same way (it's 0 for subwindow so callers don't silently mis-account
+    it into a TFLOP/s figure the constant was never derived for).
     """
     x, fill_info = load_subject_channels(h5_path, channel_candidates)
     t_epochs = x.shape[1] // EPOCH_SAMPLES
@@ -134,6 +170,9 @@ def extract_subject_embeddings(
     out = np.zeros((t_epochs, N_SLOTS, embed_dim), dtype=np.float32)
     epochs_per_chunk = max(1, chunk_batch_size // n_present)
 
+    forward_seconds = 0.0
+    channel_epochs_processed = 0
+
     for start in range(0, t_epochs, epochs_per_chunk):
         n = min(epochs_per_chunk, t_epochs - start)
         model_in = epochs_to_model_input(x, windowing, start, n)
@@ -147,17 +186,22 @@ def extract_subject_embeddings(
         else:
             raise ValueError(f"Unknown windowing: {windowing!r}")
 
-        with torch.no_grad():
-            cls = backbone(sel.to(device))  # (n*n_present[*8], embed_dim)
+        sel = sel.to(device)  # OUTSIDE the timed call — this is data transfer,
+                               # not compute; including it would understate the
+                               # achieved-TFLOP/s figure the timer exists to give.
+        emb_out, fwd_s = _timed_backbone_forward(backbone, sel, device)
+        if windowing == "full_epoch":
+            forward_seconds += fwd_s
+            channel_epochs_processed += n * n_present  # GFLOP_PER_CHANNEL_EPOCH's own unit
 
         if windowing == "subwindow":
-            cls = cls.reshape(n, n_present, 8, embed_dim).mean(dim=2)
+            emb_out = emb_out.reshape(n, n_present, 8, embed_dim).mean(dim=2)
         else:
-            cls = cls.reshape(n, n_present, embed_dim)
+            emb_out = emb_out.reshape(n, n_present, embed_dim)
 
-        out[start:start + n][:, present_idxs, :] = cls.cpu().float().numpy()
+        out[start:start + n][:, present_idxs, :] = emb_out.cpu().float().numpy()
 
-    return out.astype(np.float16), fill_info
+    return out.astype(np.float16), fill_info, forward_seconds, channel_epochs_processed
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -201,6 +245,16 @@ def main():
     parser.add_argument("--end-idx",     type=int,      default=None, help="Last subject index exclusive (for parallel jobs)")
     parser.add_argument("--no-skip",     action="store_true", help="Re-extract even if .npy exists")
     parser.add_argument("--cpu",         action="store_true", help="Force CPU (debugging only)")
+    parser.add_argument("--gpu-fraction", type=float, default=1 / 7,
+                         help="Fraction of a full H100 actually allocated (plan §4.1's peak-comparison "
+                              "denominator = H100_TF32_PEAK_TFLOPS * this). Default 1/7 matches this "
+                              "project's usual 1g.10gb MIG extraction slice (OSF's/PhysioOmni's own "
+                              "extraction jobs use the same size). Pass 1.0 for a whole card "
+                              "(--gpus=h100:1), 2/7 for 2g.20gb, 3/7 for 3g.40gb. NOT auto-detected: "
+                              "a real Pilot 3 run (2026-09-06) found nvidia-smi reporting the FULL "
+                              "card's 80GB even inside a 10GB MIG slice job, so device queries can't "
+                              "be trusted here — the operator (whoever wrote the --gpus= spec) is the "
+                              "only reliable source of truth.")
     args = parser.parse_args()
 
     with open(args.config) as f:
@@ -258,6 +312,8 @@ def main():
     )
 
     n_ok = n_skip = n_err = 0
+    total_forward_seconds = 0.0
+    total_channel_epochs = 0
     t0 = time.time()
     fill_log_handles: dict[str, "object"] = {}
 
@@ -270,7 +326,7 @@ def main():
 
         try:
             t_sub = time.time()
-            emb, fill_info = extract_subject_embeddings(
+            emb, fill_info, fwd_s, n_chan_epochs = extract_subject_embeddings(
                 h5_path=h5_path,
                 backbone=backbone,
                 device=device,
@@ -279,6 +335,8 @@ def main():
                 embed_dim=embed_dim,
                 channel_candidates=channel_candidates,
             )
+            total_forward_seconds += fwd_s
+            total_channel_epochs += n_chan_epochs
             np.save(out_path, emb)
 
             if dataset not in fill_log_handles:
@@ -320,6 +378,40 @@ def main():
         f"extracted: {n_ok}, skipped: {n_skip}, errors: {n_err}"
         + (f" ({n_ok/total:.2f} subjects/s)" if n_ok and total > 0 else "")
     )
+
+    # Achieved FLOP/s vs H100 TF32 peak (plan §4.1, §13.3 Pilot 3 item 1) —
+    # ONLY meaningful for windowing='full_epoch' (GFLOP_PER_CHANNEL_EPOCH's
+    # own scope, see extract_subject_embeddings' docstring).
+    #
+    # % of peak is computed against args.gpu_fraction * H100_TF32_PEAK_TFLOPS,
+    # NOT a flat full-card denominator — a real Pilot 3 run (2026-09-06) on a
+    # 1g.10gb slice initially reported "0.88% of H100 peak", which looked like
+    # a red flag, when the true utilization of what was actually allocated was
+    # ~6.2%. Device auto-detection was considered and rejected: nvidia-smi
+    # reported the FULL card's 80GB from inside that same 10GB MIG job, so a
+    # device query can't be trusted to self-report the slice size either —
+    # --gpu-fraction is operator-set, matching whatever --gpus= was requested.
+    if windowing == "full_epoch" and total_forward_seconds > 0:
+        achieved_tflops = (total_channel_epochs * GFLOP_PER_CHANNEL_EPOCH) / total_forward_seconds / 1000
+        allocated_peak_tflops = H100_TF32_PEAK_TFLOPS * args.gpu_fraction
+        pct_of_allocated = 100 * achieved_tflops / allocated_peak_tflops
+        pct_of_full_card = 100 * achieved_tflops / H100_TF32_PEAK_TFLOPS
+        logger.info(
+            f"Achieved: {achieved_tflops:.3f} TFLOP/s — "
+            f"{pct_of_allocated:.2f}% of the {args.gpu_fraction:.3f}x-H100 allocation's own "
+            f"~{allocated_peak_tflops:.1f} TFLOP/s ceiling "
+            f"({pct_of_full_card:.2f}% of a full H100's {H100_TF32_PEAK_TFLOPS:.0f} TFLOP/s, for reference), "
+            f"forward-only over {total_channel_epochs} channel-epochs in {total_forward_seconds:.1f}s "
+            f"(device={device})"
+        )
+        if device.type == "cuda" and pct_of_allocated < 5.0:
+            logger.warning(
+                f"⚠️  Under 5% of the ALLOCATED GPU's own peak (not the full card's) — "
+                f"STOP and diagnose before a real sweep (plan §4.1/§13.3): check TF32 is "
+                f"actually active, chunk_batch_size, and whether this is overhead-bound "
+                f"(see LORA_GPU_THROUGHPUT_INVESTIGATION.md). Also double-check --gpu-fraction "
+                f"matches the actual --gpus= this job requested."
+            )
 
 
 if __name__ == "__main__":
