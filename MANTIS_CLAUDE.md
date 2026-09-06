@@ -430,5 +430,34 @@ Append dated entries here as work happens (newest last).
   `STLK00151` (genuinely no ECG candidate — confirmed exact-zero, not
   skipped) and `MSTR00178` (no `CHIN`/`EMG` — correctly fell through to the
   3rd-tier `LLEG` candidate). Both real, both previously untested paths.
-  **User checkpoint — test via VSCode launch.json "🦗 Mantis Phase1 Step1:
-  Test Channel Loader" before continuing to 1.2 (extraction script).**
+  **User confirmed, proceeded to 1.2/1.3.**
+
+  **Phase 1.2/1.3 — `extract_mantis_embeddings.py` + `configs/phase0_mantis_config.yaml`,
+  done and real-data-verified.** Stage 1's absent-slot contract (§2.2:
+  skip the forward, write exact zero) is deliberately different from Stage
+  2's (§14.2: run uniformly then zero the output, needed only for Stage 2's
+  batch-uniformity constraint) — the script only batches *present* slots per
+  subject, `chunk_batch_size // n_present`. Verified twice before trusting
+  any real run: a synthetic ordering test through `epochs_to_model_input`
+  (distinct constants per slot/epoch, both windowing modes) and an
+  end-to-end run of the real selection/scatter logic against a fake
+  backbone with a genuinely partial present-set — confirms the logic itself
+  independent of the real (slow) model.
+
+  **Real incident during the CPU smoke test**: launched three single-subject
+  extractions (APPLES/SHHS/STAGES) concurrently and none finished after
+  ~40 minutes. Root cause was NOT a code bug — `uptime` showed the shared
+  login node at load average 13–19 across 87 other users, plus each of our
+  own processes independently spawning ~34 threads. Killed all three,
+  re-ran serially with `OMP_NUM_THREADS=8`/`MKL_NUM_THREADS=8`: clean
+  ~2.6–3.2 min/subject. **Lesson recorded in plan §4.10 — never run
+  concurrent CPU debug subjects on the login node, even 2–3 of them.**
+
+  Real results, all matching step 1.1's loader-only predictions for the
+  same exact subjects: `APL0001` → `(1143,6,512)`, zero missing, zero
+  NaN/Inf, per-slot std 1.68–2.23; `STLK00151` → `(1148,6,512)`,
+  `slots_missing:['ECG']`, that slot's mean AND std both exactly 0.0, every
+  other slot non-degenerate; `200001_v1` → `(1084,6,512)`, `resp_source:
+  Thor`, correct fallback log, zero NaN/Inf. **User checkpoint — test via
+  VSCode launch.json "🦗 Mantis Phase1 Step2: Extract Embeddings" before
+  continuing to 1.4 (job scripts + Pilot 3).**

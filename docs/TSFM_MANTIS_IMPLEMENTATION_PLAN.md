@@ -1008,6 +1008,19 @@ Latency-bound I/O parallelizes near-linearly: derive `num_workers` from
 - **Compute Canada ships a stub `pyarrow` wheel.** Copy `physioomni_env`'s
   `pyarrow_arrow_module.pth` into `mantis_env` or `df.to_parquet()` fails at
   inference time.
+- **Never launch multiple concurrent CPU debug/smoke-test subjects on the
+  login node — even 2-3.** Found 2026-09-06 running checklist 1.3's smoke
+  test: three single-subject extractions launched at once (APPLES, SHHS,
+  STAGES) each ran ~40+ minutes with **zero** progress, not because of a
+  code bug but because the shared login node had `uptime` load average
+  13–19 across **87 other users**, and each of our own processes was
+  independently spawning ~34 threads — real oversubscription on top of real
+  external load. Killed all three and re-ran **one at a time**, with
+  `OMP_NUM_THREADS=8`/`MKL_NUM_THREADS=8` set, and got a clean ~2.6–3.2
+  min/subject. **CPU debug runs must be serialized and thread-limited**,
+  never run in parallel "for speed" on a login node — that is exactly the
+  "don't run anything long here" rule this project already has, just
+  triggered by concurrency rather than a single long job.
 
 ---
 
@@ -2104,16 +2117,44 @@ the next one starts. Do not chain steps.**
       never hit either case, and the fallback chain beyond the first
       alternate was otherwise untested. **User checkpoint** — test via
       VSCode launch.json "🦗 Mantis Phase1 Step1: Test Channel Loader".
-- [ ] **1.2** `extract_mantis_embeddings.py` + `configs/phase0_mantis_config.yaml`
-      (§9) — wires `load_mantis_backbone`/`epochs_to_model_input` (already
-      built and tested, 1.1) into a real extraction loop over subjects. Both
+- [x] **1.2** `extract_mantis_embeddings.py` + `configs/phase0_mantis_config.yaml`
+      (§9) — **done 2026-09-06.** Wires `load_mantis_backbone`/
+      `epochs_to_model_input` into a real extraction loop; both
       `windowing`/`pe_mode` config keys wired through (§3.1's two-key
-      split). TF32 on (§4.2). Channels batched into one forward (§4.6).
-      **User checkpoint.**
-- [ ] **1.3** CPU smoke test: 2 APPLES + 1 SHHS + 1 STAGES (STAGES exercises
-      the missing-`EKG` path). Assert `[T, 6, D]`, zero NaN, non-degenerate
-      per-slot std, fill log written, absent slot exactly zero.
-      **User checkpoint.**
+      split); TF32 on (§4.2); channels batched into one forward (§4.6).
+      **The absent-slot contract is Stage-1-specific and different from
+      Stage 2's** (§2.2 vs §14.2, stated explicitly in the script's
+      docstring): only *present* slots are batched into the backbone call
+      per chunk (`chunk_batch_size // n_present`), absent ones are never
+      forwarded, not run-then-zeroed. Correctness verified two ways before
+      any real run: a synthetic ordering test (distinct per-slot/per-epoch
+      constants through `epochs_to_model_input`, both windowing modes) and
+      an end-to-end run through `extract_subject_embeddings`'s own
+      present-slot-selection/scatter logic using a fake backbone, with a
+      genuinely partial `present_idxs` — confirmed absent slots land as
+      exact zero and present ones land in the correct position, independent
+      of the real (slow) backbone. **User checkpoint.**
+- [x] **1.3** CPU smoke test — **done 2026-09-06, real numbers, not a dry
+      run.** Ran APPLES (`APL0001`), STAGES (`STLK00151` — the same
+      genuinely-ECG-absent subject 1.1 found), and SHHS (`200001_v1` — the
+      same Thor-fallback subject 1.1 found), one at a time. **A real
+      resource-contention incident happened first**: three subjects were
+      launched concurrently and none finished after ~40 minutes; `uptime`
+      showed the shared login node at load average 13–19 across 87 other
+      users, and each process was independently spawning ~34 threads — not
+      a code bug, but a real violation of "don't run anything long on the
+      login node." Killed all three, re-ran one at a time with
+      `OMP_NUM_THREADS=8`/`MKL_NUM_THREADS=8`, ~2.6–3.2 min/subject.
+      Results: `APL0001` → `(1143, 6, 512)`, zero missing slots, zero
+      NaN/Inf, per-slot std 1.68–2.23 (float32 — computing `.std()` directly
+      on the saved float16 array overflows its accumulator and prints `inf`,
+      a display artifact of the verification script, not a data problem).
+      `STLK00151` → `(1148, 6, 512)`, `slots_missing: ['ECG']`, that slot
+      **exactly** 0.0 (mean and std both 0.0), every other slot
+      non-degenerate. `200001_v1` → `(1084, 6, 512)`, `resp_source: Thor`,
+      `fallback_used: {"EEG": "EEG", "EMG": "EMG", "RESP": "Thor"}`, zero
+      NaN/Inf. All three fill logs and shapes match step 1.1's loader-only
+      predictions for these exact subjects. **User checkpoint.**
 - [ ] **1.4** `jobs/extract_mantis_embeddings_{gpu,cpu}.sh`; run **Pilot 3**
       (§13.3) — throughput, achieved TFLOP/s vs peak, `chunk_batch_size` A/B.
       **Stop here if under ~5 % of peak.** **User checkpoint.**
