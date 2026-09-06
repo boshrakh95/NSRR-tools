@@ -2,7 +2,7 @@
 #SBATCH --job-name=physioomni_lora_sweep
 #SBATCH --account=def-forouzan_gpu
 #SBATCH --time=4:00:00
-#SBATCH --gpus=h100:1
+#SBATCH --gpus=nvidia_h100_80gb_hbm3_3g.40gb:1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32000M
 #SBATCH --exclude=fc11006,fc11013,fc11010
@@ -31,16 +31,31 @@
 # train_physioomni_context_sweep_gpu.sh (--signal=B:USR1@120 + bash trap +
 # resume.pt, saved every epoch).
 #
-# GPU: FULL, NON-MIG H100 (`--gpus=h100:1`) as of 2026-08-22, up from the
-# 2g.20gb MIG slice. `sinfo` confirms Fir has whole-card h100 nodes
-# (`gpu:h100:4`) alongside the MIG nodes. 2g.20gb is ~2/7 of the SMs, so a
-# whole card is ~3.5x the compute AND 80 GB instead of 19.6 GB — which
-# also lets micro_batch climb back off the =1 floor the long contexts are
-# pinned to (see experiments/v2_physioomni_lora_registry.yaml), cutting
-# accumulation steps and improving utilization on top of the raw SM gain.
-# This is the single biggest lever for the long contexts, which measured
-# ~96% COMPUTE-bound (see below). Cost: whole cards are scarcer, so expect
-# longer queue waits than the MIG slices had.
+# GPU: 3g.40gb MIG slice. REVERTED 2026-09-06 from `--gpus=h100:1`, which
+# was a real, costly mistake — do not re-apply it without new evidence.
+#
+# What happened: on 2026-08-22 this was changed to a whole non-MIG H100 on
+# the strength of `sbatch --test-only` reporting identical estimated start
+# times for MIG vs whole card. That estimate is a heuristic snapshot of one
+# moment, not a guarantee. In reality job 56235822 sat PENDING with
+# Reason=Priority and RunTime=00:00:00 for **15 days** and never started,
+# while OSF's jobs on `3g.40gb` ran continuously through the same window
+# (many COMPLETED runs of 11-30 h on Aug 30 / Sep 1 / Sep 3).
+#
+# Why: a whole card bills at **12,200** vs **5,228** for the MIG slice —
+# 2.3x — which directly depresses priority under fairshare, and this
+# account's GPU fairshare is ~0.145. The bigger allocation is not free;
+# `--test-only` simply does not model that.
+#
+# docs/LORA_GPU_THROUGHPUT_INVESTIGATION.md (osf-implementation branch, §5)
+# independently recommended AGAINST the whole-card request on separate
+# grounds — that the overhead-bound regime where 1g.10gb -> 3g.40gb already
+# measured zero speedup makes a further jump unlikely to pay, "and it costs
+# real shared-account allocation for an unproven benefit." Both that
+# reasoning and the queue evidence point the same way.
+#
+# 3g.40gb is the right choice: proven to schedule on this account, and 40 GB
+# is 2x the 19.6 GB slice that 80m already trained on at micro_batch=1.
 #
 # cpus-per-task raised 4 -> 8 to match: the raw-signal cache read is Lustre
 # PER-OPERATION LATENCY bound (~20 ms/open, ~12 ms/read-op — measured, see
