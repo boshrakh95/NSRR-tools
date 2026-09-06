@@ -79,8 +79,9 @@ Repo cloned read-only at **`/home/boshra95/mantis`** (commit `9018b98`,
 
 ### 1.0 Corrections to the 2026-08-22 skeleton — read these first
 
-Five claims in the skeleton were wrong or incomplete. They are corrected in
-place below; listed here so nobody re-derives them from the old text.
+Six claims in the skeleton (or in this plan's own earlier drafts) were wrong
+or incomplete. They are corrected in place below; listed here so nobody
+re-derives them from the old text.
 
 | # | Skeleton claimed | Reality (how verified) |
 |---|---|---|
@@ -89,6 +90,7 @@ place below; listed here so nobody re-derives them from the old text.
 | 3 | `MantisV2` has "the same FLOPs" as `Mantis-8M` | **False.** Read from the real safetensors headers: V2's attention is `wQKV [768,256]` / `wO [256,256]` — attention inner dim **256**, not V1's 1024 — and its MLP is SwiGLU `[1024,256]`/`[256,512]`. **V2 is ≈2× cheaper per token than V1**, not equal. Its conv kernel is 41, not 17. Its LoRA target names are `wQKV`/`wO`, not `to_qkv`/`to_out.0`. |
 | 4 | "Our data is 128 Hz, 6 fast channels (`EEG, LOC, ROC, EKG, EMG, Airflow`)" | **True for SHHS only.** That statement came from one SHHS file. Measured across all four cohorts (250-subject random samples each, §2.1): APPLES/MrOS/STAGES carry **8** channels with *different names* (`C3-M2`,`C4-M1`,`CHIN`,`LLEG`…), SHHS carries 6 and **its 6th is `Airflow` for ~75 % of subjects and `Thor` for ~25 %**. A fixed canonical slot map with per-slot candidate lists is mandatory — §2.2. |
 | 5 | The synthetic (CauKer) checkpoint is a separate thing to go find | **It is `paris-noah/MantisPlus`**, already in the checkpoint table. README: *"We have open-sourced CauKer 2M, the synthetic data set we used to pre-train the two versions of Mantis, resulting in MantisPlus and MantisV2 checkpoints."* MantisPlus is **byte-identical in architecture to Mantis-8M** (key-for-key diff of the two safetensors headers: only `tokgen_unit.scalar_encoders.{0,1}.scales`, a deterministic 9-element constant buffer, differs). **This makes real-vs-synthetic a perfectly controlled ablation costing one config line.** See §5.1. |
+| 6 | Dropping `pos_encoder.pe` is the only surgery needed to load the checkpoint | **False — a second shape mismatch exists, found only by actually running the load (2026-09-06, `scripts/verify_mantis_checkpoint.py`).** `output_token='combined'` doubles `self.hidden_dim` in `MantisV1.__init__`, which also resizes `self.prj` (the pretraining-only contrastive projector) — the checkpoint's 256-dim `prj.{0,1}.{weight,bias}` then collides with our combined-mode model's 512-dim `prj`, raising the identical `RuntimeError: size mismatch` even under `strict=False`. **`prj` must be dropped too.** It is dead weight regardless of shape — `MantisV1.forward` only calls it when `pre_training=True`, never our case. Live-verified against both real checkpoints. See §3.4. |
 
 ### 1.1 Checkpoints — real byte sizes and parameter counts
 
@@ -186,13 +188,15 @@ vit_unit.transformer.layers.{0..5}.1.fn.net.3.{weight,bias}   [256,512]
 `configs/phase0_osf_lora_config.yaml`'s LoRA block transfers verbatim.
 `3072 = 3 × 1024` confirms `inner_dim = 1024`.
 
-Expected injection count: **6 blocks × 2 modules = 12 LoRA-wrapped Linears**
-(OSF has 24, since it has 12 blocks). At `r=8`, per block:
-`to_qkv` adds `8×256 + 3072×8 = 26,624`; `to_out.0` adds `8×1024 + 256×8 =
-10,240`. Over 6 blocks: `6 × (26,624 + 10,240) = ` **221,184 LoRA params ≈
-2.73 % of 8,112,384**, before counting the head. **Live-verify this exact
-count in checklist 0.3** — both OSF and
-PhysioOmni did and both found it worth doing.
+**Live-verified against both real checkpoints, 2026-09-06**
+(`scripts/verify_mantis_checkpoint.py`, checklist 0.3): injecting
+`get_peft_model(net, LoraConfig(target_modules=["to_qkv","to_out.0"], r=8))`
+produces **exactly 12 LoRA-wrapped Linears** (6 blocks × 2 modules — OSF has
+24, since OSF has 12 blocks) and **exactly 221,184 trainable LoRA
+parameters ≈ 2.75 % of the 8,037,632 live params** (§1.1). Matches the
+hand-derived arithmetic (`6 × (8×256 + 3072×8 + 8×1024 + 256×8)`) exactly —
+both checkpoints give identical numbers, as expected from their identical
+architecture.
 
 `modules_to_save=["sequence_head"]` — same mechanism, same
 `ModulesToSaveWrapper` two-copy gotcha as OSF checklist 2.3 / PhysioOmni
@@ -391,12 +395,34 @@ pretrained). Needs `3840 → 4096` resampling to get 8 clean windows (128 →
 Drawbacks: no attention across sub-window boundaries, and the mean-pool is an
 arbitrary heuristic. **This is the fallback if D and D-interp both look bad.**
 
-**Decision procedure**: implement all three behind one config key
-(`embedding.windowing: full_epoch | full_epoch_interp | subwindow`) — they
-differ only in the epoch→model-input step, ~30 lines total — then run the
-**Pilot 1** in §13.1 and commit to the winner **for both stages**. Do not mix
-windowings between Stage 1 and Stage 2; the frozen-vs-LoRA comparison depends
-on the backbone input being identical.
+**Decision: Option D**, on cross-model fairness grounds — D matches the
+*interface* every other backbone uses (one forward pass over one 30 s epoch →
+one embedding), whereas B adds a **second aggregation stage no other model in
+the comparison has**, in the exact place the paper makes its claims. **§13.1
+gives the full option-by-option comparison, the reasoning, and the one
+staging-probe result that would overturn it.**
+
+Implement all three behind **two** config keys, not one — D and D-interp
+produce **identical model input** (both are the plain 3840-sample epoch);
+they differ only in the backbone's positional buffer, not in how the epoch is
+sliced. Conflating them into one "windowing" enum would make two of its three
+values do the same tensor-shaping work for no reason:
+
+- `embedding.windowing: full_epoch | subwindow` — controls
+  `epochs_to_model_input()`, i.e. what tensor shape the epoch becomes.
+- `embedding.pe_mode: extrapolate | interpolate` — controls
+  `load_mantis_backbone()`'s positional buffer (§3.4's `sinusoidal_pe`
+  `stride` argument); only meaningful when `windowing: full_epoch`, since
+  `subwindow` never changes `num_patches` away from the pretrained 32.
+
+So there are three *runnable* configurations (`full_epoch`+`extrapolate` = D,
+`full_epoch`+`interpolate` = D-interp, `subwindow`+`extrapolate` = B), not
+three windowing values — matching the two-key split already in §9's config
+template. Each differs only in the epoch→model-input step and the backbone's
+buffer, ~30 lines total combined, so the confirming measurement is nearly
+free and the escape hatch is a config change, not a rewrite. **Do not mix
+windowings between Stage 1 and Stage 2**; the
+frozen-vs-LoRA comparison depends on the backbone input being identical.
 
 ### 3.2 Normalization — feed our z-scored data AS-IS. DECIDED.
 
@@ -435,9 +461,13 @@ compare against a µV-restored variant on the same subjects. If µV wins
 clearly, this decision flips; the plan just changes one config flag
 (`data.denormalize: false`).
 
-### 3.3 Which output token / which layer — **pilot it** (§13.2), default `combined @ layer 2`
+### 3.3 Which output token / which layer — **DECIDED: `combined @ last`**
 
-The README's own table, and `getting_started/intermediate_layers.ipynb`:
+Mantis lets you pick *where* to read the encoder (`return_transf_layer`, one
+of 6 blocks) and *what* to read (`output_token` ∈ `cls_token` | `mean_token` |
+`combined`, where `combined = cat(cls, mean-of-non-cls-tokens)`).
+
+The README recommends, for frozen feature extraction:
 
 > *"the superior performance of the frozen encoder is achieved by using one of
 > the intermediate representations together with the aggregated output-token
@@ -445,39 +475,103 @@ The README's own table, and `getting_started/intermediate_layers.ipynb`:
 >
 > optimal `layer_idx`: **Mantis-8M → 2**, MantisPlus → 1, MantisV2 → 2.
 
-`output_token='combined'` returns `cat(cls_token, mean_of_other_tokens)` →
-**512 per channel**. `return_transf_layer=2` returns after transformer block
-index 2 (3 of 6 blocks).
+**An earlier draft of this plan defaulted to `combined @ 2` on the strength of
+that sentence. That was wrong, for two independent reasons — one empirical,
+one methodological.**
 
-| Config | dim/channel | `input_dim` | Backbone cost | Notes |
-|---|---:|---:|---|---|
-| `cls_token @ -1` (last) | 256 | **1536** | 100 % | simplest; matches the skeleton's assumption |
-| `combined @ 2` | 512 | **3072** | **~55 %** | **authors' documented frozen-optimal** |
-| `combined @ -1` | 512 | 3072 | 100 % | middle option |
+#### The empirical reason: the layer recommendation does not reproduce
 
-**Why the default is `combined @ 2`:**
-- It is the **model authors' own published recommendation for exactly our use
-  case** (frozen feature extraction), not a hyperparameter we tuned on our
-  data. That is the defensible thing to report.
-- `docs/TSFM_THIRD_MODEL_DECISION.md` §2/§6 pre-commits us to expecting a
-  **weak frozen result**. Handicapping the frozen condition by ignoring the
-  authors' own recipe would make that finding uninterpretable.
-- It **halves backbone compute and roughly halves Stage 2 activation memory**
-  (§14.4) — the single biggest lever on whether 240m LoRA is reachable at all.
+`getting_started/intermediate_layers.ipynb` ships with stored outputs. Read
+directly (GestureMidAirD1, 130 test samples, RandomForest on the frozen
+features):
 
-**Why it still needs a pilot**: `layer_idx=2` was selected on UCR — 128 short,
-mostly univariate, mostly ≤512-sample datasets — not on 241-token PSG epochs.
-It may not transfer.
+```
+Mantis-8M  cls@0..5:      .654  .677  .654  .669  .662  .669     best = layer 1
+Mantis-8M  combined@0..5: .677  .700  .700  .715  .685  .692     best = layer 3
+MantisPlus cls@0..5:      .654  .692  .631  .669  .677  .669     best = layer 1
+MantisPlus combined@0..5: .669  .692  .654  .700  .662  .700     best = layers 3 / 5
+MantisV2   cls@0..5:      .677  .677  .715  .700  .708  .685     best = layer 2
+MantisV2   combined@0..5: .638  .700  .731  .700  .731  .662     best = layers 2 / 4
+```
 
-**Hard constraint either way**: Stage 1 and Stage 2 must use the **same**
-setting. Stage 2 warm-starts Stage 1's head, so `input_dim` must match; and
-the frozen-vs-LoRA contrast is only clean if the sole difference is
-adaptation. Pick once, in Pilot 2, and record it in `MANTIS_CLAUDE.md`.
+The authors' own demo **does not select layer 2 for Mantis-8M** — it selects
+layer 1 (cls) or layer 3 (combined). With 130 test samples one sample is
+0.0077, so the entire layer-to-layer spread is 3–8 samples wide. The README's
+table is presumably a UCR-128 average; the *specific layer* is a low-margin,
+dataset-dependent pick that does not survive contact with a different dataset.
 
-> Note for the paper: if `@ layer 2` wins, say plainly that the LoRA condition
-> adapts only the first 3 of 6 transformer blocks (the later blocks are not
-> used at all), because the encoder is truncated at the layer the model's
-> authors identify as optimal for frozen extraction.
+**What does reproduce is the token choice.** `combined` beats `cls` at **all
+six layers** for Mantis-8M (6/6), and at most layers for MantisPlus and
+MantisV2 — **including at the last layer** (.692 vs .669 and .700 vs .669).
+
+So the recipe splits into a **robust half** (`combined`) and a **fragile half**
+(a specific intermediate layer). Take the robust half.
+
+#### The methodological reason: comparability with the other three backbones
+
+All three other models in the paper harvest the **last layer** — verified in
+their own extraction code:
+
+| Model | What is harvested | Layer |
+|---|---|---|
+| SleepFM | 60 per-patch token embeddings from a native 300 s chunk (`extract_sleepfm_embeddings.py`, `patch_emb`) | last |
+| OSF | CLS + mean of patch tokens (`forward_encoding`) | last |
+| PhysioOmni | CLS (`forward_features(..., return_all_tokens=False)`) | last |
+| **Mantis (decided)** | **CLS + mean of patch tokens (`output_token='combined'`)** | **last** |
+
+Three consequences of truncating Mantis at layer 2 that the earlier draft
+under-weighted:
+
+1. **Mantis would be the only truncated encoder in the paper** — a visible,
+   easily-challenged asymmetry, in exchange for a benefit the authors' own
+   notebook does not reproduce.
+2. **Stage 2 would be systematically handicapped.** OSF's LoRA adapts 12/12
+   transformer blocks; PhysioOmni's adapts 12/12 per encoder. Truncating at
+   layer 2 would let Mantis's LoRA adapt only **3 of 6** — a weaker LoRA
+   condition for a reason unrelated to the model.
+3. **It would break the MantisPlus ablation.** Mantis-8M's published optimal
+   layer is 2; MantisPlus's is 1. Following per-checkpoint layer
+   recommendations would make the real-vs-synthetic contrast differ in **two**
+   variables (pretraining corpus *and* extraction depth) instead of one —
+   destroying the single property that made that pair worth running (§5.1).
+   Using the last layer for both keeps it a clean one-variable ablation.
+
+#### Decision
+
+| Config | dim/ch | `input_dim` | Backbone cost | Layer matches other 3? | LoRA depth | Authors' recipe? |
+|---|---:|---:|---|---|---|---|
+| `cls @ last` | 256 | 1536 | 100 % | ✅ | 6/6 | ❌ |
+| **`combined @ last`** ← **chosen** | **512** | **3072** | **100 %** | **✅** | **6/6** | **token yes, layer no** |
+| `cls @ 2` | 256 | 1536 | ~55 % | ❌ | 3/6 | layer yes, token no |
+| `combined @ 2` | 512 | 3072 | ~55 % | ❌ | 3/6 | ✅ |
+
+**`combined @ last`** — `return_transf_layer: -1`, `output_token: "combined"`,
+`embed_dim: 512`, `model.input_dim: 3072`.
+
+**What this choice costs, stated plainly:**
+- **We give up the compute/memory saving.** `@ 2` would have halved backbone
+  FLOPs and roughly halved Stage 2 activation memory (§4.3) — the single
+  biggest lever on whether 240m LoRA fits. We are paying that in order to keep
+  the comparison clean, and §4.5's mitigation ladder has to carry the
+  difference instead.
+- **Mantis's head input becomes the widest in the paper** — 3072, versus
+  OSF 1536, SleepFM 512, PhysioOmni 500. This asymmetry already exists and is
+  documented in `CLAUDE.md`'s code-reuse assessment (`input_dim` is the
+  encoder's output dim and necessarily varies); Mantis extends it to 2× OSF.
+  The head *architecture* — `hidden_dim=128, num_layers=1` — stays identical
+  across all four models, which is what the paper's "architecture held
+  constant" claim actually asserts. **One sentence in Methods.**
+- **We are not following the authors' layer recommendation.** Pilot 2 (§13.2)
+  measures exactly what that cost, and the number goes in the supplement:
+  *"the authors' recommended layer-2 extraction scored X higher on the
+  single-epoch staging probe; we used the last layer for comparability with
+  the other backbones."* Reporting it is what makes the choice defensible.
+
+**Hard constraint**: Stage 1 and Stage 2 must use the **same** setting.
+Stage 2 warm-starts Stage 1's head, so `input_dim` must match, and the
+frozen-vs-LoRA contrast is only clean if adaptation is the sole difference.
+This value is baked into every saved embedding file — changing it later means
+re-extracting the entire population.
 
 ### 3.4 How to actually load the checkpoint — manual, not `from_pretrained`
 
@@ -498,12 +592,15 @@ def load_mantis_backbone(repo_id, seq_len, num_patches, return_layer,
                    output_token=output_token, device=device)   # builds pe [num_patches+1,1,256]
     path = hf_hub_download(repo_id, "model.safetensors")       # or a local snapshot dir
     sd = load_file(path, device="cpu")
-    sd.pop("vit_unit.pos_encoder.pe", None)                    # regenerate, never load
-    sd.pop("transf_unit.pos_encoder.pe", None)                 # (both spellings, be safe)
+    for key in ["vit_unit.pos_encoder.pe",                     # regenerate, never load
+                "prj.0.weight", "prj.0.bias",                  # dead at inference (pre_training=False,
+                "prj.1.weight", "prj.1.bias"]:                 #   §1.0 #6) AND shape-mismatched in
+        sd.pop(key, None)                                      #   'combined' mode (hidden_dim doubles)
     missing, unexpected = net.load_state_dict(sd, strict=False)  # rename hook fires here
     allowed_missing = {"transf_unit.pos_encoder.pe",
+                       "prj.0.weight", "prj.0.bias", "prj.1.weight", "prj.1.bias",
                        "tokgen_unit.scalar_encoders.0.scales",
-                       "tokgen_unit.scalar_encoders.1.scales"}
+                       "tokgen_unit.scalar_encoders.1.scales"}   # Mantis-8M only; MantisPlus HAS these
     assert not unexpected, unexpected
     assert set(missing) <= allowed_missing, set(missing) - allowed_missing
     if pe_mode == "interpolate":
@@ -512,17 +609,28 @@ def load_mantis_backbone(repo_id, seq_len, num_patches, return_layer,
     return net.eval().to(device)
 ```
 
-Notes, each verified:
+Notes, each verified (`scripts/verify_mantis_checkpoint.py`, both real
+checkpoints, 2026-09-06):
 - `sd.pop` before `load_state_dict` is what avoids the `RuntimeError` — the
   constructor already built the correct `[num_patches+1, 1, 256]` sinusoidal
   buffer, and the sinusoid is fully determined by position and `d_model`, so
   regenerating is exactly equal to what a 241-position pretrained buffer would
   have been.
-- Pop **both** key spellings: the checkpoint has `vit_unit.…`, and the rename
-  pre-hook rewrites it to `transf_unit.…` *during* the load, so popping after
-  the fact is impossible — pop the raw name, and keep the second pop as
-  defensive cover for any future re-uploaded checkpoint.
-- `allowed_missing` is exactly the §1.1 set. Fail loudly on anything else.
+- **`prj` must be dropped too — a second, independent shape mismatch**
+  (§1.0 #6). `output_token='combined'` doubles `self.hidden_dim`, resizing
+  `self.prj`'s `LayerNorm`/`Linear` to 512-dim, which collides with the
+  checkpoint's native 256-dim `prj`. It raises the same hard `RuntimeError`
+  under `strict=False` that the positional buffer does. `prj` is dead weight
+  at inference regardless of shape (`MantisV1.forward` only calls it when
+  `pre_training=True`), so dropping it costs nothing.
+- Pop the raw `vit_unit.…` spelling: the checkpoint's own key is
+  `vit_unit.pos_encoder.pe`, and the rename pre-hook rewrites it to
+  `transf_unit.…` *during* the `load_state_dict()` call itself — popping
+  after the fact is impossible. `allowed_missing` lists the post-rename
+  (`transf_unit.…`) name because that is what `load_state_dict` reports back.
+- `allowed_missing` is exactly the set live-verified in §1.1/§1.3. Fail
+  loudly on anything else — that is precisely how the `prj` mismatch above
+  was caught, not by reading the source more carefully.
 - `_sinusoidal_pe(..., stride=32/num_patches)` implements Option D-interp
   (§3.1); with `stride=1.0` it reproduces the constructor's own buffer.
 
@@ -546,6 +654,35 @@ PhysioOmni's 80m LoRA run was measured at **0.69 TFLOP/s — 0.14 % of an
 H100's ~989 TFLOP/s peak.** That number was not computed until weeks of
 tuning had gone by, and it made the diagnosis obvious in one step.
 
+> **But "0.14 % of peak" is not a uniform property of this training pattern —
+> OSF measured otherwise, and the difference matters.** From
+> `docs/LORA_GPU_THROUGHPUT_INVESTIGATION.md` (on `osf-implementation`, real
+> single-segment timings cross-checked against `resume.pt` + `sacct`):
+>
+> | context | N (raw epochs/window) | min/epoch | est. TFLOP/s |
+> |---|---:|---:|---:|
+> | 30s | 1 | 18.77 | ~2.0 |
+> | 10m | 20 | 58.9 | ~12.8 |
+> | 40m | 80 | 112.26 | ~18.5 |
+> | 80m | 160 | 217.22 | ~19.2 |
+>
+> Utilization jumps **~6.4× from 30s to 10m**, then **plateaus** (40m→80m is
+> +3 %), reaching roughly **65 % of the FP32-dense peak of that MIG slice**.
+> So OSF is **overhead-bound at 30s/10m and substantially compute-utilizing at
+> 40m+** — one answer does not cover the sweep. This also explains why AMP and
+> the `1g.10gb → 3g.40gb` upgrade both measured *zero* speedup: **both were
+> tested at 30s, exactly where overhead dominates.**
+>
+> **Two consequences for Mantis, both actionable now:**
+> 1. **Never benchmark a throughput change at 30s.** Measure at 40m+, where
+>    most of the sweep's compute budget actually lives (§13.3 item 3).
+> 2. **Also note what the table says about wall-time scaling.** 30s→10m is 20×
+>    the raw epochs for only 3.1× the time; 10m→40m is 4× for ~2.8×; 40m→80m is
+>    2× for ~1.9×. Cost is **strongly sub-linear at short contexts and
+>    approaches linear only once compute-bound.** The plan's "compute scales
+>    ~linearly with N" shorthand is the *long-context* limit, not the whole
+>    curve — do not budget 240m by multiplying 30s by 480.
+
 **First real training run: compute achieved FLOP/s and compare to peak.**
 `(items × epochs_per_window × channels × FLOP_per_channel_epoch × 3) / seconds`.
 Use §4.8's per-channel-epoch numbers. If it is under ~5 % of peak, stop tuning
@@ -558,11 +695,18 @@ It costs nothing and makes §4.1 impossible to skip.
 
 ### 4.2 TF32 — enable it in line one of the training script
 
-**PyTorch 2.5 ships with TF32 OFF by default** (confirmed: `physioomni_env`
-runs torch 2.5.1). Both `torch.backends.cuda.matmul.allow_tf32` and
-`torch.set_float32_matmul_precision` default to the slow path, so every matmul
-runs at true FP32: **~67 TFLOP/s instead of ~495 on H100, a ~7× penalty for
-nothing.** OSF and PhysioOmni both ran that way for weeks.
+**PyTorch 2.5 ships with matmul TF32 OFF by default** (confirmed:
+`physioomni_env` runs torch 2.5.1). `torch.backends.cuda.matmul.allow_tf32` is
+`False` and `torch.get_float32_matmul_precision()` is `"highest"`, so every
+matmul runs at true FP32: **~67 TFLOP/s instead of ~495 on H100.** OSF and
+PhysioOmni both ran that way for weeks.
+
+> **Correction, from OSF's own live check** (`docs/LORA_GPU_THROUGHPUT_INVESTIGATION.md`
+> §2 on `osf-implementation`, verified in `osf_env`): **`torch.backends.cudnn.allow_tf32`
+> is already `True` by default in torch 2.5.1** — the "both flags default to the
+> slow path" claim that propagated from the PhysioOmni session is wrong. Only
+> the *matmul* flag actually needs changing. Setting the cudnn one is harmless
+> and self-documenting, so keep it in the block, but do not describe it as a fix.
 
 ```python
 if torch.cuda.is_available():
@@ -667,10 +811,26 @@ throughout via `accum_steps = 32 // micro_batch`.
   speedup** raising it 16→64. PhysioOmni measured **no difference** at all
   (4.2 vs 4.05 s/subject) — the lesson is *measure it*, not *copy the number*.
   It is safe here because Mantis's backbone has **zero `BatchNorm`** (§1.4).
-- **For Mantis, `chunk_batch_size` counts channel-epochs, not epochs.** One
-  window-epoch is 6 items. Set it to a multiple of 6 so chunks land on epoch
-  boundaries and no call is ragged. **Start at 192** (= 32 epochs × 6
-  channels) for extraction, and at `min(192, micro_batch × N × 6)` for Stage 2.
+- **The mechanism behind OSF's 3.28×, made explicit** (from
+  `LORA_GPU_THROUGHPUT_INVESTIGATION.md` §4): a training step's backbone work
+  is `micro_batch × N` items split into `ceil(items / chunk_batch_size)` calls.
+  At 30s with `micro_batch=32, N=1, chunk=64`, OSF got **one half-empty call**
+  — per-call launch and Python overhead dominated. At 40m it got 40 full calls
+  and became compute-bound. **`chunk_batch_size` only helps once there are
+  enough items to fill several chunks**, which is exactly why it did nothing
+  for PhysioOmni's *extraction* (whole nights, always plenty of items) and
+  3.28× for OSF's *short-context training*.
+- **For Mantis, `chunk_batch_size` counts channel-epochs, not epochs — and
+  this is a real structural advantage.** One window-epoch is **6** items,
+  because all 6 channels go through the same encoder in one call (§4.6). At
+  30s with `micro_batch=32`: OSF has 32 items, **Mantis has 192**. So Mantis
+  enters the compute-bound regime at a *much shorter context than OSF did*,
+  and should be far less overhead-bound at 30s — the regime where every
+  previous throughput fix on this project measured nothing. **Predicted, not
+  measured: confirm in Pilot 3 (§13.3).**
+- Set `chunk_batch_size` to a multiple of 6 so chunks land on epoch boundaries
+  and no call is ragged. **Start at 192** (= 32 epochs × 6 channels) for
+  extraction, and at `min(192, micro_batch × N × 6)` for Stage 2.
 - **Aim for few, large, evenly-sized calls.** At `micro_batch=1, N=160` there
   are 960 channel-epochs; chunk 192 → 5 even calls. Good.
 - **`micro_batch=1` is a last resort**, not a default. On a whole 80 GB H100
@@ -689,6 +849,25 @@ same job: `--time=36:00:00` queued 4 days out; `--time=12:00:00` started the
 same day. With per-epoch checkpointing plus auto-resume, a short wall-time
 request is nearly free. **Default to `--time=4:00:00` for training** (what
 PhysioOmni's LoRA job script settled on) and let auto-resume handle the rest.
+
+> **Two sessions disagree about the whole card, and the disagreement is worth
+> resolving explicitly rather than silently picking one.**
+> `LORA_GPU_THROUGHPUT_INVESTIGATION.md` §5 **recommends against**
+> `--gpus=h100:1` for OSF: since `1g.10gb → 3g.40gb` (3× the compute) gave
+> *zero* speedup, a further 2.33× jump is unlikely to help, and it spends real
+> shared-account allocation for an unproven benefit. That reasoning is sound —
+> **but it is a throughput argument, and it was measured at 30s, in the
+> overhead-bound regime.**
+>
+> **For Mantis the justification is memory, not throughput, and it is not
+> optional.** §4.3's arithmetic puts the activation cost at ~240 MB per
+> epoch-unit. A `2g.20gb` slice (~19.6 GB usable — the exact figure in
+> PhysioOmni's OOM logs) holds roughly **80 epoch-units**; 240m needs 480 at
+> the `micro_batch=1` floor. It is not a question of speed: **the long contexts
+> cannot run at all on a MIG slice.** Request the whole card because we need
+> the 80 GB, treat any throughput gain as a bonus, and **measure it at 40m, not
+> 30s** (§13.3). PhysioOmni reached the same allocation for the same
+> memory-driven reason on 2026-08-22.
 
 **Mitigation ladder, in order (revised for Mantis, §4.3):**
 1. Whole H100 (`--gpus=h100:1`) — zero speed cost.
@@ -810,6 +989,17 @@ Latency-bound I/O parallelizes near-linearly: derive `num_workers` from
 - **Warm-start readiness must gate on `metrics.json`, not `best_model.pt`.**
   `best_model.pt` is written from epoch 1; PhysioOmni had a 120m run branch
   off an unconverged 30s checkpoint because of this.
+- **`metrics.json`'s `training_time_min` is wrong for any multi-resume run**
+  (found on OSF, `LORA_GPU_THROUGHPUT_INVESTIGATION.md` §3, **not fixed there**).
+  `t0 = time.time()` resets on every script (re)start, but `history` — and so
+  `n_epochs_run` — correctly persists across resumes via `resume.pt`. The
+  numerator covers only the final segment while the denominator counts every
+  epoch ever run, so per-epoch cost is silently **undercounted**. It made OSF's
+  own timing table nonsensical (10m appearing faster than 30s, some zeros).
+  **Fix this in Mantis's scripts from the start**: carry cumulative elapsed
+  time inside `resume.pt` and add to it, rather than measuring from the current
+  process's start. Cheap now, and it is the number every wall-time and
+  throughput decision downstream depends on.
 - **Build a dedicated `mantis_env`.** Do not reuse `osf_env`/`physioomni_env` —
   each has an `nsrr_tools_src.pth` pointing at ONE worktree's `src/`.
 - **`nsrr_tools.core` eagerly imports `pyedflib`**, which is not in
@@ -842,8 +1032,11 @@ Latency-bound I/O parallelizes near-linearly: derive `num_workers` from
   quantified 87.7 % SHHS pretraining overlap. And because the architecture is
   held exactly constant, "does physiological/real pretraining data matter at
   all?" becomes a controlled one-variable ablation rather than a model swap.
-- Its own documented optimal frozen layer is **1**, not 2 — carry that
-  through as a per-checkpoint config value, don't hardcode 2.
+- Its own documented optimal frozen layer is **1**, where Mantis-8M's is 2 —
+  which is precisely why §3.3 rejects per-checkpoint layer selection and uses
+  the **last layer for both**. Following the per-checkpoint recommendations
+  would make this ablation differ in *two* variables (pretraining corpus AND
+  extraction depth) and destroy the only property that makes it worth running.
 - **Scope: Stage 1 only**, at the winning windowing, all 6 contexts,
   `lstm` + `transformer`, all 5 tasks. Separate embedding dir
   (`mantis_30sec_plus`), separate results dir (`phase0_mantis_plus`),
@@ -1040,12 +1233,15 @@ def get_epoch_count(h5_path) -> int:
     PhysioOmni's get_epoch_count()."""
 
 def epochs_to_model_input(x, windowing, epoch_start, n_epochs) -> torch.Tensor:
-    """[6, n_samples] -> model input for n_epochs epochs (§3.1).
-       'full_epoch' / 'full_epoch_interp' -> (n_epochs*6, 1, 3840)
-       'subwindow'                        -> (n_epochs*6*8, 1, 512), after a
-                                             3840->4096 linear interpolation
-       Returns channel-minor within epoch-major order so the caller can
-       reshape to [n_epochs, 6, D] with no transpose."""
+    """[6, n_samples] -> model input for n_epochs epochs (§3.1). Takes only
+       `windowing` (NOT `pe_mode` — that's a load_mantis_backbone() concern,
+       §3.1's two-key split): D and D-interp produce IDENTICAL tensors here,
+       differing only in the backbone's positional buffer.
+       'full_epoch' -> (n_epochs*6, 1, 3840)               (D and D-interp)
+       'subwindow'  -> (n_epochs*6*8, 1, 512), after a
+                       3840->4096 linear interpolation       (Option B)
+       Returns epoch-major, channel-minor order so the caller can reshape
+       the backbone's output to [n_epochs, 6, D] with no transpose."""
 
 def load_mantis_backbone(repo_id, seq_len, num_patches, return_layer,
                          output_token, device, pe_mode, local_dir) -> nn.Module:
@@ -1085,13 +1281,13 @@ and `collate_fn` are pure integer arithmetic over `T`/`N` and copy unchanged.
 ```python
 PATCH_SECONDS       = 30      # each Mantis embedding row = one 30-second epoch
 PATCHES_PER_EPOCH   = 1       # epoch and patch are the same unit (as OSF)
-EMBED_DIM           = 512     # or 256 — MUST match configs' model.input_dim/6
+EMBED_DIM           = 512     # 'combined' output (§3.3). MUST match model.input_dim/6
 N_SUBTOKENS         = 6       # the 6 channel slots (§2.2)
-FLAT_DIM            = N_SUBTOKENS * EMBED_DIM     # 3072 (or 1536)
+FLAT_DIM            = N_SUBTOKENS * EMBED_DIM     # 3072
 FULL_NIGHT_SENTINEL = -1
 ```
 
-`EMBED_DIM` is fixed by Pilot 2 (§13.2). Read it from the config
+`EMBED_DIM` is fixed by §3.3's decision (512, `combined @ last`). Read it from the config
 (`model.input_dim // 6`) and **assert** it against the first loaded `.npy`'s
 real shape at dataset-build time, so a mismatched config fails immediately
 rather than producing silent garbage.
@@ -1116,11 +1312,19 @@ embedding:
   local_dir:      "/home/boshra95/mantis_checkpoints/Mantis-8M"
   seq_len:        3840        # 30s @ 128Hz  (Option D, §3.1)
   num_patches:    240         # -> patch_window_size 16, kernel 17, as pretrained
-  windowing:      "full_epoch"        # full_epoch | full_epoch_interp | subwindow
-  pe_mode:        "extrapolate"       # extrapolate | interpolate  (§3.1)
-  return_transf_layer: 2      # authors' frozen-optimal for Mantis-8M (§3.3)
-                              # MantisPlus: 1.  Last layer: -1.
-  output_token:   "combined"  # cls_token | mean_token | combined
+  windowing:      "full_epoch"        # full_epoch | subwindow  (tensor shape, §13.1)
+  pe_mode:        "extrapolate"       # extrapolate | interpolate  (backbone PE buffer only,
+                                      # meaningful only when windowing=full_epoch; §3.1/§3.4)
+  return_transf_layer: -1     # LAST layer — matches SleepFM/OSF/PhysioOmni (§3.3).
+                              # Deliberately NOT the authors' per-checkpoint
+                              # intermediate layer (2 for Mantis-8M, 1 for
+                              # MantisPlus): that does not reproduce in their own
+                              # notebook, would make Mantis the only truncated
+                              # encoder, would halve its LoRA depth vs OSF's 12/12,
+                              # and would make the MantisPlus ablation two-variable.
+  output_token:   "combined"  # cls_token | mean_token | combined. 'combined' =
+                              # cat(cls, mean) — the ROBUST half of the authors'
+                              # recipe (beats cls at 6/6 layers in their notebook).
   embed_dim:      512         # 512 for 'combined', 256 otherwise. ASSERTED at runtime.
   chunk_batch_size: 192       # CHANNEL-epochs per forward call = 32 epochs x 6 (§4.4)
   output_dir:     "/scratch/boshra95/psg/unified/embeddings/mantis_30sec"
@@ -1170,7 +1374,9 @@ dataset:
 # changes (6 x embed_dim), preserving "architecture held constant, only the
 # encoder changes".
 model:
-  input_dim: 3072            # 6 x 512. MUST equal 6 * embedding.embed_dim.
+  input_dim: 3072            # 6 x 512 (combined @ last, §3.3).
+                             # MUST equal 6 * embedding.embed_dim — asserted at
+                             # dataset-build time against a real .npy's shape.
   head_type: "lstm"
   hidden_dim: 128
   num_layers: 1
@@ -1330,80 +1536,318 @@ CPU jobs (`extract_mantis_embeddings_cpu.sh`,
 
 ---
 
-## 13. Step 0 — the three pilots that must run before any full sweep
+## 13. Step 0 — the pilots, and how each choice was decided
 
-All three run on the **same pilot subset** so results are directly
-comparable: **APPLES (1,104 subjects, the smallest cohort and 100 % locally
-present) + 500 SHHS subjects**, task `sex_binary`, head `lstm`, context `30s`.
-`sex_binary` is the highest-N, cleanest-signal task and the one both previous
-baselines used as their own pilot.
+**Framing, because it changed once the cross-model comparison was done
+properly (§13.0): Pilots 1 and 2 are no longer open choices.** Fairness with
+the other three backbones constrains both of them, and both are decided below
+with reasons. What remains is a **confirmatory measurement with a named
+escape hatch** — a specific number that, if it came back, would overturn the
+decision. Pilot 3 was never a choice at all; it is a measurement that fills in
+config values.
 
-### 13.1 Pilot 1 — windowing: `full_epoch` vs `full_epoch_interp` vs `subwindow`
+### 13.0 The fairness frame — what every model in this paper actually gets fed
 
-Extract the pilot subset three times (three `output_dir`s), train a 30s LSTM
-head on each, compare **val AUROC**. Fix `cls_token @ -1` for this pilot so
-only one thing varies.
+Verified by reading each model's own extraction code in this repo, not
+inferred:
 
-**Decision rule, committed in advance so it isn't rationalized afterwards**:
-take the winner only if it leads by **> 0.010 val AUROC**; otherwise default
-to `full_epoch` (simplest, no resampling, no PE surgery, one embedding per
-epoch with no pooling heuristic). Record the three numbers in
-`MANTIS_CLAUDE.md` whichever way it goes — a null result here is itself worth
-reporting, because it tells us the 7.3× length extrapolation is benign.
+| | Pretrained on | What we feed it | In distribution? | Harvested | Layer | `input_dim` |
+|---|---|---|---|---|---|---:|
+| **SleepFM** | 300 s chunk = 60 × 5 s patches | 300 s chunk, **exact** | ✅ exact | 60 per-patch tokens | last | 512 (4 × 128) |
+| **OSF** | one 30 s epoch, 12 ch @ 64 Hz, 90 tokens | one 30 s epoch, **exact** | ✅ exact | CLS + mean(patches) | last | 1536 (2 × 768) |
+| **PhysioOmni** | patch streams, ≤512 patches | 30 s = 30–150 patches | ✅ well inside | CLS | last | 500 |
+| **Mantis** | **512 samples = 32 patches** | **3840 samples = 240 patches** | ❌ **7.3× beyond** | CLS + mean (§3.3) | last | 3072 (6 × 512) |
 
-### 13.2 Pilot 2 — output token / layer: `cls@-1` vs `combined@2` vs `combined@-1`
+Two facts follow, and they drive everything below:
 
-With Pilot 1's winning windowing. Same subset, same decision rule (> 0.010).
-Default if inconclusive: **`combined @ 2`**, because it is the model authors'
-own documented recipe for frozen extraction (§3.3) and it halves both compute
-and Stage 2 activation memory.
+1. **Mantis is the only one of the four forced out of distribution at all.**
+   We cannot engineer that away — only choose *where to put it*. It belongs in
+   the paper's Methods whichever option we pick.
+2. **All three others harvest the last layer.** §3.3 already used this to
+   settle the output question. It also shapes Pilot 1.
 
-**This decision then locks `embed_dim`, `model.input_dim`, and
-`EMBED_DIM`/`FLAT_DIM` in the dataset class for both stages.** Change it later
-and every Stage 1 embedding must be re-extracted.
-
-### 13.3 Pilot 3 — throughput and memory, on a real whole H100
-
-Three numbers, none of which may be assumed:
-1. **Extraction throughput** (s/subject) and **achieved TFLOP/s vs the 495
-   TF32 peak** (§4.1). If under ~5 % of peak, stop and diagnose before
-   launching the full extraction.
-2. **`chunk_batch_size` A/B**: 192 vs 48, matched fresh subject batches, same
-   cohort. OSF found 3.28×; PhysioOmni found nothing. **Measure ours.**
-3. **Stage 2 memory ceiling per context**: run one training step at each of
-   30s / 10m / 40m / 80m / 120m / 240m with §4.3's proposed `micro_batch`, and
-   record `torch.cuda.max_memory_allocated()`. This turns §4.3's arithmetic
-   into a real schedule. **Do not extrapolate from one point** — that is
-   exactly what PhysioOmni did and had to redo.
-
-### 13.4 The rest of the Step-0 checklist
-
-5. **Checkpoint load** (§3.4) — construct at `num_patches=240`, load
-   `Mantis-8M`, assert missing keys are exactly the allowed set, assert zero
-   unexpected. Repeat for `MantisPlus`.
-6. **LoRA injection count** — `get_peft_model` on the combined module,
-   assert **12** LoRA-wrapped Linears (6 blocks × `to_qkv` + `to_out.0`) and
-   that `sequence_head` is trainable via `modules_to_save`.
-7. **Zero `BatchNorm`** — assert `not any(isinstance(m, nn.modules.batchnorm._BatchNorm)
-   for m in backbone.modules())`, so §4.4's `chunk_batch_size` safety claim is
-   machine-checked, not prose.
-8. **Normalization sanity** (§3.2) — zero NaN/Inf, non-degenerate
-   per-dimension embedding std, on real APPLES **and** SHHS subjects (SHHS
-   exercises the `EEG` name fallback and the `Thor` RESP fallback).
-9. **Absent-slot path** — force a slot missing on a real subject; confirm the
-   slice is exactly zero, that no forward ran for it, and that the fill log
-   records it.
-10. **Cohort filter units** — confirm `min_recording_patches: 480` is applied
-    in 30s-epoch units.
-11. **`mantis_env` sanity** — `import nsrr_tools` resolves to
-    `/home/boshra95/NSRR-tools-mantis/src`; `nsrr_tools.datasets` imports
-    without `pyedflib`; `pyarrow` writes a parquet.
-12. **Split-population audit** — after full extraction, confirm the
-    "has embedding" population and compare it to PhysioOmni's 14,993/14,994.
-    Any difference changes `rng.shuffle()`'s entire permutation and therefore
-    the splits (§14.6).
+A third, pre-existing asymmetry worth naming so it isn't mistaken for
+something Mantis introduces: **SleepFM's atomic unit is 5 s, everyone else's
+is 30 s** (`PATCH_SECONDS=5`, `min_recording_patches=2880` for SleepFM vs
+`30`/`480` for the three baselines). That was accepted before Mantis existed.
+It is also why "Option C" — making Mantis's atomic unit its native 4 s window
+— was rejected outright: it would add a *fourth* granularity to the sweep.
 
 ---
+
+### 13.1 Pilot 1 — how do we hand Mantis a 30-second epoch?
+
+#### The problem
+
+Mantis was pretrained on series of exactly **512 numbers**, cut into 32
+patches of 16 samples. Our 30 s epoch at 128 Hz is **3840 numbers**. Something
+must give. Four options were considered; three survive.
+
+#### Option A — interpolate 3840 → 512. **Rejected outright, not piloted.**
+
+What Mantis's own README suggests generically
+(`F.interpolate(..., size=512)`). Effective sampling rate 17.07 Hz, **Nyquist
+8.5 Hz**.
+
+*Comparison with the others*: none of SleepFM, OSF or PhysioOmni is
+bandwidth-reduced anywhere near this. OSF's 128→64 Hz decimation keeps Nyquist
+at 32 Hz, above the whole EEG band of interest; PhysioOmni is *up*sampled.
+
+*Why rejected*: destroys sleep spindles (11–16 Hz), beta, and essentially all
+EMG and ECG morphology. It would cripple the baseline before it starts and
+hand a reviewer a free objection. **Not a fallback either.**
+
+#### Option D — `seq_len=3840, num_patches=240`. ***CHOSEN.***
+
+Tell Mantis the series is 3840 long with 240 patches. `patch_window_size` is
+still `3840/240 = 16`, so `kernel_size` is still 17, the patch-mean pooling
+window is still 16 samples, and the per-patch mean/std statistics are computed
+over the same span. **Every learned weight performs exactly the operation it
+performed in pretraining.** The only change is that the transformer sees
+**241 tokens instead of 33**.
+
+*Comparison with the others*: this is structurally the *same operation* every
+model in the comparison performs — tokenise the epoch into patches, attend
+across them. Token counts: SleepFM 60 per chunk, OSF 90, PhysioOmni 30–150,
+**Mantis-D 241**. Relative to the comparison set, 241 is unremarkable. It is
+only unusual relative to *Mantis's own pretraining*.
+
+*Cost*: **7.3× beyond Mantis's pretraining sequence length.** The conv
+tokenizer is length-agnostic and the sinusoidal PE is defined at every
+position, but the transformer's learned attention behaviour at that length is
+untested. **This is the single largest scientific risk in the plan.**
+
+#### Option D-interp — Option D with a rescaled positional buffer.
+
+Identical to D except the regenerated sinusoidal buffer uses
+`position = arange(241) * (32/240)` instead of `arange(241)`, so the 241
+tokens occupy exactly the arc of the sinusoid that 33 tokens occupied in
+pretraining. The standard ViT position-embedding-interpolation trick for
+feeding a bigger input than the model was trained on. One line.
+
+*Fairness*: **identical to D.** Both regenerate a **non-learned** buffer
+(`PositionalEncoding.pe` is deterministic sinusoid, `register_buffer`), so
+neither is surgery on pretrained parameters. There is no fairness distinction
+between them, only an empirical one:
+
+| | local spacing between adjacent tokens | total positional span |
+|---|---|---|
+| **D** | 1.0 — **matches pretraining** | 241 — **7.3× OOD** |
+| **D-interp** | 0.133 — **OOD** | 33-equivalent — **matches pretraining** |
+
+Neither dominates. Genuinely empirical, which is why both are measured.
+
+#### Option B — 8 sub-windows of 512, embedded independently, mean-pooled.
+
+Resample 3840 → 4096 (128 → 136.53 Hz, a 6.7 % stretch, far above any band of
+interest) to get exactly 8 clean 512-sample windows; run each at native
+settings (33 tokens, kernel 17, patch 16 — **fully in distribution**); average
+the 8 embeddings into one per epoch. Compute cost 8 × 33 = 264 token-positions
+vs D's 241 — essentially identical.
+
+*Comparison with the others*: **this is where B loses.** It adds a **second
+aggregation stage — a mean over 8 sub-windows — that no other model in the
+comparison has.** SleepFM, OSF and PhysioOmni each produce their per-timestep
+embedding from a single forward pass; only Mantis would have a hand-designed
+pooling step inside the backbone. And **aggregation is exactly what this paper
+makes claims about** — the entire study is "how does performance change as we
+aggregate more context." Introducing a bespoke aggregation stage inside the
+one backbone that most needs to look comparable is the worst possible place
+for an asymmetry.
+
+*Secondary costs*: Mantis never attends across a sub-window boundary, so an
+event straddling one (a spindle, a K-complex, an arousal) is split; and the
+128 → 136.53 Hz resample is a second small departure the others don't need.
+
+#### Decision and reasoning
+
+**Option D, with D-interp measured alongside it as a free variant.**
+
+| | D | D-interp | B |
+|---|---|---|---|
+| Interface matches SleepFM/OSF/PhysioOmni (one forward → one embedding) | ✅ | ✅ | ❌ extra pooling stage |
+| Token count unremarkable vs the comparison set (60/90/30–150) | ✅ 241 | ✅ 241 | ✅ 33 |
+| In distribution for **Mantis's own** pretraining | ❌ | partly | ✅ |
+| Introduces an aggregation step no other model has | ✅ no | ✅ no | ❌ yes |
+| Full 128 Hz bandwidth | ✅ | ✅ | ✅ |
+| 30 s atomic unit preserved (comparability of the sweep) | ✅ | ✅ | ✅ |
+| Extra resampling step | ✅ none | ✅ none | ❌ 3840→4096 |
+
+**The reason, in one sentence**: *D matches on interface and breaks on
+distribution; B matches on distribution and breaks on interface — and it
+breaks it in the load-bearing place, by adding an aggregation stage to the one
+component the paper's claims are about.*
+
+#### Escape hatch — the one result that would overturn this
+
+If the staging probe (§13.4) shows **Option D scoring far below Option B** —
+concretely, weighted F1 below ~0.60 where B reaches ~0.75+, i.e. a gap several
+times larger than the between-variant noise — then "the model is not working
+at this sequence length" beats "the interface is tidier," and we switch to B
+and say so explicitly in Methods. Anything smaller than that, take D.
+
+D vs D-interp: take whichever scores higher; if within ~0.01, take plain **D**
+(no PE modification at all is the simpler thing to describe).
+
+---
+
+### 13.2 Pilot 2 — which layer, which output token?
+
+**Already decided in §3.3: `combined @ last` (`return_transf_layer: -1`,
+`output_token: "combined"`, 512/channel, `input_dim: 3072`).** Read §3.3 for
+the full argument; the short version:
+
+- The authors' recipe splits into a **robust half** (`combined` beats `cls` at
+  6/6 layers in their own notebook, including the last) and a **fragile half**
+  (a specific intermediate layer, which their own demo fails to reproduce —
+  it picks layer 1 or 3, not the README's 2, with the whole spread only 3–8
+  test samples wide).
+- **All three other backbones harvest the last layer.** Truncating Mantis at
+  layer 2 would make it the only truncated encoder, would let its LoRA adapt
+  only 3 of 6 blocks against OSF's and PhysioOmni's 12/12, and — decisively —
+  would break the MantisPlus ablation into a two-variable comparison, since
+  Mantis-8M's published optimal layer is 2 and MantisPlus's is 1.
+
+**So Pilot 2 is not a decision. It is the supplementary number.** The same
+extraction pass that produces `combined @ last` also produces layer-2 output
+for free (capture the intermediate activation while iterating
+`transf_unit.transformer.layers` — ~10 lines), so all four cells of §3.3's
+table come from one job at zero extra GPU cost:
+
+```
+                     dim/ch   input_dim   weighted F1   kappa
+cls      @ last        256       1536        ?            ?
+combined @ last  ←     512       3072        ?            ?    (chosen)
+cls      @ 2           256       1536        ?            ?
+combined @ 2           512       3072        ?            ?
+```
+
+What we do with it: report it in the supplement as *"the authors' recommended
+layer-2 extraction scored X higher on the single-epoch staging probe; we used
+the last layer for comparability with the other backbones, and because
+per-checkpoint layer selection would have made the Mantis-8M vs MantisPlus
+contrast two-variable."* Showing the number we didn't take is what makes the
+choice auditable rather than arbitrary.
+
+**Escape hatch**: if `@ 2` beats `@ last` by a very large margin — say >0.08
+weighted F1, far beyond anything the authors' own ±0.02 spread suggests — that
+would mean the last layer is genuinely broken at 241 tokens rather than merely
+suboptimal, and it becomes a *finding about sequence-length extrapolation*
+worth acting on. Then we would switch, use layer 2 for **both** checkpoints
+(not per-checkpoint layers), and state the comparability cost plainly.
+
+---
+
+### 13.3 Pilot 3 — measurement, not a decision
+
+Nothing to choose. Four numbers that go straight into config files, and one
+gate.
+
+1. **Achieved TFLOP/s vs the H100's ~495 TF32 peak** (§4.1), logged by the
+   script itself. **This is a gate**: if extraction comes back under ~5 % of
+   peak, stop and diagnose before launching a 90-run sweep. That single check
+   would have saved weeks on PhysioOmni.
+2. **`chunk_batch_size` A/B**: 192 vs 48, matched fresh subject batches, same
+   cohort. OSF measured **3.28×** from this knob; PhysioOmni measured
+   **nothing**. Ours is unknown, and §4.4 predicts Mantis should be *less*
+   sensitive than OSF at short contexts because the 6-channel axis already
+   gives 6× more items per forward call.
+3. **`torch.profiler` over a handful of batches at 40m** (not 30s — OSF's
+   `docs/LORA_GPU_THROUGHPUT_INVESTIGATION.md` §6 is explicit that profiling at
+   30s measures the overhead-bound regime and answers the wrong question).
+   Gives the actual matmul-vs-everything-else split, settling
+   compute-bound-vs-overhead-bound directly instead of via a FLOP estimate.
+4. **One training step at each of 30s/10m/40m/80m/120m/240m**, recording
+   `torch.cuda.max_memory_allocated()` → rewrites §4.3's estimated
+   `context_micro_batch` table into a measured one. **Do not extrapolate from
+   one point** — that is exactly what PhysioOmni did and had to redo.
+
+---
+
+### 13.4 The instrument for Pilots 1 and 2 — a single-epoch sleep-staging probe
+
+**Why not val AUROC on a 30 s `sex_binary` run** (what an earlier draft of this
+section proposed): the pilot val split is ~165 subjects, where AUROC noise is
+roughly ±0.04. A decision threshold of 0.01 sits **well inside** that noise —
+it would be picking on coin flips. It is also expensive: three extraction
+passes over ~1,600 subjects, twice.
+
+**The instrument instead**: per-30 s-epoch sleep-stage labels, which already
+exist for every subject — verified:
+`/scratch/boshra95/psg/{cohort}/derived/annotations/{subject}_stages.npy`,
+e.g. `APL0001_stages.npy`, shape `(1142,)`, `int8`, classes
+`{0:W, 1:N1, 2:N2, 3:N3, 5:REM}` (5→4 via the existing `_remap_stages`).
+
+Protocol:
+- **~100 subjects** (50 APPLES + 50 SHHS — SHHS also exercises the `EEG`
+  name fallback and the `Thor` RESP fallback, §2.2) → roughly **100,000
+  labelled epochs**.
+- For each variant, fit a plain multinomial logistic regression on the
+  `[6 × D]` per-epoch embeddings of the train subjects; score **weighted F1**
+  and **Cohen's κ** on held-out *subjects* (never held-out epochs from a
+  training subject).
+- No sequence head, no context sweep, no training loop. Seconds of CPU per
+  variant after extraction.
+
+Why this is the right instrument:
+
+| | val AUROC, `sex_binary` 30s | single-epoch staging probe |
+|---|---|---|
+| Effective n | ~165 subjects | ~20,000 held-out epochs |
+| Detectable difference | ~0.04 (useless) | ~0.005 |
+| Extraction cost | 3 × 1,600 subjects, twice | **3 × 100 subjects, once** |
+| Wall time | many hours | one ~30 min GPU job |
+| External reference point | none | **Gnassounou et al. report Mantis at 75–89 weighted F1 on exactly this task, on NSRR-family cohorts** |
+
+That last row is the real value: it turns "which variant is bigger" into "does
+our variant land where the published Mantis-on-sleep numbers land, or far
+below" — which is precisely the question Option D's 7.3× extrapolation raises.
+
+**Honest caveat**: staging is a *proxy*. It measures whether the encoder
+resolves the physiology, which is what is at stake here, but the paper's real
+tasks are subject-level (sex, BMI, age, apnea, sleep efficiency). So the winner
+is confirmed with **one** real 30 s `sex_binary` training run before the full
+sweep — one job, not six.
+
+**This probe also subsumes the standalone embedding-sanity check** that used
+to be §13.5 item 8: a degenerate or collapsed embedding cannot reach a
+plausible staging F1, so a sane probe result is stronger evidence than a
+NaN-and-variance check alone. Keep the NaN/variance assertions inside the
+probe script; drop the separate step.
+
+**Both pilots run from one job.** Three extraction passes (D, D-interp, B),
+each capturing layer-2 *and* layer-6 output, each in both `cls` and `combined`
+form ⇒ **3 × 4 = 12 variants from 3 forward passes**, all scored by the same
+probe.
+
+---
+
+### 13.5 The rest of the Step-0 checklist
+
+1. **Checkpoint load** (§3.4) — construct at `num_patches=240`, load
+   `Mantis-8M`, assert missing keys are exactly
+   `{transf_unit.pos_encoder.pe, tokgen_unit.scalar_encoders.{0,1}.scales}`,
+   assert zero unexpected, assert 8,112,384 params. Repeat for `MantisPlus`
+   (8,112,402).
+2. **LoRA injection count** — `get_peft_model` on the combined module; assert
+   **12** LoRA-wrapped Linears (6 blocks × `to_qkv` + `to_out.0`), **221,184**
+   LoRA params, and that `sequence_head` is trainable via `modules_to_save`.
+3. **Zero `BatchNorm`** — machine-check
+   `not any(isinstance(m, nn.modules.batchnorm._BatchNorm) for m in
+   backbone.modules())`, so §4.4's `chunk_batch_size` safety claim is asserted,
+   not merely prose.
+4. **Absent-slot path** — force a slot missing on a real subject; confirm the
+   slice is exactly zero, that no forward ran for it, and that the fill log
+   records it.
+5. **Cohort filter units** — confirm `min_recording_patches: 480` is applied
+   in 30 s-epoch units, not SleepFM's 5 s units.
+6. **`mantis_env` sanity** — `import nsrr_tools` resolves to
+   `/home/boshra95/NSRR-tools-mantis/src`; `nsrr_tools.datasets` imports
+   without `pyedflib`; `pyarrow` writes a parquet.
+7. **Split-population audit** — after full extraction, compare the
+   "has embedding" population against PhysioOmni's 14,993/14,994. Any
+   difference changes `rng.shuffle()`'s entire permutation and therefore the
+   splits (§14.4).
 
 ## 14. Stage 2 (LoRA) — design
 
@@ -1600,36 +2044,72 @@ being supported by the imported `run_epoch`).
 the next one starts. Do not chain steps.**
 
 ### Phase 0 — setup
-- [ ] **0.1** Build `/home/boshra95/mantis_env` from
-      `osf_env_requirements.txt` (147 packages, CC-wheelhouse-proven), then
-      `pip install mantis-tsfm peft`. Own `nsrr_tools_src.pth` →
-      `/home/boshra95/NSRR-tools-mantis/src`. Copy
-      `physioomni_env`'s `pyarrow_arrow_module.pth`. Verify `import
-      nsrr_tools` resolves here, `nsrr_tools.datasets` imports,
-      `import mantis` works, `torch.__version__`. Record all of it in
-      `MANTIS_CLAUDE.md`.
-- [ ] **0.2** `snapshot_download` `paris-noah/Mantis-8M` and
-      `paris-noah/MantisPlus` to `/home/boshra95/mantis_checkpoints/`.
-      Record real byte sizes.
-- [ ] **0.3** `scripts/verify_mantis_checkpoint.py` — §13.4 items 5–7 in one
-      real script (not a throwaway snippet): manual 240-patch load, exact
-      allowed-missing-key assertion, LoRA injection count = 12,
-      `modules_to_save` leaves the head trainable, zero `BatchNorm`,
-      parameter count = 8,112,384 / 8,112,402. **User checkpoint.**
-- [ ] **0.4** Save the Mantis papers to `/home/boshra95/related_work/`
-      (arXiv 2502.15637 + the EEG study 2510.27522), same shared location as
-      `OSF.pdf` / `PhysioOmni.pdf`.
-- [ ] **0.5** Append `🦗 Mantis …` entries to
-      `/home/boshra95/.vscode/launch.json` (append only, §0.1).
+- [x] **0.1** Build `/home/boshra95/mantis_env` — **done 2026-09-06.** NOT a
+      plain `-r osf_env_requirements.txt` install (aborts atomically on any
+      unsatisfiable pin — `accelerate==1.2.1`/`scikit-learn==1.7.2` aren't in
+      the CC wheelhouse, and installing them from PyPI silently upgraded
+      `torch` to 2.6.0). Built in small batches, verified after each one,
+      `torch` re-pinned to `2.5.1+computecanada` last. `pyarrow`'s dummy CC
+      stub fixed via the same `.pth` trick `physioomni_env` already found.
+      `mantis-tsfm` installed with `--no-deps` (its `datasets>=4.0` dep is
+      never imported by `mantis.architecture`, which is all we use). Own
+      `nsrr_tools_src.pth` → `/home/boshra95/NSRR-tools-mantis/src`,
+      confirmed. `nsrr_tools.datasets` imports; `nsrr_tools.core` correctly
+      fails on `pyedflib` (re-confirms the channel-loader placement decision,
+      §7). Full detail: `MANTIS_CLAUDE.md`.
+- [x] **0.2** `snapshot_download` `paris-noah/Mantis-8M` and
+      `paris-noah/MantisPlus` to `/home/boshra95/mantis_checkpoints/` —
+      **done 2026-09-06.** Byte sizes match the remote header read exactly
+      (32,466,928 / 32,467,192).
+- [x] **0.3** `scripts/verify_mantis_checkpoint.py` — **done and PASSING on
+      both checkpoints, 2026-09-06.** Manual 240-patch load (never
+      `.from_pretrained()`), exact allowed-missing-key assertion, LoRA
+      injection count = 12 = 221,184 trainable params, `modules_to_save`
+      (tested with a stand-in head, real `sequence_head.py` wiring is
+      Phase 1) leaves the head trainable while non-LoRA backbone params stay
+      frozen, zero `BatchNorm`, 6-channel-batched forward pass is NaN/Inf-free
+      and non-degenerate. **A real second checkpoint-loading bug was found
+      running this, not anticipated by reading the source** — see §1.0 #6:
+      `prj` must be dropped too, not just `pos_encoder.pe`. **Parameter count
+      corrected**: 8,037,632 live params (excl. the dead `prj` head), not
+      8,112,384/8,112,402 (those are checkpoint-file totals including a
+      non-trainable buffer and `prj`) — see §1.1. **User checkpoint.**
+- [x] **0.4** Save the Mantis papers to `/home/boshra95/related_work/` —
+      **done 2026-09-06**: `Mantis.pdf` (arXiv 2502.15637, 1.01 MB) and
+      `Mantis_EEG_Study.pdf` (arXiv 2510.27522, 273 KB), same shared location
+      as `OSF.pdf` / `PhysioOmni.pdf`.
+- [x] **0.5** Append `🦗 Mantis …` entries to
+      `/home/boshra95/.vscode/launch.json` — **done 2026-09-06**: one entry
+      so far ("🦗 Mantis Phase0 Step3: Verify Checkpoint"), appended after the
+      last PhysioOmni entry, JSON validated (51 total configs, all existing
+      entries untouched).
 
 ### Phase 1 — Stage 1 (frozen)
-- [ ] **1.1** `mantis_channel_loader.py` (§7) + `test_mantis_channel_loader.py`
-      — 2 subjects × 4 cohorts, assert the 6-slot map resolves, assert SHHS
-      uses the `EEG` and `Thor`/`Airflow` fallbacks, assert no NaN, assert
-      `[6, n]` shape and `n == duration × 128`. **User checkpoint.**
+- [x] **1.1** `mantis_channel_loader.py` (§7) + `test_mantis_channel_loader.py`
+      — **done and PASSING, 2026-09-06.** Contains the full §7 design
+      (`load_subject_channels`, `get_epoch_count`, `epochs_to_model_input`
+      for both `full_epoch`/`subwindow`, and `load_mantis_backbone`/
+      `sinusoidal_pe` from §3.4 — built as one shared module from day one,
+      not incrementally). Default 2-subject × 4-cohort smoke test: `[6, n]`
+      shape exact, zero NaN, `epochs_to_model_input` correct shapes for both
+      windowing modes on real signal. **Both SHHS fallbacks confirmed on
+      real data, not just reasoned about**: the very first SHHS subject
+      (`200001_v1`) used both the generic `EEG` key AND the `Thor` RESP
+      fallback simultaneously. **Went further than the checklist's own
+      2-subject scope**: random-sampled STAGES to find and directly test a
+      subject with a genuinely absent slot (`STLK00151`, no ECG candidate at
+      all — confirmed zero-filled, not skipped) and a subject exercising the
+      EMG candidate list's 3rd fallback tier (`MSTR00178`, no
+      `CHIN`/`EMG`, resolved via `LLEG`) — the default 2-subject sample
+      never hit either case, and the fallback chain beyond the first
+      alternate was otherwise untested. **User checkpoint** — test via
+      VSCode launch.json "🦗 Mantis Phase1 Step1: Test Channel Loader".
 - [ ] **1.2** `extract_mantis_embeddings.py` + `configs/phase0_mantis_config.yaml`
-      (§9), all three windowing modes behind the config key. TF32 on. Channels
-      batched into one forward. **User checkpoint.**
+      (§9) — wires `load_mantis_backbone`/`epochs_to_model_input` (already
+      built and tested, 1.1) into a real extraction loop over subjects. Both
+      `windowing`/`pe_mode` config keys wired through (§3.1's two-key
+      split). TF32 on (§4.2). Channels batched into one forward (§4.6).
+      **User checkpoint.**
 - [ ] **1.3** CPU smoke test: 2 APPLES + 1 SHHS + 1 STAGES (STAGES exercises
       the missing-`EKG` path). Assert `[T, 6, D]`, zero NaN, non-degenerate
       per-slot std, fill log written, absent slot exactly zero.
@@ -1637,12 +2117,19 @@ the next one starts. Do not chain steps.**
 - [ ] **1.4** `jobs/extract_mantis_embeddings_{gpu,cpu}.sh`; run **Pilot 3**
       (§13.3) — throughput, achieved TFLOP/s vs peak, `chunk_batch_size` A/B.
       **Stop here if under ~5 % of peak.** **User checkpoint.**
-- [ ] **1.5** Extract the pilot subset three ways; run **Pilot 1** (§13.1);
-      commit to a windowing. **User checkpoint — this is a decision, not a
-      test.**
-- [ ] **1.6** Re-extract the pilot subset three ways for output token/layer;
-      run **Pilot 2** (§13.2); commit to `embed_dim` / `input_dim`.
-      **User checkpoint — locks the embedding format for both stages.**
+- [ ] **1.5** `scripts/probe_mantis_staging.py` (§13.4) — the single-epoch
+      sleep-staging probe: ~100 subjects (50 APPLES + 50 SHHS), multinomial
+      logistic regression on `[6 × D]` epoch embeddings, subject-wise held-out
+      split, weighted F1 + Cohen's κ. Includes the NaN / per-dimension-variance
+      assertions (this subsumes the old standalone sanity step).
+      **User checkpoint.**
+- [ ] **1.6** Run **Pilots 1 and 2 in one job** (§13.1/§13.2): three extraction
+      passes (D, D-interp, B), each capturing layer-2 *and* layer-6 output in
+      both `cls` and `combined` form → 12 variants scored by one probe.
+      Confirm Option D and `combined @ last`, or trigger an escape hatch.
+      Record the full 12-row table in `MANTIS_CLAUDE.md` either way — the
+      not-taken rows are the paper's supplementary number (§13.2).
+      **User checkpoint — this confirms the embedding format for both stages.**
 - [ ] **1.7** `mantis_context_window_dataset.py` (§8) +
       `test_mantis_context_window_dataset.py` — on ≥10 subjects/cohort (the
       3-subject population PhysioOmni used was too small to exercise the
@@ -1703,8 +2190,8 @@ the next one starts. Do not chain steps.**
 | Checkpoint | **`Mantis-8M`** primary, **`MantisPlus`** as the ablation | Byte-identical architecture (verified from both safetensors headers) → real-vs-synthetic pretraining is a controlled one-variable ablation costing one config line (§5.1) |
 | `MantisV2` | Documented, not run | Different architecture (RoPE/RMSNorm/SwiGLU), different LoRA names (`wQKV`/`wO`), synthetic-only, no sleep evidence — a third model family, not a swap |
 | Loading | **Manual safetensors load, never `from_pretrained`** | `from_pretrained` rebuilds from the repo `config.json` and then hard-raises on the `pos_encoder.pe` shape mismatch — verified empirically on torch 2.5.1 (§1.0 #2, §3.4) |
-| Windowing | **Option D** (`seq_len=3840, num_patches=240`) — pilot D / D-interp / B | Keeps `patch_window_size=16` and `kernel_size=17` identical to pretraining; full 128 Hz bandwidth; one embedding per epoch, no pooling heuristic. Option A (→512) destroys spindles/beta/EMG. The 7.3× token-length extrapolation is the one real risk → §13.1 |
-| Output token / layer | **`combined @ layer 2`** default, pilot-confirmed | The Mantis authors' own documented recipe for frozen extraction; halves compute AND Stage 2 activation memory. Must be identical in both stages (§3.3) |
+| Windowing | **Option D** (`seq_len=3840, num_patches=240`); D-interp measured alongside | D matches on *interface* (one forward → one embedding, 241 tokens vs OSF's 90 / PhysioOmni's 30–150 — unremarkable for the comparison set); B matches on *distribution* but adds an aggregation stage **no other model has**, in the exact place the paper makes claims. Option A (→512) destroys spindles/beta/EMG. The 7.3× extrapolation is the one real risk → §13.1's escape hatch |
+| Output token / layer | **`combined @ last`** (`return_transf_layer: -1`, `input_dim: 3072`) | Takes the **robust** half of the authors' recipe (`combined` beats `cls` at 6/6 layers in their own notebook) and rejects the **fragile** half (their demo picks layer 1/3, not the README's 2). Last layer matches SleepFM/OSF/PhysioOmni, keeps LoRA depth at 6/6 like OSF's 12/12, and keeps the MantisPlus ablation one-variable (§3.3) |
 | Source tree | **Fast-channel `/scratch/boshra95/psg`** | Measured: every needed channel is present in all 4 cohorts. No reprocessing, no resampling |
 | Comparison baseline | **`phase0_v3`** (paper-primary) | Follows from the fast tree; matches PhysioOmni |
 | Channel map | **6 fixed slots**, per-slot candidate lists, absent → exact-zero slice | Measured cohort-dependent names; a 7th (second-EEG) slot would be permanently absent for 56 % of subjects, and duplicating SHHS's single EEG would fabricate an r=1.0 channel (§2.2) |
@@ -1715,6 +2202,8 @@ the next one starts. Do not chain steps.**
 | Channel batching | Reshape `(B,C,L)→(B·C,1,L)`, one forward | `transform()` loops channels with a `DataLoader` each — 6 launches instead of 1 (§4.6) |
 | Stage 2 cache | **`[T,6,3840]` fp16 epoch-major, one `.npy`/subject** | Makes an N-epoch window one contiguous read (§4.9). The HDF5s are gzip-chunked at 300 s, so reading them live is worse than it looks (§14.3) |
 | Absent slots in Stage 2 | Uniform tensor, zero the *output* slice | ~1–2 % of subjects; keeps batches uniform and the contract bit-identical to Stage 1 (§14.2) |
+| Whole H100 vs MIG | **Whole card, justified on MEMORY not throughput** | OSF's throughput investigation argues against it *for OSF at 30s*; but 240m needs ~480 epoch-units × ~240 MB, which a 19.6 GB slice cannot hold at any batch size. Not a speed choice (§4.5) |
+| Pilot instrument | **Single-epoch sleep-staging probe**, not val AUROC | ~20,000 held-out labelled epochs vs ~165 subjects → detects 0.005 instead of 0.04; 16× cheaper; and comparable to published Mantis-on-NSRR numbers (§13.4) |
 | Memory ladder | whole H100 → micro_batch → **tokgen-only checkpointing** → full checkpointing → cap and report | The `same`-padded 3840-sample conv is 39 % of activation memory for 1.3 % of FLOPs — a Mantis-specific rung neither previous model had (§4.3/§4.5) |
 | Env | Dedicated `mantis_env` | `osf_env`/`physioomni_env` each pin `nsrr_tools_src.pth` to another worktree |
 
@@ -1722,13 +2211,23 @@ the next one starts. Do not chain steps.**
 
 ## 17. Known open questions
 
-- **Windowing (§13.1) and output token/layer (§13.2)** — defaults chosen and
-  justified, but genuinely undecided until the pilots run. They are the first
-  two real decisions of the implementation.
+- **Windowing (§13.1)** — **decided (Option D)** on cross-model fairness
+  grounds, with a named escape hatch: staging-probe weighted F1 below ~0.60
+  where Option B reaches ~0.75+ would mean the 241-token extrapolation is
+  genuinely broken, and we switch to B and say so in Methods. D vs D-interp is
+  purely empirical and fairness-neutral.
+- **Output token / layer (§3.3, §13.2)** — **decided (`combined @ last`)** on
+  cross-model fairness plus the authors' own non-reproducing layer table. Not
+  an open question; the pilot produces the supplementary number showing what
+  layer-2 would have given.
 - **Achieved GPU utilization (§4.7)** — §4.8's per-context wall-clock budgets
   are FLOP arithmetic, not measurements. The Mantis-vs-PhysioOmni "faster
   despite more FLOPs" hypothesis is an *estimate from tensor shapes*, and it
-  is the dominant uncertainty in the whole plan.
+  is the dominant uncertainty in the whole plan. §4.4 adds a second, sharper
+  prediction to test: because all 6 channels batch into one call, Mantis has
+  **6× more items per forward call than OSF at the same `micro_batch`**, so it
+  should escape the overhead-bound regime at a much shorter context than OSF
+  did. Both are predictions; Pilot 3 measures them, at 40m not 30s.
 - **Whether 240m LoRA is reachable at all.** §4.3's estimate puts it over the
   ceiling at the `micro_batch=1` floor. Expect to need tokgen checkpointing;
   be prepared to cap the LoRA condition and report the ceiling explicitly

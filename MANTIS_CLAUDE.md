@@ -130,43 +130,132 @@ wall-clock despite more FLOPs**. Verify with a pilot; don't take it on faith.
 
 ## Environment
 
-**Not built yet.** Plan: `/home/boshra95/mantis_env`, `pip install mantis-tsfm`,
-plus `peft`.
+**Built and verified 2026-09-06.** `/home/boshra95/mantis_env`, Python
+3.10.13. Real gotchas hit while building it, worth knowing before rebuilding:
 
-Do **not** reuse `osf_env` or `physioomni_env` — each has an
-`nsrr_tools_src.pth` pointing at ONE worktree's `src/`, so reusing one
-silently imports another branch's `nsrr_tools`, and repointing it breaks that
-branch's live environment. PhysioOmni hit exactly this.
+- **`pip install -r osf_env_requirements.txt` cannot be reused wholesale.**
+  `accelerate==1.2.1` and `scikit-learn==1.7.2` are not in the CC wheelhouse
+  (they were installed into `osf_env`/`physioomni_env` from PyPI originally);
+  a plain `--no-index -r requirements.txt` aborts the **entire batch** on the
+  first unsatisfiable pin, silently dropping everything else in that command
+  (this cost two rebuild cycles — `pandas`/`h5py`/`einops` were missing
+  because `PyYAML==6.0.3` doesn't exist in the wheelhouse either, only
+  `6.0.2`). **Install in small batches and verify each one**, not one big
+  `-r` file.
+- **Installing `accelerate`/`peft` from PyPI silently upgraded `torch` to
+  2.6.0**, overwriting the wheelhouse's pinned 2.5.1. Caught by re-checking
+  `torch.__version__` after every batch, not assumed. Fixed with
+  `pip install --no-index --no-deps --force-reinstall torch==2.5.1
+  torchvision==0.20.1 torchaudio==2.5.1` run *after* peft/accelerate/transformers.
+- **`pyarrow` needs the same `.pth` fix `physioomni_env` already found** — CC
+  ships a dummy stub wheel; the real compiled package lives under the `arrow`
+  environment module. Copied `physioomni_env`'s
+  `pyarrow_arrow_module.pth` verbatim (same absolute path, no `module load`
+  needed at runtime). `df.to_parquet()` verified working.
+- **`mantis-tsfm` was installed with `--no-deps`** — every real dependency
+  (`torch`, `einops`, `safetensors`, `huggingface_hub`) was already pinned
+  above; installing normally would have let it pull `datasets>=4.0` from
+  PyPI, which we don't need (see below).
+- `pip` correctly complains that `datasets>=4.0` (a `mantis-tsfm` declared
+  dependency) is missing — **left uninstalled, deliberately.** Verified:
+  `mantis/__init__.py` only lists submodule names, it doesn't import them;
+  `from mantis.architecture import MantisV1` imports cleanly with zero
+  `datasets` dependency. `datasets` is only needed by `mantis.trainer`
+  (`MantisTrainer.pretrain`/`.fit`), which we never use — we call the
+  architecture directly and load weights manually (plan §3.4).
 
-Record here once built: Python/torch versions, package count, and confirmation
-that `import nsrr_tools` resolves to `/home/boshra95/NSRR-tools-mantis/src`.
+**Versions** (torch/numpy/scipy/pandas/h5py/einops match `osf_env`/
+`physioomni_env` exactly, for numerical parity across the three baselines):
+
+```
+torch 2.5.1+computecanada    numpy 2.1.1+computecanada    scipy 1.14.1+computecanada
+pandas 2.2.3+computecanada   h5py 3.12.0+computecanada    einops 0.8.0+computecanada
+safetensors 0.8.0            huggingface_hub 0.36.2       peft 0.14.0+computecanada
+transformers 4.47.0+computecanada   accelerate 1.2.1      scikit-learn 1.7.2
+mantis-tsfm 1.1.0            pyarrow 18.1.0 (via .pth)
+```
+(`safetensors`/`huggingface_hub`/`scikit-learn` are newer than
+`osf_env`'s — pulled in transitively resolving `peft`/`transformers`/
+`mantis-tsfm`; none of these affect training numerics, only checkpoint I/O
+and sklearn API, both exercised by real code below.)
+
+51 packages installed.
+
+**Confirmed** (all live-checked, not assumed):
+- `import nsrr_tools` resolves to `/home/boshra95/NSRR-tools-mantis/src/nsrr_tools`
+  (own `nsrr_tools_src.pth`, not shared with `osf_env`/`physioomni_env`).
+- `nsrr_tools.datasets` imports with **zero** errors.
+- `nsrr_tools.core` correctly **fails** on `import pyedflib` — same gotcha
+  `physioomni_env` found, re-verified here rather than assumed. Confirms the
+  channel-loader placement decision (`datasets/`, not `core/`, plan §7).
+- `torch.cuda.is_available()` is `False` on the login node, as expected —
+  real GPU checks wait for a job.
+- `from mantis.architecture import MantisV1, MantisV2` imports cleanly.
 
 ## Checkpoint
 
-**Not downloaded yet.** License **Apache-2.0** (confirmed from the repo's
-`LICENSE` and all three HF model cards' `cardData`) — the cleanest of the
-three baselines.
+**Downloaded and strict-load-verified 2026-09-06** — `scripts/verify_mantis_checkpoint.py`,
+PASSING on both `Mantis-8M` and `MantisPlus` at
+`/home/boshra95/mantis_checkpoints/{Mantis-8M,MantisPlus}/`, byte sizes
+matching the remote header read exactly (32,466,928 / 32,467,192). License
+**Apache-2.0** (confirmed from the repo's `LICENSE` and all three HF model
+cards' `cardData`) — the cleanest of the three baselines.
 
-Param counts read directly from each `model.safetensors` header over HTTP
-range requests, 2026-08-27 (not from the papers, not from the README):
+Checkpoint-file totals read directly from each `model.safetensors` header
+over HTTP range requests, 2026-08-27 (not from the papers, not from the
+README):
 
-| Checkpoint | Module | Params | Pretraining data | Optimal frozen layer |
+| Checkpoint | Module | File total (incl. buffer + `prj`) | Pretraining data | Optimal frozen layer (not used, see below) |
 |---|---|---:|---|---|
-| `paris-noah/Mantis-8M` | `MantisV1` | **8,112,384** | real time series | 2 |
-| `paris-noah/MantisPlus` | `MantisV1` | **8,112,402** | **CauKer 2M — synthetic only** | 1 |
-| `paris-noah/MantisV2` | `MantisV2` | **4,188,690** | CauKer 2M — synthetic only | 2 |
+| `paris-noah/Mantis-8M` | `MantisV1` | 8,112,384 | real time series | 2 |
+| `paris-noah/MantisPlus` | `MantisV1` | 8,112,402 | **CauKer 2M — synthetic only** | 1 |
+| `paris-noah/MantisV2` | `MantisV2` | 4,188,690 | CauKer 2M — synthetic only | 2 |
+
+**⚠️ A real second checkpoint-loading bug, found only by running the load
+(not by reading the source more carefully) — 2026-09-06.** Dropping
+`pos_encoder.pe` is not the only surgery needed. `output_token='combined'`
+(our decided setting, §3.3 below) doubles `self.hidden_dim`, which also
+resizes `self.prj` — the pretraining-only contrastive projector — to 512-dim,
+colliding with the checkpoint's native 256-dim `prj` and raising the same
+hard `RuntimeError: size mismatch` even under `strict=False`. `prj` is dead
+weight at inference regardless (`MantisV1.forward` only calls it when
+`pre_training=True`), so it must be dropped alongside `pos_encoder.pe`. See
+plan §1.0 #6 and §3.4.
+
+**Correction to the "8.11M" headline figure**: it is the checkpoint-file
+total, including the non-trainable `pos_encoder.pe` buffer (8,448 elements)
+and the dead `prj` head (66,304 elements at its native shape). **The number
+that matters for model-size claims and the LoRA-adapted fraction is
+8,037,632 live parameters, identical for both checkpoints.**
+
+**LoRA — live-verified against both real checkpoints**: `target_modules=
+["to_qkv","to_out.0"]` injects **exactly 12** LoRA-wrapped Linears (6 blocks
+× 2) and **exactly 221,184** trainable params ≈ **2.75 %** of 8,037,632.
+`modules_to_save` correctly leaves a stand-in head trainable while freezing
+every non-LoRA backbone param.
 
 **`Mantis-8M` and `MantisPlus` differ by exactly 2 tensors / 18 params** —
 `tokgen_unit.scalar_encoders.{0,1}.scales`, a deterministic constant buffer.
-Architecturally identical. **So the synthetic-pretraining ("CauKer") ablation
-the plan wanted is `MantisPlus`, and running it is one config line** — a
-perfectly controlled contrast against OSF's quantified 87.7 % SHHS overlap.
+Architecturally identical (confirmed again by the missing-key sets above:
+Mantis-8M is missing those 2 keys entirely, MantisPlus is not). **So the
+synthetic-pretraining ("CauKer") ablation the plan wanted is `MantisPlus`,
+and running it is one config line** — a perfectly controlled contrast
+against OSF's quantified 87.7 % SHHS overlap.
 
 **Correction to the 2026-08-22 skeleton**: `MantisV2` does **not** have the
 same FLOPs as Mantis-8M. Its attention inner dim is 256 (`wQKV [768,256]`),
 not V1's 1024, and its MLP is SwiGLU — it is roughly **2× cheaper per token**.
 Its conv kernel is 41, not 17, and its LoRA targets are `wQKV`/`wO`, not
 `to_qkv`/`to_out.0`. Documented, not run (plan §5.1).
+
+**On the "optimal frozen layer" column above**: decided AGAINST using it
+(plan §3.3, checklist decision, not a pilot). The authors' own
+`getting_started/intermediate_layers.ipynb` does not reproduce its own
+README table (Mantis-8M's best in that notebook is layer 1 or 3, not 2), and
+per-checkpoint layer truncation would make Mantis the only truncated encoder
+in the paper, halve its LoRA depth vs OSF's/PhysioOmni's 12/12, and break the
+Mantis-8M-vs-MantisPlus ablation into two variables. **Decided: `combined @
+last` for both checkpoints** — `input_dim=3072`.
 
 ## Reference materials
 
@@ -282,3 +371,64 @@ Append dated entries here as work happens (newest last).
   token/layer, throughput+memory) are specified in plan §13 and must run
   before any full sweep. Next action: user reviews the plan, then checklist
   0.1 (build `mantis_env`).
+
+- **2026-09-06** — Plan §3.3/§13 rewritten after user pushback that the
+  pilots were unexplained and the fairness comparison with the other three
+  backbones was under-argued. Decided (not piloted): **`combined @ last`**
+  for output token/layer (rejects the authors' per-checkpoint intermediate
+  layer — their own notebook doesn't reproduce it, and following it would
+  make Mantis the only truncated encoder and break the MantisPlus ablation
+  into two variables) and **Option D** for windowing (matches the interface
+  every other backbone uses; Option B's extra pooling stage was judged the
+  worse asymmetry). Both pilots reframed as confirmatory, scored by a
+  single-epoch sleep-staging probe (existing per-subject annotation `.npy`
+  files) instead of 30s `sex_binary` val AUROC — ~20,000 held-out epochs vs
+  ~165 subjects, detects 0.005 not 0.04. Folded in OSF's
+  `docs/LORA_GPU_THROUGHPUT_INVESTIGATION.md` (from `osf-implementation`):
+  corrected the "TF32 both flags default off" claim (cudnn's is already
+  True), and replaced "0.14% of peak" as a universal Mantis expectation with
+  OSF's real measured overhead-bound-at-30s / compute-bound-at-40m+ pattern
+  — Pilot 3 now profiles at 40m, not 30s.
+
+  **Then implementation started, Phase 0.** `mantis_env` built (0.1) — not a
+  trivial `pip install -r`, see "Environment" section above for the real
+  gotchas (wheelhouse gaps, a silent torch 2.6.0 upgrade, the pyarrow `.pth`
+  fix). Both checkpoints downloaded (0.2), byte-exact to the earlier remote
+  read. `scripts/verify_mantis_checkpoint.py` written and PASSING on both
+  (0.3) — and it caught a **second real checkpoint-loading bug** no amount
+  of reading the source had surfaced: `prj` collides in `combined` mode
+  exactly the way `pos_encoder.pe` does, for a different reason (`hidden_dim`
+  doubling, not sequence length). Also corrected the "8.11M" headline
+  parameter count — that number includes a non-trainable buffer and a
+  dead-at-inference head; the number that matters is 8,037,632. LoRA
+  injection (12 modules, 221,184 params, 2.75%) and `modules_to_save`
+  behavior are now real-checkpoint-verified, not reasoned about. **User
+  confirmed the Phase 0 verify output matches — proceeded to Phase 1.**
+
+  **Phase 1.1 — `mantis_channel_loader.py` + its test, done and PASSING.**
+  Built as one complete shared module from day one per plan §7 (not just
+  the channel-reading piece): `load_subject_channels`, `get_epoch_count`,
+  `epochs_to_model_input` (both `full_epoch`/`subwindow` windowing modes),
+  and `load_mantis_backbone`/`sinusoidal_pe` (the manual-load logic from
+  checklist 0.3, factored into the shared module this time). One real fix
+  made along the way to the plan's own §13.1 text: it described three
+  windowing values behind one config key, but Option D and D-interp produce
+  **identical model input** — they differ only in the backbone's positional
+  buffer — so `epochs_to_model_input` takes just `windowing:
+  full_epoch|subwindow`, and D-vs-D-interp is `load_mantis_backbone`'s
+  separate `pe_mode` argument, matching what `configs/phase0_mantis_config.yaml`'s
+  template already had. Corrected in the plan doc, not just the code.
+
+  Real-data test (`scripts/test_mantis_channel_loader.py`, launch.json "🦗
+  Mantis Phase1 Step1"): default 2-subject × 4-cohort run passed everything
+  — `[6,n]` shape exact, zero NaN, both windowing modes correct-shaped on
+  real signal — and, by luck, the very first SHHS subject (`200001_v1`)
+  exercised BOTH documented SHHS fallbacks at once (generic `EEG` key AND
+  `Thor` RESP source). **Went beyond the checklist's own scope**: since the
+  default sample never hit an actually-absent slot or a fallback beyond the
+  1st alternate, random-sampled STAGES directly to find and test
+  `STLK00151` (genuinely no ECG candidate — confirmed exact-zero, not
+  skipped) and `MSTR00178` (no `CHIN`/`EMG` — correctly fell through to the
+  3rd-tier `LLEG` candidate). Both real, both previously untested paths.
+  **User checkpoint — test via VSCode launch.json "🦗 Mantis Phase1 Step1:
+  Test Channel Loader" before continuing to 1.2 (extraction script).**
