@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=physioomni_lora_infer_windows
-#SBATCH --account=def-forouzan_gpu
+#SBATCH --account=def-egranger_gpu
 #SBATCH --time=05:00:00
 #SBATCH --gpus=nvidia_h100_80gb_hbm3_1g.10gb:1
 #SBATCH --cpus-per-task=4

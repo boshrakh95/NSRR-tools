@@ -240,10 +240,42 @@ SHHS results look degraded.
       elsewhere. The 1 gap (`stages/STLK00096`) has no PhysioOmni-relevant
       channels at all — a known outlier already flagged for OSF too, not
       a bug. Ready for 1.11 (the real Stage 1 sweep).
-- [ ] 1.11 Run the Stage 1 sweep — in progress (user is submitting jobs
-      directly via `gen_commands_physioomni.py`)
+- [x] 1.11 Run the Stage 1 sweep — **done**, all 4 tasks x lstm/transformer
+      x all 6 contexts, trained + inferred (test split) weeks ago; the
+      results just weren't collected into CSV form until 2026-09-06
+      (below), so this checklist item was stale.
+- [x] 1.12 Analyze + collect — **done 2026-09-06.**
+      `results/collected/phase0_physioomni/{training.csv,analysis.csv}`,
+      646 analysis rows = exactly 4 tasks x 2 heads x 6 contexts x 12+ K
+      values, zero fabricated combos, `seg_auroc` has zero NaNs. No
+      bootstrap CIs yet (`bootstrap_samples: 0` — same two-step convention
+      `docs/EXPERIMENTS_GUIDE.md` documents: fast pass first, `--bootstrap
+      1000` later once numbers look right). Threshold-tuning (val-split
+      inference for the 3 binary tasks) intentionally not done — out of
+      scope for now, matches OSF's current state too.
 
-## Phase 2 (LoRA) status — design done, implementation done, not yet run
+### Stage 1 (frozen) results, 2026-09-06 — test seg_auroc at k=all
+
+| task | head | 30s | 10m | 40m | 80m | 120m | 240m |
+|---|---|---|---|---|---|---|---|
+| sex_binary | lstm | 0.673 | 0.748 | 0.790 | 0.819 | 0.829 | 0.847 |
+| sex_binary | transformer | 0.670 | 0.734 | 0.794 | 0.826 | 0.844 | **0.863** |
+| sleep_efficiency_binary | lstm | 0.657 | 0.674 | 0.689 | 0.704 | 0.724 | 0.768 |
+| sleep_efficiency_binary | transformer | 0.657 | 0.670 | 0.689 | 0.713 | 0.728 | 0.771 |
+| bmi_binary | lstm | 0.665 | 0.689 | 0.710 | 0.710 | 0.718 | 0.727 |
+| bmi_binary | transformer | 0.660 | 0.690 | 0.705 | 0.712 | 0.717 | 0.736 |
+| age_class | lstm | 0.794 | 0.825 | 0.837 | 0.855 | 0.855 | **0.860** |
+| age_class | transformer | 0.790 | 0.817 | 0.834 | 0.846 | 0.850 | 0.856 |
+
+(`age_class`'s column here is whatever `analyze_windows.py` computed as
+`seg_auroc` for a 3-class task — likely macro/OVR AUROC, not the kappa OSF
+reports for the same task. Confirm the exact metric definition against
+`analyze_windows.py` before treating this row as directly comparable to
+OSF's age_class kappa numbers in a paper table.) Monotonic improvement with
+context length in every row, no anomalies — this is a complete, real,
+ready-to-compare Stage 1 result set, unlike Stage 2 below.
+
+## Phase 2 (LoRA) status — partial results collected (2026-09-06)
 
 **Full detailed design: plan doc §15 (rewritten 2026-08-19, previously
 outline-only).** The one genuinely open design question (§15.1 — how to
@@ -284,8 +316,49 @@ doc for full detail):
   scoping) + `scripts/gen_commands_physioomni_lora.py` — verified live
   (`list`/`train`/`status` against the real registry).
 
-**Not yet done**: checklist 2.6 (real wall-time pilot), 2.7 (three-way
-config/argparse audit), 2.8 (the full sweep).
+**Not yet done**: 2.7 (three-way config/argparse audit), the remainder of
+2.8 (full sweep — bmi_binary and age_class untouched, sex/sleep_efficiency
+missing 80m-240m). Checklist 2.6 (real wall-time pilot) is effectively
+superseded by direct experience below — the answer turned out to be "very
+slow, GPU-scheduling matters more than raw compute," not a single pilot
+number.
+
+### Stage 2 (LoRA) results actually collected so far, 2026-09-06
+
+**Only 9 of the 48 (task, head, context) cells are real.** Inference,
+analysis, and collection ran for exactly these — verified against
+`results/collected/phase0_physioomni_lora/analysis.csv`, no fabricated or
+extrapolated rows:
+
+| task | head | contexts done | test seg_auroc (k=all) |
+|---|---|---|---|
+| sex_binary | lstm | 30s, 10m, **40m** | 0.720 / 0.794 / **0.825** |
+| sex_binary | transformer | 30s, 10m | 0.703 / 0.782 |
+| sleep_efficiency_binary | lstm | 30s, 10m | 0.664 / 0.676 |
+| sleep_efficiency_binary | transformer | 30s, 10m | 0.656 / 0.677 |
+| bmi_binary | lstm, transformer | **none** | — |
+| age_class | lstm, transformer | **none** | — |
+
+(For reference, Stage 1/frozen at the same contexts: sex_binary lstm
+0.673/0.748/0.790, transformer 0.670/0.734/0.794 — LoRA is a real, if
+modest, win at every matched context so far.)
+
+**Do not treat this as a completed sweep in any comparison table.** Missing
+cells are "not yet run," not zero and not "LoRA doesn't help" — say so
+explicitly if this CSV feeds a cross-model table before the rest of the
+sweep lands. Why it stopped here: this branch's `2g.20gb`→whole-H100 GPU
+misstep (see `jobs/train_physioomni_lora_gpu.sh`'s header comment, fixed
+2026-09-06 back to `3g.40gb`) left an 80m job PENDING for 15 real days
+because whole-card jobs bill 2.3x and starve under this account's fairshare
+— caught only when the user asked why nothing had progressed. Even after
+the fix, PhysioOmni's LoRA stage runs at a measured ~0.69 TFLOP/s (~3.6% of
+this account's realistic fp32 ceiling on a 3g.40gb slice, not the
+whole-card figure) because its 4 encoders' hidden dims (100-200) are too
+small to use tensor cores well — an architectural ceiling training-script
+changes cannot fix. **Long contexts (80m+) for bmi/age were not attempted
+further** pending a decision on whether to cap the LoRA sweep at a shorter
+context and report the ceiling explicitly (plan doc §15.8's mitigation
+ladder, rung 3), or accept the multi-day-per-run cost.
 
 **Real precompute + first LoRA train attempt, 2026-08-20 — 2 real bugs
 found and fixed** (see plan doc checklist 2.6 for full detail):

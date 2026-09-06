@@ -2363,14 +2363,42 @@ code/branch work, which this revision is not).
       Stage 2 (§15.7's lesson) before trusting the config's stated options
 - [ ] 2.8 Run the full Stage 2 sweep (§15.10: 48 training runs — 8
       `(task,head)` × 6 contexts, only 30s independently trained per
-      pair), applying the memory-mitigation ladder (§15.8) if needed
+      pair), applying the memory-mitigation ladder (§15.8) if needed —
+      **9/48 done as of 2026-09-06** (sex_binary lstm: 30s/10m/40m;
+      sex_binary transformer, sleep_efficiency_binary lstm/transformer:
+      30s/10m each; bmi_binary and age_class entirely untouched). Inference
+      + analyze + collect ran for exactly these 9 —
+      `results/collected/phase0_physioomni_lora/{training,analysis}.csv`,
+      verified against `metrics.json` with zero fabricated rows. Stalled on
+      wall-time: measured ~0.69 TFLOP/s on `3g.40gb` (~3.6% of that slice's
+      realistic fp32 ceiling), an architectural ceiling from the 4 encoders'
+      small hidden dims (100-200), not fixable from the training script. A
+      real, costly scheduling mistake compounded this — `--gpus=h100:1`
+      (whole card) was tried 2026-08-22 on the strength of a
+      `sbatch --test-only` estimate, and the resulting job sat PENDING for
+      **15 days** because whole-card jobs bill 2.3x and starve under this
+      account's fairshare; reverted to `3g.40gb` 2026-09-06 (see
+      `jobs/train_physioomni_lora_gpu.sh`'s header comment for the full
+      account). **Open decision, not yet made**: cap the LoRA sweep at the
+      longest tractable context per §15.8 rung 3 and report the ceiling
+      explicitly, or accept the multi-day-per-run cost for bmi/age and
+      80m+. See `PHYSIOOMNI_CLAUDE.md`'s Stage 2 results section for the
+      real per-context numbers collected so far.
 
 ### Phase 3 — Results
-- [ ] 3.1 Compile Stage 1 + Stage 2 results against `phase0_v3`
-      (paper-primary), stating §0's caveats plainly (small sleep-specific
-      pretraining scale, arXiv-only/unreviewed, own-paper HMC numbers below
-      a non-FM baseline, no apnea) — same "no silently-incomplete cells"
-      discipline as OSF
+- [x] 3.1a Stage 1 compiled — **done 2026-09-06.** All 4 tasks x 2 heads x
+      6 contexts, `results/collected/phase0_physioomni/{training,analysis}.csv`,
+      646 analysis rows, zero NaN in `seg_auroc`. Real headline numbers now
+      in `PHYSIOOMNI_CLAUDE.md`'s Stage 1 results table. Not yet done:
+      bootstrap CIs, threshold-tuning (matches OSF's current state, not a
+      PhysioOmni-specific gap).
+- [ ] 3.1b Stage 2 compiled — **partial, 9/48 cells, see 2.8 above.** Do
+      not feed into a cross-model comparison table without labeling missing
+      cells as "not yet run," never as zero or omitted silently.
+- [ ] 3.2 Report back before starting MOMENT — do not start the next
+      model's plan unprompted. (Superseded in scope, not skipped: the third
+      baseline is now Mantis, not MOMENT — see
+      `docs/TSFM_THIRD_MODEL_DECISION.md`.)
 - [ ] 3.2 Report back before starting MOMENT — do not start the next
       model's plan unprompted
 
