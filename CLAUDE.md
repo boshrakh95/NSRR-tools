@@ -616,24 +616,40 @@ checklist 2.5d for the full reasoning, grounded directly in
 `npj_main.tex`'s stated methodology). 30s itself still warm-starts from
 Stage 1's frozen-backbone head, as before.
 
-**30s tier complete as of 2026-08-17: all 5 Tier-1 tasks × lstm/transformer
-(10 runs) trained, evaluated, and inference'd (test split).** Headline
-val/test AUROC (kappa for age_class): apnea_binary lstm 0.724/0.719,
-transformer 0.716/0.711; sex_binary lstm 0.843/0.832, transformer
-0.838/0.831; sleep_efficiency_binary lstm 0.667/0.668, transformer
-0.673/0.669; bmi_binary lstm 0.745/0.755, transformer 0.742/0.747;
-age_class lstm 0.870/0.866, transformer 0.867/0.858. A 10m calibration
-pilot (apnea_binary/lstm, warm-started from its 30s checkpoint) is running
-now to get real per-epoch timing before batch-submitting the rest of the
-long-context sweep (10m/40m/80m/120m/240m × 5 tasks × 2 heads) —
+**Stage 2 (LoRA) sweep stopped deliberately at 120m, as of 2026-09-06/07 —
+not a full 6-context sweep, and that's an intentional, documented
+stopping point, not an oversight.** All 5 Tier-1 tasks × lstm/transformer
+(10 runs) are trained through `30s → 10m → 40m → 80m → 120m` (`240m` was
+never started — the long-context compute cost described above made it not
+worth it for a first comparison pass), inferred (test split, all 5
+contexts, resumable inference), analyzed (`--k-dense`), and collected into
+`results/collected/phase0_osf_lora/{training,analysis}.csv` — same
+schema/location convention as `results/collected/phase0_osf/` (Stage 1)
+and `results/collected/phase0_v3*/` (SleepFM), so all three are directly
+comparable now. Full per-context/per-task/per-head numbers are in
+`docs/TSFM_OSF_IMPLEMENTATION_PLAN.md`'s "Stage 2 Results" section — the
+headline is a clean, monotonic AUROC/balanced-accuracy improvement with
+context length for every single task/head combination, e.g. apnea_binary
+lstm goes 0.719 (30s) → 0.761 → 0.812 → 0.840 → 0.870 (120m) on test.
 `mean_pool` head and threshold-tuning (val-split inference for the 4
-binary tasks) still pending too.
+binary tasks) were never done for Stage 2 either — same status as Stage 1.
+**A full cross-model comparison (SleepFM vs. OSF-frozen vs. OSF-LoRA vs.
+PhysioOmni vs. Mantis) is deliberately deferred until Mantis's own results
+are ready** — these CSVs are prepared and comparison-ready now so that
+step is just a data-pull once Mantis finishes, not a re-run of anything
+here.
 
 **All of this OSF work (Stage 1 + Stage 2) lives on the
-`osf-implementation` branch, not yet merged to `main`** (29 commits /
-~16,700 lines as of 2026-08-17) — a fresh clone of `main` will not have any
-of it. Branch from `osf-implementation`, not `main`, for any work that
-needs this context.
+`osf-implementation` branch, still not merged to `main`** as of
+2026-09-07 — a fresh clone of `main` will not have any of it. Branch from
+`osf-implementation`, not `main`, for any work that needs this context.
+Verified (dry-run, no changes made) that `osf-implementation`,
+`physioomni-implementation`, and `mantis-implementation` (forked from
+physioomni) can all still merge into `main` with **zero conflicts** —
+`main` hasn't moved since any of them diverged, and each branch has kept
+to its own model-specific files (own `*_CLAUDE.md`, own configs/registries/
+job scripts, own `logs_*`/`results/collected/phase0_*` trees). Ready to
+merge whenever the user wants; not yet done.
 
 **PhysioOmni (model #2 of 3): implementation starting now, in parallel
 with OSF's remaining long-context sweep** (which from here is mostly

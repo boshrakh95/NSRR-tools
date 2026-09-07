@@ -492,6 +492,66 @@ flip from a few percent of subjects being added/removed.
 
 ---
 
+## Stage 2 Results (partial by design, complete for what it covers — 2026-09-06/07)
+
+**Deliberately stopped at 120m, not the full 6-context sweep.** `240m` was
+never trained — per-context compute cost scales with raw epochs/window
+(§"Status" above), and running it for all 5 tasks × 2 heads wasn't worth
+it for a first LoRA-vs-frozen comparison pass. `mean_pool` and val-split
+threshold-tuning were also never run for Stage 2 (same gaps as Stage 1).
+Everything that *was* run (`30s/10m/40m/80m/120m` × 5 tasks × lstm/
+transformer, 10 runs) went all the way through: train → resumable "all
+windows" inference (test split) → `analyze --k-dense` → `collect`. Output:
+`results/collected/phase0_osf_lora/{training,analysis}.csv` — same
+schema as Stage 1's and SleepFM's collected CSVs, so they're directly
+comparable without any reshaping.
+
+### Headline: test-set AUROC (binary tasks) / balanced accuracy (age_class, 3-class), best epoch per context
+
+| task | head | 30s | 10m | 40m | 80m | 120m |
+|---|---|---|---|---|---|---|
+| age_class | lstm | 0.866 | 0.899 | 0.914 | 0.927 | 0.932 |
+| age_class | transformer | 0.858 | 0.900 | 0.922 | 0.934 | 0.941 |
+| apnea_binary | lstm | 0.719 | 0.761 | 0.812 | 0.840 | 0.870 |
+| apnea_binary | transformer | 0.711 | 0.770 | 0.811 | 0.848 | 0.873 |
+| bmi_binary | lstm | 0.754 | 0.789 | 0.800 | 0.805 | 0.808 |
+| bmi_binary | transformer | 0.747 | 0.786 | 0.803 | 0.813 | 0.821 |
+| sex_binary | lstm | 0.832 | 0.887 | 0.911 | 0.929 | 0.930 |
+| sex_binary | transformer | 0.831 | 0.889 | 0.914 | 0.929 | 0.938 |
+| sleep_efficiency_binary | lstm | 0.668 | 0.693 | 0.707 | 0.722 | 0.744 |
+| sleep_efficiency_binary | transformer | 0.669 | 0.696 | 0.708 | 0.738 | 0.762 |
+
+**Every single task/head combination improves monotonically with context
+length, no exceptions.** This is a clean, coherent finding on its own —
+LoRA fine-tuning lets OSF's encoder make real use of longer context,
+unlike the frozen-encoder Stage 1 saturation curves. `bmi_binary` shows
+the smallest gains (0.754→0.808 lstm, a ~5.4pt spread) — worth checking
+against the frozen-encoder BMI saturation curve later, since Stage 1
+already found BMI to be a real OSF-favorable task; `apnea_binary` and
+`sleep_efficiency_binary` (the two tasks Stage 1 found "genuinely
+mixed"/"inconclusive" against SleepFM) show some of the *largest*
+LoRA gains (apnea: 0.719→0.870, a 15.1pt spread) — worth flagging in the
+paper as a candidate explanation: maybe frozen-encoder underperformance on
+dynamic-physiological-event tasks is a fine-tuning-need problem, not a
+ceiling on what the encoder can represent.
+
+### What this means for next steps
+
+- **Not yet compared against SleepFM or Stage 1 numbers in this doc** —
+  the CSVs are ready (`results/collected/phase0_osf_lora/`, same schema as
+  `phase0_osf/` and `phase0_v3*/`) but the actual cross-model comparison
+  is deliberately deferred until PhysioOmni and Mantis both have their own
+  results ready too, so it happens once, not incrementally per model.
+- **240m, `mean_pool`, and threshold-tuning remain open** if a more
+  complete sweep is wanted later — nothing here blocks that, this is a
+  stopping point, not a dead end.
+- Same caveat as Stage 1 applies to Stage 2: **SHHS-derived numbers still
+  carry OSF's pretraining-contamination risk** (see "Honest comparison
+  framing" in `CLAUDE.md`) — don't blend SHHS into a pooled headline
+  number without the caveat, same as before.
+
+---
+
 ## Implementation Checklist
 
 **Work through a few unchecked items, commit after each, check the box,
