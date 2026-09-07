@@ -801,3 +801,37 @@ accumulation, tokgen checkpointing) rather than write-naive-then-optimize.
   signal that training will read from instead. This step only builds and
   tests the low-level read/write functions; the actual cache-building job
   (checklist 2.2) that populates it from real subjects comes next.
+
+- **Checklist 2.2 done (code)**: `precompute_mantis_raw_signal_cache.py`
+  + `jobs/precompute_mantis_raw_signal_cache.sh` +
+  `configs/phase0_mantis_lora_config.yaml`. Genuinely simpler and faster
+  than OSF's/PhysioOmni's own precompute — Mantis needs no resampling at
+  all (already 128 Hz), pure read+reshape, real measured **~5.3
+  subjects/s** single-process.
+
+  Verified three ways: local 3-subject test; real-data correctness check
+  (cached array byte-identical to an independently-computed ground truth,
+  for all 3 real APPLES subjects, whole array and a middle window —
+  APL0001's file size, 52,669,568 bytes, matches the plan's own predicted
+  number exactly); and the actual job script verified with a real
+  `sbatch` job that wrote 3 valid entries to the real production cache
+  path (kept, not deleted — legitimate real data). `diskusage_report`
+  checked (8,442/19,000 GiB used) — comfortable headroom for the eventual
+  ~720GB full cache.
+
+  **Full ~14,994-subject build deliberately NOT launched** — real,
+  quota-relevant production operation, explicit user checkpoint. Code is
+  ready whenever the user wants to start it (`docs/MANTIS_EXPERIMENTS_GUIDE.md`
+  will get a Stage 2 section with the exact sharded commands once Stage 2
+  is further along).
+
+  **What this step means in plain terms**: this is the job that actually
+  populates the cache the previous step only built the plumbing for — it
+  reads each subject's raw signal once, reshapes it into the fast layout
+  Stage 2 training needs, and writes it to a permanent location so every
+  future LoRA training run reads a cheap local file instead of decompressing
+  HDF5 chunks on every step. Only run on 3 real subjects so far, as a
+  correctness/speed check — the real ~15,000-subject build is a deliberate
+  next decision for the user, not something to launch automatically given
+  its size and disk-quota relevance. Next: checklist 2.3, the PyTorch
+  dataset class that reads from this cache during actual training.

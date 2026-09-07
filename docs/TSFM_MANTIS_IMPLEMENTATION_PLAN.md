@@ -2657,9 +2657,51 @@ pass.
       this) worked correctly, not just assumed to transfer from
       `physioomni_env`. Confirmed the pre-existing (non-cache) channel-loader
       tests still pass after this edit.
-- [ ] **2.2** `precompute_mantis_raw_signal_cache.py` + CPU job. Check
-      `diskusage_report` first. Build cohort by cohort; time the first shard
-      before budgeting the rest. **User checkpoint.**
+- [x] **2.2** `precompute_mantis_raw_signal_cache.py` + CPU job — DONE
+      2026-09-07 for the code; **full population build deliberately NOT
+      launched (real user checkpoint, quota-sensitive ~720GB operation)**.
+      Forked from `precompute_osf_raw_signal_cache.py` (closer structural
+      match than PhysioOmni's — single fixed-shape array per subject, no
+      ragged per-channel files). Genuinely simpler and faster than either
+      sibling's precompute: Mantis needs **no resampling at all** (already
+      128 Hz), so this is pure read + reshape, no `scipy` anywhere — real
+      measured throughput **~5.3 subjects/s single-process** (vs.
+      OSF's/PhysioOmni's FFT/decimation-bound precomputes).
+
+      Output is epoch-major `[T,6,3840]` (the whole point of the design,
+      §14.3/§4.9 — an N-epoch training window is then one contiguous byte
+      range), built by truncating `load_subject_channels`'s channel-major
+      `[6,n_samples]` output to whole epochs and reusing
+      `epochs_to_model_input`'s own already-verified transpose — not a new
+      reshape invented from scratch.
+
+      `diskusage_report` checked as required: 8,442/19,000 GiB used,
+      comfortable headroom for the ~720GB full cache — but this is a
+      point-in-time check, re-verify immediately before the real full
+      build, not now.
+
+      **Verified three ways, not just "it ran"**: (1) a 3-subject local
+      test at 5.27-5.37 subjects/s; (2) real-data correctness — for all 3
+      real APPLES subjects, the cached array was confirmed byte-identical
+      to an *independently* computed ground truth (loaded fresh via
+      `load_subject_channels` and reshaped inline, not by re-calling the
+      same code path), for the whole array AND a real middle window;
+      APL0001's cache file size (52,669,568 bytes) matches the plan's own
+      predicted number exactly, an independent cross-check that the
+      design's byte math is right; (3) the actual CPU job script verified
+      with a real minimal `sbatch` job (58544852, `def-egranger_cpu`),
+      which correctly wrote 3 real, valid, `cache_exists()`-confirmed
+      entries to the real production cache path
+      (`/scratch/boshra95/psg/unified/mantis_raw_signal_128hz`) — kept as
+      the legitimate start of the real cache, not deleted as test
+      pollution, since they're exactly what the real precompute would
+      produce for these subjects.
+
+      **Not done**: the full ~14,994-subject sharded build. This is a
+      real, expensive, quota-relevant production operation and checklist
+      2.2 is explicitly a user checkpoint — the user decides when to
+      launch it (likely once Phase 1 extraction is further along, since
+      both compete for the same filesystem's I/O bandwidth).
 - [ ] **2.3** `mantis_raw_epoch_dataset.py` (§14.4) + smoke test, including
       the Stage-1-embedding-existence split-match assertion.
       **User checkpoint.**

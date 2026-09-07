@@ -1,0 +1,176 @@
+# ============================================================
+# Phase 0 — Mantis Stage 2 (LoRA fine-tuning) Config
+# ============================================================
+# Forked from configs/phase0_mantis_config.yaml (checklist 2.2,
+# docs/TSFM_MANTIS_IMPLEMENTATION_PLAN.md §14.6) — Stage 2's own config,
+# never edited in place alongside Stage 1's, so the two never overwrite
+# each other. Everything not called out below is identical to Stage 1 by
+# design (same channel mapping, same labels/splits, same head architecture)
+# — only what's genuinely different for LoRA fine-tuning changes.
+#
+# KEY DIFFERENCE FROM STAGE 1: Stage 2 has no precomputed-embeddings step
+# for training — the backbone runs live, LoRA-adapted, every training
+# step. `embedding.repo_id`/`local_dir` are still used (to load the base
+# Mantis backbone before wrapping it with LoRA). The raw signal itself
+# (NOT embeddings) is precomputed once, offline, epoch-major
+# [T,6,3840] float16, to `data.raw_signal_cache_dir` (checklist 2.2) —
+# see scripts/precompute_mantis_raw_signal_cache.py. Run that before any
+# real training; MantisRawEpochWindowDataset (checklist 2.3, not yet
+# written) will raise a clear error if a subject's cache entry is
+# missing, rather than silently falling back to a slow raw-HDF5 read.
+
+# ── Base checkpoint (loaded fresh, then wrapped with LoRA) ──────────────────
+embedding:
+  repo_id:        "paris-noah/Mantis-8M"      # MantisPlus ablation: swap this line (deferred, plan §1.13)
+  local_dir:      "/home/boshra95/mantis_checkpoints/Mantis-8M"
+  seq_len:        3840
+  num_patches:    240
+  windowing:      "full_epoch"        # Option D — same decided windowing as Stage 1
+  pe_mode:        "extrapolate"
+  return_transf_layer: -1             # full depth — LoRA adapts every block, unlike Stage 1's fixed layer readout
+  output_token:   "combined"
+  embed_dim:      512
+  # Channel-epochs per backbone forward call within one training window
+  # (plan §4.4/§14.2 — must be a multiple of 6). Seeded from Stage 1's own
+  # decided value; NOT yet GPU-calibrated for Stage 2 specifically —
+  # checklist 2.6's real pilot measures this per context length and
+  # rewrites experiments/v2_mantis_lora_registry.yaml's
+  # gradient_accumulation.context_micro_batch from real
+  # max_memory_allocated() numbers, not this default.
+  chunk_batch_size: 192
+
+# ── HDF5 Signal Data — identical to Stage 1's data: section, plus the
+# Stage-2-only raw_signal_cache_dir (checklist 2.2) ─────────────────────────
+data:
+  hdf5_dir: "/scratch/boshra95/psg"
+  raw_signal_cache_dir: "/scratch/boshra95/psg/unified/mantis_raw_signal_128hz"
+  epoch_seconds: 30
+  source_hz: 128
+  denormalize: false
+  channel_candidates:
+    EEG:   [C3-M2, EEG, C4-M1, O1-M2]
+    EOG_L: [LOC]
+    EOG_R: [ROC]
+    ECG:   [EKG, ECG-L]
+    EMG:   [CHIN, EMG, LLEG, RLEG]
+    RESP:  [Airflow, Thor, ABD]
+
+# ── Raw-Epoch Window Dataset ─────────────────────────────────────────────────
+# Same subject/split/task/context settings as Stage 1's dataset: section —
+# same task_subject_dir + split_seed, required for a fair comparison on
+# identical subjects/splits.
+#
+# stage1_embedding_dir (NOT used to load any signal data — existence-check
+# ONLY, same discipline as OSF's/PhysioOmni's own Stage 2 configs):
+# MantisContextWindowDataset (Stage 1) filters subjects by "has embedding
+# .npy" BEFORE computing the train/val/test split. If Stage 2 filtered by
+# a different criterion (e.g. "has raw HDF5"), even a single subject's
+# difference in filtered population size changes
+# np.random.default_rng(split_seed).shuffle()'s ENTIRE output permutation
+# — a real, previously-live bug on both OSF's and PhysioOmni's Stage 2
+# builds (plan §14.4), not a theoretical concern. Stage 2 filters by this
+# SAME criterion first, guaranteeing identical splits, then separately
+# checks its own raw_signal_cache_dir for actually reading signal.
+dataset:
+  embedding_dir: "/scratch/boshra95/psg/unified/embeddings/mantis_30sec"
+  stage1_embedding_dir: "/scratch/boshra95/psg/unified/embeddings/mantis_30sec"
+  label_source:  "/scratch/boshra95/psg/unified/targets_v2/master_targets.parquet"
+  task_subject_dir: "/scratch/boshra95/psg/unified/targets_v2/task_subjects"
+  sleep_stage_dir:  "/scratch/boshra95/psg"
+  context_lengths: ["30s", "10m", "40m", "80m", "120m", "240m"]
+  task: "sex_binary"
+  task_type: "seq2label"
+  datasets: [apples, shhs, mros, stages]
+  train_split: 0.70
+  val_split:   0.15
+  test_split:  0.15
+  split_seed:  42
+  windows_per_subject: 5
+  # seq2seq params carried for config-shape parity — sleep_staging deferred
+  # for both stages (plan §5.8).
+  seq2seq_context_mode: "centered"
+  seq2seq_padding_policy: "complete_only"
+  seq2seq_max_padding_fraction: 0.5
+  min_past_denom: 8
+  max_min_past_patches: 40
+  min_recording_patches: 480
+
+# ── Sequence Head Model — identical architecture to Stage 1 ─────────────────
+# Warm-started from the matching Stage 1 checkpoint at training start
+# (train_mantis_lora.py, checklist 2.4) — architecture must match exactly
+# for the warm-start state_dict to load.
+model:
+  input_dim: 3072
+  head_type: "lstm"
+  hidden_dim: 128
+  num_layers: 1
+  num_heads: 8
+  dropout: 0.3
+  num_classes: 2
+
+# ── LoRA ──────────────────────────────────────────────────────────────────────
+# Target modules checkpoint-verified 2026-09-06 (plan §1.3, scripts/
+# verify_mantis_checkpoint.py): 12 modules across the transformer, 221,184
+# trainable params. r/lora_alpha/lora_dropout/lr are NOT yet calibrated
+# against a real Mantis pilot — starting values are OSF's/PhysioOmni's own
+# standard-practice defaults (plan §5.7: LoRA for method parity across all
+# three baselines, same target-module names as OSF). Revisit after
+# checklist 2.6's wall-time/quality pilot.
+lora:
+  r: 8
+  lora_alpha: 16
+  lora_dropout: 0.05
+  target_modules: ["to_qkv", "to_out.0"]
+  modules_to_save: ["sequence_head"]
+
+# ── Training ─────────────────────────────────────────────────────────────────
+# Starting point is PhysioOmni's revised Stage 2 budget (plan §14.6), NOT
+# OSF's cut-and-halved values — OSF's epochs/lr change was justified by
+# ITS OWN pilot curve showing overfitting from epoch 9; PhysioOmni's own
+# curve showed no such signature and kept lr=1e-4, cutting only
+# epochs/patience on wall-clock grounds. Neither is evidence about Mantis
+# — revise from Mantis's own real 30s pilot curve (checklist 2.6), record
+# it in MANTIS_CLAUDE.md the way both previous plans did, don't assume
+# either prior curve transfers.
+training:
+  epochs: 25
+  lr: 1.0e-4
+  weight_decay: 1.0e-3
+  optimizer: "adamw"    # NOTE: not read — hardcoded to plain Adam, same as train_mantis_context_sweep.py.
+  scheduler: "cosine"   # NOTE: not read — hardcoded to CosineAnnealingLR (same as Stage 1).
+  early_stopping_patience: 5
+  device: "cuda"        # NOTE: not read — device comes from --cpu / torch.cuda.is_available() (same as Stage 1).
+  mixed_precision: false   # TF32 instead (plan §4.2), not autocast/fp16 — same as Stage 1
+  class_weights: "auto"
+  early_stopping_monitor: "val_auroc"
+  weighted_sampler: false
+
+  windows_strategy: "fixed"
+  token_budget_minutes: 240
+  k_max: 50
+
+  # Starting point only — NOT yet calibrated against a real Mantis pilot
+  # curve (checklist 2.6). Matches PhysioOmni's own starting ratio (half
+  # of base lr) rather than OSF's, consistent with starting from
+  # PhysioOmni's revised budget above.
+  context_lr_overrides:
+    "120m": 5.0e-5
+    "240m": 5.0e-5
+
+  overfit_epochs: 0
+
+  save_snapshots: true
+  snapshot_interval: 5
+
+# ── Analysis ─────────────────────────────────────────────────────────────────
+analysis:
+  bootstrap_samples: 0
+
+# ── Logging & Output ─────────────────────────────────────────────────────────
+# Separate results_dir AND logs_dir from Stage 1 — sibling directories,
+# never overlap. Sharing Stage 1's logs_dir corrupted both stages' status
+# files for PhysioOmni (plan §4.10/§14.7) — logs_dir is set at the
+# registry level (experiments/v2_mantis_lora_registry.yaml, checklist 2.5),
+# not here, matching Stage 1's own convention.
+logging:
+  results_dir: "/scratch/boshra95/psg/unified/results/phase0_mantis_lora"
