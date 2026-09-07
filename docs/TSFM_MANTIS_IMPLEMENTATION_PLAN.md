@@ -2358,10 +2358,51 @@ the next one starts. Do not chain steps.**
       supplementary "what we gave up" numbers). **User checkpoint — the
       embedding format (Option D, `combined @ last`, `input_dim=3072`) is
       now confirmed for both stages, not just decided.**
-- [ ] **1.7** `mantis_context_window_dataset.py` (§8) +
-      `test_mantis_context_window_dataset.py` — on ≥10 subjects/cohort (the
-      3-subject population PhysioOmni used was too small to exercise the
-      padding branch or K-sampling). **User checkpoint.**
+- [x] **1.7** `mantis_context_window_dataset.py` (§8) +
+      `test_mantis_context_window_dataset.py` — DONE 2026-09-07. Forked
+      `osf_context_window_dataset.py` per §8: only the module-level
+      constants changed (`EMBED_DIM=512, N_SUBTOKENS=6, FLAT_DIM=3072`),
+      class renamed `MantisContextWindowDataset`, `SubjectGroupedSampler`
+      copied in unchanged. Added the real-data guard called for in §8/§9:
+      `_assert_embed_dim()` loads one real subject's `.npy` at dataset-build
+      time and asserts its trailing shape is exactly `(6, 512)`, raising a
+      clear error naming the file if a stale/wrong-variant embedding_dir is
+      pointed at, rather than a confusing shape error deep inside a
+      DataLoader worker.
+
+      Tested on the real 100-subject Pilot 1/2 population
+      (`mantis_pilot12/D_Llast_combined/` — the exact production Option-D
+      combined@last variant, checkpoint 1.6) via a new `--embedding-dir`
+      override flag on the test script, since the production
+      `embedding_dir` only has 4 real subjects extracted so far (1.11 not
+      yet run) — 69/14/15 train/val/test subjects after the
+      `min_recording_patches=480` filter (1 of 100 excluded, real short
+      recording), confirmed **100% label overlap** with
+      `sex_binary_subjects.csv` beforehand. Verified at 30s/10m/240m/
+      full_night: correct tensor shapes/dtypes, K-sampling respects
+      `K_max=5` (train random, val/test evenly-spaced), `SubjectGroupedSampler`
+      keeps every subject's items consecutive across a full epoch,
+      full_night `collate_fn` correctly pads the batch to its longest
+      subject (padding fractions 3.6-9.8% across the 3 splits' first
+      batches).
+
+      **Real-data finding, not a bug**: at 240m (N=480), the seq2label
+      right-padding branch (`T < N`) never actually fires on production
+      data — `min_recording_patches=480` guarantees every kept subject has
+      ≥480 epochs, so no window ever needs padding at the longest context
+      length. That's intentional (same guarantee OSF/PhysioOmni make), but
+      it means the real-data test alone doesn't exercise that branch.
+      Added a second, synthetic unit test (`T=7 < N=10`) directly against
+      `_get_seq2label_window`/`_get_causal_window` confirming: right-pad
+      values are exact zero, mask is `False` for real positions / `True`
+      for padded, real-region values match the source array exactly at
+      both `window_start=0` and an offset start, and the seq2seq causal
+      left-pad branch is likewise correct. Both real-data and synthetic
+      checks passed on the first run — no bugs found, but this closes the
+      gap the plan explicitly flagged (PhysioOmni's original 3-subject test
+      was too small to exercise padding or K-sampling; this test uses 100
+      real subjects plus a synthetic check for the one branch real data
+      structurally can't reach).
 - [ ] **1.8** `train_mantis_context_sweep.py` (§10) + job script; CPU smoke
       test on the pilot subset, run to `Status: SUCCESS`. **User checkpoint.**
 - [ ] **1.9** `infer_mantis_subject_windows.py` + job script; CPU smoke test
@@ -2376,8 +2417,21 @@ the next one starts. Do not chain steps.**
 - [ ] **1.12** Full Stage 1 sweep (90 runs) → inference → analysis.
 - [ ] **1.13** MantisPlus ablation: `phase0_mantis_plus_config.yaml` +
       `v2_mantis_plus_registry.yaml`, extraction, 60 runs (§5.1).
-- [ ] **1.14** `docs/MANTIS_EXPERIMENTS_GUIDE.md`, written incrementally as
-      each step lands — real commands, real measured numbers, real paths.
+- [ ] **1.14** `docs/MANTIS_EXPERIMENTS_GUIDE.md` — **START EARLIER than
+      this checklist position, per explicit user instruction 2026-09-07**:
+      begin as soon as there is something for the USER to actually submit
+      and run themselves (the training/inference scripts + job scripts,
+      roughly checklist 1.8-1.10), not after the full sweep. Mirrors
+      PhysioOmni's own guide precedent (started once its Stage 1 pipeline
+      existed and was verified, filled in incrementally after). Must
+      include: real data-directory layout, exact input/output shapes and
+      paths for every script, step-by-step commands with real examples
+      (not placeholders), and `gen_commands_mantis.py` usage once it
+      exists — written so the user can follow and run the pipeline
+      themselves without re-deriving anything from this plan doc. Written
+      incrementally as each subsequent step lands — real commands, real
+      measured numbers, real paths, updated in place rather than only
+      appended.
 
 ### Phase 2 — Stage 2 (LoRA)
 - [ ] **2.1** Extend `mantis_channel_loader.py` with the cache functions

@@ -590,4 +590,41 @@ Append dated entries here as work happens (newest last).
   "what we gave up" numbers (§3.3, §13.1/§13.2). **This closes Pilots 1
   and 2 entirely — the embedding format (Option D, `combined @ last`,
   `input_dim=3072`) is now empirically confirmed for both stages, not
-  just decided. Next: checklist 1.7, `mantis_context_window_dataset.py`.**
+  just decided.**
+
+- **2026-09-07 — Checklist 1.7 done**: `mantis_context_window_dataset.py` +
+  `test_mantis_context_window_dataset.py`. Forked
+  `osf_context_window_dataset.py` per plan §8 — only the module-level
+  shape constants changed (`EMBED_DIM=512, N_SUBTOKENS=6, FLAT_DIM=3072`),
+  everything else (K-sampling, `SubjectGroupedSampler`, window index math,
+  padding, `collate_fn`) copied unchanged since it's pure integer
+  arithmetic over T/N. Added a real-data guard (`_assert_embed_dim`) that
+  loads one real subject's `.npy` at dataset-build time and asserts its
+  shape is exactly `(6, 512)`, so a stale/wrong-variant `embedding_dir`
+  fails immediately with a clear message instead of a confusing shape
+  error inside a DataLoader worker later.
+
+  Tested on the real 100-subject Pilot 1/2 population
+  (`mantis_pilot12/D_Llast_combined/`, the exact production Option-D
+  combined@last variant) via a new `--embedding-dir` CLI override on the
+  test script — the production `embedding_dir` only has 4 real subjects
+  extracted so far (1.11 not yet run). 69/14/15 train/val/test subjects
+  after the recording-length filter (1 of 100 excluded, genuinely short).
+  Verified at 30s/10m/240m/full_night: shapes/dtypes correct, K-sampling
+  respects `K_max=5`, `SubjectGroupedSampler` keeps each subject's items
+  consecutive, full_night `collate_fn` pads correctly to the batch's
+  longest subject.
+
+  **Real-data finding (not a bug)**: at 240m, the seq2label right-padding
+  branch structurally never fires on production data —
+  `min_recording_patches=480` already guarantees every kept subject has
+  ≥480 epochs. Added a synthetic unit test (`T=7 < N=10`) directly against
+  the window-builder functions to cover that branch: right-pad is exact
+  zero, mask correct, real region matches source data exactly, including
+  an offset `window_start` and the seq2seq causal left-pad case. Both real
+  and synthetic checks passed first try.
+
+  Next: checklist 1.8, `train_mantis_context_sweep.py` + job script (CPU
+  smoke test on the pilot subset). Per the user's 2026-09-07 instruction,
+  `docs/MANTIS_EXPERIMENTS_GUIDE.md` should be started once 1.8-1.10 exist
+  (real submittable/runnable scripts), not deferred to the end.
