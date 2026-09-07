@@ -2455,9 +2455,59 @@ the next one starts. Do not chain steps.**
       override. Not yet run as an actual sbatch job (no GPU need yet — CPU
       smoke test already proved correctness); will be exercised for real
       once 1.11's production extraction exists.
-- [ ] **1.9** `infer_mantis_subject_windows.py` + job script; CPU smoke test
-      against 1.8's checkpoint; verify the parquet schema and zero NaN.
-      **User checkpoint.**
+- [x] **1.9** `infer_mantis_subject_windows.py` + job script; CPU smoke test
+      against 1.8's checkpoint; verify the parquet schema and zero NaN. DONE
+      2026-09-07. Forked `infer_physioomni_subject_windows.py` unchanged
+      except: dataset import, an `--embedding-dir` override (same pattern as
+      1.7/1.8, for testing against the pilot population), and TF32 enabled
+      at the top of `main()` per §4.2 (the one genuinely new addition vs the
+      template — inference is forward-only so the effect is smaller than
+      training, but §4.2 calls for it on every GPU-touching Mantis script,
+      no reason to exempt this one).
+
+      The batch-size auto-scaling reference (`_ref_bs=64` at `_ref_N=480`)
+      is carried forward unchanged and honestly caveated a third time: not
+      yet GPU-verified for any of the three models, including Mantis.
+      Mantis's per-token width (3072 = 6×512) is wider than PhysioOmni's
+      (500) and OSF's (1536), so if this reference is miscalibrated for
+      Mantis specifically it's more likely too generous than too
+      conservative — worth watching once real GPU inference runs happen,
+      not yet re-derived.
+
+      **Smoke-tested end-to-end**: trained a real checkpoint (LSTM, 30s,
+      full 98-subject pilot split) with `train_mantis_context_sweep.py`,
+      then ran `infer_mantis_subject_windows.py` against it on the test
+      split (15 subjects, all-windows mode → 14,712 rows, ~981
+      windows/subject). Verified directly against the output parquet, not
+      just eyeballed: exactly the 7 documented columns
+      (`subject_id, dataset, true_label, pred_label, prob_class0,
+      prob_class1, window_idx`) with correct dtypes (`int16`/`float32`/
+      `int32`), **zero NaN in every column**, `prob_class0 + prob_class1`
+      sums to 1.0 for every row (0.9999999–1.0000001, float32 rounding
+      only), and `window_idx` correctly restarts at 0 for each of the 15
+      subjects. `jobs/infer_mantis_subject_windows_gpu.sh` forked from
+      PhysioOmni's own job script, same auto-resume/status-JSONL
+      conventions, plus the same `EMBEDDING_DIR` passthrough as the
+      training job script. Not yet run as an actual sbatch job (no GPU
+      need yet); will be exercised for real once 1.11's production
+      extraction exists.
+
+      **Real bug found and fixed during this step's debugging** (not
+      Mantis-specific — inherited from OSF's/PhysioOmni's original
+      `train_*_context_sweep.py`, confirmed present in both by direct
+      diff, but only fixed here per the worktree isolation rule): if the
+      early-stopping monitor (default `val_auroc`) is `NaN` for every
+      epoch — which happens whenever a validation split is small/degenerate
+      enough that only one class is present (hit live via a `--limit 2`
+      debug run) — `NaN > -inf` is always `False` in Python, so
+      `best_model.pt` was never written, and the final evaluation crashed
+      with `FileNotFoundError`. Fixed in `train_mantis_context_sweep.py`
+      with a safety-net save (`elif not ckpt_path.exists(): torch.save(...)`)
+      so a checkpoint always exists for evaluation to load, without
+      resetting early-stopping patience or claiming false progress. OSF's
+      and PhysioOmni's own scripts still have this latent bug — out of
+      scope to fix there under the worktree isolation rule, flagged to the
+      user for awareness.
 - [ ] **1.10** `v2_mantis_registry.yaml` + `gen_commands_mantis.py` (§11);
       verify `list`/`train`/`infer`/`status` against the real checkpoint from
       1.8. **User checkpoint.**

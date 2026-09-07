@@ -804,6 +804,17 @@ def train_one_context(
             best_monitor = val_monitor
             no_improve   = 0
             torch.save(model.state_dict(), ckpt_path)
+        elif not ckpt_path.exists():
+            # Safety net: if the monitor metric is NaN for every epoch so far
+            # (e.g. val_auroc undefined because a tiny/degenerate split has
+            # only one class present — real edge case, not hypothetical:
+            # comparisons against NaN are always False in Python, so
+            # `improved` never fires and no checkpoint would otherwise ever
+            # be written), save the current weights anyway so the final
+            # evaluation below has something to load instead of crashing
+            # with FileNotFoundError. Does not reset no_improve/patience —
+            # this is purely so a checkpoint exists, not a claim of progress.
+            torch.save(model.state_dict(), ckpt_path)
         else:
             no_improve += 1
 

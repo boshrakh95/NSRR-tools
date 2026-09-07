@@ -669,3 +669,44 @@ Append dated entries here as work happens (newest last).
   checklist 1.6/1.11); this step is cheap by design. Next: checklist 1.9,
   the inference script that turns a trained checkpoint into per-window
   predictions for the paper's actual result tables.
+
+- **2026-09-07 — Checklist 1.9 done**: `infer_mantis_subject_windows.py` +
+  `jobs/infer_mantis_subject_windows_gpu.sh`. Forked
+  `infer_physioomni_subject_windows.py` unchanged except the dataset
+  import, an `--embedding-dir` override, and TF32 enabled at startup
+  (§4.2). Batch-size auto-scaling reference (`_ref_bs=64`) is carried
+  forward with the same honest caveat OSF's and PhysioOmni's scripts
+  already carry: still not GPU-verified for any of the three.
+
+  Trained a real checkpoint (LSTM/30s, full 98-subject pilot split) and
+  ran inference against it end-to-end (15 test subjects, 14,712 rows).
+  Verified the actual parquet file, not just that it ran: exactly the 7
+  documented columns, correct dtypes, **zero NaN anywhere**,
+  `prob_class0+prob_class1` sums to 1.0 every row, `window_idx` restarts
+  at 0 per subject.
+
+  **Real bug found and fixed along the way**: while debugging a
+  `--limit 2` smoke-test run, hit a genuine latent bug — if the
+  early-stopping monitor is `NaN` for an entire run (happens when a tiny
+  validation split has only one class present, since AUROC needs both),
+  `NaN > -inf` is always `False` in Python, so no checkpoint was ever
+  saved, and evaluation crashed trying to load one that didn't exist. This
+  bug is NOT new to Mantis — confirmed present, byte-identical, in OSF's
+  and PhysioOmni's own original `train_*_context_sweep.py` scripts too. Per
+  the worktree isolation rule, only fixed it here (a safety-net checkpoint
+  save that doesn't fake progress or reset patience); flagged to the user
+  that those other two scripts carry the same bug if it's ever worth
+  fixing there.
+
+  **What this step means in plain terms**: checklist 1.8 gave us a trained
+  classifier per context length; this step turns that trained classifier
+  into the actual numbers the paper needs — a per-window prediction table
+  (subject, true label, predicted label, probability) that downstream
+  analysis code aggregates into subject-level AUROC/F1 and, eventually,
+  the context-length comparison plots. Both frozen-backbone scripts
+  (train + infer) are now written, tested, and correctness-checked against
+  real embeddings and real checkpoints. Next: checklist 1.10, the registry
+  + command generator that lets the user run the whole sweep with short
+  `gen_commands_mantis.py` calls instead of hand-typed CLI invocations —
+  after that, `docs/MANTIS_EXPERIMENTS_GUIDE.md` starts, per the user's
+  instruction to begin it once real submittable steps exist.
