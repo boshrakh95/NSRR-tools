@@ -2265,12 +2265,38 @@ the next one starts. Do not chain steps.**
       Stage 1 has no such constraint, and per explicit user instruction,
       Stage 1 stays on a MIG slice unless a real OOM forces otherwise —
       never pre-emptively for throughput. **User checkpoint.**
-- [ ] **1.5** `scripts/probe_mantis_staging.py` (§13.4) — the single-epoch
-      sleep-staging probe: ~100 subjects (50 APPLES + 50 SHHS), multinomial
-      logistic regression on `[6 × D]` epoch embeddings, subject-wise held-out
-      split, weighted F1 + Cohen's κ. Includes the NaN / per-dimension-variance
-      assertions (this subsumes the old standalone sanity step).
-      **User checkpoint.**
+- [x] **1.5** `scripts/probe_mantis_staging.py` (§13.4) — **done and PASSING,
+      2026-09-06.** ⚠️ **Reminder, since this label caused real confusion in
+      conversation**: this is a throwaway engineering instrument to decide
+      the windowing/layer config (checklist 1.6), NOT a paper task — sleep
+      staging stays out of scope for all 5 real comparison tasks (§5.8),
+      exactly as for OSF and PhysioOmni. Multinomial logistic regression
+      (`StandardScaler` + `LogisticRegression`, sklearn 1.7.2 — `multi_class`
+      is a deprecated no-op there, correctly omitted) on `[6×D]` flattened
+      epoch embeddings, subject-wise held-out split via the same
+      `np.random.default_rng(split_seed).shuffle()` convention used
+      elsewhere in this project. Includes the NaN / per-dimension-variance
+      assertions (subsumes the old standalone sanity step).
+
+      **Correctness verified two ways before trusting real data**: (1)
+      synthetic tests — a hand-built "embedding" that perfectly encodes the
+      true stage scored **F1=1.0000, κ=1.0000**; pure random noise scored
+      **F1=0.2124, κ=0.0143** (correctly at chance for 5 classes); a subject
+      with an injected NaN and one with an all-zero embedding were both
+      correctly detected and skipped with the right stated reason, while
+      the rest of the (unaffected) data still scored perfectly. (2) Real
+      data — extracted 3 fresh APPLES subjects (`APL0001/0003/0004`) into
+      the real `configs/phase0_mantis_config.yaml` output dir alongside the
+      one real SHHS embedding already there from earlier debugging (found
+      unexpectedly at this step, verified numerically identical to an
+      already-confirmed-correct extraction, not corrupted — kept), giving
+      4 real subjects end-to-end: correct `flat_dim=3072` (matches
+      `6×512`), correct subject-wise 3-train/1-test split, and the script's
+      own "only 1 held-out subject, not enough for a real decision" warning
+      correctly fired. The resulting F1≈0.19/κ≈0.08 is **not a finding about
+      Mantis** — it's the expected consequence of a 3-subject training set,
+      exactly what the warning says. **User checkpoint** — test via VSCode
+      launch.json "🦗 Mantis Phase1 Step5: Staging Probe".
 - [ ] **1.6** Run **Pilots 1 and 2 in one job** (§13.1/§13.2): three extraction
       passes (D, D-interp, B), each capturing layer-2 *and* layer-6 output in
       both `cls` and `combined` form → 12 variants scored by one probe.

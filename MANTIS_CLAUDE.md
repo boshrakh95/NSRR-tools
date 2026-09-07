@@ -503,5 +503,36 @@ Append dated entries here as work happens (newest last).
   user instruction, stays on a MIG slice unless a real OOM forces
   otherwise, never pre-emptively for throughput. No new launch.json entry
   needed — this was GPU-only pilot work, not something to hand to
-  interactive login-node debugging. **Next: checklist 1.5, the
-  single-epoch sleep-staging probe (Pilots 1/2).**
+  interactive login-node debugging.
+
+  **User then asked for a full accuracy audit of the plan** after the
+  "sleep-staging probe" name understandably read as scope creep (sleep
+  staging is one of the project's 7 real tasks, per `CLAUDE.md`, but
+  explicitly NOT one of the TSFM baselines' 5 Tier-1 tasks). Audited and
+  confirmed: every task-scope mention (§5.5, §5.8, §11, the real config,
+  the real registry description) consistently says 5 Tier-1 tasks only;
+  no stale `1536`/`return_transf_layer: 2` values from pre-decision drafts
+  survive anywhere; the real config and script match the §3.3 decision
+  exactly (`return_transf_layer: -1`, `output_token: combined`,
+  `embed_dim: 512`, `input_dim: 3072`); run-count arithmetic (90/60/60)
+  checks out; and running 1.2-1.4 before the confirmatory 1.5/1.6 pilots
+  is fine because those steps validate code correctness, not the
+  windowing/layer choice — the one thing that DOES depend on that choice
+  (full 4-cohort extraction, 1.11) is still correctly gated behind them.
+
+  **Phase 1.5 — `scripts/probe_mantis_staging.py`, done and PASSING.**
+  Restating clearly since the name caused confusion: this is a throwaway
+  engineering instrument for deciding checklist 1.6's windowing/layer
+  config, not a paper deliverable — sleep staging stays out of scope for
+  all 5 real comparison tasks. Verified two ways: synthetic data (a
+  hand-built perfect-signal embedding scored F1=1.0/κ=1.0; pure noise
+  scored F1=0.21/κ=0.01, correct chance level for 5 classes; injected
+  NaN and all-zero subjects were both correctly detected and skipped)
+  and real data (3 fresh APPLES extractions + 1 pre-existing real SHHS
+  embedding found already sitting in the production output dir from
+  earlier debugging — verified numerically identical to an
+  already-confirmed-correct run, kept rather than deleted). Real-data run:
+  correct `flat_dim=3072`, correct subject-wise split, correct
+  too-few-subjects warning. **User checkpoint — test via VSCode
+  launch.json "🦗 Mantis Phase1 Step5: Staging Probe" before continuing
+  to 1.6 (the real ~100-subject, 12-variant Pilot 1/2 run).**
