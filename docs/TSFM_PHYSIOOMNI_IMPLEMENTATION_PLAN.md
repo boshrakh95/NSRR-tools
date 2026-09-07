@@ -175,11 +175,77 @@ re-verify):
   `OSF-Open-Sleep-FM/`, `moment/`, same layout convention as `CLAUDE.md`'s
   "Cluster Execution Guidance" section describes)
 
-Implementation, when it starts, lives in **`NSRR-tools`** (this repo, on a
-`physioomni-implementation` branch forked from `osf-implementation` — not
-`main` — so it inherits the OSF context this plan references throughout,
-per `CLAUDE.md`'s current instruction) — `PhysioOmni/` itself stays a
-read-only reference clone.
+**Implementation now lives in `/home/boshra95/NSRR-tools-omni`** (a
+separate `git worktree`, set up 2026-08-17, checked out to the
+`physioomni-implementation` branch, forked from `osf-implementation` — not
+`main` — so it inherits the OSF context this plan references throughout).
+`/home/boshra95/NSRR-tools` remains a **separate worktree of the same
+repository**, checked out to `osf-implementation`, where OSF's own
+implementation continues in parallel. `PhysioOmni/` itself stays a
+read-only reference clone, sibling to both worktrees under
+`/home/boshra95/`.
+
+### Hard constraint: worktree/directory isolation (added 2026-08-17,
+**not yet mirrored in `CLAUDE.md` — pending a decision on how to keep
+cross-branch status in sync without `CLAUDE.md` diverging per-branch; for
+now this is recorded here only**)
+
+**On Compute Canada Fir, this repository is checked out as two separate
+`git worktree`s at once**, one per active TSFM baseline implementation, so
+each can be worked on from its own VSCode window/Claude Code session
+without the two clobbering each other:
+
+| Directory | Branch | What it's for |
+|---|---|---|
+| `/home/boshra95/NSRR-tools` | `osf-implementation` | OSF baseline (Stage 1 done, Stage 2/LoRA in progress) |
+| `/home/boshra95/NSRR-tools-omni` | `physioomni-implementation` | PhysioOmni baseline (this plan) |
+
+**A session working on PhysioOmni operates *only* inside
+`/home/boshra95/NSRR-tools-omni`, on the `physioomni-implementation`
+branch. It never reads or writes anything under `/home/boshra95/NSRR-tools`
+(the `osf-implementation` worktree), and never intends a change for any
+branch other than `physioomni-implementation`.** Symmetrically, a session
+working on OSF should operate only inside `/home/boshra95/NSRR-tools` on
+`osf-implementation`, and never touch `/home/boshra95/NSRR-tools-omni` —
+**this expectation currently exists only in this plan doc, not (yet) as an
+equivalent note in the `osf-implementation` branch's own `CLAUDE.md`**,
+since that would require editing a file this session cannot touch; flag
+this to the user/other session directly if it matters before assuming it's
+already known there.
+
+**Why this needs care, not just a directory convention**: both worktrees
+share the same underlying git history/objects (same `.git`), but each has
+its own independent checkout and currently-checked-out branch — editing
+files in the wrong worktree either silently targets the wrong branch or
+creates conflicts neither session can see coming. **Do not `cd` out of your
+own worktree directory to peek at or edit the other one.** If reference
+material from OSF's branch is needed (e.g. reusing OSF's finished pipeline
+as a structural template, §6-§15 below do this throughout), read it from
+*within this worktree's own checkout* — it's already present here, since
+this branch forked from `osf-implementation` and inherited its file tree at
+that point — not by crossing into the other worktree's directory.
+
+**Why this note isn't also in `CLAUDE.md` right now, and what that
+implies**: `CLAUDE.md` exists independently in both branches' history, so
+an edit made here would not automatically appear in the `osf-implementation`
+worktree's copy until an explicit merge — and since `CLAUDE.md` is a living
+status doc both branches keep independently updating, inlining a growing
+"current status of both efforts" section into it would create a real,
+recurring merge-conflict surface, not a one-time cost. **This is an
+explicitly open, undecided question** (options discussed: a shared file
+outside git version control, a symlinked `CLAUDE.md`, a separate small
+git-tracked status repo) — until it's resolved, **this plan doc is the one
+place all of the above is recorded**; don't assume `CLAUDE.md` reflects any
+of it.
+
+**Practical consequence for this plan's own references**: every mention
+below of "OSF's finished file X" (§6-§15 read OSF's implementation as a
+structural template throughout) means "read `X` as it exists in this
+`physioomni-implementation` branch's own checkout," not "go look in the
+`NSRR-tools` worktree." The file-isolation rule below (which files are
+read-only reference material vs. new PhysioOmni-specific files) still
+applies exactly as written; the worktree rule above just adds *which
+directory* that discipline is enforced in.
 
 ### Hard constraint: total file isolation from OSF and SleepFM
 
@@ -229,7 +295,15 @@ below.
 
 ## 2. Status (revised 2026-08-17)
 
-**Planning only — nothing built.** Two research/planning passes so far:
+**Implementation started 2026-08-17, on its own worktree
+(`/home/boshra95/NSRR-tools-omni`).** Phase 0 (env + checkpoint) is real
+and verified, not just planned — see checklist 0.1/0.2 below and
+`PHYSIOOMNI_CLAUDE.md` (this branch's live status file, not auto-loaded —
+read it explicitly) for the full detail. Phase 1 (channel loader,
+extraction script) starts next, one step at a time with a VSCode debug
+config per step, mirroring the workflow OSF itself used.
+
+Two research/planning passes preceded implementation:
 
 1. **2026-08-13** — reading the PhysioOmni GitHub repo's code directly,
    fetching the arXiv paper and HuggingFace weights-repo metadata over the
@@ -441,42 +515,161 @@ fast-channel tree, 2026-08-13):
 | Cohort | Real HDF5 keys found | PhysioOmni-relevant channels present |
 |---|---|---|
 | APPLES (`APL1373.h5`) | `Airflow, C3-M2, C4-M1, EKG, EMG, LOC, ROC` | EEG ✅, EOG ✅, ECG ✅, EMG ✅ (generic fallback) |
-| SHHS (`203805_v2.h5`) | `Airflow, EEG, EKG, EMG, LOC, ROC` | EEG ❌ (generic only, no C3/C4), EOG ✅, ECG ✅, EMG ✅ (generic fallback) |
+| SHHS (`203805_v2.h5`) | `Airflow, EEG, EKG, EMG, LOC, ROC` | EEG ⚠️ (has data — generic `EEG` only, no C3/C4 split, see §4.5), EOG ✅, ECG ✅, EMG ✅ (generic fallback) |
 | MrOS (`AA1449_v2.h5`) | `Airflow, C3-M2, C4-M1, CHIN, EKG, LLEG, LOC, ROC` | EEG ✅, EOG ✅, ECG ✅, EMG ✅ (real `CHIN`) |
 | STAGES (`STNF00032.h5`) | `Airflow, C3-M2, C4-M1, CHIN, EKG, LOC, ROC` | EEG ✅, EOG ✅, ECG ✅, EMG ✅ (real `CHIN`) |
 
-Cross-referenced against `docs/TSFM_OSF_IMPLEMENTATION_PLAN.md`'s larger
-50-subject-per-cohort audit for the overlapping channel set:
+**Recomputed 2026-08-17 directly against the full raw population** (not
+OSF's smaller 50-subject-per-cohort sample) — parsed
+`output/channel_analysis/{apples,shhs,mros,stages}_channels.csv` (1,104 /
+8,444 / 3,933 / 1,879 raw subjects respectively) against
+`configs/channel_definitions.yaml`'s real alias lists:
 
-| Channel | APPLES | SHHS | MrOS | STAGES |
+| Channel | APPLES (n=1,104) | SHHS (n=8,444) | MrOS (n=3,933) | STAGES (n=1,879) |
 |---|---|---|---|---|
-| `C3-M2`/`C4-M1` (EEG) | 100% | **0%** | 100% | 100% |
-| `LOC`/`ROC` (EOG, both needed for the derived HEO) | 100% | 100% | 100% | 100% |
-| `EKG`→`ECG-L` (ECG) | 100% | 100% | 100% | 90% |
-| `CHIN`→generic `EMG` (EMG) | 100%† | 100%† | 100% | 100% |
+| C3 (`C3-M2`) | 99.4% | **0%** | 100% | 99.9% |
+| C4 (`C4-M1`) | 99.4% | **0%** | 100% | 99.9% |
+| LOC (EOG) | 100% | 100% | 100% | 99.9% |
+| ROC (EOG) | 99.4% | 100% | 100% | 99.9% |
+| ECG (`EKG`→`ECG-L`) | 99.9% | 100% | 100% | **90.8%** |
+| EMG (`CHIN`→generic `EMG`) | 100% | 100% | 100% | 99.9% |
 
-†generic `EMG` fallback for APPLES/SHHS, real `CHIN` channel for MrOS/STAGES.
+STAGES's ECG gap (173/1,879 subjects, 9.2%) was traced directly, not left
+unexplained: those subjects have a channel named `Heartrate` where an ECG
+waveform would be — a derived beats-per-minute value, not a usable raw
+signal, and not fixable via any alias-list addition (genuinely absent
+data, same category as SHHS's C3/C4 gap below, not the same category as
+OSF's fixable STAGES/SHHS alias-list gaps). Not worth reprocessing over.
 
-**The one real gap: SHHS has no distinguishable C3/C4 EEG**, identical root
-cause to OSF's own SHHS finding. **Decision, mirroring OSF's own resolved
-SHHS decision**: duplicate SHHS's single generic `EEG` channel into both
-`'C3'` and `'C4'` position-lookup slots. This should be revisited together
-with OSF's own SHHS caveat if results look degraded, not decided
-independently per model. **Needs its own explicit re-confirmation with the
-user before Phase 1** (checklist 0.4) — the pattern matching OSF's decision
-is not the same as the user having actually confirmed it for PhysioOmni.
+**The one real gap: SHHS has no distinguishable C3/C4 EEG.** To be precise
+about what this means (a source of real confusion the first time this was
+reported, worth stating carefully): SHHS is **not** missing EEG signal —
+its `psg/` HDF5s carry a channel literally named `EEG` at 100% coverage,
+the exact channel OSF already reads today. What SHHS lacks is the *split*
+into two separately-labeled electrodes (`C3-M2`/`C4-M1`) the other three
+cohorts have. §4.5 below covers the full investigation and the final
+decision on how to handle this — **no reprocessing is needed either way.**
 
 ### 4.4 Reprocessing decision: **no raw EDF reprocessing needed, and no
 full-channel tree needed either**
 
 Every channel PhysioOmni needs is already present in the fast-channel
 `psg/` HDF5s — the same tree SleepFM's paper-primary `phase0_v3` results
-already use — except the one structural SHHS EEG gap above (which
-reprocessing can't fix either). `docs/OSF_CHANNEL_REPROCESSING_PLAN.md`'s
-three already-identified, already-deferred gaps (MrOS `ABD`, STAGES leg
-EMG `LAT`/`RAT`, SHHS `NEW AIR`/airflow) **do not apply to PhysioOmni at
-all** — none of those three channels are in PhysioOmni's input set. **No
-new reprocessing plan doc is needed for PhysioOmni.**
+already use — including SHHS's EEG (§4.5 below covers exactly how it's
+used). `docs/OSF_CHANNEL_REPROCESSING_PLAN.md`'s three already-identified,
+already-deferred gaps (MrOS `ABD`, STAGES leg EMG `LAT`/`RAT`, SHHS
+`NEW AIR`/airflow) **do not apply to PhysioOmni at all** — none of those
+three channels are in PhysioOmni's input set. **No new reprocessing plan
+doc is needed for PhysioOmni.**
+
+### 4.5 SHHS's single EEG channel — investigation, a documented future
+option, and the final decision (2026-08-17)
+
+**The problem, precisely.** SHHS's raw EDFs are recorded with a generic
+`EEG`/`EEG(sec)` naming convention instead of clinical `C3`/`C4` labels
+(a harmonized/de-identified NSRR release quirk). `configs/channel_definitions.yaml`
+currently aliases **both** `EEG` and every `EEG(sec)`-family variant
+(`EEG 2`, `EEG sec`, `EEG(SEC)`, `EEG(sec2)`, `EEG2`) to the **same single
+canonical `EEG` slot** — architecturally there is only one EEG channel to
+fill, so whichever name appears first in a given raw file wins and the
+other is silently discarded. This is exactly the same class of issue
+`docs/OSF_CHANNEL_REPROCESSING_PLAN.md` §4 already flagged for OSF, where
+it was left as an **explicitly unverified** "open research question, NOT a
+recommended fix" — worth checking whether `EEG`/`EEG(sec)` are genuinely
+two different electrode sites or just a redundant backup of the same one,
+before deciding whether pursuing a fix is worthwhile.
+
+**That follow-up was done this session, with real data — the question is
+no longer unverified:**
+1. **100% of SHHS subjects (8,444/8,444)** have *both* an `EEG` channel
+   and an `EEG(sec)`-family channel present in the same raw file
+   (`output/channel_analysis/shhs_channels.csv`, all 5 naming variants
+   checked) — not a naming difference across different files/recording
+   eras, genuinely two channels recorded in essentially every SHHS file.
+2. **Loaded a real raw SHHS EDF directly**
+   (`shhs1-203279.edf`, via `mne.io.read_raw_edf`) and computed the
+   correlation between its `EEG` and `EEG(sec)` channels: **r = 0.18.**
+   A duplicate/backup of the same electrode would correlate near 1.0; a
+   weak correlation is exactly what two genuinely different EEG
+   derivations (e.g. C3 vs. C4 — same brain, different hemisphere, some
+   shared global signal, mostly independent local activity) would produce.
+
+**Conclusion: `EEG(sec)` is very likely a real, informative second EEG
+channel that the current pipeline silently discards for essentially all of
+SHHS** — not a naming duplicate. This is a materially stronger finding
+than OSF's own doc had when it deferred the question.
+
+**A possible future fix exists, deliberately not pursued now — documented
+here so it doesn't need re-deriving.** Unlike `OSF_CHANNEL_REPROCESSING_PLAN.md`
+§5's fix (a full fork of the EDF→HDF5 pipeline, re-processing *every*
+channel for the affected cohorts, because those three fixes changed
+channel *selection* more broadly), this case only requires *adding* one
+already-well-understood channel: extract `EEG(sec)` per SHHS subject using
+the exact same `processing_params.eeg` block (bandpass/resample/z-score)
+the existing `EEG` channel already gets, and write it as a small,
+additive, non-destructive companion artifact — the existing SHHS HDF5s
+would not need to be touched or regenerated at all. This should be
+substantially cheaper than a full SHHS reprocessing (one channel × 8,444
+subjects, not seven-or-eight channels × 8,444), though it hasn't been
+timed. It would benefit **both** OSF and PhysioOmni, since both currently
+approximate SHHS's second EEG channel rather than having a real one — but
+wiring it into OSF's own extraction script is a change on the
+`osf-implementation` branch this session cannot make (worktree isolation,
+§1). **Revisit this only if SHHS's actual results (either model) come back
+meaningfully degraded on EEG-dependent tasks relative to the other
+cohorts** — not before, and not as a prerequisite for starting Phase 1.
+
+**Final decision for PhysioOmni, superseding this plan's earlier "duplicate
+into both slots" draft**: **feed SHHS's existing single `EEG` channel to
+the EEG branch as one real channel — not duplicated into two.** No
+reprocessing of any kind is involved; this uses the exact `EEG` channel
+already sitting in the existing `psg/` HDF5s.
+
+Why this is better than duplication here specifically (unlike OSF, where
+duplication was the right call — see below): PhysioOmni's `NeuralTransformer`
+takes a **variable-length token sequence per modality**, not a fixed
+channel-count tensor — there is no architectural requirement to supply
+exactly 2 EEG channels. `CAP`'s own pretraining data used anywhere from a
+few to 16 EEG channels per subject depending on the source recording, so a
+1-channel EEG branch for SHHS is a legitimate, natively-supported input,
+not a workaround. Duplicating the single channel would instead fabricate a
+second token stream at **r=1.0** correlation with its twin — nothing like
+the r=0.18 real channel pairs the encoder was pretrained on, contributing
+zero genuine information while risking looking like nothing in the
+pretraining distribution. **OSF's own duplication choice is unaffected by
+this reasoning and stays correct for OSF** — OSF's ViT takes a *fixed*
+`[B, 12, 1920]` tensor with no mechanism for a variably-sized channel set,
+so duplicating (real data in every slot) was already the better choice
+there over leaving a slot all-zero; PhysioOmni just doesn't have that
+constraint in the first place.
+
+**Mechanical consequence, not a design change**: this means SHHS's EEG
+branch produces a shorter token sequence than the other three cohorts (30
+one-second patches from 1 real channel, vs. 60 from 2) before CLS-pooling.
+This does **not** change the pooled output dimension — the CLS token is
+still 200-dim regardless of how many real tokens fed the forward pass — so
+§6.3's flat `[T, 500]` embedding design is entirely unaffected; only the
+channel loader's per-subject token-sequence-building step (§7) needs to
+branch on "does this subject have a second EEG channel," the same kind of
+per-subject conditional it already needs for any other missing channel.
+
+**On the broader "avoid repeating preprocessing per training job" question
+this ties into**: none of the above requires resolving separately from
+what's already planned. §6.3's embedding-extraction step (`scripts/extract_physioomni_embeddings.py`,
+Phase 1.2) is exactly the one-time, offline place where resampling (§5.1),
+normalization inversion (§5.2), and this SHHS single-vs-duplicated-channel
+handling all happen — **once per subject, producing a small `.npy`
+embedding file**. `scripts/train_physioomni_context_sweep.py` and
+`scripts/infer_physioomni_subject_windows.py` (§10/§11) never touch raw
+signal, never resample, never re-run the frozen encoder — they only read
+these precomputed embeddings, exactly mirroring OSF's own Stage 1 pattern
+(`extract_osf_embeddings.py` once → `train_osf_context_sweep.py`/
+`infer_osf_subject_windows.py` read cheaply, many times, across the full
+task × head × context sweep). There is no risk of this preprocessing being
+repeated inside a training job's GPU time — that would only become a
+concern for Stage 2 (LoRA), where the backbone runs live every training
+step on raw signal (§15.2 already covers why an offline raw-signal cache
+is planned for that stage specifically, for exactly this reason).
 
 ## 5. Sample-rate and normalization handling
 
@@ -501,42 +694,68 @@ pipeline's resample choice exactly" principle already applied to OSF
 existing preprocessing already uses elsewhere for non-integer-ratio
 resampling, for consistency; verify empirically in the Step 0 pilot (§14).
 
-### 5.2 Normalization — concrete method identified, needs empirical
-validation before trusting extraction output
+### 5.2 Normalization — method confirmed, self-calibrating by design
+(revised 2026-08-18, corrects the earlier per-channel-type assumption)
 
 PhysioOmni's `dataset.py` divides raw signal by 100 (`EEG/100`, `EOG/100`,
 etc., not z-score) before feeding the model — **different from OSF's
 expectation of already-z-scored input.** Our `signal_processor.py`
 z-scores per-channel during EDF→HDF5 preprocessing, but **every HDF5 file
 stores the exact per-channel pre-normalization statistics needed to invert
-this**, confirmed by reading a real file's root attributes directly
-(`/scratch/boshra95/psg/apples/derived/hdf5_signals/APL1373.h5`): a
-`normalization_stats` JSON attribute with `{mean, std, min, max}` per
-channel, e.g. `"C3-M2": {"mean": -0.00155, "std": 15.25, "min": -221.6,
-"max": 219.9}`. **Recommended approach**: `x_original = x_zscored * std +
-mean` per channel (using each channel's own stored stats), then scale to
-match whatever raw unit PhysioOmni's own prep scripts assume, then divide
-by 100.
+this**: a `normalization_stats` JSON root attribute with `{mean, std, min,
+max}` per channel. **Method**: `x_original = x_zscored * std + mean` per
+channel (using that channel's own stored stats), then a scale correction
+(below) to reach µV, then divide by 100.
 
-**One real wrinkle found while reading these stats, worth flagging
-explicitly**: the stored pre-normalization scales are **not uniform across
-channels** — `C3-M2`/`C4-M1`/`EKG`/`EMG`/`Airflow` have `std` in the
-~15-25 range (consistent with already-µV-scale raw amplitudes), but
-`LOC`/`ROC` have `std` around `1.6e-5` and min/max around `±0.0002`
-(consistent with raw **volts**, not µV — roughly 4-5 orders of magnitude
-smaller). **A single flat "convert V→µV" rule applied uniformly would be
-wrong** — the unit-inversion step needs to check each channel's actual
-recovered scale (or track it explicitly per channel from the original EDF
-units) rather than assuming every channel was in the same unit before
-z-scoring. Confirm against `signal_processor.py`'s unit handling directly
-before writing the extraction script, not just from the stored stats'
-magnitudes alone.
+**Traced the actual source of the unit inconsistency directly in
+`signal_processor.py`, not just inferred from stats magnitudes** —
+`_process_channel()` reads raw amplitude via plain MNE indexing
+(`raw[ch_idx, :]`, `signal_processor.py:378`), with **no explicit unit
+conversion anywhere in the file** (confirmed: no `units=` argument to
+`mne.io.read_raw_edf`, no scaling call in `_process_channel`/
+`_normalize_signal`). `stats['std']` is the std of this raw-indexed,
+bandpass-filtered, resampled signal — i.e., **whatever unit MNE's default
+EDF reader happens to return for that specific channel**, which turns out
+to depend on the source EDF file's own header declarations, not a fixed
+system-wide convention.
 
-**Still flagged as a Step 0 pilot check (§14), not assumed to work
-correctly on the first attempt**: after inverting to raw scale and
-applying the `/100` convention, run a handful of real epochs through the
-frozen encoder and check for NaNs/degenerate (near-zero or saturated) CLS
-outputs before trusting any extraction at scale.
+**This was verified with real data across two cohorts, and the original
+"LOC/ROC = volts, everything else = µV" hypothesis (this section's
+2026-08-17 draft) turned out to be wrong — the real pattern is
+cohort/file-dependent, not a fixed per-channel-type rule:**
+- **APPLES** (`apples-560232.edf`, loaded directly with `mne.io.read_raw_edf`,
+  same bandpass params `signal_processor.py` uses): `C3_M2` std≈15.6→14.5
+  (before→after bandpass), `ECG` std≈18.7, `EMG` std≈34.9 — all µV-scale —
+  but `LOC`/`ROC` std≈1.9-2.1e-5 — volts-scale. Matches the original
+  hypothesis, for this cohort.
+- **SHHS** (two real files, `shhs1-203279.edf`/`shhs1-200709.edf`): `EEG`
+  std≈1.4-3.3e-5 (volts-scale, as expected) **but `ECG` std≈1.3-2.2e-4 —
+  also volts-scale**, unlike APPLES's µV-scale `ECG`. **The same canonical
+  channel (`ECG`) is in a different unit depending on cohort.**
+
+**Design consequence: don't hardcode a per-channel-name unit table — detect
+and correct per subject/channel at runtime instead.** Real physiological
+signal amplitudes are µV-scale (std roughly 1-100s, confirmed above) or,
+equivalently, volts-scale (std roughly 1e-6-1e-3) — the two regimes are
+separated by several orders of magnitude with a wide, safe gap between
+them, so a simple runtime check on each channel's own stored `stats['std']`
+is a robust, self-calibrating detector, no hardcoded table needed:
+
+```python
+def invert_normalization(x_zscored, stats):
+    x = x_zscored * stats["std"] + stats["mean"]   # undo z-score
+    if abs(stats["std"]) < 1.0:      # this channel's raw scale was volts, not uV
+        x = x * 1e6                  # -> uV, matching PhysioOmni's own convention
+    return x / 100.0                 # PhysioOmni's own dataset.py convention
+```
+
+**Still a Step 0 pilot check (§14), not assumed correct on the first
+attempt**: run a handful of real epochs through the frozen encoder after
+this conversion and check for NaNs/degenerate (near-zero or saturated) CLS
+outputs before trusting any extraction at scale — the self-calibrating
+threshold (`1.0`) is a reasoned choice given the observed ~5-order-of-
+magnitude gap between regimes, not empirically swept against many
+channels/cohorts yet.
 
 ---
 
@@ -617,10 +836,11 @@ forward pass per available branch" pattern from
    OSF's `[T, 2, 768]` two-subtoken design (no shared dimension across
    sub-tokens to preserve) — a flat `[T_epochs, 500]` array per subject is
    sufficient; there's no need for a 3D shape at all.
-3. **Log which modality was zero-filled per subject** (same
-   `_channel_fill_log.jsonl` convention as OSF's extraction script) — the
-   SHHS EEG-duplication case (§4.3) and any true per-subject absence both
-   need to be visible in this log before trusting results.
+3. **Log which modality was zero-filled per subject, and how many real
+   channels fed the EEG branch** (same `_channel_fill_log.jsonl` convention
+   as OSF's extraction script) — SHHS's single-real-EEG-channel case (§4.5)
+   and any true per-subject absence both need to be visible in this log
+   before trusting results.
 
 **Output**: `{output_dir}/{dataset}/{subject_id}.npy`, dtype float16, shape
 `[T_epochs, 500]`, under
@@ -657,7 +877,7 @@ a plan, not code):
 
 ```
 PHYSIOOMNI_CHANNEL_MAPPING = {   # PhysioOmni branch -> our HDF5 candidates (§4.2)
-    "EEG":  {"C3": ["C3-M2"], "C4": ["C4-M1"]},   # up to 2 channels, both fed
+    "EEG":  {"C3": ["C3-M2"], "C4": ["C4-M1"]},   # up to 2 channels — SHHS only has 1, see below
     "EOG":  {"HEO": ["LOC", "ROC"]},               # derived: LOC - ROC
     "ECG":  {"ECG": ["EKG", "ECG-L"]},
     "EMG":  {"EMG": ["CHIN", "EMG"]},
@@ -667,9 +887,14 @@ NATIVE_HZ = {"EEG": 200, "EOG": 200, "ECG": 500, "EMG": 500}   # §5.1
 PATCH_SAMPLES = {"EEG": 200, "EOG": 100, "ECG": 100, "EMG": 100}   # §3's table
 
 def build_channel_candidates(dataset: str, cfg_candidates: dict) -> dict:
-    """Same SHHS-special-case pattern as OSF's build_channel_candidates()
-    (§4.3) — for SHHS, EEG's C3/C4 candidates both resolve to the single
-    generic 'EEG' key instead of C3-M2/C4-M1."""
+    """SHHS special case (§4.5, final decision — NOT duplication): SHHS has
+    no C3-M2/C4-M1 keys at all, only a single generic 'EEG'. Returns EEG
+    candidates for SHHS as {"C3": ["EEG"]} ONLY — no "C4" entry at all, so
+    the token-sequence builder naturally feeds just 1 real EEG channel for
+    SHHS instead of 2, rather than duplicating one real channel into both
+    slots (§4.5 explains why duplication is the wrong choice here,
+    architecturally different from OSF's own — correct — choice to
+    duplicate)."""
 
 def load_and_resample_modality(h5_path, modality: str, candidates: dict) -> tuple[np.ndarray | None, dict]:
     """Load + resample ONE modality's channel(s) to its native rate (§5.1).
@@ -755,10 +980,14 @@ within a modality) produces a genuinely zero 100-or-200-dim *slice* of an
 otherwise-real embedding, not a zero-filled *channel* feeding into an
 otherwise-normal forward pass. Confirm during the Step 0 pilot (§14) that
 this doesn't produce degenerate downstream training (e.g. the sequence
-head learning to ignore the zero slice entirely in a way that's
-mathematically fine but worth being aware of when interpreting SHHS's
-results, since SHHS's EEG slice will be the *duplicated-generic-channel*
-case, not the *zero-filled* case — two different degeneracy risks, not one).
+head learning to ignore the zero slice entirely). SHHS's EEG slice is a
+**third, different case from either of those** (§4.5's final decision): its
+200-dim EEG slice is neither zero-filled nor duplicated — it's a genuine,
+real CLS output, just computed from a shorter (1-channel, 30-token) input
+sequence than the other three cohorts' (2-channel, 60-token) EEG branch.
+Worth keeping in mind when interpreting SHHS's results (a real, if
+information-poorer, EEG representation — not a degenerate one), distinct
+from both the zero-fill and duplication failure modes above.
 
 ---
 
@@ -1106,51 +1335,291 @@ PhysioOmni's open items:
 3. **Sample-rate resampling sanity check** (§5.1) — confirm the chosen
    128→200Hz/128→500Hz resampling method (FFT-based or polyphase) produces
    sane-looking waveforms on a real subject, not just correct shapes.
-4. **SHHS EEG-duplication decision** (§4.3) — explicit user re-confirmation
-   before writing extraction code, not assumed to carry over from OSF's
-   already-confirmed decision just because the pattern matches.
+4. ~~**SHHS EEG-duplication decision**~~ — **✅ RESOLVED 2026-08-17, see
+   §4.5**: not duplication — SHHS feeds the EEG branch one real,
+   non-duplicated channel. No reprocessing involved, no further
+   confirmation needed before writing extraction code.
 5. **Small-scale pilot, end-to-end** — `--limit 5` extraction on one
    dataset, inspect `.npy` shape/values, then a tiny Stage 1 training run
    (`--context 30s`, one task, one head) before submitting a full sweep.
-6. **`physioomni_env` compatibility check** — confirm whether it can share
-   `osf_env` or needs its own build (checklist 0.1); confirm the
-   `nsrr_tools.core` eager-import gotcha (§7) applies the same way.
+   Include SHHS specifically, to confirm its shorter (1-channel) EEG token
+   sequence runs cleanly through the encoder (§4.5).
+6. **`physioomni_env` compatibility check** — **✅ RESOLVED 2026-08-17**:
+   dedicated venv, does not share `osf_env` (checklist 0.1); the
+   `nsrr_tools.core` eager-import gotcha (§7) confirmed to apply the same
+   way in `physioomni_env`.
 7. **Cohort filter unit check** — confirm `min_recording_patches: 480` is
    applied in epoch units, same discipline OSF's own Step 0 checklist used.
 8. **Per-modality-missing degeneracy check** (§8) — confirm a subject with
    an entire modality zero-filled doesn't produce a pathological (not just
-   suboptimal) training signal, distinct from SHHS's duplicated-channel
-   case.
+   suboptimal) training signal. Distinct from SHHS's real-but-shorter EEG
+   case (§4.5) — that one isn't a degeneracy risk in the same sense, but
+   still worth confirming it trains sensibly.
 
 ---
 
-## 15. Stage 2 (LoRA) — outline, informed by OSF's real Stage 2 lessons
+## 15. Stage 2 (LoRA) — detailed design, resolved and live-verified 2026-08-19
 
-**Per the hand-off's explicit scope, this section stays at outline level —
-target modules and staging approach, not full file specs.** What's new
-this revision is folding in real, hard-won lessons from OSF's own
-(still-in-progress) Stage 2, so PhysioOmni's eventual Stage 2 doesn't
-rediscover the same problems from scratch.
+**This revision replaces the earlier outline-only version.** Every
+previously-open design question (§15.1's "genuinely undecided" multi-
+encoder wrapping question, in particular) is now resolved below, with the
+resolution live-verified against the real checkpoint (not just reasoned
+about) before being written down. Written after re-reading
+`scripts/train_osf_lora.py`/`osf_raw_epoch_dataset.py`/
+`osf_channel_loader.py` in full (not just their docstrings) and PhysioOmni's
+own `model/neural_transformer.py`/`model/transformer.py` source directly —
+see the per-decision "verified" notes below for exactly what was checked
+and how.
 
-### 15.1 What's architecturally harder here than for OSF
+### 15.0 What we're building — one-paragraph summary (for the paper later)
 
-- **No single backbone to wrap.** OSF's Stage 2 wraps one ViT; PhysioOmni's
-  needs up to 4 separate `NeuralTransformer` instances LoRA-wrapped (either
-  independently or together under one `get_peft_model()` call over a
-  parent module holding all four) — **genuinely undecided, needs a design
-  conversation before Phase 2 starts**, not resolved by this plan.
-- **No pretrained fusion to warm-start from.** OSF's combined model is
-  `(ViT, sequence_head)` — nothing else to build. PhysioOmni needs its own
-  fusion step (the flat-concatenation from §6.3, or a small learned fusion
-  layer) between the four LoRA-adapted encoders and the sequence head —
-  genuinely new code, not a fork of anything PhysioOmni ships.
-- **LoRA target modules**: `c_attn`, `c_proj` (§3) — the natural PEFT
-  choice, but applied across up to 4×12=48 attention modules instead of
-  OSF's 12, with no existing `get_peft_model()` call anywhere in
-  PhysioOmni's repo to reference (OSF at least had the checkpoint's own
-  naming conventions as an implicit hint; PhysioOmni has nothing analogous).
+Stage 2 fine-tunes PhysioOmni's 4 frozen encoders via LoRA adapters
+(`c_attn`, `c_proj` in every attention block — the same staged LP-FT
+procedure used for OSF: Stage 1's already-trained sequence head warm-starts
+Stage 2, then LoRA-adapted encoders and the head are fine-tuned jointly).
+Architecturally, PhysioOmni's 4 independent encoders are wrapped as ONE
+combined `nn.Module` and passed through a SINGLE `peft.get_peft_model()`
+call — `peft`'s target-module matching is name-suffix-based across the
+whole module tree, so one call correctly finds and wraps all 4×12=48
+attention blocks (96 `c_attn`/`c_proj` Linear layers total) without any
+per-encoder special-casing. This was live-verified against the real
+checkpoint, not assumed. The one genuine engineering complication unique to
+PhysioOmni (not present in OSF's single-backbone case) is that different
+subjects have different *sets* of present modalities/channels (e.g. some
+STAGES subjects are missing EMG or ECG) — Stage 2 preserves Stage 1's exact
+zero-fill contract (a missing modality's encoder is never called for that
+subject; its embedding slice stays exactly zero) via a batch-level
+present/absent mask, rather than running the encoder on zero-padded input
+(which would silently change the model's behavior relative to Stage 1).
 
-### 15.2 Lessons from OSF's real Stage 2 build, applicable here
+### 15.1 Multi-encoder LoRA wrapping — RESOLVED, live-verified 2026-08-19
+
+**Decision: one `CombinedPhysioOmniLoRAModel(nn.Module)` holding all 4
+encoders (`self.eeg_encoder`, `self.eog_encoder`, `self.ecg_encoder`,
+`self.emg_encoder`) + `self.sequence_head` as submodules, wrapped by a
+SINGLE `peft.get_peft_model(combined, LoraConfig(target_modules=["c_attn",
+"c_proj"], modules_to_save=["sequence_head"], ...))` call** — direct
+extension of OSF's `CombinedOSFLoRAModel(backbone, sequence_head)` pattern
+to 4 backbones instead of 1, not a different mechanism.
+
+**Why this works (verified, not assumed):** `peft`'s `target_modules`
+matching operates on each submodule's full dotted name, matching by suffix
+— `"c_attn"` matches `eeg_encoder.blocks.3.attn.c_attn` exactly as readily
+as it matches `eog_encoder.blocks.7.attn.c_attn`. There's no
+backbone-count-awareness in the matching logic, so a single call over a
+module tree containing 4 parallel encoder branches naturally wraps all of
+them. Live-verified 2026-08-19 by constructing the real 4-encoder combined
+module from the actual `PhysioOmni.pt` checkpoint and calling
+`get_peft_model()` once:
+```
+trainable params: 289,002 || all params: 14,161,308 || trainable%: 2.04
+LoRA modules per encoder: {'eeg_encoder': 24, 'eog_encoder': 24, 'ecg_encoder': 24, 'emg_encoder': 24}
+```
+24 = 12 blocks × 2 target modules (`c_attn`, `c_proj`) per encoder, ×4
+encoders = 96 total LoRA-wrapped Linear layers — exactly the expected
+count, confirmed live. (`n_layer=12` for all 4 encoders, also confirmed
+directly from the checkpoint's `{mod}_encoder_args` — not assumed to match
+EEG's value.) Four independent `get_peft_model()` calls would produce the
+same wrapped modules with more bookkeeping (4 separate wrapped submodels,
+4 state dicts to merge) for zero functional benefit — rejected.
+
+**No separate learned fusion layer** — considered and rejected. PhysioOmni
+ships no native cross-modality fusion (the flat 500-dim concatenation from
+§6.3 is entirely our own construction, not something the checkpoint
+provides), which might suggest Stage 2 should add one. But the sequence
+head (LSTM/Transformer/MeanPool) already sits on the concatenated 500-dim
+vector and already performs cross-modality fusion at every timestep before
+temporal aggregation — a separate fusion layer would be redundant and
+would blur what "the LoRA condition" means (adapting the pretrained model
+vs. adding a new randomly-initialized component). Concatenation stays
+exactly as-is from Stage 1.
+
+### 15.2 Missing-modality handling — batch-level present-mask, not zero-input-forward
+
+**The one genuinely new engineering problem PhysioOmni's Stage 2 has that
+OSF's didn't**: OSF's raw signal is always exactly `[12, n_samples]` per
+subject (missing channels are zero-filled at the raw level, see
+`osf_channel_loader.load_and_resample_channels`), so every subject in a
+batch has an identical tensor shape and the combined model's `forward()`
+can naively reshape `[B,N,C,T] -> [B*N,C,T]` and run everything through one
+backbone call. PhysioOmni's raw channels are NOT zero-filled at Stage 1 —
+a modality with zero real channels is skipped entirely (`if not
+channel_list: ... continue`, `extract_physioomni_embeddings.py` line ~248),
+leaving that modality's embedding slice at literal zero with no encoder
+forward pass ever run. Different subjects have genuinely different
+*channel-presence patterns* (confirmed in the real extraction logs —
+e.g. some STAGES subjects logged `zero-filled: ['EMG']` or `['ECG']`),
+which a batched `[B,...]` tensor can't represent directly the way OSF's
+uniform 12-channel case can.
+
+**Decision: preserve Stage 1's exact zero-fill contract via a batch-level
+presence mask, not by feeding zero-valued raw signal through the encoder.**
+For each modality, `CombinedPhysioOmniLoRAModel.forward()`:
+1. Builds a boolean `present[b]` for each subject `b` in the batch (True if
+   that subject has ≥1 real channel for this modality — a per-subject,
+   whole-recording property, constant across all of that subject's windows,
+   so it's attached once per subject by the raw-signal cache/dataset, not
+   recomputed per window).
+2. Selects only the present subjects' epochs (`x[present]`), runs them
+   through that modality's LoRA-adapted encoder (chunk-batched exactly like
+   Stage 1's `chunk_batch_size` pattern), and scatters the resulting CLS
+   outputs into the correct rows/columns of the `[B, N, 500]` embedding
+   tensor.
+3. Leaves `emb[~present, :, slot_start:slot_end]` at exactly zero — no
+   forward pass, no gradient, identical behavior to Stage 1's embeddings
+   for that modality/subject.
+
+This is more engineering than OSF's case needed (a real instance of what
+§15.1's old text flagged as "genuinely harder here"), but it's the
+correct thing to do — feeding zero-valued raw signal through the encoder
+instead would produce a *non-zero* learned output (transformers with
+position embeddings and a CLS token don't map all-zero input to all-zero
+output), silently diverging from what Stage 1's embeddings — and every
+frozen-condition result already computed — actually represent for that
+subject.
+
+### 15.3 Raw signal cache — per-subject, per-slot files (not a single unified matrix)
+
+**OSF's raw signal cache is one `[12, n_samples_64]` array per subject**
+(`osf_channel_loader.save_signal_cache`/`load_signal_cache`) because every
+subject has the same 12 channels (zero-filled if actually missing) at the
+same 64Hz rate. **This doesn't transfer to PhysioOmni directly**: channels
+are genuinely present-or-absent (not zero-filled) per subject, channel
+*count* varies (EEG has 1 or 2 channels depending on cohort — SHHS gets 1,
+per §4.5's final decision), and different modalities run at different
+native rates (EEG/EOG at 200Hz, ECG/EMG at 500Hz, per §5.1) — no single
+fixed-shape array covers all of that.
+
+**Decision: one cache directory per subject, one `.npy` file per present
+channel-slot, plus a small `meta.json`.**
+```
+{raw_cache_dir}/{dataset}/{subject_id}/
+    EEG_C3.npy      (float16, 200Hz, only if present)
+    EEG_C4.npy      (float16, 200Hz, only if present — omitted for SHHS, §4.5)
+    EOG_HEO.npy     (float16, 200Hz, only if both LOC and ROC were present)
+    ECG.npy         (float16, 500Hz, only if present)
+    EMG.npy         (float16, 500Hz, only if present)
+    meta.json       {"t_epochs": <int>, "slots_found": {...}, "slots_missing": [...]}
+```
+Directly mirrors `physioomni_channel_loader.load_subject_signals()`'s
+existing return structure (`{"EEG": [(label, arr), ...], ...}`) — the
+cache IS that structure, persisted, so building/reading it needs no new
+data-shape design, just serialization. `t_epochs` (the same `min(...)`
+computation Stage 1's extraction already does) is stored directly in
+`meta.json` so shape lookups never need to open an array (cheaper than
+even OSF's own `get_cached_epoch_count`, which still does a shape-only
+`np.load(mmap_mode="r")`).
+
+**Scope: apples + shhs + mros only (13,481 subjects), NOT stages.** None
+of PhysioOmni's 4 Tier-1 tasks (`v2_physioomni_registry.yaml`) use STAGES
+— apnea (the only task that would need it) is already excluded for
+PhysioOmni entirely (no respiratory pathway). Building the cache for
+STAGES' 1,513 subjects would be pure wasted compute. This is a real,
+concrete scope reduction relative to OSF's own cache (which covers all 4
+datasets since OSF's apnea task does use STAGES).
+
+**Precompute is CPU-only, offline, built BEFORE any training job** — direct
+answer to the standing instruction not to bury slow preprocessing inside
+GPU training jobs (many training jobs would each redo it otherwise).
+`load_subject_signals()` is pure `h5py`/`numpy`/`scipy.signal.resample` —
+no GPU dependency at all, same as OSF's precompute script. Sharded via CPU
+SLURM jobs (`--account=def-forouzan`, matching every other CPU-only job in
+this project), NOT run on the login node.
+**Wall-time is not assumed to match OSF's own precompute numbers** (OSF:
+1104 APPLES subjects in 5.1 min at `--num-workers 8`, CPU-only) —
+PhysioOmni's FFT-based `scipy.signal.resample` (needed since 128→200Hz and
+128→500Hz have no exact-decimation shortcut, unlike OSF's clean 128→64Hz
+2:1 case) is more expensive per sample than OSF's array-slice
+decimation, so this could plausibly be slower. Time the first real shard
+before assuming a total wall-time budget for the rest.
+
+### 15.4 Raw-signal dataset class
+
+`PhysioOmniRawEpochWindowDataset` — same split-matching discipline as
+`OSFRawEpochWindowDataset` (§15.7 below), same windowing arithmetic
+(`_build_seq2label_index`, `SubjectGroupedSampler`, K-sampling by split),
+copied near-verbatim from that file since it's pure integer arithmetic
+over `T`/`N`, unrelated to what's actually stored per epoch. The real
+difference from OSF's version: `__getitem__` returns a dict of per-modality
+raw windows (not one `[N,12,1920]` tensor), since channel presence varies
+per subject:
+```python
+{
+  "EEG": (x_eeg, chan_labels_eeg),   # x_eeg: [n_eeg_chans, N, 200] or None if absent
+  "EOG": (x_eog, ["HEO"]) or None,
+  "ECG": (x_ecg, ["ECG"]) or None,
+  "EMG": (x_emg, ["EMG"]) or None,
+  "mask": bool[N],                    # True = right-padded position (recording too short)
+}, label
+```
+`collate_fn` (custom, like `PhysioOmniContextWindowDataset`'s own) batches
+this into the `present[b]`-masked structure §15.2's `forward()` expects —
+NOT `torch.utils.data.default_collate`, which can't handle the
+per-subject-varying tuple/`None` structure. Reads only from the §15.3
+cache — never the raw HDF5 — same as `OSFRawEpochWindowDataset`.
+
+**Split-matching discipline — copied from OSF's real, previously-live bug
+fix (§15.7), not theoretical here either**: filter subjects by "has a
+Stage 1 PhysioOmni embedding file" FIRST (existence check only, contents
+never read), before separately checking the Stage 2 raw-signal cache for
+actually reading data. `np.random.default_rng(split_seed).shuffle()`
+produces a completely different permutation if the filtered population
+differs by even one subject — this must exactly match
+`PhysioOmniContextWindowDataset`'s (Stage 1's) subject pool at
+split-computation time, for the frozen-vs-LoRA comparison to be valid.
+
+### 15.5 Combined model forward() — position-ID construction is duplicated, not shared
+
+`CombinedPhysioOmniLoRAModel.forward()` needs the same per-modality
+patch-reshape + `input_chans`/`input_times` position-ID construction
+`extract_physioomni_embeddings.py`'s `_modality_forward()` already does —
+but that function wraps its encoder call in `with torch.no_grad():`,
+which is wrong for Stage 2 (LoRA gradients must flow through it).
+
+**Decision: duplicate the ~20-line patch/position-ID logic into
+`train_physioomni_lora.py` directly, rather than factor it into the shared
+channel-loader module.** This deliberately follows OSF's own stated
+precedent (`train_osf_lora.py`'s `load_osf_backbone()` docstring: "single
+~15-line function... duplicated rather than imported... unlike the
+channel-loading logic, which was genuinely at risk of drifting out of
+sync") — a small, single-purpose function used in exactly two places (one
+`no_grad`, one not) is lower total risk to duplicate carefully than to
+factor out and thread a `grad_enabled` flag through, especially since
+`extract_physioomni_embeddings.py` is an already-verified, already-in-
+production script actively feeding real completed training runs
+(checklist 1.10) — not touching it at all is the safest choice here.
+**Also chunk-batches epochs the identical way Stage 1 does** (`chunk_batch_size`
+epochs at a time as the batch dimension, each epoch independently
+patchified with its own position-ID sequence reset per channel) — this is
+load-bearing, not a style choice: PhysioOmni's positional-embedding tables
+(`pos_embed = nn.Embedding(256, ...)`, `time_embed = nn.Embedding(512,
+...)`) are sized for one epoch's own token layout, never a multi-epoch
+concatenated sequence (confirmed directly from `neural_transformer.py`,
+consistent with §19's already-documented native-context-ceiling finding).
+Concatenating multiple epochs into one long per-item token sequence
+instead of batching them would both exceed these tables' sizes for longer
+contexts AND not match how the pretrained model was ever used.
+
+### 15.6 Warm-start / LP-FT staging — identical to OSF's resolved design
+
+Same mechanism as OSF's `warm_start_head_from_stage1()` /
+`warm_start_from_stage2_30s()`, reused conceptually (own PhysioOmni
+implementation, not imported — different checkpoint format): **30s always
+warm-starts the sequence head from Stage 1's frozen-backbone checkpoint**
+(`configs/phase0_physioomni_config.yaml`'s `results_dir`); **every other
+context length warm-starts LoRA+head together from that same (task,
+head)'s own already-converged 30s Stage 2 checkpoint** (branch, not a
+chain — compute scales ~linearly with context length here too, likely
+worse than OSF's given up to 4 encoder forward passes per epoch instead of
+1, not yet measured). `peft`'s `modules_to_save` wraps `sequence_head` in a
+`ModulesToSaveWrapper` (`.original_module` + `.modules_to_save["default"]`)
+— the Stage-1-checkpoint warm-start must load into both copies explicitly,
+exactly the gotcha OSF's checklist 2.3 already found and fixed; the
+Stage-2-30s warm-start is already in `peft`'s own state-dict format
+(`get_peft_model_state_dict`/`set_peft_model_state_dict` round-trip), no
+special handling needed, same as OSF.
+
+### 15.7 Lessons from OSF's real Stage 2 build, applicable here
 
 Read directly from `docs/TSFM_OSF_IMPLEMENTATION_PLAN.md`'s Phase 2
 checklist (items 2.1-2.5d) and `docs/OSF_EXPERIMENTS_GUIDE.md`'s Step 8 —
@@ -1235,15 +1704,32 @@ concrete, dated findings, not speculation:
   side-by-side-diff it against Stage 1's own config/script for every
   training-loop option**, not just the ones that seem architecture-relevant.
 
-### 15.3 Memory mitigation ladder (unchanged from OSF's, apply in this order)
+### 15.8 Memory mitigation ladder — REVISED 2026-08-20, order corrected
 
-1. Gradient checkpointing through each encoder's transformer blocks.
-2. Request a larger GPU memory allocation.
+**Original order below was OSF's own, copied without re-deriving it for
+PhysioOmni's specific tradeoffs — corrected after a real OOM (checklist
+2.6) and a direct question about training-time impact.** MIG partitions
+scale compute proportionally to memory, so a larger GPU allocation is not
+a tradeoff the way gradient checkpointing is (checkpointing trades compute
+for memory; a bigger GPU gives more of both). The revised order:
+
+1. **Request a larger GPU memory allocation first** — zero speed cost.
+   Implemented as a per-context override in `gen_commands_physioomni_lora.py`
+   (`_LARGE_GPU_CONTEXTS`), not a blanket change — only the specific
+   context with real evidence it's needed gets the bigger, scarcer-to-
+   schedule allocation; everything else keeps the cheaper default.
+2. **Gradient checkpointing, only if #1 is still not enough.** Real
+   compute cost (an extra forward pass per chunk during backward) — kept
+   OPT-IN, default OFF (`CombinedPhysioOmniLoRAModel`'s
+   `use_gradient_checkpointing` flag / `--gradient-checkpointing` CLI /
+   `GRADIENT_CHECKPOINTING=1` env var), verified to never activate unless
+   explicitly requested, so it can never silently slow down a context that
+   didn't ask for it.
 3. Only if both fail: cap the LoRA condition at the longest tractable
    context length, keep the frozen condition (Stage 1) at all 6 lengths,
    state the compute ceiling explicitly.
 
-### 15.4 Wall-time/compute budget — unknown, do not assume, do not
+### 15.9 Wall-time/compute budget — unknown, do not assume, do not
 extrapolate from OSF's numbers
 
 OSF's own Stage 2 wall-time tables are themselves still uncalibrated
@@ -1253,6 +1739,87 @@ one that accounts for PhysioOmni's up-to-4-encoder structure. Run a short
 real pilot (few epochs, smallest context, actual GPU allocation) before
 committing to any `--time` budget, same discipline OSF's own plan already
 states for itself.
+
+### 15.10 Scope for this round
+
+Same 4 Tier-1 tasks as Stage 1 (sex, sleep efficiency, BMI, age — apnea
+still excluded, no respiratory pathway). **`lstm`/`transformer` heads only
+for the first pass, `mean_pool` deferred** — matches OSF's own Stage 2
+scoping decision (real LoRA compute cost, not worth tripling the sweep
+before the first two heads' numbers exist). All 6 context lengths per
+(task, head), but only 30s is independently trained from Stage 1's
+warm-start — 10m/40m/80m/120m/240m all branch from that same (task,
+head)'s own 30s LoRA checkpoint (§15.6), so the "12 experiments" from
+Stage 1's registry becomes effectively "8 (task,head) pairs × 6 contexts =
+48 training runs" here, not 12×6=72 — `mean_pool`'s absence and the
+warm-start branching both reduce real compute relative to a naive reading
+of the registry.
+
+### 15.11 Training budget (epochs/lr/patience) — REVISED 2026-08-21, grounded
+in PhysioOmni's own curve, not copied from OSF
+
+OSF's own Stage 2 revised its placeholder training budget
+(`epochs: 40->18, lr: 1.0e-4->5.0e-5, early_stopping_patience: 10->5`,
+`configs/phase0_osf_lora_config.yaml`) based on OSF's own real pilot curve:
+best val_auroc at epoch 9, declining/noisy through epoch 16 while train
+kept climbing — a clear overfitting signature. **PhysioOmni's own 30s
+pilot (sex_binary/lstm, jobs 55842503+55861216) does NOT show the same
+signature** — copying OSF's numbers here would not have been justified by
+evidence:
+
+```
+Epoch 1: val_auroc=0.6615*  patience=0/10
+Epoch 2: val_auroc=0.6679*  patience=0/10
+Epoch 3: val_auroc=0.6721*  patience=0/10
+Epoch 4: val_auroc=0.6743*  patience=0/10
+Epoch 5: val_auroc=0.6723   patience=1/10  (first, small decline)
+```
+
+Still improving every epoch through epoch 4, all new-bests, patience never
+above 0 until epoch 5's small dip — no train/val divergence like OSF's.
+What the curve does show: per-epoch gains shrinking fast (+0.0064, +0.0042,
++0.0022, -0.0020), consistent with an approaching plateau even without
+overfitting yet.
+
+**The actual driver for revising this config was wall-clock time, not
+overfitting**: at the observed ~1hr/epoch for 30s (the fastest context,
+most items/epoch of the sweep), `epochs=40, patience=10` risks 25-40+
+hours per single (task, head, context) combo across ~48 runs — not
+sustainable. Applied to `configs/phase0_physioomni_lora_config.yaml`:
+
+- `epochs: 40 -> 25` — caps the pathological (never-plateaus) case;
+  patience is expected to be the actual binding constraint in practice
+  given the shrinking-gains trend above.
+- `early_stopping_patience: 10 -> 5` — same number OSF landed on, but
+  justified independently here by the shrinking-gains trend, not copied
+  because OSF used it.
+- `lr` deliberately left at `1.0e-4`, **NOT** halved to OSF's `5.0e-5`: a
+  lower lr would need *more* epochs to converge, working against the
+  time-reduction goal, and unlike OSF there is no PhysioOmni evidence yet
+  of an lr-driven instability/overfitting problem to fix. Revisit only if
+  a future run's curve shows real noise/instability rather than a clean
+  plateau.
+
+This change applies on the next auto-resubmit of any already-running LoRA
+job (config is re-read fresh via `--config` on every resubmit), not only
+to newly-submitted jobs.
+
+**New files this phase** (mirrors the file list style already in this
+plan's earlier sections):
+
+| File | Role |
+|---|---|
+| `src/nsrr_tools/datasets/physioomni_channel_loader.py` (extended, not replaced) | Add `cache_path_for`/`save_signal_cache`/`load_signal_cache`/`load_meta`-equivalent functions (§15.3) alongside the existing Stage 1 functions — same file, since both stages' loading logic must never drift apart |
+| `scripts/precompute_physioomni_raw_signal_cache.py` | Offline, CPU-only, builds §15.3's per-subject-per-slot cache — run before any Stage 2 training job |
+| `jobs/precompute_physioomni_raw_signal_cache.sh` | CPU-only SLURM job (`--account=def-forouzan`, mirrors `jobs/precompute_osf_raw_signal_cache.sh` / this repo's own `extract_physioomni_embeddings_cpu.sh`) |
+| `src/nsrr_tools/datasets/physioomni_raw_epoch_dataset.py` | `PhysioOmniRawEpochWindowDataset` + `SubjectGroupedSampler` + custom `collate_fn` (§15.4) |
+| `configs/phase0_physioomni_lora_config.yaml` | Forked from `phase0_physioomni_config.yaml`, adds `lora:` section + `data.raw_signal_cache_dir` + `dataset.stage1_embedding_dir` |
+| `scripts/train_physioomni_lora.py` | `CombinedPhysioOmniLoRAModel` (§15.1/15.2/15.5) + warm-start logic (§15.6) + sweep `main()`, reusing `run_epoch`/`compute_metrics`/`compute_monitor_metric`/`append_to_summary`/`_classify_failure` imported from `train_physioomni_context_sweep.py` (same reuse pattern as `train_osf_lora.py`) |
+| `jobs/train_physioomni_lora_gpu.sh` | GPU job script, same auto-resume mechanism as every other job script in this project |
+| `scripts/infer_physioomni_lora_subject_windows.py` | Live-backbone inference (raw signal in, not precomputed embeddings) |
+| `jobs/infer_physioomni_lora_subject_windows_gpu.sh` | GPU job script |
+| `experiments/v2_physioomni_lora_registry.yaml` | 8 `(task, head)` entries (4 tasks × lstm/transformer) |
+| `scripts/gen_commands_physioomni_lora.py` | Structural fork of `gen_commands_osf_lora.py`, pointed at the new registry/job scripts |
 
 ---
 
@@ -1264,80 +1831,574 @@ starting now, in parallel with OSF's remaining sweep — no longer gated on
 OSF finishing first," but still gated on an explicit go-ahead for actual
 code/branch work, which this revision is not).
 
-### Phase 0 — Setup
-- [ ] 0.1 Build `physioomni_env` — check whether it can share `osf_env` or
-      needs its own venv (§14 item 6); verify the `nsrr_tools.core` eager
-      `pyedflib` import gotcha (§7) applies the same way before deciding
-      module placement
-- [ ] 0.2 Download `PhysioOmni.pt`, strict-or-partial-load-verify against
-      `FT.py`'s four `NeuralTransformer` encoders (§14 item 1) — do **not**
-      download `VQ.pt` unless this reveals it's actually needed
-- [ ] 0.3 Save the paper PDF locally (mirrors `related_work/OSF.pdf`)
-- [ ] 0.4 Confirm the SHHS EEG-duplication decision (§4.3) with the user
-- [ ] 0.5 Empirically validate the normalization approach (§5.2, §14 item 2)
-- [ ] 0.6 Empirically validate the sample-rate resampling approach (§5.1,
-      §14 item 3)
-- [ ] 0.7 Create the `physioomni-implementation` branch, forked from
-      `osf-implementation` (§1) — not `main`
+### Phase 0 — Setup — ✅ mostly done 2026-08-17 (0.4-0.6 remain)
+- [x] 0.1 Build `physioomni_env` — **resolved: dedicated venv, not shared
+      with `osf_env`.** Package-wise `osf_env` was a near-perfect match
+      (`torch==2.5.1`/`torchvision==0.20.1`/`torchaudio==2.5.1` already
+      exactly right, plus `einops`/`pandas`/`scikit-learn`/`huggingface_hub`
+      already present), but `osf_env`'s `nsrr_tools_src.pth` points at
+      `/home/boshra95/NSRR-tools/src` (the OSF worktree) — reusing it
+      as-is would silently import OSF's branch's `nsrr_tools`, and
+      repointing that `.pth` would break OSF's own still-active
+      environment. Built `/home/boshra95/physioomni_env` fresh from
+      `/home/boshra95/osf_env_requirements.txt` (147 packages, no version
+      relaxation needed this time — already CC-wheelhouse-proven), own
+      `.pth` → `/home/boshra95/NSRR-tools-omni/src`, verified
+      `import nsrr_tools` resolves to this worktree. Confirmed
+      `nsrr_tools.core` still fails (`pyedflib` missing, same as
+      `osf_env`) — `nsrr_tools.datasets` placement (§7) confirmed correct.
+      `wandb` not installed (same known CC Go-toolchain issue OSF hit;
+      inert since our own training scripts will make it opt-in like
+      OSF's). Full detail: `PHYSIOOMNI_CLAUDE.md`.
+- [x] 0.2 Download `PhysioOmni.pt`, strict-load-verify — **done, real
+      script not a throwaway snippet**: `scripts/verify_physioomni_checkpoint.py`
+      (VSCode debug config "🫀 PhysioOmni Phase0 Step2: Verify Checkpoint").
+      **Result: zero missing keys on all 4 encoders** (one expected
+      `mask_token` unexpected-key per encoder, an MSM-pretraining-only
+      component `FT.py`'s own `strict=False` load already accounts for).
+      Resolves the previously-open checkpoint-key-prefix hypothesis (§2,
+      §18) — confirmed, not just inferred from code reading. **Bonus
+      finding**: the checkpoint's own `{modality}_encoder_args` dicts
+      contain the exact `NTConfig` kwargs per modality — read these at
+      runtime (mirroring OSF's `metadata` dict pattern) instead of
+      hardcoding §3's table when writing the extraction script (§7).
+      Total real encoder params: 13,871,304. `VQ.pt` confirmed **not**
+      downloaded/needed — the verification only ever touches
+      `*_encoder.`-prefixed keys, exactly as hypothesized.
+- [x] 0.3 Save the paper PDF locally — done,
+      `/home/boshra95/related_work/PhysioOmni.pdf` (arXiv 2504.19596v3, 15
+      pages), same shared non-git-tracked location as `OSF.pdf`.
+- [x] 0.4 SHHS EEG channel decision — **✅ RESOLVED 2026-08-17, see §4.5.**
+      Investigated the dual-EEG-channel question `docs/OSF_CHANNEL_REPROCESSING_PLAN.md`
+      §4 had left open (confirmed live: 100% of SHHS subjects carry both
+      `EEG` and an `EEG(sec)`-family channel; correlation between them in a
+      real file is r=0.18, confirming they're genuinely distinct
+      electrodes, not a duplicate). **Decided against duplicating** SHHS's
+      single available `EEG` channel into two slots (unlike OSF, which
+      correctly does duplicate, for its own different architectural
+      reasons) — PhysioOmni's variable-length token sequence per modality
+      means SHHS can legitimately be fed **one real EEG channel, not two**,
+      requiring zero reprocessing. A lightweight future option (recover the
+      currently-discarded `EEG(sec)` channel via an additive, non-destructive
+      patch job, not a full SHHS reprocessing) is documented in §4.5 but
+      deliberately not pursued now — revisit only if SHHS results look
+      degraded.
+- [x] 0.5 Empirically validate the normalization approach (§5.2, §14 item 2)
+      — **✅ RESOLVED 2026-08-18 via checklist 1.3's real smoke test**: 3
+      real subjects (2 APPLES + 1 SHHS) through the actual frozen encoder,
+      zero NaNs, non-degenerate CLS output std (~0.8-1.3) across every
+      modality slice.
+- [x] 0.6 Empirically validate the sample-rate resampling approach (§5.1,
+      §14 item 3) — **✅ RESOLVED 2026-08-18**, same evidence as 0.5 (both
+      checks share the same real-data pipeline).
+- [x] 0.7 Create the `physioomni-implementation` branch, forked from
+      `osf-implementation` (§1) — not `main`. **Went further than
+      originally planned**: this branch now has its own `git worktree` at
+      `/home/boshra95/NSRR-tools-omni`, running in its own VSCode window,
+      completely isolated from the `osf-implementation` worktree at
+      `/home/boshra95/NSRR-tools` — see this section's own "Hard
+      constraint: worktree/directory isolation" note above.
 
 ### Phase 1 — Stage 1 (frozen encoders)
-- [ ] 1.1 Implement `src/nsrr_tools/datasets/physioomni_channel_loader.py`
-      (§7) — the shared utility, built first so both the extraction script
-      and (eventually) Stage 2 import from it
-- [ ] 1.2 Implement `scripts/extract_physioomni_embeddings.py` +
-      `configs/phase0_physioomni_config.yaml` (§6.3, §9)
-- [ ] 1.3 Smoke-test on real APPLES + SHHS subjects (small `--limit`, CPU),
-      verify no NaNs, verify SHHS's EEG-duplication and any true zero-fills
-      match §4.3's expected pattern — **user checkpoint**
-- [ ] 1.4 Implement `src/nsrr_tools/datasets/physioomni_context_window_dataset.py`
-      (§8) — fork `ContextWindowDataset`, following OSF's fork pattern
-- [ ] 1.5 Smoke-test the dataset class at 30s/10m/full_night contexts,
-      including the per-modality-missing degeneracy check (§14 item 8) —
-      **user checkpoint**
-- [ ] 1.6 Implement `scripts/train_physioomni_context_sweep.py` (§10) +
-      job script (§13), written with clean `run_epoch`/`compute_metrics`
-      function boundaries from the start (§10's reuse principle) —
-      **user checkpoint**
-- [ ] 1.7 Implement `scripts/infer_physioomni_subject_windows.py` (§11) +
-      job script (§13) — **user checkpoint**
-- [ ] 1.8 Implement `experiments/v2_physioomni_registry.yaml` +
-      `scripts/gen_commands_physioomni.py` (§12)
-- [ ] 1.9 Implement `jobs/extract_physioomni_embeddings_gpu.sh`, test via a
-      small real GPU allocation before trusting it for the full run —
-      apply the `chunk_batch_size`-first tuning lesson (§13) if throughput
-      looks off
-- [ ] 1.10 Run full embedding extraction, all 4 datasets
+- [x] 1.1 Implement `src/nsrr_tools/datasets/physioomni_channel_loader.py`
+      (§7) — **done 2026-08-18.** Built as the shared utility from day
+      one, per §7's design. Smoke-tested via a new
+      `scripts/test_physioomni_channel_loader.py` (VSCode debug config
+      "🫀 PhysioOmni Phase1 Step1: Test Channel Loader") against 2 real
+      subjects × all 4 cohorts: zero NaNs, all resampled lengths exactly
+      match `round(n_samples_128hz * native_hz / source_hz)`, and —
+      the one thing checked explicitly, not just implicitly — **SHHS gets
+      exactly 1 real EEG channel, non-SHHS cohorts get 2**, confirming
+      §4.5's final decision is correctly implemented. **A real bug was
+      caught and fixed during this step, not in the loader itself but in
+      its own test**: the test's first draft computed "expected length"
+      via `get_epoch_count()*30*native_hz`, which truncates to whole 30s
+      epochs — wrong, since `load_subject_signals()` deliberately returns
+      the *full* resampled night (epoch truncation is a later, separate
+      step, matching OSF's own `load_and_resample_channels()` design).
+      This only surfaced on STAGES (`BOGN00004.h5`: 4,884,352 raw samples
+      at 128Hz isn't an exact 30s-epoch multiple), not the other 3
+      cohorts' sampled subjects, whose sample counts happened to divide
+      evenly — a reminder that a 2-subject smoke test can miss real
+      test-logic gaps a slightly different sample would have caught.
+      Fixed by computing the expected length the same way the loader
+      itself does, not via the (correctly epoch-truncating, but not the
+      right comparison here) `get_epoch_count()`.
+      **Also resolved during this step, a real correction to §5.2's own
+      2026-08-17 draft**: traced `signal_processor.py` directly (not
+      inferred) and found the earlier "LOC/ROC = volts, everything else =
+      µV" hypothesis was wrong — the actual unit depends on the source
+      EDF file's own header, confirmed cohort-dependent (APPLES's `ECG` is
+      µV-scale, SHHS's `ECG` is volts-scale, same canonical channel name).
+      `invert_normalization()` self-calibrates per channel via its own
+      stored `std` instead of a hardcoded table — see §5.2's revised text.
+- [x] 1.2 Implement `scripts/extract_physioomni_embeddings.py` +
+      `configs/phase0_physioomni_config.yaml` (§6.3, §9) — **done
+      2026-08-18.** Runs each of the 4 frozen encoders independently per
+      subject (no unified fusion model exists, §3) and concatenates their
+      CLS outputs into the flat `[T, 500]` embedding. VSCode debug configs
+      added: "🫀 PhysioOmni Phase1 Step2" (APPLES 2-subject and SHHS
+      1-subject variants).
+- [x] 1.3 Smoke-test on real APPLES + SHHS subjects (CPU) — **done
+      2026-08-18, real results not just a dry run**:
+      - APPLES (`APL0001`, `APL0003`): shapes `(1143, 500)`/`(970, 500)`
+        — exactly matching checklist 1.1's channel-loader-only epoch
+        counts for the same subjects — zero NaNs, `eeg_channel_count: 2`,
+        `modalities_zero_filled: []`. Non-degenerate CLS output std across
+        every 100-dim block (~0.8–1.3), confirming the encoder isn't
+        producing collapsed/saturated output.
+      - SHHS (`200001_v1`): shape `(1084, 500)`, again exactly matching
+        checklist 1.1's prediction, zero NaNs, **`eeg_channel_count: 1`**
+        — confirms §4.5's final decision (one real EEG channel, not
+        duplicated) works correctly all the way through the actual frozen
+        encoder forward pass, not just the channel loader in isolation.
+        EEG block std (~0.89–1.12) is in the same range as APPLES's,
+        not degenerate despite the shorter (30 vs. 60 token) input
+        sequence.
+      - **This also resolves checklist 0.5/0.6** (normalization +
+        resampling empirical validation) — sane, non-NaN, non-degenerate
+        encoder output on real data is exactly the check those items
+        called for.
+      - **CPU timing, for planning purposes**: ~584-938s/subject
+        (~10-16 min) — confirms CPU is debug-only, real extraction needs
+        a GPU job (checklist 1.9); no GPU timing yet.
+      - **User checkpoint** — re-verify via the "🫀 PhysioOmni Phase1
+        Step2" debug configs before continuing to 1.4.
+- [x] 1.4 Implement `src/nsrr_tools/datasets/physioomni_context_window_dataset.py`
+      (§8) — **done 2026-08-18.** Forked from
+      `osf_context_window_dataset.py`. **One real simplification beyond a
+      rename, not just cosmetic**: since the saved embeddings are
+      genuinely 2D `[T, 500]` (§6.3's design — PhysioOmni has no
+      meaningful sub-token dimension the way OSF's CLS+mean-pooled-patch
+      pair does), every 3D `(N_SUBTOKENS, EMBED_DIM)` pad-block shape and
+      the post-hoc `.reshape(N, FLAT_DIM)` call in OSF's fork are dropped
+      entirely — pad blocks are plain `(n, EMBED_DIM)` and windows are
+      already the right shape with no reshape needed. `PATCH_SECONDS=30`,
+      `PATCHES_PER_EPOCH=1`, `min_recording_patches=480` all carried over
+      unchanged (same 30s-epoch units as OSF, no recomputation needed).
+- [x] 1.5 Smoke-test the dataset class — **done 2026-08-18, with an honest
+      population-size caveat.** Formalized as
+      `scripts/test_physioomni_context_window_dataset.py` (VSCode debug
+      config "🫀 PhysioOmni Phase1 Step3"). Real results against the 3
+      subjects extracted so far (checklist 1.3): train/val/test correctly
+      split to 2/0/1 subjects (val landing empty is arithmetic —
+      `int(3*0.15)==0` — not a bug, confirmed by inspection); item
+      retrieval at `30s`/`10m`/`full_night` all produced correctly-shaped
+      `(N, 500)` float32 tensors, zero NaNs, correct dtypes, zero
+      unexpected padding. **What this does NOT yet cover, flagged
+      explicitly rather than glossed over**: with only 3 subjects (all
+      with T well above every non-full_night context tested), no padding
+      branch was exercised, and K-sampling wasn't tested at a realistic
+      pool size the way OSF's own dataset-class smoke test used (10
+      subjects/cohort specifically to get this right). The
+      per-modality-missing degeneracy check (§14 item 8) is really a
+      downstream sequence-head-training concern, not something the
+      dataset class itself behaves differently for (it reads whatever
+      values are in the `.npy`, zero-filled or not, uniformly) — deferred
+      to Phase 1.6+'s real training smoke test, not applicable here.
+      **Re-run this test with more extracted subjects before trusting it
+      at full-sweep scale** — a real, open follow-up, not resolved by this
+      pass. **User checkpoint.**
+- [x] 1.6 Implement `scripts/train_physioomni_context_sweep.py` (§10) +
+      job script (§13) — **done 2026-08-18, verified with a real CPU smoke
+      test, not just a code read.** Forked structurally from
+      `scripts/train_osf_context_sweep.py` with identical
+      `run_epoch`/`compute_metrics`/`compute_monitor_metric`/
+      `append_to_summary`/`_classify_failure`/`train_one_context`/`main`
+      boundaries; only the dataset import (`PhysioOmniContextWindowDataset`
+      family) and the `wandb_project` default changed — no
+      `--zero-modalities` flag, matching OSF's own fork (no 4-modality-group
+      structure to ablate). Job script:
+      `jobs/train_physioomni_context_sweep_gpu.sh`, forked from
+      `jobs/train_osf_context_sweep_gpu.sh` with paths/env/job-name updated
+      for this repo (`physioomni_env`, `logs_physioomni`,
+      `physioomni_ctx_sweep`), same SIGUSR1 auto-resume + `--requeue`
+      mechanism.
+
+      **Population expansion needed first.** Checklist 1.5's 3-subject
+      smoke test was too small for a real training run (val split empty).
+      Simulated `PhysioOmniContextWindowDataset`'s exact split logic
+      (`np.random.default_rng(42).shuffle`) against candidate population
+      sizes to find the minimal sufficient count *before* spending
+      extraction time, rather than guessing: **8 apples + 8 shhs = 16
+      total** reliably gives both classes in val for `sex_binary`.
+      Extracted the additional subjects (apples 5→8, shhs 4→8) via a new
+      **CPU-only** SLURM job, `jobs/extract_physioomni_embeddings_cpu.sh`
+      (`--account=def-forouzan`, no `_gpu` suffix, 16 CPUs/32GB, forked from
+      `jobs/precompute_osf_raw_signal_cache.sh`'s CPU-job pattern) —
+      submitted via `sbatch`, not run on the login node. Both jobs
+      completed with 0 errors (2 apples + 4 shhs newly extracted, rest
+      skipped as already present).
+
+      **Smoke test**: `--config configs/phase0_physioomni_config.yaml
+      --context 30s --datasets apples shhs --batch-size 2 --no-wandb --cpu`.
+      Result: `Items — train: 55 | val: 10 | test: 15`, val AUROC a real
+      number (0.52, no longer NaN) from the first eligible epoch, so
+      `best_model.pt` saved correctly this time — the NaN-AUROC /
+      `best_model.pt`-never-saved failure mode from checklist 1.5's
+      3-subject population (a known, pre-existing pattern, already seen in
+      OSF's own Stage 2 build) is resolved by having enough val-split
+      subjects, not by a code change. Checkpoint resume was also exercised
+      live (a stale 11-epoch checkpoint from an earlier run was correctly
+      picked up and continued to early-stop at epoch 21). Ran to
+      `Status: SUCCESS — all context lengths completed.` end-to-end. Train/
+      val metrics are non-degenerate (val bal_acc 0.5, auroc 0.52); test
+      metrics are degenerate (bal_acc 0.0, auroc NaN) — expected and
+      unconcerning at this population size (2-3 subjects in test, plausibly
+      single-class or a saturated single-class prediction), not a script
+      bug — this is a mechanics smoke test, not a real result, and will be
+      revisited naturally once the real extraction (checklist 1.9) runs at
+      full population. **User checkpoint.**
+- [x] 1.7 Implement `scripts/infer_physioomni_subject_windows.py` (§11) +
+      job script (§13) — **done 2026-08-18, verified with a real CPU smoke
+      test.** Fork of `scripts/infer_osf_subject_windows.py` with identical
+      structure; only the dataset import changed and the batch-size
+      auto-scaling reference (`_ref_bs=64`, `_ref_N=480`) was kept
+      unchanged rather than re-derived, since PhysioOmni's dataset uses the
+      exact same token unit as OSF's (one row per 30s epoch,
+      `PATCHES_PER_EPOCH=1`) — not a re-verified-on-GPU number, same open
+      caveat OSF's own script already carries. Job script:
+      `jobs/infer_physioomni_subject_windows_gpu.sh`, forked from
+      `jobs/infer_osf_subject_windows_gpu.sh` with paths/env/job-name
+      updated.
+
+      **Environment fix needed along the way**: `physioomni_env` had no
+      working `pyarrow`, so `df.to_parquet()` failed
+      (`ImportError: ... pyarrow or fastparquet`) even though the rest of
+      the pipeline (dataset build, checkpoint auto-detection from state-dict
+      shapes, forward pass) ran correctly. Root cause: Compute Canada
+      ships `pyarrow` as a "dummy" stub wheel that only registers metadata
+      — the real compiled package lives under the `arrow` environment
+      module's own site-packages and has to be exposed via a `.pth` file
+      (found the working pattern already present in `osf_env`:
+      `pyarrow_arrow_module.pth` pointing at
+      `.../easybuild/software/2023/x86-64-v4/Compiler/gcccore/arrow/18.1.0/lib/python3.10/site-packages`).
+      Copied the same `.pth` into `physioomni_env` — fixes `pyarrow` for
+      every script in this env going forward, not just this one, with no
+      `module load` needed at runtime (the `.pth` path is absolute).
+
+      **Smoke test**: `--config configs/phase0_physioomni_config.yaml
+      --task sex_binary --task-type seq2label --head lstm --context 30s
+      --datasets apples shhs --split val --cpu`, against checklist 1.6's
+      trained checkpoint. Result: `Dataset items: 1,796 (subjects: 2)` →
+      `Saved 1,796 rows → .../val_windows.parquet`,
+      `Segment accuracy: 50.84%`. Verified the parquet directly: correct
+      7-column schema (`subject_id, dataset, true_label, pred_label,
+      prob_class0, prob_class1, window_idx`), zero NaNs. Ran to
+      `All contexts processed successfully.` **User checkpoint.**
+- [x] 1.8 Implement `experiments/v2_physioomni_registry.yaml` +
+      `scripts/gen_commands_physioomni.py` (§12) — **done 2026-08-18,
+      verified against the real checklist-1.6 checkpoint.**
+      `v2_physioomni_registry.yaml` mirrors `experiments/v2_registry.yaml`
+      (fast-channel, paper-primary — not `v2_full_registry.yaml`, since
+      PhysioOmni only needs EEG/EOG/ECG/EMG and the fast-channel `psg/`
+      tree already carries all of it, unlike OSF) for the same 4 tasks
+      (sex, sleep efficiency, BMI, age) × 3 heads = 12 experiments.
+      **apnea_binary is deliberately absent** — no respiratory pathway in
+      PhysioOmni, confirmed at 4 independent code locations (see
+      CLAUDE.md's PhysioOmni section). `gen_commands_physioomni.py` is a
+      structural fork of `gen_commands_osf.py` (itself unmodified in
+      pipeline logic — `list`/`train`/`infer`/`analyze`/`build-heatmap`/
+      `collect`/`threshold-tuning`/`status`/`runs`), pointed at the new
+      registry, `jobs/{train,infer}_physioomni_*_gpu.sh`, and
+      `physioomni_env`; wall-time tables are placeholder copies of OSF's
+      own (themselves not yet calibrated), to revisit after the first real
+      GPU sweep (checklist 1.11) — same open caveat OSF's generator already
+      carries. Verified live: `list` correctly shows `sex_binary_lstm` as
+      `trained (1/6 contexts)` (picking up checklist 1.6's 30s checkpoint);
+      `train`/`infer`/`status` all produce correct sbatch commands and
+      paths against the real registry and job scripts.
+- [x] 1.9 Implement `jobs/extract_physioomni_embeddings_gpu.sh` — **done
+      2026-08-18, verified with real GPU allocations, including an
+      empirical `chunk_batch_size` A/B test.** Fork of
+      `jobs/extract_osf_embeddings_gpu.sh` — same `--start-idx`/`--end-idx`
+      sharding, SIGUSR1 auto-resume, skip-if-exists convention.
+
+      **Test 1** (job 55499713, `END=20 DATASETS="apples shhs"`): 20
+      subjects (12 new, 8 already-cached skipped correctly), completed in
+      3m40s wall / 1.5 min extraction time on a real H100 MIG `1g.10gb`
+      slice — first real signal that GPU is dramatically faster than the
+      CPU path (checklist 1.6's extraction logs: 50-450s/subject on CPU).
+
+      **Test 2** (the `chunk_batch_size` question): rather than assuming
+      OSF's own finding (`chunk_batch_size` 16→64 gave a measured 3.28x
+      speedup — CLAUDE.md's OSF section) transfers here, ran a controlled
+      A/B on matched, same-dataset, same-size batches — 20 fresh shhs
+      subjects at `chunk_batch_size=64` (job 55500731, 1.4 min = 84s →
+      4.2s/subject) vs. the next 20 fresh shhs subjects at
+      `chunk_batch_size=16` (job 55500915, 1.4 min = 81s → 4.05s/subject).
+      **Result: no meaningful difference** — unlike OSF, PhysioOmni's
+      per-subject extraction here is not `chunk_batch_size`-bound (likely
+      because per-subject fixed overhead dominates at these window sizes,
+      not per-call GPU compute). Kept `chunk_batch_size: 16` (the original
+      default, no reason to change it) — documented directly in
+      `configs/phase0_physioomni_config.yaml`'s comment and the job
+      script's own header, both with the real measured numbers rather than
+      an assumption borrowed from OSF.
+
+      **Real measured throughput: ~4.1s/subject** on a single H100 MIG
+      `1g.10gb` slice (apples + shhs; mros/stages not yet tested, expected
+      similar — same channel-loading path) — 15-100x faster than CPU.
+      Across the ~14,994-subject population (apples 1104 + shhs 8444 +
+      mros 3933 + stages 1513), that's ~17 hours serial on one GPU;
+      checklist 1.10 will shard into parallel jobs (~2500 subjects/job,
+      ~2.85h each) rather than one long run, mirroring OSF's own sharding
+      convention. **User checkpoint.**
+- [x] 1.10 Run full embedding extraction, all 4 datasets — **done
+      2026-08-19.** Sharded across 6 GPU jobs (`--start-idx`/`--end-idx`
+      ranges spanning the full 14,994-subject concatenated list) plus the
+      earlier small test-batch jobs. Final counts: apples 1104/1104, shhs
+      8444/8444, mros 3933/3933, stages 1512/1513 — **14,993/14,994
+      (99.99%)**, zero errors across 8 of 9 extraction jobs. The 1 gap is
+      `stages/STLK00096`: "No PhysioOmni-relevant channels found at all"
+      — not a pipeline bug, this exact subject is already flagged in
+      `CLAUDE.md`'s OSF section as a known data-quality outlier
+      (SleepFM-only, missing from OSF's own population too). No further
+      action needed — proceed to 1.11 with this population as final.
 - [ ] 1.11 Run the Stage 1 sweep (4 tasks × 3 heads × 6 contexts = up to 72
       training runs), then inference, then analysis
 - [ ] 1.12 Re-run the channel-completeness audit against real extraction
       output, confirm it matches §4.3's expectations
-- [ ] 1.13 Write `docs/PHYSIOOMNI_EXPERIMENTS_GUIDE.md` incrementally as
+- [x] 1.13 Write `docs/PHYSIOOMNI_EXPERIMENTS_GUIDE.md` incrementally as
       each step above is built and verified, mirroring
       `docs/OSF_EXPERIMENTS_GUIDE.md`'s Step 0-7 structure — the concrete
-      "how to actually run it" counterpart to this plan doc's "why"
+      "how to actually run it" counterpart to this plan doc's "why" —
+      **initial version done 2026-08-18**, covering Steps 0-7 (all real,
+      verified content — real commands, real measured numbers, real
+      output paths, not placeholders) since checklist 1.1-1.9 were all
+      already done and verified by the time this was written. Step 8
+      (LoRA) is a placeholder pointing at OSF's own Step 8 by analogy,
+      since Phase 2 hasn't started. Includes an explicit scope note
+      (per the user, 2026-08-18): unlike SleepFM (the main model, full
+      protocol including channel ablation), PhysioOmni gets exactly two
+      rounds — frozen backbone + seq head (this guide), then LoRA + seq
+      head (Step 8) — no channel ablation, no full-channel round, no
+      sleep staging. **Living document — keep updated alongside this plan
+      doc as 1.10/1.11/1.12 progress and as problems get found/fixed**,
+      same convention as `docs/OSF_EXPERIMENTS_GUIDE.md`.
 
-### Phase 2 — Stage 2 (LoRA), outline only per §15 — refine once Phase 1 runs
-- [ ] 2.1 Resolve the multi-encoder LoRA-wrapping design question (§15.1)
-      with the user before writing code
-- [ ] 2.2 Implement the shared raw-signal-cache extension to the channel
-      loader (§15.2) and an offline precompute script, from the start —
-      do not wait for a stalled-job discovery the way OSF did
-- [ ] 2.3 Implement `scripts/train_physioomni_lora.py`, filtering subjects
-      by Stage-1-embedding-file existence first (§15.2's split-matching
-      lesson), reusing Stage 1's `run_epoch`/etc. functions per §10
-- [ ] 2.4 Short wall-time pilot at the smallest context length —
-      **user checkpoint** before the full sweep
-- [ ] 2.5 Full three-way config/argparse audit against Stage 1 and OSF's
-      Stage 2 (§15.2's lesson) before trusting the config's stated options
-- [ ] 2.6 Run the full Stage 2 sweep, applying the memory-mitigation
-      ladder (§15.3) and warm-start-from-shortest-context pattern (§15.2)
+### Phase 2 — Stage 2 (LoRA), detailed design per §15 (2026-08-19)
+- [x] 2.1 Resolve the multi-encoder LoRA-wrapping design question (§15.1)
+      — **done 2026-08-19, live-verified** against the real checkpoint
+      (single `CombinedPhysioOmniLoRAModel` + single `get_peft_model()`
+      call, 96 LoRA-wrapped Linear layers across all 4 encoders confirmed
+      by direct construction, not reasoned about in the abstract). No user
+      design conversation was needed in the end — `peft`'s name-suffix
+      matching resolved it mechanically once actually tested.
+- [x] 2.2 Implement the shared raw-signal-cache extension to the channel
+      loader (§15.3) and an offline precompute script + CPU-only job —
+      **done 2026-08-19.** Added `cache_subject_dir`/`save_signal_cache`/
+      `load_signal_cache`/`load_meta`/`get_cached_t_epochs`/`cache_exists`
+      to `physioomni_channel_loader.py`, live round-trip tested (synthetic
+      signals dict → save → load, shapes/values/dtypes verified byte-exact
+      modulo float16 precision). `scripts/precompute_physioomni_raw_signal_cache.py`
+      + `jobs/precompute_physioomni_raw_signal_cache.sh` (CPU-only,
+      `--account=def-forouzan`, mirrors `precompute_osf_raw_signal_cache.sh`).
+      Scope: apples+shhs+mros only (13,481 subjects), not stages (§15.3) —
+      not yet run for real (that's checklist 2.6's prerequisite).
+- [x] 2.3 Implement `src/nsrr_tools/datasets/physioomni_raw_epoch_dataset.py`
+      (§15.4) — **done 2026-08-19.** `PhysioOmniRawEpochWindowDataset` +
+      `SubjectGroupedSampler` + `physioomni_lora_collate_fn` +
+      `PhysioOmniLoRABatch` (a tiny wrapper implementing only `.to(device)`/
+      `.size(0)`, so Stage 2's per-modality-grouped raw batches — genuinely
+      not a fixed-shape tensor, §15.2 — flow through
+      `train_physioomni_context_sweep.py`'s `run_epoch()` completely
+      unmodified: that function's only two touches on its `x` argument are
+      exactly those two calls). Filters subjects by Stage-1-embedding-file
+      existence first (§15.7's split-matching lesson). `collate_fn`'s
+      channel-count grouping (EEG: 1 vs. 2 channels, §4.5) live-tested with
+      synthetic batches — verified correct grouping/shapes/batch_idx
+      assignment for a 3-subject batch with mixed EEG channel counts and
+      mixed EOG/ECG/EMG presence. **The subject-list/split logic itself
+      also live-verified against the real config and real `sex_binary`
+      task CSV** (not synthetic): 11,400 total subjects in the CSV,
+      correctly filtered to 9,548 by Stage-1-embedding existence (exactly
+      matching apples 1104 + shhs 8444, checklist 1.10's real population),
+      correct 70% train split (6,683) — then correctly raised
+      `FileNotFoundError` with a clear, actionable message once it checked
+      for the (not-yet-built) raw-signal cache, exactly the designed
+      fail-loud behavior rather than a silent wrong-data bug.
+- [x] 2.4 Implement `scripts/train_physioomni_lora.py` (§15.5/15.6) —
+      **done 2026-08-19, live-verified end-to-end against the real
+      checkpoint** (not just unit-tested pieces). `CombinedPhysioOmniLoRAModel`
+      with batch-level present-mask handling (§15.2: absent modalities get
+      zero embedding slices with no encoder forward pass, matching Stage
+      1's exact contract) and warm-start logic (§15.6). A full synthetic
+      forward+backward pass (3 subjects, mixed 1-/2-channel EEG, mixed
+      EOG/ECG/EMG presence, real 4-encoder `peft`-wrapped model) produced
+      correctly-shaped logits, a finite loss, **and confirmed LoRA
+      gradients flowed into all target modules and sequence_head
+      gradients flowed too** — the hardest, most novel part of this
+      design (reshape/position-ID construction + gradient-preserving
+      scatter-write into the embedding tensor) is real-checkpoint-verified,
+      not just reasoned about.
+- [x] 2.5 `experiments/v2_physioomni_lora_registry.yaml` +
+      `scripts/gen_commands_physioomni_lora.py` (§15.10 scope: 8
+      `(task,head)` pairs, lstm/transformer only, mean_pool deferred) —
+      **done 2026-08-19**, verified live: `list` shows all 8 experiments
+      correctly (all `pending`, as expected — no Stage 2 training has run
+      yet), `train`/`status` produce correct commands/output.
+- [ ] 2.6 Short wall-time pilot at the smallest context length (§15.9) —
+      **user checkpoint** before the full sweep. Prerequisite: run
+      `jobs/precompute_physioomni_raw_signal_cache.sh` for real first
+      (checklist 2.2's script) — **first real attempt in progress
+      2026-08-20, two real bugs found and fixed along the way:**
+      1. **OOM on the `[9000:13481]` shard** (mostly MrOS — longer
+         recordings than apples/shhs): 16 workers' concurrent
+         `scipy.signal.resample` buffers exceeded the job's 32GB request,
+         confirmed even running completely alone on its node (ruling out
+         cross-job contention as the sole cause). Fixed: `--mem` raised
+         32000M → 64000M (node capacity is 768GB, plenty of room).
+      2. **Non-atomic `meta.json` write**: workers killed by the OOM/
+         SIGTERM events above left 81 zero-byte `meta.json` files (their
+         `.npy` siblings were all fully intact) — `cache_exists()` treats
+         mere existence as "done," so these silently blocked reprocessing
+         and broke the first real LoRA training attempt with a
+         `JSONDecodeError` the moment one was read. Fixed:
+         `save_signal_cache()` now writes `meta.json` via temp-file +
+         `os.replace` (same pattern already used elsewhere in this
+         project, e.g. `infer_osf_lora_subject_windows.py`'s resume
+         checkpoint). The 81 corrupt files were deleted so they get
+         reprocessed on the next run.
+      3. **Separately, `v2_physioomni_lora_registry.yaml`'s `logs_dir` was
+         pointed at the same directory as Stage 1's** (unlike OSF's clean
+         `logs_osf`/`logs_osf_lora` split) — real consequence, not just a
+         findability annoyance: a Stage 1 job and the first Stage 2 LoRA
+         job both trained `sex_binary_lstm`/30s and appended to the exact
+         same persistent `.log` and status `.jsonl` files, corrupting both
+         stages' job-history tracking. Fixed: Stage 2 now gets its own
+         `logs_physioomni_lora/` directory (registry + all three Stage 2
+         job scripts).
+      4. **Real OOM on the actual pilot** (job 55846947,
+         `sex_binary_lstm`/10m, `micro_batch=32`): failed with only 13 MiB
+         free out of ~19.6GB, inside the backbone's own forward pass. 30s
+         (`micro_batch=32`, N=1 epoch/window) had already trained fine.
+         Key realization: `chunk_batch_size` only bounds each individual
+         encoder call's size — it does NOT reduce peak memory, since every
+         chunk's activations stay in the SAME autograd graph until one
+         shared `backward()` call. The real driver is `micro_batch × N`
+         (total raw epochs processed per training step): `32×1=32` was
+         fine, `32×20=640` was right at the ceiling. Fixed:
+         `v2_physioomni_lora_registry.yaml`'s `context_micro_batch` is now
+         nested by head (`lstm`/`transformer`), not one flat table —
+         targets ~150-250 "epoch-units" for lstm (~3-4x margin under the
+         observed 640-unit failure), roughly half that for transformer
+         (its own sequence head adds a SECOND, head-specific O(N²)
+         self-attention cost on top of the shared backbone cost lstm's
+         O(N) head doesn't have); both converge to `micro_batch=1` once
+         that's the practical floor. `gen_commands_physioomni_lora.py`'s
+         `resolve_batch_accum()` now looks up the per-head table.
+         **First-pass estimate from ONE real data point, not fully
+         calibrated per context** — if 120m/240m (the closest remaining
+         margin, ~2.7x/~1.3x under the observed ceiling) still OOM, the
+         next lever is gradient checkpointing (§15.8), not further batch
+         cuts (already at the floor).
+      5. **240m still OOM'd at `micro_batch=1`** (the floor #4 above
+         already reached — there was no further batch-size lever left).
+         Applied §15.8's next mitigation-ladder rung: gradient
+         checkpointing. Root cause confirmed precisely: `chunk_batch_size`
+         only bounds each individual encoder call's size, not peak memory
+         — every chunk's activations stay in the SAME autograd graph until
+         one shared `backward()` call, so a 240m window (480 epochs / 16
+         per chunk = 30 sequential calls) was retaining 30 chunks' worth of
+         full 12-block activations simultaneously. Fixed:
+         `CombinedPhysioOmniLoRAModel._run_group()` now wraps each chunk's
+         `encoder.forward_features()` call in
+         `torch.utils.checkpoint.checkpoint(..., use_reentrant=False)`
+         whenever there's more than one chunk and only during training (no
+         backward pass to recompute for during eval) — applies
+         automatically based on chunk count, no new config knob needed.
+         **Verified two ways against the real checkpoint**: a full
+         forward+backward pass completes with finite, non-zero LoRA
+         gradients, and — the real correctness guarantee, not just
+         "doesn't crash" — checkpointed vs. non-checkpointed runs on
+         identical input/seed produced **bit-identical** loss and
+         gradients (max abs diff: 0.0), confirming the technique is
+         mathematically lossless here, exactly as the theory predicts.
+      6. **Reconsidered the ladder's own ordering after user pushback**
+         (correctly — "would this make training longer" wasn't answered
+         up front): checkpointing trades compute for memory, but a larger
+         GPU allocation does NOT — MIG partitions scale compute
+         proportionally to memory, so requesting more memory is strictly
+         better wherever it's sufficient, not a tradeoff. The training job
+         script's GPU size had separately been turned down by the user to
+         `2g.20gb` (~19.6GB usable, confirmed — that's the exact figure in
+         the OOM logs) from this plan's original `3g.40gb` suggestion; the
+         240m failure happened at that smaller size. Fixed properly: (a)
+         gradient checkpointing is now OPT-IN, default OFF
+         (`CombinedPhysioOmniLoRAModel(..., use_gradient_checkpointing=False)`
+         by default — verified via a monkeypatched `checkpoint()` call
+         count that it's genuinely never invoked unless requested, so
+         every other context's speed is completely unaffected), exposed
+         via `--gradient-checkpointing` / `GRADIENT_CHECKPOINTING=1` as a
+         last-resort fallback; (b) `gen_commands_physioomni_lora.py` now
+         requests `3g.40gb` specifically for 240m (the one context with
+         real evidence it's needed) via an explicit `--gpus=` override at
+         `sbatch` submission time — every other context keeps the
+         cheaper, faster-to-schedule `2g.20gb` default. **Revised
+         ladder order: (1) bigger GPU allocation first, zero speed cost;
+         (2) gradient checkpointing only if that's still not enough; (3)
+         cap the LoRA condition at the longest tractable context,** not
+         the order originally written in §15.8 above.
+      7. **Training budget revised 2026-08-21** (§15.11) — `epochs: 40->25`,
+         `early_stopping_patience: 10->5` in
+         `configs/phase0_physioomni_lora_config.yaml`, grounded in
+         PhysioOmni's own 30s pilot curve (still improving through epoch 4,
+         first small decline at epoch 5 — no OSF-style overfitting yet, but
+         wall-clock time was the actual driver: ~1hr/epoch observed at 30s
+         makes the old 40/10 budget unworkable across ~48 runs). `lr` left
+         at `1.0e-4`, deliberately NOT halved like OSF's — see §15.11 for
+         the full reasoning. **Known open item, not yet fixed as of this
+         revision**: the warm-start readiness check
+         (`train_physioomni_lora.py`'s auto-detection of "is the 30s LoRA
+         checkpoint ready to warm-start other contexts from") currently
+         checks `best_model.pt` existence, which is written incrementally
+         from epoch 1 — should check `metrics.json` existence instead
+         (written once, only at true training completion). Confirmed real
+         via a live incident: a 120m+ context started warm-starting from an
+         unconverged, still-early 30s checkpoint. Recommended fix, not yet
+         applied — do before submitting long-context runs off of a 30s run
+         that hasn't reached `metrics.json` yet.
+- [ ] 2.7 Full three-way config/argparse audit against Stage 1 and OSF's
+      Stage 2 (§15.7's lesson) before trusting the config's stated options
+- [ ] 2.8 Run the full Stage 2 sweep (§15.10: 48 training runs — 8
+      `(task,head)` × 6 contexts, only 30s independently trained per
+      pair), applying the memory-mitigation ladder (§15.8) if needed —
+      **9/48 done as of 2026-09-06** (sex_binary lstm: 30s/10m/40m;
+      sex_binary transformer, sleep_efficiency_binary lstm/transformer:
+      30s/10m each; bmi_binary and age_class entirely untouched). Inference
+      + analyze + collect ran for exactly these 9 —
+      `results/collected/phase0_physioomni_lora/{training,analysis}.csv`,
+      verified against `metrics.json` with zero fabricated rows. Stalled on
+      wall-time: measured ~0.69 TFLOP/s on `3g.40gb` (~3.6% of that slice's
+      realistic fp32 ceiling), an architectural ceiling from the 4 encoders'
+      small hidden dims (100-200), not fixable from the training script. A
+      real, costly scheduling mistake compounded this — `--gpus=h100:1`
+      (whole card) was tried 2026-08-22 on the strength of a
+      `sbatch --test-only` estimate, and the resulting job sat PENDING for
+      **15 days** because whole-card jobs bill 2.3x and starve under this
+      account's fairshare; reverted to `3g.40gb` 2026-09-06 (see
+      `jobs/train_physioomni_lora_gpu.sh`'s header comment for the full
+      account). **Open decision, not yet made**: cap the LoRA sweep at the
+      longest tractable context per §15.8 rung 3 and report the ceiling
+      explicitly, or accept the multi-day-per-run cost for bmi/age and
+      80m+. See `PHYSIOOMNI_CLAUDE.md`'s Stage 2 results section for the
+      real per-context numbers collected so far.
 
 ### Phase 3 — Results
-- [ ] 3.1 Compile Stage 1 + Stage 2 results against `phase0_v3`
-      (paper-primary), stating §0's caveats plainly (small sleep-specific
-      pretraining scale, arXiv-only/unreviewed, own-paper HMC numbers below
-      a non-FM baseline, no apnea) — same "no silently-incomplete cells"
-      discipline as OSF
+- [x] 3.1a Stage 1 compiled — **done 2026-09-06.** All 4 tasks x 2 heads x
+      6 contexts, `results/collected/phase0_physioomni/{training,analysis}.csv`,
+      646 analysis rows, zero NaN in `seg_auroc`. Real headline numbers now
+      in `PHYSIOOMNI_CLAUDE.md`'s Stage 1 results table. Not yet done:
+      bootstrap CIs, threshold-tuning (matches OSF's current state, not a
+      PhysioOmni-specific gap).
+- [ ] 3.1b Stage 2 compiled — **partial, 9/48 cells, see 2.8 above.** Do
+      not feed into a cross-model comparison table without labeling missing
+      cells as "not yet run," never as zero or omitted silently.
+- [ ] 3.2 Report back before starting MOMENT — do not start the next
+      model's plan unprompted. (Superseded in scope, not skipped: the third
+      baseline is now Mantis, not MOMENT — see
+      `docs/TSFM_THIRD_MODEL_DECISION.md`.)
 - [ ] 3.2 Report back before starting MOMENT — do not start the next
       model's plan unprompted
 
@@ -1354,44 +2415,213 @@ code/branch work, which this revision is not).
 | Embedding storage | Concatenated per-modality CLS vectors, `[T, 500]` per epoch, flat | No unified fusion module exists in the pretrained weights (§3); simpler than a 3D shape since there's no shared dim across modalities to preserve |
 | Channel loader placement | `src/nsrr_tools/datasets/`, not `src/nsrr_tools/core/` | Avoids `nsrr_tools.core`'s eager `pyedflib` import, a real gotcha confirmed in `osf_env` (§7) — verify holds for `physioomni_env` too, don't assume |
 | Channel loader design | Shared module from day one, built before the extraction script depends on it | OSF only factored this out after Stage 2 needed it, then had to regression-test the refactor; building it shared from the start avoids that extra step (§7) |
-| Reprocessing | **No** — reuse existing fast-channel `psg/` HDF5s | Every PhysioOmni-needed channel already exists except SHHS's structural EEG gap |
-| SHHS EEG handling | Duplicate generic `EEG` into both `'C3'`/`'C4'` lookup slots | Same approximation as OSF's already-user-confirmed decision — **needs its own explicit re-confirmation before Phase 1** (checklist 0.4) |
+| Reprocessing | **No** — reuse existing fast-channel `psg/` HDF5s, including SHHS's | Every PhysioOmni-needed channel already exists; SHHS's single `EEG` channel is used as-is, not reprocessed (§4.5) |
+| SHHS EEG handling | **One real, non-duplicated channel** — not OSF's duplicate-into-both-slots approximation | **Decided 2026-08-17, see §4.5.** Verified `EEG`/`EEG(sec)` are genuinely distinct (100% co-occurrence, r=0.18 correlation) but not pursuing the fix to recover the second channel now. PhysioOmni's variable-length token sequence per modality (unlike OSF's fixed-tensor ViT) makes 1-channel EEG a legitimate input, not a workaround — duplicating would fabricate an r=1.0 fake "second channel" unlike anything in pretraining |
+| SHHS `EEG(sec)` recovery (deferred) | **Documented, not implemented** — a lightweight additive patch job (not full SHHS reprocessing) could recover a genuine second EEG channel for SHHS, benefiting both OSF and PhysioOmni | Not needed for correctness now that duplication is off the table; revisit only if SHHS results look degraded on EEG-dependent tasks (§4.5) |
 | Sample rate | Resample to PhysioOmni's own native per-modality rates (200Hz EEG/EOG, 500Hz ECG/EMG) | Matches the reference prep scripts exactly (§5.1); patch duration is a fraction of real time that depends on this choice |
-| Normalization | Invert each channel's stored `normalization_stats`, correcting for the per-channel unit inconsistency (µV vs. volts), then `/100` | `/100` raw-scale expectation vs. our already-z-scored HDF5 data is a real mismatch; still needs an empirical Step 0 check (§14) |
+| Normalization | Invert each channel's stored `normalization_stats`, then a **self-calibrating** V→µV correction (`if abs(std) < 1.0: ×1e6`) based on that channel's own stored `std`, then `/100` | Traced `signal_processor.py` directly: no explicit unit conversion anywhere, so the unit MNE returns is file/cohort-dependent, not a fixed per-channel-name rule (confirmed: APPLES's `ECG` is µV-scale, SHHS's `ECG` is volts-scale) — a hardcoded per-channel table would be wrong; still needs an empirical Step 0 check (§14) |
 | LoRA target modules | `c_attn`, `c_proj` (per encoder, up to 4 encoders) | The only two Linear layers in PhysioOmni's `Attention` block (§3) — genuinely new code, no existing LoRA precedent in the repo |
 | Multi-encoder LoRA wrapping | **Undecided** — one `get_peft_model()` call over all 4 vs. 4 independent calls | Needs a design conversation before Phase 2 starts (§15.1) |
 | Stage 2 raw-signal caching | Offline, from day one, not discovered after a stalled job | OSF's real Stage 2 lost 2+ hours to exactly this before fixing it (§15.2) |
 | Stage 2 split-matching | Filter by Stage-1-embedding-file existence, not raw-HDF5 existence | A live, previously-real bug in OSF's own Stage 2 — same fix applies here (§15.2) |
 | Stage 2 warm-start | Every context length other than the shortest branches from that (task, head)'s shortest-context LoRA checkpoint | Compute scales linearly with context length (§15.2); direct reuse of OSF's own resolved design |
-| Checkpoint needed | `PhysioOmni.pt` only, not `VQ.pt` | Traced `FT.py`'s loading code directly — only `*_encoder.`-prefixed keys are ever loaded; **still needs empirical confirmation once downloaded** (checklist 0.2) |
+| Checkpoint needed | `PhysioOmni.pt` only, not `VQ.pt` | **Confirmed 2026-08-17** — strict-load-verified via `scripts/verify_physioomni_checkpoint.py`: all 4 encoders load with zero missing keys from `PhysioOmni.pt` alone (checklist 0.2) |
+| `physioomni_env` vs. `osf_env` | **Dedicated venv**, not shared | `osf_env`'s `nsrr_tools_src.pth` points at the OSF worktree; sharing would either silently import OSF's branch's code or require repointing a still-in-use shared environment — neither acceptable (checklist 0.1, `PHYSIOOMNI_CLAUDE.md`) |
+| Per-modality `NTConfig` kwargs | Read from the checkpoint's own `{modality}_encoder_args` dicts at runtime | **Found 2026-08-17** while verifying the checkpoint — the exact kwargs are stored in the checkpoint itself, no need to hardcode §3's table (mirrors OSF's own `metadata`-dict pattern) |
 
 ---
 
 ## 18. Known open questions
 
-- **Checkpoint key-prefix hypothesis (§2, §17)** — not yet verified against
-  the real file.
-- **Normalization mismatch (§5.2)** — a concrete inversion method is
-  identified and the per-channel unit inconsistency is flagged, but neither
-  is empirically validated yet.
-- **Sample-rate resampling method (§5.1)** — recommended (FFT-based or
-  polyphase resampling for the non-integer 128→200/128→500 ratios) but not
-  yet empirically validated against real signal.
+- ~~**Checkpoint key-prefix hypothesis**~~ — **✅ RESOLVED 2026-08-17**, see
+  checklist 0.2 and §17.
+- ~~**Whether `physioomni_env` can share `osf_env`'s environment**~~ — **✅
+  RESOLVED 2026-08-17: no, dedicated venv**, see checklist 0.1 and §17.
+- ~~**Normalization mismatch**~~ — **✅ RESOLVED 2026-08-18**, see §5.2's
+  revised self-calibrating method and checklist 0.5/1.3.
+- ~~**Sample-rate resampling method**~~ — **✅ RESOLVED 2026-08-18**, see
+  checklist 0.6/1.3.
+- ~~**SHHS EEG-duplication decision**~~ — **✅ RESOLVED 2026-08-17, see
+  §4.5 and checklist 0.4**: not duplication, one real channel.
 - **Multi-encoder LoRA-wrapping design (§15.1)** — genuinely undecided,
   needs a design conversation with the user before Phase 2 starts.
-- **Whether `physioomni_env` can share `osf_env`'s environment or needs its
-  own fresh build** — not checked yet; PhysioOmni's README pins are close
-  to but not identical to OSF's.
 - **GitHub code repo's missing LICENSE** — the weights are CC-BY-4.0 but
   the training/inference *code* has no stated license.
-- **Per-modality-missing degeneracy** (§8) — flagged as a real, distinct
-  failure mode from SHHS's duplicated-channel case, not yet empirically
-  checked.
+- **Per-modality-missing degeneracy** (§8) — flagged as a real failure mode
+  (whole modality zero-filled), distinct from SHHS's real-but-shorter EEG
+  case (§4.5), not yet empirically checked.
+- **SHHS `EEG(sec)` recovery** (§4.5) — a lightweight, additive future fix
+  is documented and estimated cheaper than a full SHHS reprocessing, but
+  not timed or implemented — deliberately deferred until/unless SHHS
+  results look degraded enough to justify it.
 - **PhysioOmni Stage 1's own wall-time/compute profile** — genuinely
   unknown, architecturally different from OSF's (four small transformers ×
   up to 4 forward passes per epoch during extraction vs. one ViT) — do not
   reuse OSF's wall-time tables even as a starting guess without a real
   pilot (§12).
+
+---
+
+## 19. Native context ceiling and the Plan A/B/C decision (2026-08-18 —
+write straight into the paper's Methods/Limitations, this section exists
+for that purpose)
+
+### What we wanted
+
+The project's standing preference, stated in `CLAUDE.md`'s "three usage
+modes" section: **Plan A (native long context, no sequence head) is the
+fairest comparison whenever a backbone can actually support it** — it
+tests the backbone's own long-context capability rather than our own
+aggregation machinery. Plan B (short-segment embedder + our sequence head)
+is the documented fallback, used for SleepFM and OSF only because their
+architectures leave no other option (SleepFM: hard 300s chunk requirement;
+OSF: hard 30s chunk requirement, zero cross-epoch attention in the model).
+PhysioOmni's `NeuralTransformer` is architecturally different from both —
+a variable-length token sequence per modality, no fixed native window —
+so before defaulting to Plan B again, it was worth asking concretely: how
+far could Plan A actually go here, and is it far enough to matter for a
+30s→240m sweep?
+
+### The ceiling, precisely (not the flat "512 seconds" first estimated)
+
+The `time_embed` table caps any single forward pass at 512 *tokens*, not
+512 seconds — the real-world duration one call can span depends on that
+modality's own patch size (samples) and resample rate (Hz), both fixed by
+the pretrained checkpoint (changing either would require retraining the
+`TemporalConv` weights). Using PhysioOmni's own reference resample rates
+(§5.1 — the rates its own prep scripts use, not a rate we invented):
+
+| Modality | Patch size | Resample rate | Seconds/patch | **Native ceiling (512 patches)** |
+|---|---|---|---|---|
+| EEG | 200 samples | 200Hz | 1.0s | **512s ≈ 8.5 min** |
+| EOG | 100 samples | 200Hz | 0.5s | **256s ≈ 4.3 min** |
+| ECG | 100 samples | 500Hz | 0.2s | **102.4s ≈ 1.7 min** |
+| EMG | 100 samples | 500Hz | 0.2s | **102.4s ≈ 1.7 min** |
+
+**These are theoretical single-channel maxima, not what pretraining
+typically used — a real, verified nuance worth stating precisely in the
+paper rather than the simpler-but-misleading "8.5-minute ceiling"
+framing.** Traced the actual pretraining window-construction logic
+directly (`prepare_dataset/prepare_CAP.py:178`, identical formula in
+`prepare_tuh.py`/`prepare_DEAP.py`):
+```python
+time = 512 // len(eegCh)   # seconds per sample, applied to ALL 4 modalities
+```
+i.e. pretraining **deliberately saturates the 512-token EEG budget every
+time**, splitting it across however many EEG channels a given source
+montage has (CAP/TUH montages typically carry anywhere from ~8 to ~26 EEG
+channels — exact tally not exhaustively counted, but multi-channel is the
+norm, not the single-channel edge case). A 16-channel montage gets
+`512/16=32` real seconds per sample; a 26-channel montage gets `512/26≈19`
+seconds. **The model's typical pretraining exposure was tens of seconds
+of real time across many simultaneous channels, not minutes of real time
+on one channel** — the 8.5-minute figure is a real, valid upper bound
+(useful for stating "how far could this architecture go at all"), but not
+representative of what the encoder actually learned to expect.
+
+**Downstream fine-tuning (HMC, the model's own validated sleep-staging
+task) uses a different, fixed convention**: exactly 30 real seconds per
+sample regardless of channel count
+(`prepare_dataset/prepare_HMC_downstream.py`, `row[' Duration'] != 30:
+continue` — a hard AASM-epoch filter, not a computed value) — the *same*
+30-second unit this plan already uses for embedding extraction (§6.3).
+**This is a genuine point of confidence for Option 1 below, not just an
+arbitrary convenience choice**: 30 seconds is not an unfamiliar duration
+to this encoder — it's literally the unit PhysioOmni's own authors used to
+fine-tune and validate it on a real sleep-staging task.
+
+### Why 240m (or even most of the sweep) is not reachable via Plan A
+
+240 minutes = 14,400 seconds. Even EEG's best-case theoretical ceiling
+(512s) is short by ~28×. Closing that gap would require resampling EEG
+down to ~7Hz and ECG/EMG down to ~3.6Hz to fit 14,400s into 512 patches —
+not "more efficient use of capacity," but destruction of the signal (EEG
+below ~30Hz loses essentially all clinically meaningful frequency content;
+3.6Hz can't resolve an ECG waveform). No resample-rate choice makes 240m
+native. **More consequentially for the sweep as a whole**: converting the
+six sweep points to seconds (30s, 600s, 2400s, 4800s, 7200s, 14400s)
+against the ceiling table above shows **10m (600s) already exceeds even
+EEG's theoretical 512s maximum** — so every sweep point except the
+trivial 30s one already requires aggregation beyond a single native
+forward pass, for every modality, regardless of resample-rate tuning.
+Plan A is architecturally inapplicable to this study's sweep beyond its
+very first point.
+
+### Options considered
+
+1. **Keep 30-second epochs** (matches SleepFM's and OSF's own epoch-unit
+   convention exactly, and — per the finding above — matches PhysioOmni's
+   *own* HMC downstream fine-tuning convention too, not just our other two
+   backbones'). Simplest, most directly comparable across all three
+   models on the same epoch unit. Zero rework of already-built/tested
+   Phase 1.1/1.2/1.4 code.
+2. **Grow the native chunk size toward PhysioOmni's own ceiling** (up to
+   ~90-100s, bound by ECG/EMG — the shortest of the four, since a single
+   chunk spanning all 4 modalities over the same real-world duration is
+   capped by whichever modality's ceiling is smallest). Uses more of the
+   architecture's per-chunk attention span, at the cost of moving away
+   from the SleepFM/OSF-shared 30-second convention and requiring real
+   rework across the already-implemented pipeline (`EPOCH_SECONDS` is a
+   module constant threaded through the channel loader, extraction
+   script, and dataset class).
+3. **A standalone supplementary experiment** (not a sweep point): feed
+   each modality its own true maximum native window as a single item, no
+   sequence head, straight to a classification head — a "PhysioOmni's own
+   best native representation" reference number, analogous in spirit to
+   OSF's Plan A discussion but capped at ~1.7-8.5 min instead of a long
+   context. Not a substitute for the sweep (one fixed condition, not a
+   function of context length), and not decided against permanently —
+   just not pursued now.
+
+### What we chose, and why (for the paper)
+
+**Option 1 — 30-second epochs, unchanged from the rest of this plan.**
+State this plainly in the Methods/Limitations section: PhysioOmni is
+evaluated via Plan B (short-segment embedder + our sequence head) at
+every context length in the sweep, **the same as SleepFM and OSF** — not
+because Plan A wasn't considered or because PhysioOmni's architecture is
+as rigid as the other two (it genuinely isn't — see the ceiling table
+above), but because even its own best-case native ceiling (8.5 minutes
+for EEG, materially less for the other three modalities) falls short of
+every sweep point except the shortest. The 30-second unit chosen is not
+arbitrary relative to PhysioOmni itself, either — it matches the model's
+*own* downstream fine-tuning convention (HMC), a fact worth citing
+directly if this comparison is challenged in review. Growing the native
+chunk size (Option 2) was considered and set aside: the achievable gain
+(30s → ~100s, bound by ECG/EMG) is small relative to the sweep's own span
+(up to 240m) and would break the "same epoch unit across all three
+backbones" comparison principle for a benefit that doesn't change the
+fundamental Plan B conclusion. The standalone native-max-window reference
+experiment (Option 3) remains a live option for later, not implemented as
+part of this plan.
+
+---
+
+## 20. Three-way model comparison: SleepFM vs. OSF vs. PhysioOmni (for
+the paper — everything here is code-verified in this repo, not recalled
+from memory, except where explicitly flagged as unverified)
+
+| | SleepFM | OSF | PhysioOmni |
+|---|---|---|---|
+| **Native per-call window — hard requirement** | Exactly 300s (5 min); incomplete trailing chunks dropped (`scripts/extract_sleepfm_embeddings.py`: `chunk_size = sampling_freq*300`, "model requires full 5-min chunks") | Exactly 30s; no cross-epoch attention exists anywhere in the model (`osf/backbone/vit1d_cls.py`'s positional table is sized to exactly one epoch) | **No fixed requirement** — variable-length token sequence; real ceiling is per-modality (§19 table: 512s EEG / 256s EOG / 102s ECG / 102s EMG at PhysioOmni's own reference rates) |
+| **Internal sub-patch (within one native call)** | 5s (640 samples @ 128Hz) — 60 sub-patches per 300s call | 1s (64 samples @ 64Hz) — 90 tokens (30 time-steps × 3 channel-groups) per 30s call | Per-modality: EEG 1s/patch, EOG 0.5s/patch, ECG/EMG 0.2s/patch (all at PhysioOmni's own reference resample rates) |
+| **Channel handling per call** | All 4 modality groups (BAS/RESP/EKG/EMG) in one joint tensor | All 12 channels in one joint tensor | **Each of the 4 modalities is a fully separate forward call** — no shared tensor, no cross-modal attention anywhere in the pretrained weights |
+| **What pretraining actually saw (real-world duration)** | 300s fixed, always (same as inference — no separate shorter-window pretraining regime found) | 30s fixed, always | **Variable, saturating a 512-EEG-token budget per sample**: `time = 512 // n_eeg_channels` (`prepare_CAP.py:178`, same formula in `prepare_tuh.py`/`prepare_DEAP.py`) — typically tens of seconds across many (8-26) simultaneous EEG channels, not minutes on one channel (§19) |
+| **What the model's own downstream fine-tuning used** | N/A in this repo's scope (SleepFM is used frozen throughout) | N/A (OSF's own downstream benchmarks not the focus here) | **Fixed 30 real seconds**, matching AASM epoch length exactly (`prepare_HMC_downstream.py`, hard `Duration==30` filter) — the *same* unit this plan uses (§19) |
+| **What our own extraction uses** | 5s (our stored granularity) inside 300s calls, batched | 30s (fixed by the architecture itself) | **30s** — a deliberate choice (§19 Option 1), not an architectural requirement; matches SleepFM's/OSF's own epoch unit *and* PhysioOmni's own HMC fine-tuning unit |
+| **Output per native call** | 4 × 128-dim (one per modality group), at 5s granularity within the call | 1 × [CLS(768) ⊕ mean-pooled-patches(768)] — fully fused, no per-channel structure survives | 4 × independent CLS (200-dim EEG, 100-dim each EOG/ECG/EMG) — **no fusion in the pretrained weights at all**, concatenation happens only in our own extraction script |
+| **Saved embedding shape (this project's convention)** | `[T, 4, 128]`, T = 5s patches/night, flat dim 512 | `[T, 2, 768]`, T = 30s epochs/night, flat dim 1536 | `[T, 500]`, T = 30s epochs/night — genuinely 2D, no sub-token axis needed (§6.3/§8) |
+| **Sequence head input_dim** | 512 | 1536 | 500 |
+| **Encoder parameter count** | Not verified in this repo this session (would need reading SleepFM's own model-loading code with the same rigor OSF/PhysioOmni got — flagged as a gap, not asserted) | 85,325,568 (strict-load-verified, `docs/TSFM_OSF_IMPLEMENTATION_PLAN.md` §5) | 13,871,304 total across all 4 encoders (strict-load-verified, checklist 0.2) — EEG alone 7,839,576; EOG/ECG/EMG ~2,010,576 each |
+| **Fusion mechanism in released weights** | Contrastive alignment across the 4 modality-group encoders during pretraining, but each still outputs its own 128-dim vector — not fused into one shared vector | Single unified ViT — full fusion, one representation | **None** — four independent tokenizers/encoders, no cross-modal attention or shared parameters anywhere; fusion (if any) is entirely downstream-constructed, by us or by PhysioOmni's own `FT.py` machinery (not part of the released checkpoint) |
+| **Plan actually used for the sweep** | B (only option — architecture leaves no other choice) | B (only option — architecture leaves no other choice) | **B** (chosen — §19; architecture could theoretically support Plan A up to ~1.7-8.5 min, but that's short of every sweep point except 30s) |
+
+**One clarifying note for the paper, since the table above could be
+read as implying otherwise**: PhysioOmni is the only one of the three
+where Plan B was a *choice* rather than an architectural inevitability —
+worth stating explicitly, since it's a materially different (and more
+favorable, from a "we gave this model a fair shot" standpoint) situation
+than SleepFM's and OSF's genuinely-forced Plan B.
 
 ---
 
@@ -1448,3 +2678,66 @@ against:
 9. **`docs/PHYSIOOMNI_PLANNING_HANDOFF.md`** — the prompt this revision
    follows; its "hard constraints" section is reproduced verbatim as this
    plan's §1 file-isolation constraint.
+
+**2026-08-17, Phase 0 execution pass** — real cluster actions, not
+research reading, all outputs captured in `PHYSIOOMNI_CLAUDE.md`:
+
+10. **`physioomni_env` built live** — `pip install -r
+    /home/boshra95/osf_env_requirements.txt` into a fresh venv, package
+    list and `.pth` contents inspected directly (not assumed) both before
+    (`osf_env`) and after (`physioomni_env`) the build.
+11. **`PhysioOmni.pt` downloaded live** from
+    `https://huggingface.co/Weibang/PhysioOmni/resolve/main/PhysioOmni.pt`
+    (267,795,410 bytes, matches the 2026-08-13 pass's HF-API size
+    exactly) and **strict-load-verified against the real
+    `NeuralTransformer`/`NTConfig` classes** from
+    `/home/boshra95/PhysioOmni/model/neural_transformer.py` via
+    `scripts/verify_physioomni_checkpoint.py` — the checkpoint's own
+    `torch.load(...)` output (top-level keys, per-modality
+    `*_encoder_args`, `load_state_dict(strict=False)` missing/unexpected
+    key lists, parameter counts) is the direct source for every claim in
+    checklist 0.2, not inference from code reading alone.
+12. **Paper PDF fetched live** from `arxiv.org/pdf/2504.19596v3` to
+    `/home/boshra95/related_work/PhysioOmni.pdf`, verified as a real
+    15-page PDF (`file` command), not just a successful HTTP status.
+
+**2026-08-17, SHHS EEG channel investigation (§4.5)** — a direct follow-up
+on `docs/OSF_CHANNEL_REPROCESSING_PLAN.md` §4's explicitly-unverified
+question, this time with real measurements:
+
+13. **`output/channel_analysis/shhs_channels.csv` parsed directly**
+    (pandas, all 8,444 rows) — checked for co-occurrence of `EEG` and each
+    of the 5 `EEG(sec)`-family alias variants
+    (`configs/channel_definitions.yaml`'s own `EEG:` list) within the same
+    row's `channels` field. Result: 8,444/8,444 (100%).
+14. **A real raw SHHS EDF loaded directly** (`mne.io.read_raw_edf`,
+    `shhs1-203279.edf`) — both channels extracted via `raw.get_data()`,
+    correlation computed via `np.corrcoef`. Result: r=0.18, not
+    numerically identical (`np.allclose` → `False`).
+15. **Full-population channel coverage recomputed for every channel
+    PhysioOmni needs, all 4 cohorts**, directly against
+    `output/channel_analysis/{apples,shhs,mros,stages}_channels.csv` using
+    the real alias lists from `configs/channel_definitions.yaml` — the
+    §4.3 table's numbers (this revision) are computed this way, not
+    carried over from OSF's smaller 50-subject-per-cohort sample. Also
+    traced STAGES's ECG gap (9.2% of subjects) to a genuine cause (a
+    `Heartrate`-only channel, not a raw ECG waveform) rather than a
+    fixable alias-list oversight.
+
+**2026-08-18, native-context-ceiling investigation (§19-§20)**:
+
+16. **`scripts/extract_sleepfm_embeddings.py` read directly** — confirmed
+    SleepFM's hard 300s chunk requirement (`chunk_size =
+    sampling_freq*300 = 38400` samples, "model requires full 5-min chunks"
+    stated in the script's own docstring) and the 4-modality-group output
+    structure (`[T,4,128]`, "BAS, RESP, EKG, EMG").
+17. **`prepare_dataset/{prepare_CAP,prepare_tuh,prepare_DEAP}.py` read
+    directly** — confirmed the exact pretraining window-construction
+    formula (`time = 512 // len(eegCh)`, identical across all three
+    scripts) behind §19's "pretraining typically saw tens of seconds
+    across many channels, not minutes on one channel" finding.
+18. **`prepare_dataset/prepare_HMC_downstream.py` re-read for this
+    specific question** (already read once for §4.2's EOG-derivation
+    finding) — confirmed the hard `row[' Duration'] != 30: continue`
+    filter, establishing that PhysioOmni's own downstream fine-tuning
+    (not just our own extraction choice) uses a fixed 30-second epoch.

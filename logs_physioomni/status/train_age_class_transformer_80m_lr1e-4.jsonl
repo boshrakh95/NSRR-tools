@@ -1,0 +1,2 @@
+{"ts":"2026-08-20T00:35:28-07:00","job_id":"55690820","node":"fc11015","status":"STARTED","task":"age_class","head":"transformer","context":"80m","lr":"1e-4","datasets":"apples shhs mros"}
+{"ts":"2026-08-20T00:49:14-07:00","job_id":"55690820","node":"fc11015","status":"SUCCESS","task":"age_class","head":"transformer","context":"80m","lr":"1e-4","datasets":"apples shhs mros"}

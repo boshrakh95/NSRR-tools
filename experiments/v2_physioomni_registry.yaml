@@ -1,0 +1,224 @@
+# ============================================================
+# V2 PhysioOmni Registry — frozen PhysioOmni backbone + our sequence heads
+# ============================================================
+# Mirrors experiments/v2_registry.yaml field-for-field (same tasks, dataset
+# lists, contexts, LR, tier) since PhysioOmni is compared against the
+# fast-channel SleepFM protocol (phase0_v3, paper-primary) — see
+# CLAUDE.md's PhysioOmni section: PhysioOmni needs only EEG/EOG/ECG/EMG (no
+# RESP), so the existing fast-channel psg/ HDF5s already carry everything
+# needed, unlike OSF (which needed the full-channel tree). Only the
+# top-level paths (config/results_dir/inference_dir/logs_dir/python_bin)
+# and script names (resolved in gen_commands_physioomni.py) differ.
+#
+# Scope: 4 of the 5 Tier-1 tasks from CLAUDE.md's OSF first-pass scope
+# (sex, sleep efficiency, BMI, age). apnea_binary is deliberately excluded
+# — PhysioOmni has no respiratory/airflow pathway anywhere in the model or
+# its pretraining data (confirmed at 4 independent code locations, see
+# CLAUDE.md's PhysioOmni section and plan doc §18). sleep_staging (seq2seq)
+# is deferred, same as OSF — not yet ported to
+# PhysioOmniContextWindowDataset/train_physioomni_context_sweep.py.
+#
+# Fields: same as v2_registry.yaml — see that file's header for the field
+# reference. Use gen_commands_physioomni.py (not gen_commands.py or
+# gen_commands_osf.py) to generate commands from this file.
+
+config: configs/phase0_physioomni_config.yaml
+results_dir: /scratch/boshra95/psg/unified/results/phase0_physioomni
+inference_dir: /scratch/boshra95/psg/unified/results/phase0_physioomni/inference
+logs_dir: /home/boshra95/NSRR-tools-omni/logs_physioomni
+python_bin: /home/boshra95/physioomni_env/bin/python
+
+# ── Training protocol ────────────────────────────────────────────────────────
+# Same batch_size/accum_steps values as v2_registry.yaml/v2_osf_registry.yaml,
+# reused as a starting point. NOT YET GPU-CALIBRATED FOR PHYSIOOMNI (only
+# CPU-debugged with --batch-size 2 as of 2026-08-18) — revisit after the
+# first real GPU sweep (checklist item 1.11) if OOM/underutilization is
+# observed. Same accum_steps = effective_batch / micro_batch mechanism as
+# SleepFM's/OSF's registries so gen_commands_physioomni.py's
+# resolve_batch_accum() works unmodified.
+gradient_accumulation:
+  enabled: true
+  effective_batch: 32
+  context_micro_batch:
+    "30s":  32
+    "10m":  32
+    "40m":  32
+    "80m":  32
+    "120m": 32
+    "240m": 32
+
+# ── Tier 1: 4 Tier-1 tasks × 3 heads = 12 experiments (apnea excluded) ──────
+
+experiments:
+
+  # ── sex_binary (N=13,163 — APPLES, SHHS) ─────────────────────────────────
+  sex_binary_lstm:
+    task: sex_binary
+    task_type: seq2label
+    num_classes: 2
+    head: lstm
+    datasets: [apples, shhs] # , stages
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
+    batch_size: 32
+    lr: 1.0e-4
+    run_tag: ""
+    n_size: large
+    tier: 1
+    notes: "Female=1, Male=0. MrOS excluded (all-male cohort, zero variance)."
+
+  sex_binary_transformer:
+    task: sex_binary
+    task_type: seq2label
+    num_classes: 2
+    head: transformer
+    datasets: [apples, shhs] # , stages
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
+    batch_size: 32
+    lr: 1.0e-4
+    run_tag: ""
+    n_size: large
+    tier: 1
+    notes: ""
+
+  sex_binary_mean_pool:
+    task: sex_binary
+    task_type: seq2label
+    num_classes: 2
+    head: mean_pool
+    datasets: [apples, shhs] # , stages
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
+    batch_size: 64
+    lr: 1.0e-4
+    run_tag: ""
+    n_size: large
+    tier: 1
+    notes: "Baseline (no temporal modelling)."
+
+  # ── sleep_efficiency_binary (N=13,615 — APPLES, SHHS, MrOS) ─────────────
+  sleep_efficiency_binary_lstm:
+    task: sleep_efficiency_binary
+    task_type: seq2label
+    num_classes: 2
+    head: lstm
+    datasets: [apples, shhs, mros]
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
+    batch_size: 32
+    lr: 1.0e-4
+    run_tag: ""
+    n_size: large
+    tier: 1
+    notes: "Sleep efficiency < 85% = 1. STAGES excluded (no eff. score available)."
+
+  sleep_efficiency_binary_transformer:
+    task: sleep_efficiency_binary
+    task_type: seq2label
+    num_classes: 2
+    head: transformer
+    datasets: [apples, shhs, mros]
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
+    batch_size: 32
+    lr: 1.0e-4
+    run_tag: ""
+    n_size: large
+    tier: 1
+    notes: ""
+
+  sleep_efficiency_binary_mean_pool:
+    task: sleep_efficiency_binary
+    task_type: seq2label
+    num_classes: 2
+    head: mean_pool
+    datasets: [apples, shhs, mros]
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
+    batch_size: 128
+    lr: 1.0e-4
+    run_tag: ""
+    n_size: large
+    tier: 1
+    notes: ""
+
+  # ── bmi_binary (APPLES, SHHS, MrOS) ─────────────────────────────────────
+  bmi_binary_lstm:
+    task: bmi_binary
+    task_type: seq2label
+    num_classes: 2
+    head: lstm
+    datasets: [apples, shhs, mros] # , stages
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
+    batch_size: 32
+    lr: 1.0e-4
+    run_tag: ""
+    n_size: large
+    tier: 1
+    notes: "BMI >= 30 = obese (WHO definition). MrOS: visit-1 labels only."
+
+  bmi_binary_transformer:
+    task: bmi_binary
+    task_type: seq2label
+    num_classes: 2
+    head: transformer
+    datasets: [apples, shhs, mros] # , stages
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
+    batch_size: 32
+    lr: 1.0e-4
+    run_tag: ""
+    n_size: large
+    tier: 1
+    notes: ""
+
+  bmi_binary_mean_pool:
+    task: bmi_binary
+    task_type: seq2label
+    num_classes: 2
+    head: mean_pool
+    datasets: [apples, shhs, mros] # , stages
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
+    batch_size: 128
+    lr: 1.0e-4
+    run_tag: ""
+    n_size: large
+    tier: 1
+    notes: ""
+
+  # ── age_class (3-class — APPLES, SHHS, MrOS) ────────────────────────────
+  age_class_lstm:
+    task: age_class
+    task_type: seq2label
+    num_classes: 3
+    head: lstm
+    datasets: [apples, shhs, mros] # , stages
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
+    batch_size: 32
+    lr: 1.0e-4
+    run_tag: ""
+    n_size: large
+    tier: 1
+    notes: "3-class: <50=0, 50-64=1, >=65=2. MrOS all class 2 (65+ cohort)."
+
+  age_class_transformer:
+    task: age_class
+    task_type: seq2label
+    num_classes: 3
+    head: transformer
+    datasets: [apples, shhs, mros] # , stages
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
+    batch_size: 32
+    lr: 1.0e-4
+    run_tag: ""
+    n_size: large
+    tier: 1
+    notes: ""
+
+  age_class_mean_pool:
+    task: age_class
+    task_type: seq2label
+    num_classes: 3
+    head: mean_pool
+    datasets: [apples, shhs, mros] # , stages
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
+    batch_size: 128
+    lr: 1.0e-4
+    run_tag: ""
+    n_size: large
+    tier: 1
+    notes: ""
