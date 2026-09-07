@@ -710,3 +710,53 @@ Append dated entries here as work happens (newest last).
   `gen_commands_mantis.py` calls instead of hand-typed CLI invocations —
   after that, `docs/MANTIS_EXPERIMENTS_GUIDE.md` starts, per the user's
   instruction to begin it once real submittable steps exist.
+
+- **2026-09-07 — Checklist 1.10 done**: `v2_mantis_registry.yaml` +
+  `gen_commands_mantis.py`. 5 Tier-1 tasks × 3 heads = 15 experiments,
+  fields copied verbatim from `v2_osf_registry.yaml` per plan §5.8 —
+  unlike PhysioOmni, apnea_binary IS included (Mantis is channel-agnostic,
+  RESP goes through the same encoder as every other slot, making it the
+  only baseline directly comparable to OSF on apnea). Verified against a
+  real checkpoint (trained at the exact production path the registry
+  expects, no `run_tag`): `list`/`status`/`infer` all correctly detected
+  the trained context and generated the right commands. Test checkpoint
+  removed afterward.
+
+  **`docs/MANTIS_EXPERIMENTS_GUIDE.md` created**, per the user's earlier
+  instruction to start it once real submittable steps exist — filled in
+  incrementally alongside the plan doc from here.
+
+  **Also done, ahead of schedule**: `jobs/extract_mantis_embeddings_gpu.sh`
+  (checklist 1.4 had explicitly deferred this file until the step-by-step
+  implementation finished — that's now). Real per-subject GPU cost from
+  Pilot 3/Pilot 1-2: ~8.0s/subject (Option D). While preparing this,
+  found and fixed a real correctness gap in
+  `extract_mantis_embeddings.py`: the embedding write was
+  `np.save(out_path, emb)` directly, not atomic — a SLURM timeout mid-write
+  could leave a truncated `.npy` that the skip-check would treat as "done"
+  forever after, a real risk across many sharded jobs at ~15,000-subject
+  scale. Fixed with temp-file + `os.replace()`; caught and fixed a second
+  bug in the fix itself along the way (numpy silently appends `.npy` to a
+  filename that doesn't already end in it, so a naive `X.npy.tmp123` temp
+  name becomes `X.npy.tmp123.npy` on disk) before it ever ran for real.
+  Verified end-to-end with a real single-subject CPU extraction, then the
+  SLURM wrapper itself with two real `sbatch` submissions (not just
+  syntax-checked) — the first accidentally only hit the skip-path (those
+  subjects already existed), caught and re-verified against genuinely
+  fresh subjects (job 58534992): 3/3 extracted, 6.20% of the allocated
+  1g.10gb slice's peak (matches Pilot 3's independent 6.18% measurement),
+  zero leftover temp files. **The user can now start real sharded batch
+  extraction**, see `docs/MANTIS_EXPERIMENTS_GUIDE.md` Step 1.
+
+  **What this step means in plain terms**: 1.7-1.9 built the pieces
+  (dataset, train, infer); this step is the "remote control" that ties
+  them together — instead of typing out long training/inference commands
+  by hand for each of the 15 (task, head) combinations, `gen_commands_mantis.py`
+  reads one registry file and prints the exact ready-to-submit `sbatch`
+  command, already knowing which contexts are done and which still need
+  running. Combined with the newly-written extraction job script, this is
+  the point where the Mantis pipeline stops being "code being built" and
+  starts being "a pipeline you submit jobs to" — the shift the user's
+  MANTIS_EXPERIMENTS_GUIDE.md request anticipated. Next: checklist 1.11,
+  the real full-population extraction (sharded GPU jobs across all 4
+  cohorts), which can now start immediately.

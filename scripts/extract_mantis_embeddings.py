@@ -49,6 +49,7 @@ USAGE
 
 import argparse
 import json
+import os
 import signal
 import sys
 import time
@@ -337,7 +338,22 @@ def main():
             )
             total_forward_seconds += fwd_s
             total_channel_epochs += n_chan_epochs
-            np.save(out_path, emb)
+            # Atomic write: save to a per-process temp file, then rename into
+            # place. os.replace() is atomic on POSIX — a reader (or a resumed
+            # job's skip-check) can never observe a partially-written file.
+            # Without this, a SLURM timeout/kill mid-np.save() could leave a
+            # truncated .npy that out_path.exists() would treat as "done"
+            # forever after (real risk across sharded batch jobs — this is
+            # not hypothetical at ~16,000-subject scale).
+            # NOTE: the temp name must itself end in ".npy" — np.save()
+            # appends ".npy" to any path that doesn't already end with it,
+            # so a name like "X.npy.tmp123" silently becomes
+            # "X.npy.tmp123.npy" on disk and os.replace() below would then
+            # raise FileNotFoundError on the path we actually passed
+            # (verified empirically before relying on this).
+            tmp_path = out_path.parent / f"{out_path.stem}.tmp{os.getpid()}.npy"
+            np.save(tmp_path, emb)
+            os.replace(tmp_path, out_path)
 
             if dataset not in fill_log_handles:
                 log_path = output_dir / dataset / "_channel_fill_log.jsonl"

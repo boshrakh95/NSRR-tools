@@ -2508,30 +2508,103 @@ the next one starts. Do not chain steps.**
       and PhysioOmni's own scripts still have this latent bug — out of
       scope to fix there under the worktree isolation rule, flagged to the
       user for awareness.
-- [ ] **1.10** `v2_mantis_registry.yaml` + `gen_commands_mantis.py` (§11);
-      verify `list`/`train`/`infer`/`status` against the real checkpoint from
-      1.8. **User checkpoint.**
-- [ ] **1.11** Full extraction, all 4 cohorts, sharded GPU jobs. Then the
-      §13.4-12 split-population audit and the §5.5 `resp_source` tally from
-      the fill logs.
+- [x] **1.10** `v2_mantis_registry.yaml` + `gen_commands_mantis.py` (§11) —
+      DONE 2026-09-07. Task/dataset/n_size/notes fields copied verbatim from
+      `v2_osf_registry.yaml` per §5.8's explicit instruction (not
+      PhysioOmni's registry, which excludes apnea_binary) — 5 Tier-1 tasks
+      × 3 heads = 15 experiments, apnea_binary included across all 4
+      cohorts since Mantis is channel-agnostic (RESP goes through the same
+      encoder as every other slot, plan §2.2), making it the only one of
+      the three baselines directly comparable to OSF on apnea.
+      `gen_commands_mantis.py` structurally forked from
+      `gen_commands_physioomni.py`; wall-time tables seeded from Pilot 3's
+      real single-point GPU measurement (§13.3), not blindly copied from
+      OSF's/PhysioOmni's numbers (different compute profile).
+
+      **Verified against a real checkpoint, not just read for plausibility**:
+      trained a real LSTM/30s checkpoint at the exact production path the
+      registry expects (`{results_dir}/sex_binary_lstm/context_30s/
+      best_model.pt`, no `run_tag`) using the Pilot 1/2 population, then
+      confirmed `list` correctly reports `trained (1/6 contexts), not
+      inferred`, `status` correctly lists `Trained: ['30s']`, and `infer`
+      correctly auto-discovers `['30s']` and generates the matching sbatch
+      command. Test checkpoint deleted afterward — nothing real at that
+      path yet (1.11/1.12 haven't run).
+- [x] **1.11a** `extract_mantis_embeddings_gpu.sh` — DONE 2026-09-07, ahead
+      of the full population run. Checklist 1.4 explicitly deferred writing
+      this file until the step-by-step implementation (1.7-1.10) was
+      finished — that point is now. Forked from
+      `extract_physioomni_embeddings_gpu.sh`: same `--start-idx`/`--end-idx`
+      sharding pattern and SIGUSR1 auto-resume mechanism, plus a
+      `GPU_FRACTION` passthrough (extraction's achieved-TFLOP/s
+      instrumentation needs the real allocated slice fraction, not a
+      device query — plan §4's MIG-memory-misreport lesson). Real wall-time
+      guidance from Pilot 3 + Pilot 1/2's measured **~8.0s/subject**
+      (Option D, 1g.10gb slice) — full ~14,994-subject population is
+      ~33.3h serial, sharded into ~2500-subject jobs (~5.6h each) in the
+      header's usage examples, same convention as OSF's/PhysioOmni's own
+      extraction jobs.
+
+      **Real-data risk found and fixed in `extract_mantis_embeddings.py`
+      while preparing this step**: the write was `np.save(out_path, emb)`
+      directly — not atomic. A SLURM timeout/kill mid-write could leave a
+      truncated `.npy` that the skip-logic (`out_path.exists()`) would
+      treat as "done" forever after — a real risk at ~15,000-subject,
+      many-sharded-job scale, not hypothetical. Fixed with a temp-file +
+      `os.replace()` pattern; **verified twice before trusting it**: first
+      an isolated `np.save` test caught that numpy silently appends
+      `.npy` to any filename not already ending in `.npy` (a naive
+      `X.npy.tmp123` temp name becomes `X.npy.tmp123.npy` on disk, which
+      would have made `os.replace()` raise `FileNotFoundError` — caught
+      before it shipped, not after), then confirmed the corrected
+      `X.tmp123.npy` scheme round-trips correctly, then ran a real
+      single-subject CPU extraction end-to-end (`APL0001`) to confirm the
+      final file lands correctly with zero leftover temp files.
+
+      **Sharding safety confirmed**: `find_hdf5_files()` returns a
+      `sorted()`, per-dataset-concatenated subject list — deterministic
+      across repeated calls — so disjoint `--start-idx`/`--end-idx` ranges
+      can never process the same subject twice, and since output filenames
+      are per-subject (`{output_dir}/{dataset}/{subject_id}.npy`), no two
+      concurrent shards can ever overwrite each other's file even without
+      separate output directories per shard.
+
+      **SLURM wrapper verified with two real sbatch submissions, not just
+      `bash -n` syntax-checking**: the first (`END=2,DATASETS=apples`) hit
+      only the skip-path (those 2 subjects already existed from earlier
+      debugging) — caught this and re-verified with a second job
+      (`START=3,END=6,DATASETS=apples`) against genuinely fresh subjects.
+      Real result (job 58534992, H100 MIG `1g.10gb`, `def-egranger_gpu`):
+      3/3 extracted, 0 errors, **6.20% of the allocated slice's peak**
+      (consistent with Pilot 3's independently-measured 6.18% — not a
+      coincidence, the same code path), correct `.npy` files written,
+      **zero leftover temp files**. `--gpu-fraction` forwarding, the
+      atomic-write fix, and the SIGUSR1 job-wrapper mechanics are now all
+      confirmed working on a real production job, not just reasoned about.
+      **User can now start real sharded batch extraction** (checklist
+      1.11) — see `docs/MANTIS_EXPERIMENTS_GUIDE.md` Step 1 for exact
+      commands.
+- [ ] **1.11** Full extraction, all 4 cohorts, sharded GPU jobs (job script
+      ready as of 1.11a above). Then the §13.4-12 split-population audit
+      and the §5.5 `resp_source` tally from the fill logs.
 - [ ] **1.12** Full Stage 1 sweep (90 runs) → inference → analysis.
 - [ ] **1.13** MantisPlus ablation: `phase0_mantis_plus_config.yaml` +
       `v2_mantis_plus_registry.yaml`, extraction, 60 runs (§5.1).
-- [ ] **1.14** `docs/MANTIS_EXPERIMENTS_GUIDE.md` — **START EARLIER than
-      this checklist position, per explicit user instruction 2026-09-07**:
-      begin as soon as there is something for the USER to actually submit
-      and run themselves (the training/inference scripts + job scripts,
-      roughly checklist 1.8-1.10), not after the full sweep. Mirrors
-      PhysioOmni's own guide precedent (started once its Stage 1 pipeline
-      existed and was verified, filled in incrementally after). Must
-      include: real data-directory layout, exact input/output shapes and
-      paths for every script, step-by-step commands with real examples
-      (not placeholders), and `gen_commands_mantis.py` usage once it
-      exists — written so the user can follow and run the pipeline
-      themselves without re-deriving anything from this plan doc. Written
-      incrementally as each subsequent step lands — real commands, real
-      measured numbers, real paths, updated in place rather than only
-      appended.
+- [x] **1.14** `docs/MANTIS_EXPERIMENTS_GUIDE.md` — **CREATED 2026-09-07**,
+      right after checklist 1.10, per the user's explicit instruction to
+      start it once real submittable/runnable steps exist. Mirrors
+      `docs/PHYSIOOMNI_EXPERIMENTS_GUIDE.md`'s structure (Overview, run
+      identity quick-reference table, one section per pipeline step with
+      real verified commands/outputs/paths, Checkpoint Resume, Job Run
+      History). Covers Steps 0-8: environment/checkpoint, extraction
+      (including the newly-written `extract_mantis_embeddings_gpu.sh` and
+      real sharded-submission examples), channel loader + dataset smoke
+      tests, config, the Pilots 1+2 windowing/layer decision, training,
+      inference, `gen_commands_mantis.py`, and the not-yet-run full sweep.
+      Every command shown has actually been run against real data at least
+      once — no placeholder examples. Will keep being updated in place as
+      checklist 1.11-1.13 land, same living-document convention as this
+      plan doc.
 
 ### Phase 2 — Stage 2 (LoRA)
 - [ ] **2.1** Extend `mantis_channel_loader.py` with the cache functions
