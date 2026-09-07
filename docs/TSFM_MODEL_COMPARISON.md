@@ -346,7 +346,132 @@ something inherent to PhysioOmni itself.
 
 ---
 
-## 4. What NOT to over-interpret
+## 4. Intrinsic architectural sources of GPU inefficiency (honest per-model take)
+
+**Draft for review — not yet proposed for any specific location in the paper.** This
+is a candidate short paragraph (or a compact table + a few sentences) for wherever the
+computational-cost narrative in §3 lands, if this material ships at all. It answers a
+narrower question than §3: not "why did the sweep stop where it stopped" but "what,
+specifically, about each model's own architecture — as opposed to how carefully we
+drove it — makes it waste GPU throughput." Only claims backed by a real measurement
+are stated as fact; everything else is flagged as structural inference.
+
+**Why this only matters for the LoRA condition.** In the frozen condition, a backbone
+is run once per subject to produce a saved embedding, then never touched again — a
+saved embedding is a saved embedding, and the compute-cost story in `npj_main.tex`
+(Extended Data Figure, the FLOPs-vs-AUROC power-law fit) is entirely about the
+lightweight downstream head, not the backbone. Backbone-level architectural
+inefficiency only becomes visible once a backbone is put through backpropagation —
+the LoRA condition in this comparison — because now the backbone's own native call
+size, tensor dimensions, and single-vs-multi-encoder structure determine how much of
+the GPU's actual tensor-core throughput is reachable.
+
+### SleepFM — no measured data; structurally the best-positioned of the three, unverified
+
+SleepFM is used **frozen throughout this entire project** — it was never LoRA
+fine-tuned here, so there is no measured TFLOP/s number for it to compare against
+OSF's ~2–19 or PhysioOmni's ~0.69. Anything said about its efficiency is a structural
+inference from its published design, not a measurement, and should be labeled as such
+if it goes in the paper:
+
+- One joint tensor across all 4 modality groups per call (same efficient
+  single-backbone pattern as OSF, not PhysioOmni's 4-way split).
+- 128-dim per-modality embedding — a power of 2, tensor-core-friendly, unlike
+  PhysioOmni's d=100.
+- A 300-second native chunk — 10× larger than OSF's 30-second unit, meaning each
+  backbone call does 10× more work before returning, which on the mechanism found for
+  OSF (short calls are overhead-bound, longer ones are compute-bound) would suggest
+  SleepFM reaches good GPU utilization at a much shorter position in a context sweep
+  than OSF does, if it were ever fine-tuned the same way. This is a plausible
+  prediction from the same mechanism that explained OSF's numbers, not a result.
+- One real, if minor, design quirk worth a sentence for completeness: incomplete
+  trailing 300-second chunks are dropped entirely (`extract_sleepfm_embeddings.py`),
+  so a small amount of every recording's tail is simply discarded — a data-completeness
+  cost, not a GPU-throughput one.
+
+### OSF — measured, and diagnosed: a granularity/batching problem, not an architecture problem
+
+- Single joint tensor across its 12 channels per call, well-shaped hidden dim
+  (d=768, a multiple of 8, plenty large) — neither of these is the source of the
+  measured inefficiency.
+- The actual issue is **granularity**: one native call spans only 30 seconds
+  (~46.8 GFLOP/epoch, a hand estimate), small enough that fixed per-call overhead
+  (kernel launch, the Python-side chunking loop) dominates wall time unless many
+  epochs are batched into one call. Measured: ~2.0 TFLOP/s at 30s (1 epoch/window)
+  vs. ~19.2 TFLOP/s at 80m (160 epochs/window) — GPU utilization jumps ~6.4× just from
+  having enough raw epochs available to batch together, no architecture change
+  involved.
+- **This is a real fault in the sense that the model provides no automatic path to
+  good utilization** — the default batching granularity (`chunk_batch_size=16`) left
+  a measured 3.28× of throughput on the table until a human noticed and raised it to
+  64. Nothing in OSF's own reference code surfaces this as a tunable a user should
+  check.
+- No cross-epoch attention anywhere in the backbone means all temporal aggregation
+  over a long context is 100% external (our own sequence head) — the backbone itself
+  never does anything smarter with more context than "run once per epoch, N times."
+  Every doubling of context is a literal doubling of backbone calls, with no internal
+  amortization the architecture provides on its own.
+
+### PhysioOmni — measured, and diagnosed: closer to a structural ceiling than a tuning problem
+
+- **No joint tensor** — four fully separate per-modality encoders (EEG/EOG/ECG/EMG),
+  each its own forward call, no shared computation and no cross-modal attention
+  anywhere in the pretrained weights. This is the most fragmented of the three designs:
+  even a perfectly-tuned batching scheme still pays for 4 separate kernel-launch groups
+  per window instead of 1.
+- **Hidden dims are small in absolute terms**: d=200 for EEG, d=100 for
+  EOG/ECG/EMG. Regardless of divisibility, matmuls this small struggle to fill an
+  H100's streaming multiprocessors or amortize kernel-launch latency — d=100 is also
+  not a multiple of 8, a minor additional misalignment stacked on top of the more
+  fundamental "just too small" problem.
+- **Measured consequence**: PhysioOmni's LoRA stage ran at **~0.69 TFLOP/s, ~3.6% of a
+  realistic fp32 ceiling** on the same class of GPU slice OSF was measured against —
+  roughly an order of magnitude below OSF's own already-imperfect ~19 TFLOP/s at long
+  context.
+- **The critical difference from OSF: the batching trick that fixed OSF's problem did
+  not fix PhysioOmni's.** A controlled `chunk_batch_size` 16-vs-64 A/B (run during
+  PhysioOmni's own embedding extraction, on matched SHHS batches) found **no
+  meaningful difference** — unlike OSF's confirmed 3.28×. That is real, if indirect,
+  evidence that PhysioOmni's bottleneck is the matmul size itself, not call-launch
+  overhead, and therefore not something batching alone can amortize away. This is a
+  materially harder problem to engineer around than OSF's.
+- A second, smaller compounding factor: missing-modality handling (a batch-level
+  present-mask, per-modality conditional branches) adds control-flow overhead that a
+  single-tensor model like OSF or SleepFM simply doesn't pay.
+- Separately from architecture: a real 15-day stall came from an operational
+  GPU-billing misconfiguration, not from anything above — see §3.2. Don't let that
+  incident get folded into "the architecture is inefficient"; it's a distinct,
+  non-architectural cause that happened to compound with the real architectural one.
+
+### Mantis — no data yet, flagged for when it lands
+
+Not implemented in this repo yet. Two things worth checking once it is, for
+consistency with the above: (1) its native context length is short (built and
+pretrained as a lightweight, ~8M-parameter classification-native model), so it will
+likely face the same "granularity vs. batching" question as OSF once fine-tuned —
+worth measuring rather than assuming either way; (2) since it is pretrained on
+synthetic, not physiological, data, its useful hidden dims/tensor shapes weren't
+scoped against real PSG signal characteristics at all — an unknown, not a predicted
+problem, until measured.
+
+### Honest opinion, one paragraph, for the paper if this ships
+
+None of these backbones were designed with this project's specific fine-tuning
+workload — many short raw epochs, batched into long windows — in mind, and all three
+leave real throughput on the table if driven naively. But the failure modes are not
+equivalent, and the paper should say so rather than treating "the LoRA sweep is
+incomplete" as one uniform story. **OSF's inefficiency is a granularity/batching
+problem**: real, and it cost real project time to discover, but it is fixable by
+tuning, and once fixed reaches respectable GPU utilization at long context.
+**PhysioOmni's inefficiency looks structural**: its four-encoder, small-hidden-dim
+design has a utilization ceiling that the same batching fix does not move, which
+points to a property of the released architecture rather than of how carefully it was
+driven. If the paper wants one sentence: OSF's GPU-cost problem is an engineering
+problem; PhysioOmni's looks like an architecture problem.
+
+---
+
+## 5. What NOT to over-interpret
 
 - Neither model's `mean_pool` head was ever run (Stage 1 or Stage 2), so H3-style
   "does the temporal-head advantage over MeanPool replicate under a different
@@ -363,9 +488,9 @@ something inherent to PhysioOmni itself.
 
 ---
 
-## 5. Suggestions for the paper
+## 6. Suggestions for the paper
 
-### 5.1 Framing: robustness/generalization check, not a leaderboard
+### 6.1 Framing: robustness/generalization check, not a leaderboard
 
 `npj_supplementary.tex` already has a section
 (`sec:supp-sota`, "Scope of Comparisons with Prior Work") explaining why the paper
@@ -391,7 +516,7 @@ say something true.
 language that implies more completeness than exists): something like *"Robustness to
 encoder choice"* or *"Generalization across frozen encoders."*
 
-### 5.2 Where it goes
+### 6.2 Where it goes
 
 - **Main text**: a short new Results subsection, placed after
   §"Full-channel configuration helps cardiorespiratory task" /
@@ -415,7 +540,7 @@ encoder choice"* or *"Generalization across frozen encoders."*
   than creating a disconnected new one — that section is already the paper's designated
   place for "how do we relate to other models" discussion.
 
-### 5.3 Which caveat must appear next to which number
+### 6.3 Which caveat must appear next to which number
 
 | Number | Required caveat |
 |---|---|
@@ -426,7 +551,7 @@ encoder choice"* or *"Generalization across frozen encoders."*
 | Any OSF-LoRA number at 240m | Does not exist — do not show an empty/interpolated cell |
 | Any cross-model "OSF vs. PhysioOmni" framing | Invalid — they were compared against different SleepFM baselines (full- vs. reduced-channel), never against each other under matched conditions |
 
-### 5.4 Where Mantis slots in later
+### 6.4 Where Mantis slots in later
 
 Every table in §1 and the stopping-criteria table in §3.3 has a placeholder
 column/row ready for Mantis. Two things worth deciding now so Mantis drops in cleanly:
