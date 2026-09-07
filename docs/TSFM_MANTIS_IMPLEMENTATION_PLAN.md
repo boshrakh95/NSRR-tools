@@ -2403,8 +2403,58 @@ the next one starts. Do not chain steps.**
       was too small to exercise padding or K-sampling; this test uses 100
       real subjects plus a synthetic check for the one branch real data
       structurally can't reach).
-- [ ] **1.8** `train_mantis_context_sweep.py` (§10) + job script; CPU smoke
-      test on the pilot subset, run to `Status: SUCCESS`. **User checkpoint.**
+- [x] **1.8** `train_mantis_context_sweep.py` (§10) + job script; CPU smoke
+      test on the pilot subset, run to `Status: SUCCESS`. DONE 2026-09-07.
+      Forked `train_physioomni_context_sweep.py` per §10: identical function
+      boundaries (`run_epoch`, `compute_metrics`, `compute_monitor_metric`,
+      `append_to_summary`, `_classify_failure`) preserved unmodified so a
+      future `train_mantis_lora.py` can import them, only the dataset import
+      and `--wandb-project` default changed.
+
+      **Two deliberate deviations from the template, both required by §4**:
+      (1) TF32 enabled at the top of `main()` (§4.2) — `run_epoch()`'s
+      autocast/`GradScaler` code is left in place unmodified (needed for
+      Stage 2 reuse) but `scaler` is hardcoded to `None` regardless of
+      config, since `phase0_mantis_config.yaml` already sets
+      `training.mixed_precision: false` and TF32 does the speedup instead;
+      (2) achieved-TFLOP/s instrumented every epoch (§4.1) via a new
+      `_estimate_head_flops_per_sample()` — a standard parameter-count-based
+      FLOP formula (2 FLOPs/MAC over the head's matmul dimensions) for
+      whichever head type is configured. **Correctness-verified, not just
+      plausible**: for the LSTM head at N=1 (30s), the formula's output
+      (6,553,600 FLOPs fwd-only for hidden_dim=128) equals exactly
+      `2 × N × total_LSTM_weight_params`, matching the real printed
+      trainable-param count (3,279,362, hand-verified against the standard
+      `nn.LSTM` parameter-count formula) — the estimate isn't an independent
+      guess, it's derived the same way the real weights are counted. Skipped
+      (logged as N/A) for `full_night` (N varies per sample within a batch)
+      and for non-CUDA devices (the "% of H100 TF32 peak" denominator is
+      meaningless on CPU) — both cases are labeled explicitly in the log
+      rather than printing a misleading near-zero number.
+
+      Added an `--embedding-dir` CLI override (same pattern as 1.7's test
+      script) so the required CPU smoke test could run now, since production
+      extraction (checklist 1.11) hasn't happened yet. **Smoke-tested against
+      the same 100-subject Pilot 1/2 population as 1.7**
+      (`mantis_pilot12/D_Llast_combined/`): LSTM head at 30s context (full
+      69/14/15 split, 40-epoch budget, early-stopped at epoch 21) and
+      Transformer head at 10m context (`--limit 10`, exercises the CLS-token
+      + positional-encoding + key-padding-mask path) both completed cleanly
+      with `Status: SUCCESS`, correct metrics.json/summary.csv/
+      training_curves.csv written, checkpoints saved and reloaded correctly
+      for final eval. (The transformer run overfit on 10 subjects as
+      expected — a code-path check, not a real result.)
+
+      `jobs/train_mantis_context_sweep_gpu.sh` forked from
+      `train_physioomni_context_sweep_gpu.sh`: same auto-resume-on-timeout
+      mechanism (SIGUSR1 120s before wall time → resubmit via `sbatch "$0"`,
+      finds `resume.pt`), same STARTED/SUCCESS/FAILED/TIMEOUT_REQUEUED status
+      JSONL convention, `def-forouzan_gpu` account (this is now a real
+      submittable production script, not a debug/pilot job), plus a new
+      `EMBEDDING_DIR` env-var passthrough for the same pilot-population
+      override. Not yet run as an actual sbatch job (no GPU need yet — CPU
+      smoke test already proved correctness); will be exercised for real
+      once 1.11's production extraction exists.
 - [ ] **1.9** `infer_mantis_subject_windows.py` + job script; CPU smoke test
       against 1.8's checkpoint; verify the parquet schema and zero NaN.
       **User checkpoint.**

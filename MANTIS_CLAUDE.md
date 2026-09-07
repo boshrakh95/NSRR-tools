@@ -628,3 +628,44 @@ Append dated entries here as work happens (newest last).
   smoke test on the pilot subset). Per the user's 2026-09-07 instruction,
   `docs/MANTIS_EXPERIMENTS_GUIDE.md` should be started once 1.8-1.10 exist
   (real submittable/runnable scripts), not deferred to the end.
+
+- **2026-09-07 — Checklist 1.8 done**: `train_mantis_context_sweep.py` +
+  `jobs/train_mantis_context_sweep_gpu.sh`. Forked
+  `train_physioomni_context_sweep.py` — same function boundaries kept
+  unmodified (`run_epoch`, `compute_metrics`, etc.) for future Stage 2
+  reuse, only the dataset import and `--wandb-project` default changed.
+
+  Two required deviations from the template (plan §4): TF32 enabled at
+  startup instead of autocast/fp16 (config already had
+  `mixed_precision: false`; `scaler` is now hardcoded `None` regardless of
+  config to make that invariant explicit); and achieved-TFLOP/s logged
+  every epoch via a new head-FLOP estimator. Verified the estimator isn't
+  just plausible but actually correct: for the LSTM head at N=1 it gives
+  exactly `2 × N × total_weight_params`, matching the real printed
+  trainable-param count (3,279,362) against the standard `nn.LSTM`
+  parameter-count formula by hand. Logged as N/A (not a misleading
+  near-zero) for full_night and for non-CUDA devices, since the "% of H100
+  peak" comparison doesn't apply to either.
+
+  CPU-smoke-tested against the same 100-subject Pilot 1/2 population used
+  in 1.7 (production extraction, checklist 1.11, hasn't run yet) — LSTM
+  head/30s (full split, early-stopped epoch 21) and Transformer head/10m
+  (10-subject limit, exercises CLS+positional-encoding+masking) both
+  reached `Status: SUCCESS` with correct outputs. `jobs/
+  train_mantis_context_sweep_gpu.sh` forked from PhysioOmni's own job
+  script — same auto-resume-on-timeout and status-JSONL machinery,
+  `def-forouzan_gpu` (a real production script now, not a debug job) —
+  not yet run as an actual sbatch job since there's no GPU need until
+  real data exists.
+
+  **What this step means in plain terms**: checklist 1.7 gave us a way to
+  hand context windows of Mantis embeddings to a model; this step gives us
+  the model training loop itself — the code that actually takes those
+  windows, trains a small classifier (LSTM/Transformer/MeanPool) on top of
+  the frozen Mantis embeddings, and reports accuracy/AUROC per context
+  length. It's "frozen backbone, train a head" — the entire Stage 1
+  comparison this baseline exists to run. Nothing here touches GPU/Mantis
+  backbone compute directly (that already happened during extraction,
+  checklist 1.6/1.11); this step is cheap by design. Next: checklist 1.9,
+  the inference script that turns a trained checkpoint into per-window
+  predictions for the paper's actual result tables.
