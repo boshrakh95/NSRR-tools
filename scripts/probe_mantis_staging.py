@@ -82,50 +82,57 @@ def load_subject_epochs(embedding_path: Path, stage_path: Path):
     return emb, stages[:t_eff]
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        description="Single-epoch sleep-staging probe — a Pilot 1/2 engineering "
-                    "instrument, NOT a paper task (plan §13.4)."
-    )
-    parser.add_argument("--embedding-dir", required=True,
-                        help="Root dir of {dataset}/{subject_id}.npy Mantis embeddings")
-    parser.add_argument("--stage-dir", default="/scratch/boshra95/psg",
-                        help="Root of {dataset}/derived/annotations/{subject_id}_stages.npy")
-    parser.add_argument("--datasets", nargs="+", default=["apples", "shhs"])
-    parser.add_argument("--limit-per-dataset", type=int, default=None,
-                        help="Debug: cap subjects per dataset")
-    parser.add_argument("--test-fraction", type=float, default=0.3)
-    parser.add_argument("--split-seed", type=int, default=42)
-    args = parser.parse_args()
+def run_probe(
+    embedding_dir: str,
+    stage_dir: str = "/scratch/boshra95/psg",
+    datasets: list[str] = ("apples", "shhs"),
+    limit_per_dataset: int | None = None,
+    test_fraction: float = 0.3,
+    split_seed: int = 42,
+    quiet: bool = False,
+) -> dict:
+    """Reusable core of the probe — importable by checklist 1.6's pilot
+    script (which calls this once per one of its 12 embedding-variant
+    directories) as well as by this file's own CLI. Keeping this as one
+    function means the multi-variant pilot run and the standalone
+    single-directory CLI can never silently drift apart.
 
-    embedding_root = Path(args.embedding_dir)
-    stage_root = Path(args.stage_dir)
+    Returns {"weighted_f1": float, "kappa": float, "n_subjects": int,
+             "n_skipped": int, "n_train_epochs": int, "n_test_epochs": int,
+             "n_train_subj": int, "n_test_subj": int, "flat_dim": int}
+    or raises SystemExit/ValueError on the same real-error conditions the
+    CLI already had (too few subjects, empty split, mismatched flat_dim).
+    """
+    _print = (lambda *a, **k: None) if quiet else print
+
+    embedding_root = Path(embedding_dir)
+    stage_root = Path(stage_dir)
 
     subjects = []  # (dataset, subject_id)
-    for ds in args.datasets:
+    for ds in datasets:
         ds_dir = embedding_root / ds
         if not ds_dir.exists():
-            print(f"WARNING: {ds_dir} does not exist, skipping {ds}")
+            _print(f"WARNING: {ds_dir} does not exist, skipping {ds}")
             continue
         files = sorted(p.stem for p in ds_dir.glob("*.npy"))
-        if args.limit_per_dataset:
-            files = files[: args.limit_per_dataset]
+        if limit_per_dataset:
+            files = files[:limit_per_dataset]
         subjects.extend((ds, sid) for sid in files)
 
     if len(subjects) < 4:
         raise SystemExit(
             f"Only {len(subjects)} subjects found under {embedding_root} for "
-            f"{args.datasets} — need more to run a meaningful subject-wise split."
+            f"{datasets} — need more to run a meaningful subject-wise split."
         )
-    print(f"Found {len(subjects)} candidate subjects across {args.datasets}")
+    _print(f"Found {len(subjects)} candidate subjects across {datasets}")
 
     # Subject-wise split (same rng convention as the rest of this project —
     # np.random.default_rng(split_seed).shuffle() — so this is reproducible
     # and comparable across variant runs in checklist 1.6).
-    rng = np.random.default_rng(args.split_seed)
+    rng = np.random.default_rng(split_seed)
     order = np.arange(len(subjects))
     rng.shuffle(order)
-    n_test = max(1, int(round(len(subjects) * args.test_fraction)))
+    n_test = max(1, int(round(len(subjects) * test_fraction)))
     test_positions = set(order[:n_test].tolist())
 
     X_train, y_train, X_test, y_test = [], [], [], []
@@ -146,11 +153,11 @@ def main():
         # plausible staging score anyway, so a sane probe result is stronger
         # evidence than a NaN/variance check alone, plan §13.4).
         if np.isnan(emb).any() or np.isinf(emb).any():
-            print(f"  SKIP {ds}/{sid}: NaN/Inf in embedding")
+            _print(f"  SKIP {ds}/{sid}: NaN/Inf in embedding")
             n_skipped += 1
             continue
         if (emb.std(axis=0) < 1e-6).all():
-            print(f"  SKIP {ds}/{sid}: degenerate (near-zero variance) embedding")
+            _print(f"  SKIP {ds}/{sid}: degenerate (near-zero variance) embedding")
             n_skipped += 1
             continue
 
@@ -173,20 +180,20 @@ def main():
         raise SystemExit(
             f"Empty train or test split after loading (train_subj={n_train_subj}, "
             f"test_subj={n_test_subj}, skipped={n_skipped}) — need more subjects "
-            f"or a smaller --test-fraction."
+            f"or a smaller test_fraction."
         )
 
     X_train = np.concatenate(X_train); y_train = np.concatenate(y_train)
     X_test = np.concatenate(X_test); y_test = np.concatenate(y_test)
 
-    print(
+    _print(
         f"Loaded {n_train_subj + n_test_subj} subjects ({n_skipped} skipped) — "
         f"train: {len(y_train)} epochs from {n_train_subj} subjects, "
         f"test: {len(y_test)} epochs from {n_test_subj} subjects, "
         f"flat_dim={flat_dim_seen}"
     )
     if n_test_subj < 5:
-        print(
+        _print(
             f"⚠️  Only {n_test_subj} held-out test subject(s) — fine for a code "
             f"smoke test (checklist 1.5), NOT enough for a real Pilot 1/2 "
             f"decision (checklist 1.6 needs ~100 subjects, plan §13.4)."
@@ -202,13 +209,52 @@ def main():
     weighted_f1 = f1_score(y_test, y_pred, average="weighted", zero_division=0)
     kappa = cohen_kappa_score(y_test, y_pred)
 
-    print(f"\nweighted F1: {weighted_f1:.4f}")
-    print(f"Cohen's kappa: {kappa:.4f}")
+    _print(f"\nweighted F1: {weighted_f1:.4f}")
+    _print(f"Cohen's kappa: {kappa:.4f}")
+
+    return {
+        "weighted_f1": float(weighted_f1),
+        "kappa": float(kappa),
+        "n_subjects": n_train_subj + n_test_subj,
+        "n_skipped": n_skipped,
+        "n_train_epochs": int(len(y_train)),
+        "n_test_epochs": int(len(y_test)),
+        "n_train_subj": n_train_subj,
+        "n_test_subj": n_test_subj,
+        "flat_dim": flat_dim_seen,
+    }
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Single-epoch sleep-staging probe — a Pilot 1/2 engineering "
+                    "instrument, NOT a paper task (plan §13.4)."
+    )
+    parser.add_argument("--embedding-dir", required=True,
+                        help="Root dir of {dataset}/{subject_id}.npy Mantis embeddings")
+    parser.add_argument("--stage-dir", default="/scratch/boshra95/psg",
+                        help="Root of {dataset}/derived/annotations/{subject_id}_stages.npy")
+    parser.add_argument("--datasets", nargs="+", default=["apples", "shhs"])
+    parser.add_argument("--limit-per-dataset", type=int, default=None,
+                        help="Debug: cap subjects per dataset")
+    parser.add_argument("--test-fraction", type=float, default=0.3)
+    parser.add_argument("--split-seed", type=int, default=42)
+    args = parser.parse_args()
+
+    result = run_probe(
+        embedding_dir=args.embedding_dir,
+        stage_dir=args.stage_dir,
+        datasets=args.datasets,
+        limit_per_dataset=args.limit_per_dataset,
+        test_fraction=args.test_fraction,
+        split_seed=args.split_seed,
+    )
     print(
-        "(Reference: Gnassounou et al. 2025 report Mantis at 75-89 weighted F1 "
-        "on real NSRR-family sleep-staging datasets, plan §13.4 — this smoke "
-        "test's subject count is far too small to expect that range; checklist "
-        "1.6's ~100-subject run is what actually informs the Pilot 1/2 decision.)"
+        "\n(Reference: Gnassounou et al. 2025 report Mantis at 75-89 weighted F1 "
+        "on real NSRR-family sleep-staging datasets, plan §13.4 — a small subject "
+        f"count [{result['n_subjects']} here] is far too small to expect that "
+        "range; checklist 1.6's ~100-subject run is what actually informs the "
+        "Pilot 1/2 decision.)"
     )
 
 

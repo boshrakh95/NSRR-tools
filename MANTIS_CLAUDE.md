@@ -533,6 +533,61 @@ Append dated entries here as work happens (newest last).
   earlier debugging — verified numerically identical to an
   already-confirmed-correct run, kept rather than deleted). Real-data run:
   correct `flat_dim=3072`, correct subject-wise split, correct
-  too-few-subjects warning. **User checkpoint — test via VSCode
-  launch.json "🦗 Mantis Phase1 Step5: Staging Probe" before continuing
-  to 1.6 (the real ~100-subject, 12-variant Pilot 1/2 run).**
+  too-few-subjects warning. **User confirmed, proceeded to 1.6.**
+
+  **Phase 1.6 — Pilots 1+2 run for real, 2026-09-07. BOTH windowing and
+  output-layer decisions now EMPIRICALLY CONFIRMED, not just reasoned
+  about.** New script `scripts/pilot_mantis_windowing_layer.py` runs 3
+  windowing variants (D, D-interp, B) and captures all 4 (layer, token)
+  combinations from ONE forward pass per variant, via a manual replication
+  of `TransformerUnit.forward()`'s internals (`MantisV1.forward()` itself
+  only returns one combination per call). **Verified bit-identical
+  (max abs diff 0.0) against the model's own forward() for all 4
+  combinations individually, on the real checkpoint**, before trusting it
+  on any data — then verified the full pipeline end-to-end on a tiny
+  4-subject CPU run before spending real GPU time.
+
+  Real run: 100 subjects (50 APPLES + 50 SHHS), `def-egranger_gpu`,
+  `1g.10gb` MIG slice, ~61 min total (extraction ~39 min, scoring ~20 min
+  — scoring was slower than expected due to a real `lbfgs` non-convergence
+  warning at `max_iter=1000`; doesn't affect the relative comparison since
+  it applies identically to all 12 variants, but would matter if this
+  probe is ever reused at larger scale). Per-subject extraction cost
+  matched Pilot 3's prediction closely: D 8.0s, Dinterp 7.7s, B 7.4s.
+
+  **Full 12-row table** (weighted F1 / kappa, 100 subjects, 30 held out):
+
+  | variant | layer | token | F1 | kappa |
+  |---|---|---|---:|---:|
+  | D | L2 | cls | 0.7331 | 0.6164 |
+  | D | L2 | combined | 0.7158 | 0.5920 |
+  | D | Llast | cls | 0.7250 | 0.6072 |
+  | **D** | **Llast** | **combined** | **0.7125** | **0.5889** |
+  | Dinterp | L2 | cls | 0.7444 | 0.6297 |
+  | Dinterp | L2 | combined | 0.7236 | 0.6022 |
+  | Dinterp | Llast | cls | 0.7281 | 0.6094 |
+  | Dinterp | Llast | combined | 0.7106 | 0.5832 |
+  | B | L2 | cls | 0.7242 | 0.6076 |
+  | B | L2 | combined | 0.7177 | 0.5955 |
+  | B | Llast | cls | 0.7334 | 0.6224 |
+  | B | Llast | combined | 0.7029 | 0.5793 |
+
+  (Bold row = the decided configuration, `combined @ last` on Option D,
+  `input_dim=3072`.)
+
+  **Decisions**: Windowing — D vs B (combined@last): gap -0.0096, escape
+  hatch needs >0.15 → **Option D CONFIRMED**. D vs D-interp: D higher by
+  0.0019, within the tie-break band → plain D wins either way. Output
+  layer — @2 vs @last (Option D): gap 0.0033, escape hatch needs >0.08 →
+  **combined @ last CONFIRMED**. **All 12 variants span only 0.0415
+  weighted F1 (0.7029-0.7444)** — none of these implementation choices
+  moved the needle much; the cross-model fairness reasoning behind both
+  decisions was never fighting the data.
+
+  Real embeddings for all 100 subjects × 12 variants kept at
+  `/scratch/boshra95/psg/unified/embeddings/mantis_pilot12/` — real GPU
+  compute, and the 11 not-taken rows are the paper's supplementary
+  "what we gave up" numbers (§3.3, §13.1/§13.2). **This closes Pilots 1
+  and 2 entirely — the embedding format (Option D, `combined @ last`,
+  `input_dim=3072`) is now empirically confirmed for both stages, not
+  just decided. Next: checklist 1.7, `mantis_context_window_dataset.py`.**

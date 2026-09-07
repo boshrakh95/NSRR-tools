@@ -1739,6 +1739,16 @@ and say so explicitly in Methods. Anything smaller than that, take D.
 D vs D-interp: take whichever scores higher; if within ~0.01, take plain **D**
 (no PE modification at all is the simpler thing to describe).
 
+#### ✅ RESOLVED 2026-09-07 — real 100-subject run, checklist 1.6
+
+`combined @ last` (the decided output setting, §3.3): **D = 0.7125 weighted
+F1, B = 0.7029, gap = −0.0096** — nowhere near the 0.15 escape-hatch
+threshold. **D vs D-interp: D = 0.7125, D-interp = 0.7106, D higher by
+0.0019** — within the tie-break band, plain D wins by the stated rule
+either way. **Windowing decision CONFIRMED: Option D**, empirically, not
+just by the fairness argument that originally chose it. Full 12-row table
+and per-run detail in `MANTIS_CLAUDE.md`.
+
 ---
 
 ### 13.2 Pilot 2 — which layer, which output token?
@@ -1785,6 +1795,22 @@ would mean the last layer is genuinely broken at 241 tokens rather than merely
 suboptimal, and it becomes a *finding about sequence-length extrapolation*
 worth acting on. Then we would switch, use layer 2 for **both** checkpoints
 (not per-checkpoint layers), and state the comparability cost plainly.
+
+#### RESOLVED 2026-09-07 -- real 100-subject run, checklist 1.6
+
+Option D, combined output: **@2 = 0.7158 weighted F1, @last = 0.7125, gap =
+0.0033** -- nowhere near the 0.08 escape-hatch threshold, and consistent with
+the authors' own +/-0.02 spread. **Output-layer decision CONFIRMED:
+`combined @ last`.** The @2 number (0.7158) is the paper's supplementary
+"what we gave up" statistic per Sec 3.3's own framing -- recorded here and in
+`MANTIS_CLAUDE.md`'s full 12-row table, never used to override the
+cross-model fairness argument that decided this in the first place.
+
+**Reassuring finding, stated plainly**: all 12 variants scored within a
+0.0415 weighted-F1 band (0.7029-0.7444) -- none of windowing, layer, or
+token choice moved the needle much at this probe's resolution. This means
+the fairness-based reasoning behind both decisions was never in tension
+with the data; it would have made the same call either way.
 
 ---
 
@@ -2297,13 +2323,41 @@ the next one starts. Do not chain steps.**
       Mantis** — it's the expected consequence of a 3-subject training set,
       exactly what the warning says. **User checkpoint** — test via VSCode
       launch.json "🦗 Mantis Phase1 Step5: Staging Probe".
-- [ ] **1.6** Run **Pilots 1 and 2 in one job** (§13.1/§13.2): three extraction
-      passes (D, D-interp, B), each capturing layer-2 *and* layer-6 output in
-      both `cls` and `combined` form → 12 variants scored by one probe.
-      Confirm Option D and `combined @ last`, or trigger an escape hatch.
-      Record the full 12-row table in `MANTIS_CLAUDE.md` either way — the
-      not-taken rows are the paper's supplementary number (§13.2).
-      **User checkpoint — this confirms the embedding format for both stages.**
+- [x] **1.6** Run **Pilots 1 and 2 in one job** (§13.1/§13.2) — **done and
+      CONFIRMED, 2026-09-07, real 100-subject GPU run (50 APPLES + 50 SHHS,
+      def-egranger_gpu, 1g.10gb MIG slice, ~61 min total).**
+
+      Built `scripts/pilot_mantis_windowing_layer.py`'s `dual_layer_forward()`
+      to capture BOTH layer-2 and layer-last hidden states, in BOTH cls and
+      combined form, from ONE forward pass per windowing variant — required
+      manually replicating `TransformerUnit.forward()`'s cls-prepend/
+      positional-encoding/layer-loop logic, since `MantisV1.forward()` only
+      returns one (layer, token) combination per call. **Verified
+      bit-identical (max abs diff 0.0) against calling the model's own
+      forward() for each of the 4 combinations separately, on the real
+      Mantis-8M checkpoint**, before trusting it on any real data. Then
+      verified the full pipeline (3 variants × 4 captures × scoring) on a
+      tiny 4-subject CPU run — all 12 extractions and scorings succeeded,
+      the escape-hatch decision logic computed correctly — before spending
+      real GPU time on the full 100-subject run.
+
+      **Both decisions CONFIRMED, not just reasoned about**:
+      - **Windowing: Option D.** `combined@last`: D=0.7125, B=0.7029
+        (gap -0.0096, escape hatch needs >0.15). D vs D-interp: D=0.7125,
+        D-interp=0.7106 (D higher by 0.0019, within the tie-break band).
+      - **Output layer: `combined @ last`.** @2=0.7158, @last=0.7125
+        (gap 0.0033, escape hatch needs >0.08).
+      - **All 12 variants scored within a 0.0415 weighted-F1 band
+        (0.7029-0.7444)** — none of these choices moved the needle much;
+        the fairness-based reasoning was never in tension with the data.
+
+      Full 12-row table in `MANTIS_CLAUDE.md`. Real embeddings for all 100
+      pilot subjects × 12 variants kept at
+      `/scratch/boshra95/psg/unified/embeddings/mantis_pilot12/` (not
+      deleted — real GPU compute, and the not-taken rows are the paper's
+      supplementary "what we gave up" numbers). **User checkpoint — the
+      embedding format (Option D, `combined @ last`, `input_dim=3072`) is
+      now confirmed for both stages, not just decided.**
 - [ ] **1.7** `mantis_context_window_dataset.py` (§8) +
       `test_mantis_context_window_dataset.py` — on ≥10 subjects/cohort (the
       3-subject population PhysioOmni used was too small to exercise the
