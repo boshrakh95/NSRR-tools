@@ -760,3 +760,44 @@ Append dated entries here as work happens (newest last).
   MANTIS_EXPERIMENTS_GUIDE.md request anticipated. Next: checklist 1.11,
   the real full-population extraction (sharded GPU jobs across all 4
   cohorts), which can now start immediately.
+
+**2026-09-07 — Phase 2 (Stage 2, LoRA) implementation starts, in parallel
+with the user submitting real Phase 1 production jobs.** Two standing
+instructions for this phase: MantisPlus ablation (checklist 1.13) is
+deferred until explicitly asked for later, not dropped; and — since LoRA
+fine-tuning runs the full backbone per step and is real GPU compute, unlike
+Stage 1's frozen-embedding head training — every Phase 2 step should
+actively apply this project's hard-won efficiency lessons (TF32,
+achieved-TFLOP/s from day one, measured `chunk_batch_size`, gradient
+accumulation, tokgen checkpointing) rather than write-naive-then-optimize.
+
+- **Checklist 2.1 done**: extended `mantis_channel_loader.py` with the 5
+  Stage 2 raw-signal cache functions (`cache_path_for`, `save_signal_cache`,
+  `load_signal_cache_window`, `get_cached_t_epochs`, `cache_exists`).
+  Reused two real lessons from PhysioOmni's own cache build rather than
+  re-deriving them: atomic `meta.json` write via temp-file+`os.replace`
+  (PhysioOmni had SIGTERM/OOM-killed jobs leave zero-byte meta.json files
+  that broke training), and direct seek+read instead of `mmap_mode="r"`
+  (PhysioOmni measured mmap as *slower* on this cluster's Lustre
+  filesystem for this access pattern). Mantis's version is simpler than
+  PhysioOmni's — one fixed-shape `[T,6,3840]` file per subject instead of
+  several ragged per-channel files, so a plain function suffices, no
+  custom lazy-reader class needed.
+
+  Added a real round-trip test (`test_mantis_channel_loader.py
+  --test-cache`, synthetic 137-epoch array): all 5 functions, 5 different
+  window reads (byte-identical to direct slicing), the out-of-range-window
+  error path, the incomplete-cache (no meta.json) path, and zero leftover
+  temp files — all passed first try, including the private numpy API this
+  relies on (untested in `mantis_env` specifically before now).
+
+  **What this step means in plain terms**: Stage 1 reads pre-extracted
+  embeddings for training; Stage 2 (LoRA) needs to feed the actual raw
+  signal through the backbone during training, since the backbone itself
+  is being fine-tuned. Reading raw signal directly from the compressed
+  HDF5 files on every training step would be slow (gzip decompression on
+  the critical path, every epoch, every experiment) — this cache step
+  builds the plumbing for a fast, pre-sliced, uncompressed copy of the raw
+  signal that training will read from instead. This step only builds and
+  tests the low-level read/write functions; the actual cache-building job
+  (checklist 2.2) that populates it from real subjects comes next.

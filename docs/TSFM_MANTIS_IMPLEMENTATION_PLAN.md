@@ -2607,8 +2607,56 @@ the next one starts. Do not chain steps.**
       plan doc.
 
 ### Phase 2 — Stage 2 (LoRA)
-- [ ] **2.1** Extend `mantis_channel_loader.py` with the cache functions
-      (§7, §14.3); round-trip test. **User checkpoint.**
+
+**Efficiency mandate (user instruction, 2026-09-07)**: LoRA fine-tuning
+runs the full Mantis backbone per training step — real GPU compute, unlike
+Stage 1's frozen-embedding head training. "In all steps, we want as
+efficient and fast code as possible to be able to run a few jobs at
+least." Every Phase 2 step below applies the performance lessons already
+paid for on this project (TF32, achieved-TFLOP/s instrumented from day
+one, measured-not-assumed `chunk_batch_size`, gradient-accumulation to
+avoid OOM without shrinking effective batch, tokgen checkpointing as the
+first memory-mitigation rung per §4.3) rather than a naive-then-optimize
+pass.
+
+- [x] **2.1** Extend `mantis_channel_loader.py` with the cache functions
+      (§7, §14.3); round-trip test. **DONE 2026-09-07.** Added
+      `cache_path_for`, `save_signal_cache`, `load_signal_cache_window`,
+      `get_cached_t_epochs`, `cache_exists`, matching §7's exact signatures.
+      Two design choices carried over deliberately from PhysioOmni's own
+      cache, both from real prior failures rather than first-principles
+      guessing: (1) `meta.json` is a separate small sibling file, written
+      LAST, only via temp-file + `os.replace()` — PhysioOmni found
+      SIGTERM/OOM-killed jobs leaving zero-byte `meta.json` files that
+      broke training with `JSONDecodeError`; (2) `load_signal_cache_window`
+      uses a direct seek+read via `np.lib.format.read_magic`/
+      `_read_array_header` (the same private-API pattern PhysioOmni's own
+      `_NpySliceReader` already uses successfully), NOT `mmap_mode="r"` —
+      PhysioOmni measured mmap as *slower* on this cluster's Lustre
+      filesystem for this exact access pattern (0.68x-0.32x), a
+      counterintuitive result worth not re-litigating.
+
+      Mantis's version is simpler than PhysioOmni's: ONE fixed-shape
+      `[T,6,3840]` file per subject (not multiple ragged per-channel
+      files), so no custom lazy-reader class is needed — a plain function
+      returning a materialized `[n,6,3840]` array is enough, and the
+      epoch-major layout means any N-epoch window is exactly one
+      contiguous byte range.
+
+      **Round-trip tested for real** (`scripts/test_mantis_channel_loader.py
+      --test-cache`, synthetic 137-epoch array — a deliberately non-round
+      number to catch off-by-ones): `cache_exists` correctly False before
+      write / True after, `get_cached_t_epochs` correct, window reads at 5
+      different `(e0, n)` combinations (including whole-array and
+      last-epoch-only) byte-identical to direct slicing of the
+      float16-cast source, an out-of-range window correctly raises
+      `ValueError` instead of silently returning short data, an
+      `.npy`-only-no-`meta.json` cache correctly reads as NOT cached, and
+      zero leftover temp files. All checks passed on the first real run —
+      the private numpy API (untested in `mantis_env` specifically before
+      this) worked correctly, not just assumed to transfer from
+      `physioomni_env`. Confirmed the pre-existing (non-cache) channel-loader
+      tests still pass after this edit.
 - [ ] **2.2** `precompute_mantis_raw_signal_cache.py` + CPU job. Check
       `diskusage_report` first. Build cohort by cohort; time the first shard
       before budgeting the rest. **User checkpoint.**

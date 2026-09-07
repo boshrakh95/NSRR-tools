@@ -47,6 +47,7 @@ subject — see `load_subject_channels`'s docstring.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import h5py
@@ -303,3 +304,132 @@ def load_mantis_backbone(
         raise ValueError(f"Unknown pe_mode: {pe_mode!r} (expected 'extrapolate' or 'interpolate')")
 
     return net.eval().to(device)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Stage 2 raw-signal cache (plan §7, §14.3)
+# ─────────────────────────────────────────────────────────────────────────────
+# One fixed-shape [T_epochs, 6, 3840] float16 array per subject, EPOCH-MAJOR
+# (T outermost, so one epoch's full 6-channel block — 6*3840 float16 =
+# 46,080 bytes — is contiguous). A window of N consecutive epochs is
+# therefore one contiguous byte range: 1 open, 1 seek, 1 read (plan §4.9) —
+# unlike OSF's channel-major [12, n_samples] cache, which needs 12 strided
+# reads for the same window.
+#
+# meta.json is a SEPARATE small sibling file ({subject_id}.meta.json, not
+# embedded in the array), written LAST and only via temp-file + os.replace.
+# This is the same real-failure-mode fix PhysioOmni's own cache needed
+# (found 2026-08-20 there: SIGTERM/OOM-killed precompute jobs left
+# truncated zero-byte meta.json files that a plain `open(...,"w")` would
+# have produced, which then broke training with JSONDecodeError) — applied
+# here from the start rather than discovered after a real job hits it.
+# Because meta.json is written only after the .npy is already fully in
+# place, cache_exists() checking meta.json's presence AND that it parses
+# is sufficient to guarantee the array write also completed — no need to
+# separately verify the (large) array file itself.
+
+def cache_path_for(cache_dir, dataset: str, subject_id: str) -> Path:
+    """{cache_dir}/{dataset}/{subject_id}.npy — the raw-signal array path."""
+    return Path(cache_dir) / dataset / f"{subject_id}.npy"
+
+
+def _meta_path_for(cache_dir, dataset: str, subject_id: str) -> Path:
+    return Path(cache_dir) / dataset / f"{subject_id}.meta.json"
+
+
+def save_signal_cache(cache_dir, dataset: str, subject_id: str,
+                       x: np.ndarray, meta: dict) -> None:
+    """Persist one subject's [T_epochs, 6, 3840] raw-signal array (cast to
+    float16) plus its meta.json.
+
+    `meta` is expected to carry at least `t_epochs` (int) — callers
+    typically pass `{"t_epochs": x.shape[0], **fill_info}`, mirroring
+    `load_subject_channels`'s own fill_info shape (`slots_found`,
+    `slots_missing`, `fallback_used`, `resp_source`) plus a `present`
+    0/1-per-slot list for Stage 2's zero-fill contract (plan §14.2).
+
+    The array write uses the same atomic temp-file + os.replace() pattern
+    already fixed in extract_mantis_embeddings.py (a killed job must never
+    leave a truncated .npy sitting where a later read would trust it), and
+    meta.json is written only afterward, also atomically — so meta.json's
+    presence implies BOTH files are complete, not just itself.
+    """
+    out_path = cache_path_for(cache_dir, dataset, subject_id)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    tmp_path = out_path.parent / f"{subject_id}.tmp{os.getpid()}.npy"
+    np.save(tmp_path, np.ascontiguousarray(x.astype(np.float16)))
+    os.replace(tmp_path, out_path)
+
+    meta_path = _meta_path_for(cache_dir, dataset, subject_id)
+    meta_tmp = meta_path.with_suffix(".json.tmp")
+    with open(meta_tmp, "w") as f:
+        json.dump(meta, f)
+    os.replace(meta_tmp, meta_path)
+
+
+def load_signal_cache_window(cache_dir, dataset: str, subject_id: str,
+                              e0: int, n: int) -> np.ndarray:
+    """Read exactly `n` consecutive epochs starting at epoch `e0` from a
+    cached subject's [T_epochs, 6, 3840] array via ONE seek + ONE
+    contiguous read.
+
+    Deliberately NOT `mmap_mode="r"` — measured slower than a full
+    sequential read for this exact per-subject-per-window access pattern
+    on this cluster's Lustre filesystem (PhysioOmni's own
+    `_NpySliceReader` docstring has the numbers: mmap turns each page
+    fault into a separate small RPC with no effective readahead, 0.68x-0.32x
+    slower than a plain streamed read). Same physical filesystem, same
+    lesson — do not "fix" this back to mmap without re-measuring.
+
+    Returns: [n, 6, 3840] float16 array (a view into a freshly-read,
+    read-only buffer — callers that need a mutable/float32 array should
+    cast with `.astype(np.float32)`, which already copies).
+    """
+    path = cache_path_for(cache_dir, dataset, subject_id)
+    with open(path, "rb") as f:
+        version = np.lib.format.read_magic(f)
+        shape, fortran, dtype = np.lib.format._read_array_header(f, version)
+        if fortran:
+            raise ValueError(f"{path}: expected C-contiguous .npy, got Fortran-ordered")
+        if len(shape) != 3 or tuple(shape[1:]) != (N_SLOTS, EPOCH_SAMPLES):
+            raise ValueError(
+                f"{path}: expected shape [T, {N_SLOTS}, {EPOCH_SAMPLES}], got {shape}"
+            )
+        header_end = f.tell()
+        bytes_per_epoch = N_SLOTS * EPOCH_SAMPLES * dtype.itemsize
+        f.seek(header_end + e0 * bytes_per_epoch)
+        buf = f.read(n * bytes_per_epoch)
+    if len(buf) != n * bytes_per_epoch:
+        raise ValueError(
+            f"{path}: requested {n} epochs from e0={e0} but only read "
+            f"{len(buf) // bytes_per_epoch} — window out of range for a "
+            f"cache with T={shape[0]} epochs"
+        )
+    return np.frombuffer(buf, dtype=dtype).reshape(n, N_SLOTS, EPOCH_SAMPLES)
+
+
+def get_cached_t_epochs(cache_dir, dataset: str, subject_id: str) -> int:
+    """Fast epoch-count lookup for a cached subject — reads only
+    meta.json, never opens the (large) array file."""
+    with open(_meta_path_for(cache_dir, dataset, subject_id)) as f:
+        return json.load(f)["t_epochs"]
+
+
+def cache_exists(cache_dir, dataset: str, subject_id: str) -> bool:
+    """Whether a subject's raw-signal cache is complete enough to use.
+
+    Parses meta.json rather than just checking existence — a zero-byte or
+    truncated meta.json (the exact PhysioOmni failure mode this design
+    avoids at the write side, kept as a read-side safety net too) must
+    read as NOT cached, not crash the caller with JSONDecodeError.
+    """
+    meta_path = _meta_path_for(cache_dir, dataset, subject_id)
+    if not meta_path.exists():
+        return False
+    try:
+        with open(meta_path) as f:
+            json.load(f)
+        return True
+    except (json.JSONDecodeError, OSError):
+        return False
