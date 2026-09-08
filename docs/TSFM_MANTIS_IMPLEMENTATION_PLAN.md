@@ -2702,8 +2702,51 @@ pass.
       2.2 is explicitly a user checkpoint — the user decides when to
       launch it (likely once Phase 1 extraction is further along, since
       both compete for the same filesystem's I/O bandwidth).
-- [ ] **2.3** `mantis_raw_epoch_dataset.py` (§14.4) + smoke test, including
-      the Stage-1-embedding-existence split-match assertion.
+- [x] **2.3** `mantis_raw_epoch_dataset.py` (§14.4) + smoke test, including
+      the Stage-1-embedding-existence split-match assertion — DONE
+      2026-09-08. Near-verbatim fork of `osf_raw_epoch_dataset.py`; one
+      genuine simplification over OSF's/PhysioOmni's own raw-epoch
+      datasets: since the Stage 2 cache is already epoch-major
+      `[T,6,3840]` (§14.3), `load_signal_cache_window()` returns windows
+      already correctly shaped — no reshape/transpose needed on read,
+      unlike OSF's channel-major cache which needs one on every access.
+
+      **One deliberate non-optimization, decided by evidence not
+      assumption**: unlike OSF's/PhysioOmni's own raw-epoch datasets, this
+      class does NOT cache a per-worker materialized full-subject array —
+      each `__getitem__` calls `load_signal_cache_window()` fresh, even
+      for consecutive same-subject windows. Documented in the module
+      docstring why: PhysioOmni's own measured finding is that I/O is
+      ~50% of a 30s-context epoch's cost but only ~3.5% of an 80m-context
+      epoch's (long contexts are ~96% compute-bound), and long contexts
+      are exactly where LoRA's real GPU-hour cost lives — so this
+      optimization would meaningfully help only the already-cheap 30s
+      case. Under the efficiency mandate, engineering effort belongs on
+      the backbone-forward path (`train_mantis_lora.py`'s
+      `chunk_batch_size`/TF32/gradient-checkpointing, checklist 2.4), not
+      here — a deliberate choice, not a gap, revisitable if a future
+      Mantis-specific profile shows otherwise.
+
+      **Real-data testing gap found and fixed along the way**: my first
+      test attempt used a small (`--limit 25`) raw-signal cache that
+      didn't overlap with the dataset's actual selected subjects, because
+      `limit` is applied *after* the random train/val/test shuffle — the
+      25 subjects a naive first-N precompute covers are essentially never
+      the 25 subjects a shuffled-then-limited split selects. Rather than
+      write a workaround, precomputed the FULL real APPLES cohort's raw
+      cache instead (1104 subjects, 1.8 min at 9.79 subjects/s with 6
+      workers — real, useful production progress, not throwaway test
+      data) and re-tested against that.
+
+      **All checks passed on real data**: shapes/dtypes correct at 30s and
+      10m context, zero NaN, zero unexpected padding. **The split-match
+      assertion — the actual thing that matters, not just "did the class
+      run"** — passed exactly: Stage 1's and Stage 2's train/val/test
+      subject pools are IDENTICAL (759/161/164 subjects respectively),
+      verified by direct set comparison, not assumed from shared code.
+      The missing-cache failure path also verified: pointing at an empty
+      cache directory correctly raises `FileNotFoundError` with the exact
+      documented message, not a silent drop or a confusing crash later.
       **User checkpoint.**
 - [ ] **2.4** `train_mantis_lora.py` (§14.2/14.5) — synthetic
       forward+backward against the real checkpoint, asserting LoRA **and**

@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=mantis_emb
 #SBATCH --account=def-egranger_gpu
-#SBATCH --time=07:00:00
+#SBATCH --time=08:00:00
 #SBATCH --gpus=nvidia_h100_80gb_hbm3_1g.10gb:1
 #SBATCH --cpus-per-task=5
 #SBATCH --mem=16000M

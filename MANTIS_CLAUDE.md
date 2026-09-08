@@ -835,3 +835,44 @@ accumulation, tokgen checkpointing) rather than write-naive-then-optimize.
   next decision for the user, not something to launch automatically given
   its size and disk-quota relevance. Next: checklist 2.3, the PyTorch
   dataset class that reads from this cache during actual training.
+
+**2026-09-08 — Phase 1 extraction confirmed complete, checklist 2.3
+done.** Full embedding extraction finished while Phase 2 was being built:
+14,993/14,994 subjects (99.99%) across all 4 cohorts, one known-bad file
+(`stages/STLK00096`, no usable channels at all — same subject PhysioOmni's
+own extraction already flagged, not new). Spot-checked 60 random real
+files across all cohorts for NaN/Inf/shape/degenerate issues — clean.
+**User is clear to proceed to the Stage 1 training sweep (checklist
+1.12).**
+
+- **Checklist 2.3 done**: `mantis_raw_epoch_dataset.py` +
+  `test_mantis_raw_epoch_dataset.py`. Near-verbatim fork of
+  `osf_raw_epoch_dataset.py`, simpler in one real way (epoch-major cache
+  means no reshape on read) and deliberately NOT optimized in another
+  (no per-worker full-subject materialization) — reasoning: PhysioOmni's
+  own measurement shows I/O matters for cheap 30s contexts but is noise
+  next to compute for the expensive long contexts, so that's not where
+  the efficiency mandate should spend effort.
+
+  Found a real gap in my own first test attempt (not the dataset code):
+  a small `--limit 25` raw cache didn't overlap with which subjects the
+  shuffled train/val/test split actually selects, since `limit` applies
+  after the shuffle. Fixed by precomputing the FULL real APPLES cohort's
+  cache instead (1104 subjects, 1.8 min, 9.79 subjects/s parallel) —
+  genuine production progress, not wasted test setup.
+
+  All checks passed against real data: correct shapes at 30s/10m, zero
+  NaN. Most importantly, the split-match assertion — verifying Stage 1's
+  and Stage 2's train/val/test subject pools are IDENTICAL, not just
+  "probably fine because they share code" — passed exactly (759/161/164
+  subjects matched across all three splits). Missing-cache error path
+  also verified for real.
+
+  **What this step means in plain terms**: this is the dataset class LoRA
+  training will actually pull batches from — it reads windows of raw
+  signal from the fast cache (not embeddings, since the backbone itself
+  gets fine-tuned in Stage 2) and guarantees the exact same subjects end
+  up in the exact same train/val/test splits as Stage 1, which is what
+  makes the frozen-vs-LoRA comparison fair. Next: checklist 2.4,
+  `train_mantis_lora.py` — the actual LoRA training loop, the biggest
+  remaining Phase 2 piece.
