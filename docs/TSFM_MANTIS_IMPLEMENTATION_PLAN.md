@@ -2748,10 +2748,66 @@ pass.
       cache directory correctly raises `FileNotFoundError` with the exact
       documented message, not a silent drop or a confusing crash later.
       **User checkpoint.**
-- [ ] **2.4** `train_mantis_lora.py` (§14.2/14.5) — synthetic
-      forward+backward against the real checkpoint, asserting LoRA **and**
-      `sequence_head` gradients are finite and non-zero, and that a zeroed
-      slot produces exactly-zero gradient. **User checkpoint.**
+- [x] **2.4** `train_mantis_lora.py` (§14.2/14.5) — DONE 2026-09-08.
+      `CombinedMantisLoRAModel` built per §14.2's design, wrapping the
+      Mantis backbone + sequence head as one module before a single
+      `get_peft_model()` call (`modules_to_save=["sequence_head"]`), same
+      pattern OSF's/PhysioOmni's own Stage 2 scripts use. `run_epoch` and
+      the other 4 low-level functions imported unmodified from
+      `train_mantis_context_sweep.py`, not duplicated.
+
+      **One genuine design decision beyond a straight fork**: the plan's
+      §14.2 pseudocode implies a `present` tensor threaded into `forward`,
+      but doing so literally would break `run_epoch`'s fixed 2-argument
+      `model(x, mask)` contract (the whole reason it's reusable
+      unmodified). Resolved by detecting absent channel slots directly
+      from the raw input instead: `mantis_channel_loader`'s zero-fill
+      contract already leaves an absent slot at EXACT zero for the whole
+      recording, and real physiological signal is never exactly all-zero
+      across an entire window — so `(x == 0).all(dim=(1,3))` is a safe,
+      free presence check computed from data already in hand, needing no
+      new tensor plumbed through the dataset/collate/run_epoch chain.
+
+      Achieved-TFLOP/s instrumented per epoch (§4.1), same convention as
+      Stage 1's script but now counting actual backbone compute (channel-
+      epochs × `GFLOP_PER_CHANNEL_EPOCH`), since Stage 2's cost — unlike
+      Stage 1's lightweight head — is dominated by the backbone. TF32
+      enabled at startup (§4.2). Both gradient-checkpointing rungs from
+      §4.3/§14.8's memory-mitigation ladder (`checkpoint_tokgen`,
+      `checkpoint_chunks`) implemented as opt-in/default-off flags from
+      the start, per the efficiency mandate, not deferred to when OOM
+      first hits. The checkpoint-safety-net fix from checklist 1.9
+      (`elif not ckpt_path.exists(): torch.save(...)`) is carried over
+      here too, proactively, rather than waiting to hit the same bug a
+      second time.
+
+      **`scripts/test_mantis_lora_model.py` — a new, real, persisted test**
+      (no equivalent exists for OSF's/PhysioOmni's own Stage 2 models;
+      their checklists describe this kind of check as done ad hoc). Three
+      independent checks, all passed on the first real run:
+      1. **Absent-slot masking, in isolation** (pure tensor math, no
+         model): confirmed a masked-out channel's gradient is EXACTLY
+         zero while a present channel's is correctly nonzero — proves the
+         mechanism itself before trusting it inside the full model.
+      2. **Real-checkpoint forward+backward**: built the actual
+         `CombinedMantisLoRAModel` + peft wrapping against the REAL
+         Mantis-8M checkpoint (not synthetic weights), on a synthetic
+         2-subject batch (one with a genuinely absent ECG slot).
+         Confirmed finite logits, finite loss, and — checked for BOTH
+         finite AND nonzero, since an all-zero gradient would pass a
+         naive "no NaN" check while being silently broken — **24 LoRA
+         parameters with finite, nonzero gradient** (matches the
+         previously live-verified 12 target modules × 2 params/module
+         exactly) and **10 `sequence_head` parameters with finite,
+         nonzero gradient**.
+      3. **Gradient-checkpointing bit-identity** (§14.8's explicit
+         requirement, matching PhysioOmni's own "max abs diff 0.0"
+         precedent): both `checkpoint_tokgen` and `checkpoint_chunks`
+         produced forward output identical to the non-checkpointed
+         baseline to **max abs diff 0.0**, confirming checkpointing
+         changes only how activations are recomputed during backward,
+         never what the forward pass computes.
+      **User checkpoint.**
 - [ ] **2.5** `infer_mantis_lora_subject_windows.py`, `v2_mantis_lora_registry.yaml`,
       `gen_commands_mantis_lora.py`, job scripts. **User checkpoint.**
 - [ ] **2.6** **Real GPU pilot at EVERY context length** (§13.3 item 3) —

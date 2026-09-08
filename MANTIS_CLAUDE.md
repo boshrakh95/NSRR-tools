@@ -876,3 +876,49 @@ files across all cohorts for NaN/Inf/shape/degenerate issues — clean.
   makes the frozen-vs-LoRA comparison fair. Next: checklist 2.4,
   `train_mantis_lora.py` — the actual LoRA training loop, the biggest
   remaining Phase 2 piece.
+
+- **Checklist 2.4 done**: `train_mantis_lora.py` + a new persisted
+  correctness test, `test_mantis_lora_model.py`. `CombinedMantisLoRAModel`
+  wraps the backbone + sequence head as one module before a single
+  `get_peft_model()` call, same pattern as OSF's/PhysioOmni's own Stage 2.
+
+  **Real design decision, not just a fork**: the plan's pseudocode
+  implied a separate `present` tensor threaded into `forward()`, but that
+  would have broken `run_epoch`'s fixed 2-argument contract (the reason
+  it's reusable unmodified across all three baselines' Stage 1 AND now
+  Stage 2). Solved instead by detecting absent channels directly from the
+  raw input — an absent slot is already exact zero for the whole
+  recording by construction, and real signal is never exactly all-zero,
+  so this needs no new tensor anywhere in the pipeline.
+
+  Achieved-TFLOP/s and TF32 wired in from the start (efficiency mandate),
+  now measuring real backbone compute since Stage 2's cost — unlike Stage
+  1's cheap head-only training — is backbone-dominated. Both
+  gradient-checkpointing memory-mitigation rungs implemented as
+  opt-in/default-off from day one rather than added reactively after a
+  future OOM.
+
+  **All three correctness checks passed on the first real run**: (1) the
+  absent-slot zero-fill math verified in isolation; (2) a real forward+
+  backward against the ACTUAL Mantis-8M checkpoint confirmed 24 LoRA
+  params and 10 sequence_head params with finite AND nonzero gradients
+  (checked for both, since an all-zero gradient would pass a naive
+  "no NaN" check while being silently broken) — the 24 matches the
+  earlier live-verified 12 target modules × 2 params/module exactly; (3)
+  both gradient-checkpointing rungs bit-identical to baseline (max abs
+  diff 0.0), matching PhysioOmni's own precedent for this exact kind of
+  check.
+
+  **What this step means in plain terms**: this is the actual LoRA
+  fine-tuning script — the piece that takes the frozen backbone and
+  starts adapting it (a small number of extra parameters injected into
+  its attention layers) jointly with the classifier head, instead of just
+  training a head on top of frozen embeddings like Stage 1 did. This is
+  the most technically novel and error-prone part of the whole Stage 2
+  build (getting gradients to flow correctly through a wrapped,
+  partially-frozen model is a common source of silent bugs), which is why
+  it got the most thorough real-checkpoint verification of any step so
+  far — confirmed working correctly, not just "runs without crashing."
+  Next: checklist 2.5, the inference script + registry + command
+  generator + job scripts that make LoRA runs submittable the same way
+  Stage 1's are.
