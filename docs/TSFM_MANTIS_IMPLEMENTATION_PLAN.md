@@ -2808,8 +2808,58 @@ pass.
          changes only how activations are recomputed during backward,
          never what the forward pass computes.
       **User checkpoint.**
-- [ ] **2.5** `infer_mantis_lora_subject_windows.py`, `v2_mantis_lora_registry.yaml`,
-      `gen_commands_mantis_lora.py`, job scripts. **User checkpoint.**
+- [x] **2.5** `infer_mantis_lora_subject_windows.py`,
+      `v2_mantis_lora_registry.yaml`, `gen_commands_mantis_lora.py`, job
+      scripts — DONE 2026-09-08.
+
+      `infer_mantis_lora_subject_windows.py` forked from
+      `infer_osf_lora_subject_windows.py`: reuses
+      `build_combined_lora_model` from `train_mantis_lora.py` (no
+      duplicated model-construction code), same resumable-inference design
+      (periodic time-based checkpointing every 5 min, independent of any
+      signal, so a killed multi-hour "all windows" pass never restarts
+      from item 0).
+
+      `v2_mantis_lora_registry.yaml`: **10 experiments (5 tasks ×
+      lstm/transformer), not OSF's 15** — checked PhysioOmni's own LoRA
+      registry first and confirmed it defers `mean_pool` (8 experiments,
+      4 tasks), matching plan §5.6/§14.7's explicit instruction for
+      Mantis too; OSF's own 15-experiment file predates that decision and
+      was NOT used as the template for experiment count, only for field
+      structure. `apnea_binary` included (Mantis's RESP pathway).
+
+      `jobs/train_mantis_lora_gpu.sh`: **whole H100 (`--gpus=h100:1`), not
+      a MIG slice** — the plan's explicit, memory-driven decision (§4.5):
+      Stage 2's backward pass needs ~240 MB/epoch-unit, and 240m context
+      needs ~480 epoch-units even at `micro_batch=1`, which doesn't fit on
+      anything smaller than the full 80GB card. `--time=04:00:00` default
+      (not 24h) — also plan-mandated (§4.5): wall-time dominates queue
+      position far more than GPU type on this cluster, and per-epoch
+      checkpointing + auto-resume make a short request nearly free.
+      Includes `CHECKPOINT_TOKGEN`/`CHECKPOINT_CHUNKS` env-var passthrough
+      for the memory-mitigation ladder (patches a throwaway config copy on
+      `/scratch`, never on node-local `/tmp`).
+      `jobs/infer_mantis_lora_subject_windows_gpu.sh`: MIG slice
+      (`1g.10gb`) — inference runs under `torch.no_grad()`, no
+      backward-pass memory argument, same logic as Stage 1 extraction.
+
+      **Verified three ways, all against real data**: (1) trained a real
+      tiny checkpoint (CPU, `--limit 2`) and ran `infer_mantis_lora_
+      subject_windows.py` against it in real "all windows" mode (2,084
+      items across 2 subjects) — completed successfully AND exercised the
+      periodic-checkpoint mechanism live (checkpointed at 72% progress
+      mid-run, not just theoretically present in the code); the output
+      parquet was inspected directly — correct 7-column schema, zero NaN,
+      probabilities summing to 1.0, `window_idx` restarting at 0 per
+      subject. (2) Both new job scripts syntax-checked (`bash -n`). (3)
+      `gen_commands_mantis_lora.py` verified against a real checkpoint
+      trained at the exact production registry path
+      (`{results_dir}/apnea_binary_lstm/context_30s/best_model.pt`, no
+      `run_tag`) — `list`/`status`/`infer` all correctly detected the
+      trained context, and `train --context 10m`'s "30s checkpoint not
+      ready" warning correctly disappeared once that checkpoint existed.
+      Test checkpoint removed afterward.
+      **User checkpoint.**
 - [ ] **2.6** **Real GPU pilot at EVERY context length** (§13.3 item 3) —
       one training step each, record `max_memory_allocated()`, rewrite
       `context_micro_batch` from measurements. Then a real multi-epoch 30s

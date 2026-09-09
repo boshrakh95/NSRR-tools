@@ -922,3 +922,34 @@ files across all cohorts for NaN/Inf/shape/degenerate issues — clean.
   Next: checklist 2.5, the inference script + registry + command
   generator + job scripts that make LoRA runs submittable the same way
   Stage 1's are.
+
+- **Checklist 2.5 done**: `infer_mantis_lora_subject_windows.py`,
+  `v2_mantis_lora_registry.yaml` (10 experiments — mean_pool deferred,
+  matching PhysioOmni's own LoRA registry precedent, not OSF's 15),
+  `gen_commands_mantis_lora.py`, and both job scripts.
+
+  Two real GPU-sizing decisions, both plan-mandated, worth remembering:
+  training uses the **whole H100** (`--gpus=h100:1`), not a MIG slice —
+  purely a memory argument (backward-pass activations at 240m need ~480
+  epoch-units, doesn't fit smaller), not a throughput one; inference
+  stays on a MIG slice since it runs under `no_grad()`. Training also
+  defaults to `--time=04:00:00`, not 24h — wall-time affects queue
+  position more than GPU size on this cluster, and auto-resume makes a
+  short request nearly free.
+
+  Verified against real data end-to-end: trained a tiny real checkpoint,
+  ran "all windows" inference against it (2,084 real items), watched the
+  periodic-checkpoint mechanism actually fire mid-run (not just present
+  in the code), and inspected the output parquet directly (correct
+  schema, zero NaN). Then trained a second real checkpoint at the exact
+  production registry path and confirmed `gen_commands_mantis_lora.py`'s
+  `list`/`status`/`infer`/`train` all correctly detect it.
+
+  **What this step means in plain terms**: Stage 1 (frozen backbone) and
+  now Stage 2 (LoRA) both have their full train → infer → command-
+  generator → job-script pipeline in place. Everything through checklist
+  2.5 is now "code done, real-checkpoint verified" — what's left is
+  running it for real: checklist 2.6 is a real GPU pilot to measure
+  actual memory/time costs and calibrate the placeholder numbers this
+  step's wall-time tables and batch sizes are seeded with, then 2.7's
+  config audit, then the real sweep (2.8).
