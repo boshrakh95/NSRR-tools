@@ -32,12 +32,13 @@ intentionally identical.
 full protocol — modality/channel ablations, full vs. fast-channel rounds,
 sleep staging, all task tiers. Mantis (like OSF and PhysioOmni) is a
 *comparison baseline*, not the main model — it gets **frozen-backbone
-Stage 1** (this guide's main content), plus a planned **MantisPlus
-ablation** (same registry shape, different checkpoint — plan §5.1) and a
-possible future **Stage 2 (LoRA)** round, not yet started. No channel
-ablation, no full-channel round, no sleep staging (out of scope for all
-three TSFM baselines, plan §5.8) — just the 5 Tier-1 seq2label tasks × 3
-heads × 6 context lengths, compared against SleepFM's `phase0_v3`
+Stage 1** (5 tasks × 3 heads × 6 contexts) and **LoRA-fine-tuned Stage 2**
+(5 tasks × 2 heads — `mean_pool` deferred, plan §5.6 — × 6 contexts; code
+done and real-checkpoint-verified as of checklist 2.5, full sweep not yet
+run), plus a planned **MantisPlus ablation** (same registry shape,
+different checkpoint — plan §5.1), not yet started. No channel ablation,
+no full-channel round, no sleep staging (out of scope for all three TSFM
+baselines, plan §5.8), compared against SleepFM's `phase0_v3`
 (paper-primary) results.
 
 ---
@@ -55,8 +56,10 @@ heads × 6 context lengths, compared against SleepFM's `phase0_v3`
 9. [Step 6 — Inference](#step-6--inference)
 10. [Step 7 — Command Generator (`gen_commands_mantis.py`)](#step-7--command-generator-gen_commands_mantispy)
 11. [Step 8 — Running the Full Stage 1 Sweep](#step-8--running-the-full-stage-1-sweep)
-12. [Checkpoint Resume and Auto-Requeue](#checkpoint-resume-and-auto-requeue)
-13. [Job Run History and Tracking](#job-run-history-and-tracking)
+12. [Step 9 — Stage 2 (LoRA Fine-Tuning)](#step-9--stage-2-lora-fine-tuning)
+13. [Running on a Second Cluster (Rorqual)](#running-on-a-second-cluster-rorqual)
+14. [Checkpoint Resume and Auto-Requeue](#checkpoint-resume-and-auto-requeue)
+15. [Job Run History and Tracking](#job-run-history-and-tracking)
 
 ---
 
@@ -128,8 +131,8 @@ this guide operationalizes.
 | **W&B project** | `nsrr-phase0` | `nsrr-phase0-osf` | `nsrr-phase0-physioomni` | `nsrr-phase0-mantis` (installed status in `mantis_env` not yet confirmed — falls back gracefully with a warning, not a crash, same as OSF's/PhysioOmni's gap) |
 | **Task scope** | All Tier 1/2 tasks | Tier 1: sex, sleep efficiency, BMI, age, apnea (5 tasks) | Tier 1 minus apnea (4 tasks) | **Tier 1, same as OSF (5 tasks, apnea included)** |
 | **Channel ablation** | Yes (main model) | No | No | No (comparison baseline) |
-| **Rounds** | Full protocol | Frozen + LoRA | Frozen + LoRA (code done) | Frozen (this guide) + MantisPlus ablation planned; LoRA not yet started |
-| **Status** | **DONE** | Frozen done, LoRA in progress | Frozen done, LoRA code done | **Frozen round: code + smoke tests done, full sweep not yet run (checklist 1.11-1.12)** |
+| **Rounds** | Full protocol | Frozen + LoRA | Frozen + LoRA (code done) | Frozen + LoRA (both code done, real-checkpoint-verified) + MantisPlus ablation planned |
+| **Status** | **DONE** | Frozen done, LoRA in progress | Frozen done, LoRA code done | **Extraction DONE (14,993/14,994). Frozen sweep: user submitting now (checklist 1.12). LoRA: code + real-checkpoint verification done (2.1-2.5), real GPU pilot next (2.6)** |
 
 ---
 
@@ -157,9 +160,12 @@ shape-mismatch causes — see plan §3.4).
 
 ## Step 1 — Embedding Extraction
 
-**Status: DONE (script + GPU job script), real-GPU-verified via Pilots
-1-3. Full population not yet extracted — this is the actual next step,
-checklist 1.11.**
+**Status: DONE — full population extracted (checklist 1.11 complete,
+2026-09-07/08): 14,993/14,994 subjects (99.99%) across all 4 cohorts. The
+1 gap is `stages/STLK00096`, a subject with no usable channels at all in
+its raw HDF5 — the same known-bad file PhysioOmni's own extraction hit,
+not a Mantis-specific issue. 60 random files spot-checked across all
+cohorts for NaN/Inf/shape/degenerate issues — clean.**
 
 ```bash
 cd /home/boshra95/NSRR-tools-mantis
@@ -220,11 +226,12 @@ never overwrite each other's files even without separate output
 directories — the `--start-idx`/`--end-idx` ranges just need to stay
 disjoint (they do, by construction, in the sharding examples above).
 
-**Not yet done**: the full population extraction itself (checklist 1.11).
-Once it's running, this section should be updated with real completion
-counts and any per-cohort gaps found (mirroring OSF's/PhysioOmni's own
-"Full extraction complete" notes), plus the §13.4-12 split-population
-audit and the §5.5 `resp_source` tally the plan calls for.
+**Full extraction complete as of 2026-09-08** (checklist 1.11): apples
+1104/1104, shhs 8444/8444, mros 3933/3933, stages 1512/1513 —
+14,993/14,994 (99.99%), one known-bad file (`stages/STLK00096`). **Ready
+for the full Stage 1 sweep.** The §13.4-12 split-population audit and the
+§5.5 `resp_source` tally from the fill logs are still pending — do those
+once time allows, not blocking the sweep itself.
 
 ---
 
@@ -575,6 +582,265 @@ notebooks the same way SleepFM's/OSF's/PhysioOmni's collected results are.
 
 ---
 
+## Step 9 — Stage 2 (LoRA Fine-Tuning)
+
+**Status: code done, real-checkpoint-verified end-to-end (checklists
+2.1-2.5). Full sweep not yet run — checklist 2.6's real GPU pilot is the
+next actual step, followed by 2.7 (config audit) and 2.8 (full sweep).**
+
+Unlike Stage 1 (frozen backbone, train only a small head on precomputed
+embeddings), Stage 2 fine-tunes the Mantis backbone itself via LoRA
+adapters, jointly with the sequence head, warm-started from Stage 1's
+converged head (LP-FT staging). Because the backbone is inside the
+trainable graph, raw signal is needed live at every training step — this
+is why Stage 2 has its own raw-signal cache, its own dataset class, and
+its own train/infer scripts, all separate from Stage 1's.
+
+### 9.1 — Raw-signal cache
+
+```bash
+# Small test
+python scripts/precompute_mantis_raw_signal_cache.py \
+    --config configs/phase0_mantis_lora_config.yaml \
+    --datasets apples --limit 5
+
+# Real production run — CPU only, no --exclude/--gpus needed (works
+# unmodified on Rorqual too, see "Running on a Second Cluster" below)
+sbatch --export=ALL,DATASETS=apples jobs/precompute_mantis_raw_signal_cache.sh
+
+# Sharded full run (~14,994 subjects across apples/shhs/mros/stages —
+# Mantis needs stages too, for apnea_binary)
+sbatch --export=ALL,START=0,END=5000        jobs/precompute_mantis_raw_signal_cache.sh
+sbatch --export=ALL,START=5000,END=10000    jobs/precompute_mantis_raw_signal_cache.sh
+sbatch --export=ALL,START=10000,END=15000   jobs/precompute_mantis_raw_signal_cache.sh
+```
+
+**Output:** `{raw_signal_cache_dir}/{dataset}/{subject_id}.npy` +
+`.meta.json` — epoch-major `[T,6,3840]` float16 (NOT channel-major like
+OSF's own cache; this is the whole point of the design, plan §14.3 — an
+N-epoch training window is then one contiguous byte range, not N strided
+reads). `raw_signal_cache_dir` =
+`/scratch/boshra95/psg/unified/mantis_raw_signal_128hz`.
+
+**Verified 2026-09-07/08**: real measured throughput **~9.8 subjects/s**
+with 6 parallel workers (Mantis needs no resampling at all, unlike OSF's/
+PhysioOmni's own precompute — pure read+reshape). The full real APPLES
+cohort (1104 subjects) is cached as of this writing — 1.8 min, zero
+errors — real production progress, not test data. Cached array confirmed
+byte-identical to an independently-computed ground truth for all checked
+subjects; file size (52,669,568 bytes for `APL0001`) matches the plan's
+own predicted number exactly.
+
+**Before the full ~14,994-subject build**: check `diskusage_report` (as
+of 2026-09-07: 8,442/19,000 GiB used — comfortable headroom for the
+~720GB full cache, but re-check immediately before building, not from
+this note). Build cohort by cohort so a quota surprise is recoverable.
+
+### 9.2 — Dataset class smoke test
+
+```bash
+python scripts/test_mantis_raw_epoch_dataset.py \
+    --config configs/phase0_mantis_lora_config.yaml \
+    --task sex_binary --context 30s 10m --datasets apples
+```
+
+Checks shapes/dtypes/NaN at real data, AND (the check that actually
+matters) that Stage 1's and Stage 2's train/val/test subject pools are
+IDENTICAL — verified 2026-09-08 against the full real APPLES cohort:
+759/161/164 subjects matched exactly across all three splits, not
+assumed from shared code.
+
+### 9.3 — Training
+
+```bash
+# CPU debug run (tiny, --limit — mirrors real correctness testing done
+# during implementation)
+python scripts/train_mantis_lora.py \
+    --config configs/phase0_mantis_lora_config.yaml \
+    --task sex_binary --head lstm --context 30s \
+    --datasets apples --limit 2 --cpu --batch-size 8
+
+# Correctness test — verifies LoRA + sequence_head gradients flow
+# correctly against the REAL Mantis-8M checkpoint, and gradient-
+# checkpointing rungs are bit-identical to baseline
+python scripts/test_mantis_lora_model.py \
+    --config configs/phase0_mantis_lora_config.yaml --cpu
+```
+
+**Output:** `{results_dir}/{task}_{head_type}/context_{L}/{best_model.pt,
+metrics.json,training_curves.csv}` — `results_dir` =
+`/scratch/boshra95/psg/unified/results/phase0_mantis_lora`. `best_model.pt`
+is a **peft state dict** (LoRA deltas + sequence_head), NOT the ~8.1M-param
+base encoder (kept frozen, always reloadable from `embedding.repo_id`).
+
+**Warm-start (plan §14.5)**: 30s warm-starts the sequence head from
+Stage 1's matching checkpoint (auto-detected); every other context
+warm-starts LoRA+head TOGETHER from this (task, head)'s own converged 30s
+Stage 2 checkpoint (a branch, not a chain) — readiness gates on
+`metrics.json` existing, not just `best_model.pt`.
+
+**GPU job — whole H100, not a MIG slice** (plan §4.5's explicit, memory-
+driven decision: Stage 2's backward pass needs ~240 MB/epoch-unit, and
+240m needs ~480 epoch-units even at `micro_batch=1`, which doesn't fit
+anything smaller than the full 80GB card):
+```bash
+sbatch --export=ALL,TASK=sex_binary,HEAD=lstm jobs/train_mantis_lora_gpu.sh
+```
+`--time=04:00:00` default (not 24h) — also plan-mandated: wall-time
+affects queue position far more than GPU type on this cluster, and
+per-epoch checkpointing + auto-resume make a short request nearly free.
+
+**Memory-mitigation ladder, if a context OOMs even on the whole card**
+(plan §4.3/§14.8, cheapest first):
+1. Lower `context_micro_batch` in the registry, raise `accum_steps`
+   proportionally to hold `effective_batch=32`.
+2. `sbatch --export=ALL,...,CHECKPOINT_TOKGEN=1 jobs/train_mantis_lora_gpu.sh`
+   — checkpoints only the tokenizer conv (~1.3% extra compute for ~39%
+   less activation memory — the cheapest real win, try this before #3).
+3. `sbatch --export=ALL,...,CHECKPOINT_CHUNKS=1 jobs/train_mantis_lora_gpu.sh`
+   — coarser, checkpoints the whole backbone chunk call (more memory
+   saved, more recompute cost).
+
+Both checkpointing rungs verified bit-identical to a non-checkpointed
+forward pass (max abs diff 0.0) before being trusted — see
+`scripts/test_mantis_lora_model.py`.
+
+### 9.4 — Inference
+
+```bash
+# CPU debug run against a checkpoint from Step 9.3
+python scripts/infer_mantis_lora_subject_windows.py \
+    --config configs/phase0_mantis_lora_config.yaml \
+    --task sex_binary --head lstm --context 30s \
+    --datasets apples --limit 2 --cpu --batch-size 8
+```
+
+**Output:** same 7-column schema as Stage 1's inference
+(`{inference_dir}/{task}_{head}/context_{L}/{split}_windows.parquet`).
+**Verified 2026-09-08**: a real 2-subject/2,084-item "all windows" CPU run
+completed correctly (zero NaN, probabilities summing to 1.0), AND the
+periodic-checkpoint mechanism (every 5 min, independent of any signal —
+so a killed multi-hour pass never restarts from item 0) was observed
+firing live at 72% progress mid-run, not just present in the code.
+
+**GPU job — MIG slice, not the whole card** (inference runs under
+`torch.no_grad()`, no backward-pass memory argument, same logic as Stage
+1 extraction):
+```bash
+sbatch --export=ALL,TASK=sex_binary,HEAD=lstm,CONTEXTS="30s 10m 40m 80m 120m 240m" \
+    jobs/infer_mantis_lora_subject_windows_gpu.sh
+```
+
+### 9.5 — Command Generator (`gen_commands_mantis_lora.py`)
+
+```bash
+python scripts/gen_commands_mantis_lora.py list
+python scripts/gen_commands_mantis_lora.py train sex_binary_lstm --context 30s
+python scripts/gen_commands_mantis_lora.py infer sex_binary_lstm
+python scripts/gen_commands_mantis_lora.py status sex_binary_lstm
+```
+
+**Registry:** `experiments/v2_mantis_lora_registry.yaml` — **10
+experiments** (5 tasks × lstm/transformer — `mean_pool` deferred, plan
+§5.6/§14.7, matching PhysioOmni's own LoRA registry precedent, NOT OSF's
+15-experiment file). `apnea_binary` included (Mantis's RESP pathway).
+
+**Verified 2026-09-08** against a real checkpoint trained at the exact
+production path (`{results_dir}/apnea_binary_lstm/context_30s/best_model.pt`,
+no `run_tag`): `list`/`status`/`infer` all correctly detected the trained
+context, and `train --context 10m`'s "30s checkpoint not ready" warning
+correctly disappeared once that checkpoint existed.
+
+**Same subcommands/exclusions as Stage 1's generator** (`analyze`,
+`build-heatmap`, `collect`, `threshold-tuning` reused unmodified; no
+figure/table subcommands). Wall-time tables are a placeholder 6× scale-up
+of Stage 1's own numbers (Stage 2 trains the full backbone every step,
+qualitatively more expensive) — NOT yet calibrated; checklist 2.6's real
+pilot replaces these.
+
+### 9.6 — Running the Full Stage 2 Sweep (not yet done)
+
+Once checklist 2.6 (real GPU pilot, calibrates `context_micro_batch` and
+wall-time per context) and 2.7 (config audit) are done, the pattern
+mirrors Step 8 exactly, just pointed at the LoRA generator and the 10
+Stage-2 experiment IDs:
+
+```bash
+MANTIS_LORA_EXPS="
+  sex_binary_lstm sex_binary_transformer
+  sleep_efficiency_binary_lstm sleep_efficiency_binary_transformer
+  bmi_binary_lstm bmi_binary_transformer
+  age_class_lstm age_class_transformer
+  apnea_binary_lstm apnea_binary_transformer
+"
+
+# 1. Train 30s FIRST for every experiment (everything else warm-starts from it)
+for exp in $MANTIS_LORA_EXPS; do
+    python scripts/gen_commands_mantis_lora.py train $exp --context 30s | bash
+done
+# ... wait for 30s to converge (metrics.json exists) before the rest ...
+for exp in $MANTIS_LORA_EXPS; do
+    python scripts/gen_commands_mantis_lora.py train $exp --context 10m 40m 80m 120m 240m | bash
+done
+
+# 2. Inference, analysis, collect — same pattern as Step 8
+for exp in $MANTIS_LORA_EXPS; do
+    python scripts/gen_commands_mantis_lora.py infer $exp | bash
+done
+python scripts/gen_commands_mantis_lora.py collect $MANTIS_LORA_EXPS | bash
+```
+
+---
+
+## Running on a Second Cluster (Rorqual)
+
+**Status: 5 of 6 Mantis job scripts have a Rorqual variant as of
+2026-09-09.** Fir and Rorqual differ in SLURM partition/node-exclude
+syntax only — same accounts, same GPU-slice naming
+(`nvidia_h100_80gb_hbm3_1g.10gb`, confirmed identical on both clusters via
+SleepFM's own long-standing Rorqual scripts), same code, same config
+files, same data paths (`/scratch/boshra95/...` is shared storage, not
+per-cluster).
+
+| Job | Fir script | Rorqual script |
+|---|---|---|
+| Stage 1 extraction | `extract_mantis_embeddings_gpu.sh` | `extract_mantis_embeddings_gpu_rorqual.sh` |
+| Stage 1 training | `train_mantis_context_sweep_gpu.sh` | `train_mantis_context_sweep_gpu_rorqual.sh` |
+| Stage 1 inference | `infer_mantis_subject_windows_gpu.sh` | `infer_mantis_subject_windows_gpu_rorqual.sh` |
+| Stage 2 raw-signal cache | `precompute_mantis_raw_signal_cache.sh` | **none needed** — CPU-only, no `--exclude`/`--gpus`, runs unmodified on either cluster (same as OSF's own precompute job, which also has no Rorqual variant) |
+| Stage 2 training | `train_mantis_lora_gpu.sh` | `train_mantis_lora_gpu_rorqual.sh` |
+| Stage 2 inference | `infer_mantis_lora_subject_windows_gpu.sh` | `infer_mantis_lora_subject_windows_gpu_rorqual.sh` |
+
+**The only real differences in each `_rorqual.sh` variant**:
+`--partition=gpubase_bygpu_b3` added (required on Rorqual, invalid on
+Fir), `--exclude=fc11006,fc11013,fc11010` removed (those Fir node names
+don't exist on Rorqual — leaving it in would be a hard `sbatch` error, not
+a silent no-op). `gen_commands_mantis.py`/`gen_commands_mantis_lora.py`
+still only know about the Fir scripts — when running on Rorqual, either
+hand-edit the generated command's script path (swap `_gpu.sh` →
+`_gpu_rorqual.sh`) or submit the printed env-vars directly against the
+`_rorqual.sh` script yourself.
+
+**Running the same pipeline on both clusters in parallel**: both read the
+same `configs/phase0_mantis*.yaml` and the same
+`/scratch/boshra95/psg/...` HDF5/embedding/cache trees (shared storage,
+not per-cluster copies) — so for sharded jobs (extraction,
+precompute-cache), pick **disjoint `--start-idx`/`--end-idx` ranges**
+across the two clusters, the same discipline already used for sharding
+within one cluster, so no subject is ever double-submitted. Output writes
+are atomic and per-subject either way, so an accidental overlap wastes
+compute rather than corrupting anything — but disjoint ranges avoid the
+waste. For non-sharded jobs (a specific `(task, head, context)` training
+run), just don't submit the exact same one on both clusters at once —
+`gen_commands_mantis*.py`'s `metrics.json`-exists skip logic only checks
+`results_dir`, which is the same shared path on both clusters, so a
+second submission of an already-finished run is automatically a no-op,
+but two clusters racing on the SAME not-yet-finished run would both write
+to the same `resume.pt`/`best_model.pt` — avoid that by dividing work by
+experiment/context, not by resubmitting the same one from both sides.
+
+---
+
 ## Checkpoint Resume and Auto-Requeue
 
 Identical mechanism to SleepFM's/OSF's/PhysioOmni's (see
@@ -594,11 +860,20 @@ explanation) — two distinct layers:
 ## Job Run History and Tracking
 
 Same JSONL status-file convention as SleepFM/OSF/PhysioOmni:
-`logs_mantis/status/train_{task}_{head}[_{run_tag}]_{context}_lr{lr}.jsonl`,
-one line per `STARTED`/`TIMEOUT_REQUEUED`/`SUCCESS`/`FAILED` event. Query
-via `python scripts/gen_commands_mantis.py status [<exp_id>]`/`runs
-[<exp_id>]` (see Step 7 above) — mirrors `python scripts/gen_commands.py
-status`/`runs` exactly, just pointed at
-`experiments/v2_mantis_registry.yaml`. No real GPU training/inference jobs
-have run yet as of 2026-09-07 (only debug-scale extraction verification
-has), so `logs_mantis/status/train_*`/`infer_*` is still empty.
+`{logs_dir}/status/train_{task}_{head}[_{run_tag}]_{context}_lr{lr}.jsonl`,
+one line per `STARTED`/`TIMEOUT_REQUEUED`/`SUCCESS`/`FAILED` event —
+`logs_dir` is `logs_mantis` for Stage 1, `logs_mantis_lora` for Stage 2
+(deliberately separate — sharing one `logs_dir` corrupted both stages'
+status files for PhysioOmni, plan §4.10). Query via `python
+scripts/gen_commands_mantis.py status [<exp_id>]`/`runs [<exp_id>]` (Stage
+1) or the same subcommands on `gen_commands_mantis_lora.py` (Stage 2) —
+mirrors `python scripts/gen_commands.py status`/`runs` exactly, just
+pointed at the matching registry file.
+
+As of 2026-09-09: Stage 1 full extraction is complete (14,993/14,994
+subjects, checklist 1.11) and the user is submitting the real Stage 1
+training sweep (checklist 1.12) — `logs_mantis/status/train_*` now has
+real entries. Stage 2 has no real GPU training/inference jobs yet (only
+debug-scale correctness verification, checklists 2.1-2.5) —
+`logs_mantis_lora/status/train_*`/`infer_*` is still empty until
+checklist 2.6's real pilot.
