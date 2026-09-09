@@ -953,3 +953,44 @@ files across all cohorts for NaN/Inf/shape/degenerate issues — clean.
   actual memory/time costs and calibrate the placeholder numbers this
   step's wall-time tables and batch sizes are seeded with, then 2.7's
   config audit, then the real sweep (2.8).
+
+- **2026-09-09: Stage 1 and Stage 2 guide/plan docs confirmed complete
+  and cluster-ready.** User asked directly whether the implementation was
+  finished enough to copy the repo to a second cluster (Rorqual) and
+  submit jobs on both in parallel. Found and fixed two real gaps before
+  answering yes: `docs/MANTIS_EXPERIMENTS_GUIDE.md` had no Stage 2
+  section at all, and `extract_mantis_embeddings_gpu.sh` (Stage 1
+  extraction) had no Rorqual variant (Stage 1 training/inference and
+  Stage 2 training/inference already did — those 4 scripts existed on
+  disk, pre-written but never committed; verified via `bash -n` and diffed
+  against their Fir counterparts before committing them). Both fixed,
+  full Step 9 (Stage 2) section added to the guide, Rorqual cluster
+  differences (partition, node-exclude list, disjoint shard ranges across
+  clusters) documented in a new guide section.
+
+- **2026-09-09: added 2 Tier-2 secondary tasks to the registry** —
+  `depression_extreme_binary` and `osa_binary_apples_postqc`, at the
+  user's request ("our two secondary tasks of sleepfm... it doesn't make
+  sense if I don't run these tasks for other models"). Real definitions
+  verified against SleepFM's own `v2_registry.yaml` and the actual
+  `task_subjects` CSVs on disk before adding anything — not guessed from
+  the name. Important finding: **`osa_binary_apples_postqc` is a
+  genuinely different task from the existing Tier-1 `apnea_binary`**, not
+  a duplicate — different severity threshold/grouping, APPLES-only scope
+  (N=1,516) vs. apnea_binary's 4-cohort AHI≥15 definition (N much
+  larger). `depression_extreme_binary` (N=1,761, APPLES+STAGES,
+  extreme-group BDI/PHQ-9 design) was the other task added. Stage 1 got 6
+  new experiments (3 heads each, 21 total); Stage 2 LoRA got 4 (2 heads
+  each, `mean_pool` deferred same as Tier-1, 14 total). No script changes
+  were needed — the training/dataset code has no hardcoded task
+  allowlist, and the wall-time tables already had `n_size: small` entries
+  from the original build. Verified end-to-end (not just "YAML parses"):
+  `gen_commands_mantis.py`/`gen_commands_mantis_lora.py`'s `list` and
+  `train` subcommands both correctly recognize and generate real,
+  fully-parameterized sbatch commands for the new tasks.
+
+  **Flagged to the user, not actioned**: the user's phrasing implies they
+  also want these two tasks added to OSF's and PhysioOmni's own
+  registries for parity — that's real, but out of scope for this
+  worktree/session under the standing worktree-isolation rule. Needs a
+  separate session opened in each of those worktrees.

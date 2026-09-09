@@ -2,13 +2,16 @@
 # V2 Mantis LoRA Registry — Stage 2 (LoRA fine-tuning of Mantis backbone)
 # ============================================================
 # Forked from experiments/v2_mantis_registry.yaml (checklist 2.5,
-# docs/TSFM_MANTIS_IMPLEMENTATION_PLAN.md §14.7). Same 5 Tier-1 tasks,
+# docs/TSFM_MANTIS_IMPLEMENTATION_PLAN.md §14.7). Same 5 Tier-1 tasks
+# PLUS 2 Tier-2 secondary tasks (depression_extreme_binary,
+# osa_binary_apples_postqc, added 2026-09-09 alongside Stage 1 — see
+# v2_mantis_registry.yaml's header for the full rationale/verification),
 # same datasets/contexts/tier/notes per task as Stage 1 — required for a
 # fair Stage 1 vs Stage 2 comparison on identical subjects/splits AND
 # identical training dynamics.
 #
-# **`mean_pool` is DEFERRED here — 10 experiments (5 tasks × lstm/
-# transformer), not 15** (plan §5.6/§14.7): same decision both OSF and
+# **`mean_pool` is DEFERRED here — 14 experiments (7 tasks × lstm/
+# transformer), not 21** (plan §5.6/§14.7): same decision both OSF and
 # PhysioOmni made for their own Stage 2 (real LoRA compute cost, not worth
 # tripling the sweep before the first two heads' numbers exist).
 # `apnea_binary` IS included (unlike PhysioOmni's own LoRA registry,
@@ -58,6 +61,7 @@ gradient_accumulation:
     "240m": 32
 
 # ── Tier 1: 5 Tier-1 tasks × 2 heads (mean_pool deferred) = 10 experiments ──
+# ── Tier 2: 2 secondary tasks × 2 heads (mean_pool deferred) = 4 experiments ─
 
 experiments:
 
@@ -207,4 +211,65 @@ experiments:
     run_tag: ""
     n_size: large
     tier: 1
+    notes: ""
+
+  # ── depression_extreme_binary (N=1,761 — APPLES + STAGES) ────────────────
+  # mean_pool deferred, same convention as Tier 1 above.
+  depression_extreme_binary_lstm:
+    task: depression_extreme_binary
+    task_type: seq2label
+    num_classes: 2
+    head: lstm
+    datasets: [apples, stages]
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
+    batch_size: 32
+    lr: 1.0e-4
+    run_tag: ""
+    n_size: small
+    tier: 2
+    notes: "Extreme-group design: BDI<=9->0 or >=20->1 (APPLES); PHQ-9 <=4->0 or >=15->1 (STAGES). Middle group dropped."
+
+  depression_extreme_binary_transformer:
+    task: depression_extreme_binary
+    task_type: seq2label
+    num_classes: 2
+    head: transformer
+    datasets: [apples, stages]
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
+    batch_size: 32
+    lr: 1.0e-4
+    run_tag: ""
+    n_size: small
+    tier: 2
+    notes: ""
+
+  # ── osa_binary_apples_postqc (N=1,516 — APPLES only) ─────────────────────
+  # A DIFFERENT task from apnea_binary above — see v2_mantis_registry.yaml's
+  # header note. mean_pool deferred, same convention as Tier 1 above.
+  osa_binary_apples_postqc_lstm:
+    task: osa_binary_apples_postqc
+    task_type: seq2label
+    num_classes: 2
+    head: lstm
+    datasets: [apples]
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
+    batch_size: 32
+    lr: 1.0e-4
+    run_tag: ""
+    n_size: small
+    tier: 2
+    notes: "Binary OSA severity post-QC: Non-rand+Mild->0, Moderate+Severe->1. APPLES only."
+
+  osa_binary_apples_postqc_transformer:
+    task: osa_binary_apples_postqc
+    task_type: seq2label
+    num_classes: 2
+    head: transformer
+    datasets: [apples]
+    contexts: [30s, 10m, 40m, 80m, 120m, 240m]
+    batch_size: 32
+    lr: 1.0e-4
+    run_tag: ""
+    n_size: small
+    tier: 2
     notes: ""

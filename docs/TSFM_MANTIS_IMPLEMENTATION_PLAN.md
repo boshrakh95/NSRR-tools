@@ -2530,6 +2530,41 @@ the next one starts. Do not chain steps.**
       correctly auto-discovers `['30s']` and generates the matching sbatch
       command. Test checkpoint deleted afterward — nothing real at that
       path yet (1.11/1.12 haven't run).
+- [x] **1.10a** Added 2 Tier-2 secondary tasks to both
+      `v2_mantis_registry.yaml` and `v2_mantis_lora_registry.yaml` —
+      DONE 2026-09-09, at the user's explicit request ("our two secondary
+      tasks of sleepfm"). Real task definitions verified against
+      `experiments/v2_registry.yaml` (SleepFM's own registry) and
+      `/scratch/boshra95/psg/unified/targets_v2/task_subjects/`, not
+      guessed: **`depression_extreme_binary`** (datasets `[apples, stages]`,
+      N=1,761, extreme-group BDI/PHQ-9 design) and
+      **`osa_binary_apples_postqc`** (datasets `[apples]`, N=1,516, binary
+      OSA severity post-QC) — the latter is a genuinely different task from
+      the existing Tier-1 `apnea_binary` (different threshold/grouping,
+      APPLES-only scope), confirmed by comparing both definitions side by
+      side before adding, not assumed from the similar name. Both
+      task_subjects CSVs confirmed real and populated (1,762/1,517 lines
+      incl. header, matching the N's above). Fields copied verbatim from
+      `v2_registry.yaml`, same convention as the 5 Tier-1 tasks (§5.8).
+      Stage 1: 3 heads each (6 new experiments, 21 total). Stage 2 LoRA: 2
+      heads each, `mean_pool` deferred same as Tier-1 (4 new experiments,
+      14 total). **No script changes needed** — confirmed no hardcoded
+      task-name allowlist anywhere in `train_mantis_context_sweep.py`/
+      `train_mantis_lora.py`/the dataset classes (the only task-name
+      special case in either script is `sleep_staging`, irrelevant here),
+      and `n_size: small` already has full wall-time table entries in both
+      `gen_commands_mantis.py` and `gen_commands_mantis_lora.py` from the
+      original Tier-1 build. Verified end-to-end: `list` shows all new
+      experiments as `pending`, YAML parses (21/14 experiments,
+      7 distinct tasks each), and `train ... --context 30s` for one new
+      task in each registry produces a fully-formed, correctly-parameterized
+      `sbatch` command. **Cross-worktree note, flagged to user, not
+      actioned here**: as of 2026-09-09 neither `v2_osf_registry.yaml` nor
+      `v2_physioomni_registry.yaml` has these two tasks yet either — this
+      is a new addition for all three TSFM baselines, not something Mantis
+      was behind on. Adding them to OSF's/PhysioOmni's own registries is
+      out of scope for this worktree/session (strict worktree isolation) —
+      needs a separate session opened in each of those worktrees.
 - [x] **1.11a** `extract_mantis_embeddings_gpu.sh` — DONE 2026-09-07, ahead
       of the full population run. Checklist 1.4 explicitly deferred writing
       this file until the step-by-step implementation (1.7-1.10) was
