@@ -157,7 +157,7 @@ trick already used for `osf_env`'s identical gap.
 population not yet extracted (checklist 1.10, next step).**
 
 ```bash
-cd /home/boshra95/NSRR-tools-omni
+cd /home/boshra95/NSRR-tools
 source /home/boshra95/physioomni_env/bin/activate
 
 # Small debug run (CPU — slow, 50-450s/subject, highly variable by recording length)
@@ -411,7 +411,7 @@ Full embeddings extracted for all 4 datasets — 14,993/14,994 subjects
 (should read 14,993).
 
 ```bash
-cd /home/boshra95/NSRR-tools-omni
+cd /home/boshra95/NSRR-tools
 
 PHYSIOOMNI_EXPS="
   sex_binary_lstm sex_binary_transformer sex_binary_mean_pool
@@ -456,11 +456,11 @@ reference):
 ```bash
 TASK=sex_binary TASK_TYPE=seq2label HEAD=lstm CONTEXT=30s \
   DATASETS="apples shhs" BATCH_SIZE=32 ACCUM_STEPS=1 LR=1e-4 \
-  CONFIG=configs/phase0_physioomni_config.yaml LOGS_DIR=/home/boshra95/NSRR-tools-omni/logs_physioomni \
+  CONFIG=configs/phase0_physioomni_config.yaml LOGS_DIR=/home/boshra95/NSRR-tools/logs_physioomni \
   sbatch --requeue --time=01:30:00 \
     --output=.../logs_physioomni/train_sex_binary_lstm_30s_lr1e-4_%j.out \
     --error=.../logs_physioomni/train_sex_binary_lstm_30s_lr1e-4_%j.err \
-    /home/boshra95/NSRR-tools-omni/jobs/train_physioomni_context_sweep_gpu.sh
+    /home/boshra95/NSRR-tools/jobs/train_physioomni_context_sweep_gpu.sh
 ```
 
 **Not included** (deliberately, per Step 6's design decision): saturation
