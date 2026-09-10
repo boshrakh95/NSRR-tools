@@ -45,4 +45,4 @@ results/*/**/*.pdf
 
 # Resized viewing variants (_sm = 1200px, _xs = 800px) created for API display limits.
 results/figures/**/*_sm.png
-results/figures/**/*_xs.png
+results/figures/**/*_xs.png.DS_Store
