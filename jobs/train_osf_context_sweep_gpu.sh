@@ -1,11 +1,11 @@
 #!/bin/bash
 #SBATCH --job-name=osf_ctx_sweep
-#SBATCH --account=def-forouzan_gpu
-#SBATCH --time=24:00:00
+#SBATCH --account=def-egranger_gpu
+#SBATCH --time=4:00:00
 #SBATCH --gpus=nvidia_h100_80gb_hbm3_1g.10gb:1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32000M
-#SBATCH --exclude=fc11006,fc11013,fc11010
+#SBATCH --exclude=fc11006,fc11013,fc11010,fc10713
 #SBATCH --signal=B:USR1@120            # send SIGUSR1 to bash 120s before wall time
 #SBATCH --output=/home/boshra95/NSRR-tools/logs_osf/%x_%j.out
 #SBATCH --error=/home/boshra95/NSRR-tools/logs_osf/%x_%j.err
