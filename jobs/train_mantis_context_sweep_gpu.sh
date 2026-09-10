@@ -5,7 +5,7 @@
 #SBATCH --gpus=nvidia_h100_80gb_hbm3_1g.10gb:1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32000M
-#SBATCH --exclude=fc11006,fc11013,fc11010
+#SBATCH --exclude=fc11006,fc11013,fc11010,fc10713
 #SBATCH --signal=B:USR1@120            # send SIGUSR1 to bash 120s before wall time
 #SBATCH --output=/home/boshra95/NSRR-tools-mantis/logs_mantis/%x_%j.out
 #SBATCH --error=/home/boshra95/NSRR-tools-mantis/logs_mantis/%x_%j.err

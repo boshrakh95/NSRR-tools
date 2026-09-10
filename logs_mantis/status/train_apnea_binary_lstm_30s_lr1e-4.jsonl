@@ -1,1 +1,2 @@
 {"ts":"2026-09-09T02:35:01-07:00","job_id":"58838403","node":"fc10910","status":"STARTED","task":"apnea_binary","head":"lstm","context":"30s","lr":"1e-4","datasets":"apples shhs mros stages"}
+{"ts":"2026-09-09T03:06:59-07:00","job_id":"58838403","node":"fc10910","status":"SUCCESS","task":"apnea_binary","head":"lstm","context":"30s","lr":"1e-4","datasets":"apples shhs mros stages"}

@@ -1,0 +1,2 @@
+{"ts":"2026-09-09T04:00:19-07:00","job_id":"58838777","node":"fc11003","status":"STARTED","task":"bmi_binary","head":"lstm","context":"40m","lr":"1e-4","datasets":"apples shhs mros"}
+{"ts":"2026-09-09T04:46:52-07:00","job_id":"58838777","node":"fc11003","status":"SUCCESS","task":"bmi_binary","head":"lstm","context":"40m","lr":"1e-4","datasets":"apples shhs mros"}
