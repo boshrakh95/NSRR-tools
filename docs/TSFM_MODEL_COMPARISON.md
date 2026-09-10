@@ -59,6 +59,20 @@ otherwise stated, all primary results use the Transformer head").
 
 ---
 
+> **⚠ Update 2026-09-10 — read before finalizing anything from this document.**
+> Two secondary (Tier 2) tasks were added and run for Phase 1 (frozen encoder) only:
+> `depression_extreme_binary` (OSF + PhysioOmni) and `osa_binary_apples_postqc` (OSF
+> only). Everything above this notice is the **original analysis, unchanged** — kept
+> exactly as first written so you can see what the verdict was *before* these two
+> tasks existed. **§7 (end of document) is the new material and states plainly where
+> it confirms, adds to, or complicates the original verdict.** The single most
+> important new finding is in §7.2 — a real tension between this document's own
+> `apnea_binary` finding and the new `osa_binary_apples_postqc` result, on
+> essentially the same clinical question and cohort. Read that before deciding
+> whether either new task ships in the paper.
+
+---
+
 ## 1. Architecture & Input-Handling Comparison
 
 Adapted and extended from the three-way table already drafted in
@@ -171,6 +185,15 @@ splits cleanly by task category:
   on two clean cohorts (APPLES, MrOS) and **wins** on one clean cohort (STAGES) plus
   the contaminated one (SHHS). Never present a single pooled apnea AUROC for OSF
   without this breakdown.
+  > **⚠ Update 2026-09-10**: the new `osa_binary_apples_postqc` task — essentially
+  > the same clinical question (AHI-based OSA severity), evaluated on the same
+  > APPLES cohort, trained as its own single-cohort model rather than as part of
+  > this pooled 4-cohort one — shows OSF **winning by the largest margin of any
+  > task in this entire document** (+6 to +11.5pp). That is the opposite direction
+  > from "OSF loses on APPLES" stated just above. See §7.2 for the full analysis —
+  > there is a real, defensible explanation (training-set size/composition, not an
+  > inconsistent model), but the optics next to this exact sentence are a genuine
+  > risk worth reading before including either task in the paper.
 
 **LoRA vs. frozen, task-by-task (a second, independent finding, not previously
 headlined this way)**: LoRA clearly helps `apnea_binary` (+2 to +5pp at matched
@@ -570,3 +593,126 @@ column/row ready for Mantis. Two things worth deciding now so Mantis drops in cl
    decision together, rather than just appending a column — a 3-model comparison may
    change which framing (robustness check vs. something stronger) is actually
    supportable.
+
+---
+
+## 7. Update 2026-09-10 — `depression_extreme_binary` and `osa_binary_apples_postqc` (Phase 1 only)
+
+**Everything above this line is unchanged from the original document.** This section
+is purely additive. Both tasks are **frozen-encoder (Phase 1) only** — no LoRA was run
+for either, on either model — so every number below is a frozen-vs-frozen comparison;
+treat any `—` accordingly, same convention as §2. `osa_binary_apples_postqc` was added
+to OSF only, not PhysioOmni (no respiratory pathway — see §1's existing row on this).
+Numbers pulled the same way as §2 (`mean_prob_auroc`, test, `k="all"`, Transformer),
+re-verified directly from the collected CSVs, not estimated.
+
+### 7.1 The numbers
+
+**depression_extreme_binary** (APPLES + STAGES — both confirmed contamination-clean,
+see §1's pretraining-overlap row; no SHHS caveat needed for this task, unlike sex/age/BMI/apnea)
+
+| Model | 30s | 10m | 40m | 80m | 120m | 240m |
+|---|---|---|---|---|---|---|
+| SleepFM (full-ch.) | 0.738 | 0.742 | 0.752 | 0.756 | 0.740 | 0.741 |
+| SleepFM (reduced-ch.) | 0.756 | 0.739 | 0.750 | 0.749 | 0.754 | 0.746 |
+| OSF-frozen | 0.762 | 0.770 | 0.777 | 0.781 | 0.776 | 0.765 |
+| PhysioOmni-frozen | 0.718 | 0.729 | 0.725 | 0.722 | 0.702 | 0.726 |
+
+**osa_binary_apples_postqc** (APPLES only, post-QC filtered — confirmed clean)
+
+| Model | 30s | 10m | 40m | 80m | 120m | 240m |
+|---|---|---|---|---|---|---|
+| SleepFM (full-ch.) | 0.755 | 0.762 | 0.791 | 0.814 | 0.814 | 0.818 |
+| OSF-frozen | 0.867 | 0.868 | 0.906 | 0.877 | 0.914 | 0.887 |
+
+### 7.2 The important finding: a real tension with the existing `apnea_binary` result
+
+**`osa_binary_apples_postqc` and `apnea_binary` use essentially the same clinical
+threshold** — confirmed directly from the registries, not assumed: `apnea_binary`'s
+notes say *"AHI >= 15 = moderate/severe OSA. Standard clinical threshold"*;
+`osa_binary_apples_postqc`'s say *"Non-rand+Mild->0, Moderate+Severe->1"* — the same
+moderate/severe cutoff, just APPLES-only with an added post-QC subject filter. On
+`apnea_binary` (pooled across apples+shhs+mros+stages, §2.1), **OSF loses to SleepFM
+specifically on the APPLES cohort**. On `osa_binary_apples_postqc` — same threshold,
+same cohort, but trained as its own single-cohort model — **OSF beats SleepFM by
++6 to +11.5pp, the largest margin of any task/model pair in this entire document**,
+bigger than any of the "real, credible" sex/age/BMI wins in §2.1.
+
+**A real, defensible explanation exists — this is not an inconsistent or broken
+result**: verified directly (`training.csv`), `osa_binary_apples_postqc` trains on
+3,795 subjects (APPLES only) vs. `apnea_binary`'s pooled 48,380 (~12.75× larger,
+4 heterogeneous cohorts/sites/devices). Single-cohort, homogeneous-site training
+producing a different performance profile than pooled multi-site training is a
+well-understood, unsurprising ML phenomenon, not evidence of a flawed comparison.
+Worth noting too: SleepFM's **own** `osa_binary_apples_postqc` numbers (0.755-0.818)
+are themselves lower than SleepFM's own `apnea_binary` numbers at matched context
+(0.800-0.901) — so the smaller/harder single-cohort task is harder for *both* models,
+just disproportionately less so for OSF.
+
+**Why this is still a real risk if it ships uncaveated**: a reviewer who reads both
+numbers side by side — same threshold, same cohort, opposite directional finding for
+the same encoder — has an obvious, fair question, and "different training-set size"
+is a real answer but requires the paper to actually make that argument explicitly, not
+just present both numbers and hope it isn't noticed. There is currently **no
+controlled test of the training-set-size hypothesis** — e.g. retraining `apnea_binary`
+on APPLES-only data with the same post-QC filter, to see whether *that* also flips
+positive for OSF, which would directly confirm (or refute) the explanation above
+rather than leaving it as a plausible-but-unverified story.
+
+**One more thing worth naming plainly, not glossed over**: subject-ID-level
+contamination is confirmed clean for APPLES (§1), but that only rules out *direct*
+subject overlap — it does not rule out OSF's pretraining corpus (heavily SHHS-weighted)
+sharing *device/protocol/site-level* characteristics with APPLES that a subject-ID
+match can't detect. This is speculative, not evidence of anything — flagged here as an
+open uncertainty, not a finding, precisely because it's the kind of thing worth having
+an answer ready for if asked, not because there's reason to believe it's true.
+
+### 7.3 depression_extreme_binary: complicates the picture less, but not a clean fit either
+
+Unlike `osa_binary_apples_postqc`, this task **does not contradict anything already in
+this document** — OSF wins consistently (+2.4 to +3.6pp at every context, both
+models notably flat across context length, unlike sex/age/BMI's clear monotonic
+climb) and PhysioOmni underperforms SleepFM consistently (-1.0 to -5.2pp), which
+*replicates and strengthens* both of §2's existing headline patterns rather than
+complicating them. It is also the cleanest task in the whole document from a
+contamination standpoint — both its cohorts (APPLES, STAGES) are confirmed clean, so
+unlike sex/age/BMI/apnea it needs no SHHS caveat at all.
+
+That said, two things are worth naming honestly before treating it as a fourth
+"OSF wins" data point on the same footing as sex/age/BMI:
+
+- **It doesn't actually belong in the "static/structural" bucket §0/§2.1 built for
+  sex/age/BMI.** Those are simple, well-defined, objectively-measured biological/
+  demographic traits with established physiological correlates in sleep macrostructure.
+  Depression is a psychological/clinical construct — noisier, more subjectively
+  defined (the task's own "extreme-group design," dropping the middle group entirely,
+  is itself a tell that the raw signal is weak enough to need this to get a usable
+  classifier at all), and its link to PSG-observable sleep macrostructure is far less
+  established in the literature than sex/age/BMI's. It happens to *pattern* like the
+  "OSF wins" bucket (flat-with-context, OSF ahead throughout), but that's a
+  resemblance in results, not a claim that the same underlying mechanism (encoder
+  captures a stable structural signal better) is what's actually happening.
+- **Absolute performance is meaningfully lower than the tasks it would sit next to.**
+  0.70-0.78 AUROC, vs. 0.83-0.96 for sex/age/BMI — a real, weaker signal. Reporting it
+  in the same table/figure as those without flagging the gap in absolute performance
+  would read as implying comparable task difficulty/validity, which isn't accurate.
+
+### 7.4 Recommendation
+
+**Include `depression_extreme_binary`, with the two caveats in §7.3 stated
+explicitly** (different task category than sex/age/BMI; weaker absolute AUROC). It's a
+clean, contamination-free, internally-consistent result that strengthens both of the
+document's existing headline findings rather than complicating either.
+
+**Hold `osa_binary_apples_postqc` back from the paper for now**, or at minimum do not
+place it anywhere near the existing `apnea_binary` discussion without directly
+addressing the tension in §7.2. My honest opinion: the training-set-size explanation
+is real and probably correct, but it is currently a plausible story, not a verified
+one — and the size of the discrepancy (a task that's the single biggest OSF win in the
+whole document, on the exact clinical question where the exact same encoder was
+previously reported losing on the exact same cohort) is large enough that I would not
+ship it without either (a) the controlled APPLES-only-`apnea_binary` retrain that
+would actually test the explanation, or (b) an explicit, well-argued paragraph in the
+paper itself making the training-composition case, written knowing a reviewer will
+likely ask about it directly. Either is real, scoped work — not a small edit — so this
+is a genuine decision point, not something to default into either direction.
