@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=mantis_lora_sweep
-#SBATCH --account=def-forouzan_gpu
+#SBATCH --account=def-egranger_gpu
 #SBATCH --time=04:00:00
 #SBATCH --gpus=h100:1
 #SBATCH --cpus-per-task=4
