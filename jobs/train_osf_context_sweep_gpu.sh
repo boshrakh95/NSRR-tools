@@ -7,8 +7,8 @@
 #SBATCH --mem=32000M
 #SBATCH --exclude=fc11006,fc11013,fc11010
 #SBATCH --signal=B:USR1@120            # send SIGUSR1 to bash 120s before wall time
-#SBATCH --output=/home/boshra95/NSRR-tools/logs_osf/%x_%j.out
-#SBATCH --error=/home/boshra95/NSRR-tools/logs_osf/%x_%j.err
+#SBATCH --output=/home/boshra95/NSRR-tools-main/logs_osf/%x_%j.out
+#SBATCH --error=/home/boshra95/NSRR-tools-main/logs_osf/%x_%j.err
 
 # OSF baseline — Stage 1 Step 4 — Context-Length Sweep Training
 #
@@ -54,7 +54,7 @@ set -e
 _SCRIPT_PATH="$(realpath "$0")"
 _PYTHON_PID=""
 
-cd /home/boshra95/NSRR-tools
+cd /home/boshra95/NSRR-tools-main
 LOGS_DIR=${LOGS_DIR:-logs_osf}
 mkdir -p "$LOGS_DIR"
 mkdir -p "$LOGS_DIR/status"

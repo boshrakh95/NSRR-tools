@@ -5,8 +5,8 @@
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=32000M
 #SBATCH --signal=B:USR1@120
-#SBATCH --output=/home/boshra95/NSRR-tools/logs_osf_lora/precompute_cache_%x_%j.out
-#SBATCH --error=/home/boshra95/NSRR-tools/logs_osf_lora/precompute_cache_%x_%j.err
+#SBATCH --output=/home/boshra95/NSRR-tools-main/logs_osf_lora/precompute_cache_%x_%j.out
+#SBATCH --error=/home/boshra95/NSRR-tools-main/logs_osf_lora/precompute_cache_%x_%j.err
 
 # OSF baseline — Stage 2 (LoRA) — Raw signal cache precompute (checklist 2.5b)
 #
@@ -41,7 +41,7 @@ set -e
 _SCRIPT_PATH="$(realpath "$0")"
 _PYTHON_PID=""
 
-cd /home/boshra95/NSRR-tools
+cd /home/boshra95/NSRR-tools-main
 LOGS_DIR=${LOGS_DIR:-logs_osf_lora}
 mkdir -p "$LOGS_DIR"
 

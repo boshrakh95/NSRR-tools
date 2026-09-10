@@ -7,8 +7,8 @@
 #SBATCH --mem=32000M
 #SBATCH --exclude=fc11006,fc11013,fc11010
 #SBATCH --signal=B:USR1@120            # send SIGUSR1 to bash 120s before wall time
-#SBATCH --output=/home/boshra95/NSRR-tools-omni/logs_physioomni/%x_%j.out
-#SBATCH --error=/home/boshra95/NSRR-tools-omni/logs_physioomni/%x_%j.err
+#SBATCH --output=/home/boshra95/NSRR-tools-main/logs_physioomni/%x_%j.out
+#SBATCH --error=/home/boshra95/NSRR-tools-main/logs_physioomni/%x_%j.err
 
 # PhysioOmni baseline — Stage 1 Step 4 — Context-Length Sweep Training
 #
@@ -16,9 +16,9 @@
 # docs/TSFM_PHYSIOOMNI_IMPLEMENTATION_PLAN.md §10/§13. Same structure, same
 # auto-resume mechanism, same status/log conventions as OSF's job script;
 # only the venv, worktree path, target script, log dir, and job name
-# differ. Runs from THIS worktree (/home/boshra95/NSRR-tools-omni,
-# physioomni-implementation branch) — never touches /home/boshra95/NSRR-tools
-# (see plan §1's worktree isolation rule).
+# differ. Retargeted to /home/boshra95/NSRR-tools-main (2026-09-10) after
+# osf-implementation and physioomni-implementation were merged into main —
+# see CLAUDE.md's Status section for the merge history.
 #
 # Trains one (task, head_type) combination across all context lengths.
 # Already-finished context lengths are skipped automatically (safe to resubmit).
@@ -60,7 +60,7 @@ set -e
 _SCRIPT_PATH="$(realpath "$0")"
 _PYTHON_PID=""
 
-cd /home/boshra95/NSRR-tools-omni
+cd /home/boshra95/NSRR-tools-main
 LOGS_DIR=${LOGS_DIR:-logs_physioomni}
 mkdir -p "$LOGS_DIR"
 mkdir -p "$LOGS_DIR/status"

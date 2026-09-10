@@ -5,8 +5,8 @@
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=32000M
 #SBATCH --signal=B:USR1@120
-#SBATCH --output=/home/boshra95/NSRR-tools-omni/logs_physioomni/extract_cpu_%x_%j.out
-#SBATCH --error=/home/boshra95/NSRR-tools-omni/logs_physioomni/extract_cpu_%x_%j.err
+#SBATCH --output=/home/boshra95/NSRR-tools-main/logs_physioomni/extract_cpu_%x_%j.out
+#SBATCH --error=/home/boshra95/NSRR-tools-main/logs_physioomni/extract_cpu_%x_%j.err
 
 # CPU-only pilot/debug extraction job for PhysioOmni embeddings — for small
 # subject counts where the GPU queue isn't worth waiting on (see
@@ -17,7 +17,7 @@
 _SCRIPT_PATH="$(realpath "$0")"
 _PYTHON_PID=""
 
-cd /home/boshra95/NSRR-tools-omni
+cd /home/boshra95/NSRR-tools-main
 LOGS_DIR=${LOGS_DIR:-logs_physioomni}
 mkdir -p "$LOGS_DIR"
 
