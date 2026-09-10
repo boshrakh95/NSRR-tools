@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=mantis_raw_signal_cache
-#SBATCH --account=def-forouzan
+#SBATCH --account=def-egranger
 #SBATCH --time=04:00:00
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=32000M
