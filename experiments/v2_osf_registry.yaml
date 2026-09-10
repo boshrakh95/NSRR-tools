@@ -19,7 +19,7 @@
 config: configs/phase0_osf_config.yaml
 results_dir: /scratch/boshra95/psg_full/unified/results/phase0_osf
 inference_dir: /scratch/boshra95/psg_full/unified/results/phase0_osf/inference
-logs_dir: /home/boshra95/NSRR-tools-main/logs_osf
+logs_dir: /home/boshra95/NSRR-tools/logs_osf
 python_bin: /home/boshra95/osf_env/bin/python
 
 # ── Training protocol ────────────────────────────────────────────────────────

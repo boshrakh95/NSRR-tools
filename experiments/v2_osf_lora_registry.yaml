@@ -37,7 +37,7 @@
 config: configs/phase0_osf_lora_config.yaml
 results_dir: /scratch/boshra95/psg_full/unified/results/phase0_osf_lora
 inference_dir: /scratch/boshra95/psg_full/unified/results/phase0_osf_lora/inference
-logs_dir: /home/boshra95/NSRR-tools-main/logs_osf_lora
+logs_dir: /home/boshra95/NSRR-tools/logs_osf_lora
 python_bin: /home/boshra95/osf_env/bin/python
 
 # ── Training protocol ────────────────────────────────────────────────────────

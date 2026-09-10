@@ -7,8 +7,8 @@
 #SBATCH --mem=32000M
 #SBATCH --exclude=fc11006,fc11013,fc11010
 #SBATCH --signal=B:USR1@120            # send SIGUSR1 to bash 120s before wall time
-#SBATCH --output=/home/boshra95/NSRR-tools-main/logs_physioomni_lora/%x_%j.out
-#SBATCH --error=/home/boshra95/NSRR-tools-main/logs_physioomni_lora/%x_%j.err
+#SBATCH --output=/home/boshra95/NSRR-tools/logs_physioomni_lora/%x_%j.out
+#SBATCH --error=/home/boshra95/NSRR-tools/logs_physioomni_lora/%x_%j.err
 
 # PhysioOmni baseline — Stage 2 Step 1 — LoRA Fine-Tuning Sweep
 #
@@ -101,7 +101,7 @@ set -e
 _SCRIPT_PATH="$(realpath "$0")"
 _PYTHON_PID=""
 
-cd /home/boshra95/NSRR-tools-main
+cd /home/boshra95/NSRR-tools
 LOGS_DIR=${LOGS_DIR:-logs_physioomni_lora}
 mkdir -p "$LOGS_DIR"
 mkdir -p "$LOGS_DIR/status"

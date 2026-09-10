@@ -7,8 +7,8 @@
 #SBATCH --mem=16000M
 #SBATCH --exclude=fc11006
 #SBATCH --signal=B:USR1@120
-#SBATCH --output=/home/boshra95/NSRR-tools-main/logs_osf/embeddings_%x_%j.out
-#SBATCH --error=/home/boshra95/NSRR-tools-main/logs_osf/embeddings_%x_%j.err
+#SBATCH --output=/home/boshra95/NSRR-tools/logs_osf/embeddings_%x_%j.out
+#SBATCH --error=/home/boshra95/NSRR-tools/logs_osf/embeddings_%x_%j.err
 
 # OSF baseline — Stage 1 Step 1 — Embedding extraction (GPU)
 #
@@ -48,7 +48,7 @@ set -e
 _SCRIPT_PATH="$(realpath "$0")"
 _PYTHON_PID=""
 
-cd /home/boshra95/NSRR-tools-main
+cd /home/boshra95/NSRR-tools
 LOGS_DIR=${LOGS_DIR:-logs_osf}
 mkdir -p "$LOGS_DIR"
 
