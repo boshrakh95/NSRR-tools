@@ -38,11 +38,45 @@ PhysioOmni bug came from trusting it too early, plan §4.10).
 
 MODEL ARCHITECTURE
 ───────────────────
-  CombinedMantisLoRAModel(backbone, sequence_head) is built as ONE
-  nn.Module BEFORE peft wrapping (plan §14.2), so peft.get_peft_model() is
-  called on the whole combined module with modules_to_save=["sequence_head"]
-  — this makes peft's own state-dict save/load cover both the LoRA deltas
-  AND the head in one call.
+  ⚠️ REVISED 2026-09-12 — a real crash (RuntimeError: shape '[786432, 1]'
+  is invalid for input of size 1572864, every context length except 30s,
+  reproduced even at micro_batch=1) was chased through two DIFFERENT real
+  causes before landing on the actual one — both corrections kept below
+  since both changes are real and both matter, even though only the
+  second was the actual fix for the crash itself:
+
+  (1) get_peft_model() now wraps the BACKBONE ALONE, not
+  backbone+sequence_head together via modules_to_save. This was the
+  FIRST fix tried, based on the (real, but ultimately NOT the cause of
+  this specific crash) observation that get_peft_model()'s global
+  freeze/re-enable sweep touches every submodule's requires_grad,
+  including the LSTM's. Kept anyway — it's a real architectural
+  simplification (sequence_head is now a plain nn.Module, no
+  ModulesToSaveWrapper/.original_module juggling needed for warm-starts)
+  and removes a genuine footgun even though it wasn't this bug's cause.
+  Checkpoint format changed accordingly (see OUTPUT below): two pieces
+  (backbone LoRA state + head state) instead of one combined
+  peft_state_dict.
+
+  (2) THE ACTUAL FIX: `checkpoint_tokgen` (gradient-checkpointing just the
+  tokenizer conv via torch.utils.checkpoint) corrupts cuDNN's
+  bidirectional-LSTM+PackedSequence backward on this cluster's
+  torch/cudnn build, REGARDLESS of (1) — confirmed by testing (1) alone
+  first (still crashed), then use_reentrant=True vs False (both crashed),
+  then explicitly fixing torch.utils.checkpoint's "no inputs require
+  grad" warning via `chunk.requires_grad_(True)` (still crashed) — ruling
+  out contiguity, PEFT-wrapping, reentrant-mode, and grad-requirement
+  explanations one at a time, by direct test, not assumption.
+  `checkpoint_chunks` (checkpointing the WHOLE per-chunk backbone call,
+  the coarser rung) does NOT hit this — verified working for both lstm
+  and transformer heads — and saves MORE memory than checkpoint_tokgen
+  besides. **Use checkpoint_chunks, not checkpoint_tokgen, whenever an
+  LSTM head is involved** (configs/phase0_mantis_lora_config.yaml
+  updated). OSF's `train_osf_lora.py` has the identical
+  get_peft_model(combined, modules_to_save=["sequence_head"]) pattern
+  from (1) — flagged to the user, not fixed there (worktree isolation) —
+  but if OSF's own LSTM LoRA runs also use checkpoint_tokgen, THIS is the
+  fix that would actually matter for them, not (1).
 
   forward(x, mask): x is raw [B, N, 6, 3840] signal (from
   MantisRawEpochWindowDataset). Every channel of every epoch goes through
@@ -84,10 +118,14 @@ USAGE
 OUTPUT — same shape as Stage 1's, under phase0_mantis_lora's results_dir:
   {results_dir}/{task}_{head_type}/
     context_{L}/
-      best_model.pt   — peft state dict (LoRA deltas + sequence_head), NOT
-                         the full 8.11M-param base model (kept frozen,
-                         never needs saving — always reloadable from
-                         embedding.repo_id/local_dir)
+      best_model.pt   — dict with "lora_state_dict" (peft's own format,
+                         backbone LoRA deltas only) and "head_state_dict"
+                         (plain sequence_head state dict) — NOT the full
+                         8.11M-param base model (kept frozen, never needs
+                         saving — always reloadable from
+                         embedding.repo_id/local_dir). Changed 2026-09-12
+                         from a single combined peft_state_dict — see
+                         MODEL ARCHITECTURE above.
       metrics.json
     summary.csv
 """
@@ -154,8 +192,12 @@ H100_TF32_PEAK_TFLOPS = 495.0
 # ─────────────────────────────────────────────────────────────────────────────
 
 class CombinedMantisLoRAModel(nn.Module):
-    """Mantis backbone + sequence head, wrapped as one module BEFORE peft
-    injection (plan §14.2) so peft's save/load covers both pieces.
+    """Mantis backbone (already peft-wrapped with LoRA) + sequence head,
+    combined as SIBLINGS — NOT peft-wrapped together (see module docstring,
+    2026-09-12 bug fix). `backbone` here is the return value of
+    `get_peft_model(raw_backbone, lora_config)`; `sequence_head` is a
+    plain nn.Module that peft has never seen, so its requires_grad/cuDNN
+    state is exactly what `build_head()` gave it — untouched.
 
     forward(x, mask) matches train_mantis_context_sweep.py's run_epoch()
     expected signature exactly — x: [B, N, 6, 3840] raw signal, mask:
@@ -244,6 +286,18 @@ def build_combined_lora_model(cfg: dict, num_classes: int, head_type: str, devic
         pe_mode=emb_cfg.get("pe_mode", "extrapolate"),
     )
 
+    # peft sees ONLY the backbone (2026-09-12 bug fix — see module
+    # docstring). No modules_to_save: sequence_head is built and attached
+    # afterward, as a sibling CombinedMantisLoRAModel never passes to peft.
+    lora_cfg = cfg["lora"]
+    lora_config = LoraConfig(
+        target_modules=lora_cfg["target_modules"],
+        r=lora_cfg["r"],
+        lora_alpha=lora_cfg["lora_alpha"],
+        lora_dropout=lora_cfg.get("lora_dropout", 0.0),
+    )
+    peft_backbone = get_peft_model(backbone, lora_config)
+
     m_cfg = dict(cfg["model"])
     m_cfg["num_classes"] = num_classes
     m_cfg["head_type"] = head_type
@@ -253,56 +307,50 @@ def build_combined_lora_model(cfg: dict, num_classes: int, head_type: str, devic
     checkpoint_tokgen = bool(cfg.get("training", {}).get("checkpoint_tokgen", False))
     checkpoint_chunks = bool(cfg.get("training", {}).get("checkpoint_chunks", False))
     combined = CombinedMantisLoRAModel(
-        backbone, sequence_head, chunk_batch_size=chunk_bs,
+        peft_backbone, sequence_head, chunk_batch_size=chunk_bs,
         checkpoint_tokgen=checkpoint_tokgen, checkpoint_chunks=checkpoint_chunks,
     )
-
-    lora_cfg = cfg["lora"]
-    lora_config = LoraConfig(
-        target_modules=lora_cfg["target_modules"],
-        r=lora_cfg["r"],
-        lora_alpha=lora_cfg["lora_alpha"],
-        lora_dropout=lora_cfg.get("lora_dropout", 0.0),
-        modules_to_save=lora_cfg.get("modules_to_save", ["sequence_head"]),
-    )
-    peft_model = get_peft_model(combined, lora_config)
-    return peft_model.to(device)
+    return combined.to(device)
 
 
-def warm_start_head_from_stage1(peft_model, stage1_checkpoint_path: str):
-    """Load Stage 1's trained sequence_head weights into the combined
-    module's head submodule before LoRA training starts (LP-FT staging —
-    see module docstring). Stage 1 checkpoints are plain
-    sequence-head-only state dicts (train_mantis_context_sweep.py).
+def save_combined_state(model: "CombinedMantisLoRAModel") -> dict:
+    """Two-piece checkpoint (2026-09-12 format, see module docstring):
+    backbone's LoRA deltas (peft's own format) + sequence_head's own plain
+    state dict — no longer one combined peft_state_dict, since peft now
+    only ever sees the backbone."""
+    return {
+        "lora_state_dict": get_peft_model_state_dict(model.backbone),
+        "head_state_dict": model.sequence_head.state_dict(),
+    }
 
-    peft's `modules_to_save` wraps sequence_head in a `ModulesToSaveWrapper`
-    holding TWO copies: `.original_module` (frozen reference) and
-    `.modules_to_save["default"]` (the trainable copy used during forward
-    while the adapter is active). A plain `load_state_dict()` fails on the
-    key-prefix mismatch against the wrapper itself — load into both inner
-    copies explicitly, exactly as train_osf_lora.py/train_physioomni_lora.py
-    already do (plan §14.5).
+
+def load_combined_state(model: "CombinedMantisLoRAModel", state: dict):
+    set_peft_model_state_dict(model.backbone, state["lora_state_dict"])
+    model.sequence_head.load_state_dict(state["head_state_dict"])
+
+
+def warm_start_head_from_stage1(model, stage1_checkpoint_path: str):
+    """Load Stage 1's trained sequence_head weights into the (now-plain,
+    never-peft-wrapped) sequence_head submodule before LoRA training
+    starts (LP-FT staging — see module docstring). Stage 1 checkpoints are
+    plain sequence-head-only state dicts (train_mantis_context_sweep.py).
+
+    Simpler than before the 2026-09-12 fix: sequence_head is no longer
+    wrapped in peft's `ModulesToSaveWrapper` (no `.original_module` /
+    `.modules_to_save["default"]` dance needed) — it's just an ordinary
+    submodule, so a direct load_state_dict() is correct.
     """
     stage1_state = torch.load(stage1_checkpoint_path, map_location="cpu", weights_only=False)
-    wrapped_head = peft_model.base_model.model.sequence_head
-    if hasattr(wrapped_head, "original_module"):
-        wrapped_head.original_module.load_state_dict(stage1_state)
-        for adapter_module in wrapped_head.modules_to_save.values():
-            adapter_module.load_state_dict(stage1_state)
-    else:
-        wrapped_head.load_state_dict(stage1_state)
+    model.sequence_head.load_state_dict(stage1_state)
     print(f"  Warm-started sequence_head from: {stage1_checkpoint_path}")
 
 
-def warm_start_from_stage2_30s(peft_model, stage2_30s_checkpoint_path: str):
-    """Load a previously-fine-tuned Stage 2 (LoRA) 30s checkpoint's FULL
-    peft state dict (LoRA deltas + sequence_head together) as the starting
-    point for fine-tuning at a DIFFERENT context length (plan §14.5).
-    Already in peft's own format (produced by get_peft_model_state_dict
-    during the 30s run), so set_peft_model_state_dict handles it directly.
-    """
+def warm_start_from_stage2_30s(model, stage2_30s_checkpoint_path: str):
+    """Load a previously-fine-tuned Stage 2 (LoRA) 30s checkpoint's
+    two-piece state (LoRA backbone deltas + sequence_head) as the starting
+    point for fine-tuning at a DIFFERENT context length (plan §14.5)."""
     state = torch.load(stage2_30s_checkpoint_path, map_location="cpu", weights_only=False)
-    set_peft_model_state_dict(peft_model, state)
+    load_combined_state(model, state)
     print(f"  Warm-started LoRA+head from Stage 2 30s checkpoint: {stage2_30s_checkpoint_path}")
 
 
@@ -420,7 +468,7 @@ def train_one_context(
 
     if _resuming:
         _rckpt = torch.load(resume_path, map_location="cpu", weights_only=False)
-        set_peft_model_state_dict(model, _rckpt["peft_state_dict"])
+        load_combined_state(model, _rckpt["combined_state_dict"])
         print(f"  [RESUME] Found checkpoint — continuing from epoch {_rckpt['epoch'] + 1}")
     elif stage2_30s_checkpoint:
         warm_start_from_stage2_30s(model, stage2_30s_checkpoint)
@@ -515,14 +563,14 @@ def train_one_context(
         if improved:
             best_monitor = val_monitor
             no_improve = 0
-            torch.save(get_peft_model_state_dict(model), ckpt_path)
+            torch.save(save_combined_state(model), ckpt_path)
         elif not ckpt_path.exists():
             # Safety net: same fix as train_mantis_context_sweep.py's own
             # (checklist 1.9) — if the monitor is NaN for every epoch so
             # far (degenerate val split), never leave best_model.pt
             # unwritten, which would otherwise crash the final evaluation
             # below with FileNotFoundError. Does not reset patience.
-            torch.save(get_peft_model_state_dict(model), ckpt_path)
+            torch.save(save_combined_state(model), ckpt_path)
         else:
             no_improve += 1
 
@@ -539,7 +587,7 @@ def train_one_context(
 
         torch.save({
             "epoch": epoch,
-            "peft_state_dict": get_peft_model_state_dict(model),
+            "combined_state_dict": save_combined_state(model),
             "optimizer_state_dict": optimizer.state_dict(),
             "scheduler_state_dict": scheduler.state_dict(),
             "best_monitor": best_monitor,
@@ -556,7 +604,7 @@ def train_one_context(
     print(f"  Training time: {elapsed/60:.1f} min")
 
     # ── Evaluation on best checkpoint ────────────────────────────────────────
-    set_peft_model_state_dict(model, torch.load(ckpt_path, map_location="cpu", weights_only=False))
+    load_combined_state(model, torch.load(ckpt_path, map_location="cpu", weights_only=False))
 
     _, train_logits, train_targets = run_epoch(model, train_loader, None, criterion, device, None, train=False)
     _, val_logits, val_targets = run_epoch(model, val_loader, None, criterion, device, None, train=False)

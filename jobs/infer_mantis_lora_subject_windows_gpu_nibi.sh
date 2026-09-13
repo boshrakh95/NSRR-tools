@@ -2,7 +2,7 @@
 #SBATCH --job-name=mantis_lora_infer_windows
 #SBATCH --account=def-forouzan_gpu
 #SBATCH --time=05:00:00
-#SBATCH --gpus=h100:1
+#SBATCH --gpus=nvidia_h100_80gb_hbm3_2g.20gb:1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32000M
 #SBATCH --signal=B:USR1@120            # send SIGUSR1 to bash 120s before wall time
@@ -12,15 +12,17 @@
 # Mantis baseline — Stage 2 Step 2 — LoRA Subject-level inference (all
 # windows) (nibi-specific)
 #
-# Differs from infer_mantis_lora_subject_windows_gpu.sh (Fir) the same way
-# train_mantis_context_sweep_gpu_nibi.sh differs from its Fir counterpart —
-# see that script's header for the full reasoning. Notably: Fir uses a MIG
-# slice here (1g.10gb, inference needs no backward pass so a small slice is
-# fine) — this Nibi version asks for a whole h100:1 instead since no MIG
-# slice naming was found documented for Nibi (unverified, see
-# jobs/test_gpu_setup_nibi.sh). Costs more of the allocation than strictly
-# needed for an inference-only job; fine as a starting point, revisit once
-# MIG availability on Nibi is confirmed one way or the other.
+# GPU size: REVISED 2026-09-12 — MIG slices are confirmed working on Nibi
+# (jobs/test_gpu_setup_nibi.sh passed, and train_mantis_lora_gpu_nibi.sh's
+# own real-GPU testing found checkpoint_chunks keeps LoRA TRAINING's peak
+# memory to ~14.4 GB even at 240m). Inference has no backward pass and no
+# gradient checkpointing at all, so its memory footprint is a strict
+# subset of training's — using the same 2g.20gb tier already verified
+# sufficient for the heavier case, not re-measured independently for
+# inference specifically, but with real margin either way. Also avoids
+# the severe whole-h100:1 queue contention found on Nibi (772 pending /
+# 90 running at the time this was tested) — see train_mantis_lora_gpu_nibi.sh's
+# header for the full story.
 #
 # No TASK_TYPE here — Stage 2 is seq2label-only.
 #

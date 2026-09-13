@@ -145,6 +145,25 @@ training:
   early_stopping_monitor: "val_auroc"
   weighted_sampler: false
 
+  # 2026-09-12 REVISED — checkpoint_tokgen was enabled 2026-09-11 after
+  # real 10m/40m/80m Nibi OOMs, but real-GPU testing found it CRASHES the
+  # LSTM head: torch.utils.checkpoint (tried both use_reentrant=True/False,
+  # and explicitly fixing the "no inputs require grad" warning via
+  # chunk.requires_grad_(True) — neither helped) corrupts cuDNN's
+  # bidirectional-LSTM+PackedSequence backward when a checkpointed segment
+  # appears earlier in the same graph, on this cluster's torch/cudnn build.
+  # Confirmed NOT a PEFT/head-wrapping issue (ruled out separately, see
+  # train_mantis_lora.py's module docstring) — purely
+  # torch.utils.checkpoint + downstream cuDNN LSTM.
+  #
+  # checkpoint_chunks (checkpointing the WHOLE per-chunk backbone call,
+  # not just the tokenizer conv) does NOT hit this — verified working for
+  # both lstm and transformer heads. It also saves MORE memory than
+  # checkpoint_tokgen (coarser granularity), so this isn't a downgrade.
+  # Use this lever, not checkpoint_tokgen, for the LSTM head.
+  checkpoint_tokgen: false
+  checkpoint_chunks: true
+
   windows_strategy: "fixed"
   token_budget_minutes: 240
   k_max: 50

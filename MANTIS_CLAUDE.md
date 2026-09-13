@@ -994,3 +994,249 @@ files across all cohorts for NaN/Inf/shape/degenerate issues — clean.
   registries for parity — that's real, but out of scope for this
   worktree/session under the standing worktree-isolation rule. Needs a
   separate session opened in each of those worktrees.
+
+- **2026-09-10/11: second cluster (Nibi) set up from scratch, in parallel
+  with Fir**, so Phase 2 (LoRA) jobs can run independently of Fir's queue.
+  This repo/worktree (`NSRR-tools-mantis` @ `mantis-implementation`) and
+  five `jobs/*_nibi.sh` scripts already existed on `main`/this branch
+  before this session; everything below is what this session actually
+  built and verified on Nibi itself.
+
+  **GPU smoke test (`jobs/test_gpu_setup_nibi.sh`) PASSED, job 21655871.**
+  Confirms all three previously-unverified SLURM directives in the five
+  `_nibi.sh` scripts are correct as written — no fixes needed: `--gpus=h100:1`
+  allocates a whole 80GB H100 (`MIG M. Disabled`, full 81,559MiB visible,
+  not a slice), no `--partition` needed (scheduler auto-selected
+  `gpubase_bygpu_b1`, confirmed via `scontrol show job`), no `--exclude`
+  needed (job ran clean on node `g21`). `def-egranger_gpu` and
+  `def-forouzan_gpu` both resolve via `sacctmgr show associations`.
+
+  **`/home/boshra95/mantis_env` built from scratch on Nibi, python/3.10.13,
+  small-batch installs per this file's own "Environment" section above —
+  one real gap found in that section's own package list.** Reproduced the
+  documented wheelhouse gaps exactly: `accelerate==1.2.1` and
+  `scikit-learn==1.7.2` are confirmed absent from the cp310 wheelhouse
+  here too (checked directly: wheelhouse jumps `accelerate` 1.1.1→1.3.0,
+  and `scikit-learn` cp310 tops out at 1.5.2) — installed both from PyPI,
+  then re-pinned `torch==2.5.1/torchvision==0.20.1/torchaudio==2.5.1` via
+  `--no-index --no-deps --force-reinstall` as a precaution (torch was
+  NOT actually upgraded this time, unlike Fir's build, but re-pinned
+  anyway since the risk is the same mechanism). `peft==0.14.0`'s own
+  wheelhouse install pulled in `accelerate==1.14.0` transitively first —
+  had to be corrected to 1.2.1 afterward, in that order (peft before the
+  accelerate/scikit-learn PyPI batch), not before.
+
+  **Real gap in this file's own "Environment" section**: `loguru` is a
+  genuine runtime dependency of `nsrr_tools.datasets`
+  (`base_adapter.py` imports it directly) but isn't in the documented
+  package list or the "51 packages installed" count above — `import
+  nsrr_tools.datasets` failed with `ModuleNotFoundError: No module named
+  'loguru'` until installed (`loguru==0.7.3`, wheelhouse). Either Fir's
+  env picked it up transitively through a path Nibi's install order
+  didn't hit, or the doc's package list was already incomplete when
+  written. Added here so a third cluster's build doesn't hit the same gap.
+
+  pyarrow fixed the same way as documented, but **rebuilt from scratch
+  rather than copied** — no `physioomni_env` exists on Nibi to copy the
+  `.pth` from (only `NSRR-tools`/OSF and `NSRR-tools-mantis` are cloned
+  here). Found Nibi's own `arrow/18.1.0` module's cp310 build directly
+  (`/cvmfs/.../arrow/18.1.0/lib/python3.10/site-packages`, confirmed via
+  `module show arrow/18.1.0` + a filesystem check — EasyBuild ships
+  parallel python3.10/3.11/3.12 builds under one module version) and
+  pointed `pyarrow_arrow_module.pth` at it directly. `df.to_parquet()`
+  round-trip verified working, same as Fir's check.
+
+  All of MANTIS_CLAUDE.md's own "Confirmed" import checks re-verified on
+  Nibi, plus the two above: `nsrr_tools` resolves to this worktree's
+  `src/`; `nsrr_tools.datasets`/`.models`/`.utils` and
+  `sequence_head.build_head` all import cleanly; `nsrr_tools.core`
+  correctly still fails on `pyedflib` (channel-loader placement decision
+  re-confirmed a third time); `torch.cuda.is_available()` is `False` on
+  the login node as expected; `from mantis.architecture import MantisV1,
+  MantisV2` imports cleanly.
+
+  **Mantis reference repo cloned to `/home/boshra95/mantis`, pinned to
+  commit `9018b98`** (same commit as Fir's copy).
+
+  **Both checkpoints downloaded to `/home/boshra95/mantis_checkpoints/`
+  and PASSED `scripts/verify_mantis_checkpoint.py`** — byte-identical to
+  Fir's remote-header read (32,466,928 / 32,467,192), and every number in
+  the script's output matches this file's documented expected values
+  exactly: 8,037,632 live params both checkpoints, 12 LoRA-wrapped
+  Linears / 221,184 trainable params (2.75%) both checkpoints, zero
+  BatchNorm, `modules_to_save` behavior correct, batched-channel forward
+  NaN/Inf-free on both.
+
+  **`~/.wandb_key` — still missing, not created.** Needs the user's own
+  W&B API key; out of scope for an agent to generate.
+
+  **Data (Globus transfer from Fir, `/scratch/boshra95/psg/...`) — the
+  parts Phase 2 actually needs are complete, not partial.** Exact file
+  counts checked against this file's own documented Fir completion
+  numbers: `embeddings/mantis_30sec/` has 14,993 `.npy` files across the
+  4 cohorts (apples 1104, mros 3933, shhs 8444, stages 1512) — matches
+  Fir's "14,993/14,994 (99.99%)" note above exactly, same one known-bad
+  STAGES subject. `unified/mantis_raw_signal_128hz/` (the Stage 2 raw
+  cache Stage 2 training actually reads from, not the original HDF5s)
+  has 14,994 subjects across all 4 cohorts (apples 1104, mros 3933, shhs
+  8444, stages 1513) — the full target count. `targets_v2/` (master
+  targets CSV/parquet + per-cohort CSVs + task subject lists) is present
+  and small. **`psg/{cohort}/derived/` (the original fast-channel HDF5s)
+  has NOT landed and, on inspection of `mantis_raw_epoch_dataset.py`'s
+  own read path, isn't actually needed for Phase 2** — Stage 2 training
+  reads the raw-signal cache directly, not the original HDF5s; flagging
+  this in case a future session assumes the derived tree is a blocker
+  when it isn't.
+
+  **Real open gap, not yet resolved: no Stage 1 checkpoints exist on
+  Nibi** (`results/phase0_mantis*` doesn't exist on this cluster at all).
+  Every Phase 2 context length other than 30s warm-starts from that same
+  (task, head)'s own converged 30s LoRA checkpoint, and 30s itself
+  warm-starts from Stage 1's frozen-backbone head checkpoint (this
+  file's "Frozen vs. LoRA-fine-tuned conditions" section above) — so
+  Phase 2 on Nibi needs either Fir's already-trained Stage 1 checkpoints
+  transferred over too, or Stage 1 needs to be re-run here first. Not
+  decided in this session; flagged to the user rather than assumed
+  either way.
+
+  **Also found, not fixed (out of scope, flagged to the user):**
+  `/scratch/boshra95/psg/nsrr/{apples,mros,shhs,stages}/raw_tar/` (raw
+  EDF tarballs, ~1.6TB, unrelated to anything Phase 2 needs) had pushed
+  scratch quota to 174% (1782/1024 GiB) before the user started deleting
+  it mid-session (in progress: down to 725G as of this entry, quota still
+  over at 179%/1834GiB since `psg/unified/` landed 950G in the meantime).
+  Also found `/scratch/boshra95/stages/stages/{original,processed}`
+  (160G) — confirmed by content (per-subject `ecg_segmented`,
+  `master_masks`, `cognitive_targets.csv`) to belong to the unrelated
+  `CogPSGFormerPP` project also in this account's home dir, not
+  NSRR-tools/Mantis — left untouched, not part of this cleanup.
+
+  **No training/inference jobs submitted this session** — setup and
+  verification only, per explicit user instruction. Nibi is ready for
+  Phase 2 submission once `~/.wandb_key` exists and the Stage-1-checkpoint
+  question above is resolved.
+
+- **2026-09-11: both open gaps from the entry above resolved by the user;
+  Nibi is now ready for real Phase 2 submission.** Quota: user deleted
+  `psg/nsrr/raw_tar/` entirely and confirmed no other cleanup needed —
+  `/scratch` is now 956GiB/1024GiB (93%), healthy. Stage 1 checkpoints:
+  user copied `results/phase0_mantis/` over from Fir — **verified via
+  `gen_commands_mantis.py list`, not just file presence**: all 7 tasks ×
+  lstm/transformer (14/14) show `analyzed (6/6 trained, 6/6 inferred)` —
+  every context length 30s through 240m, not just the 30s tier needed for
+  LoRA warm-starting. Only `mean_pool` is pending, matching Fir's own
+  documented status. wandb explicitly deprioritized by the user for now
+  (`~/.wandb_key` still absent — fine, `train_mantis_lora.py` doesn't wire
+  W&B in anyway per the job-script comments).
+
+  **Real gap found and fixed while checking readiness**:
+  `gen_commands_mantis.py`/`gen_commands_mantis_lora.py` always printed
+  the Fir job-script path (`jobs/{train,infer}_mantis*_gpu.sh`, no `_nibi`
+  suffix) with no cluster awareness at all — confirmed by generating a
+  real `train sex_binary_lstm` command and reading the emitted `sbatch`
+  line. Copy-pasting that as-is on Nibi would have submitted under Fir's
+  `--account=def-egranger_gpu` with Fir's `--exclude=fc11006,...` node
+  list (Fir-only node names, meaningless/potentially-rejected on Nibi) —
+  a real cluster-naming-convention violation, not caught by file presence
+  checks alone. **Fixed in both generators**: `_TRAIN_SCRIPT`/
+  `_INFER_SCRIPT` module constants replaced with
+  `_{TRAIN,INFER}_SCRIPT_BY_CLUSTER` dicts, `build_train_cmd`/
+  `build_infer_cmd` take a `cluster` kwarg (default `"fir"`, preserves
+  existing behavior/callers), and a new top-level `--cluster {fir,nibi}`
+  flag threads through `cmd_train`/`cmd_infer` in both scripts. Verified:
+  default (no flag) output is byte-identical to before on both scripts;
+  `--cluster nibi` correctly swaps in `train_mantis_lora_gpu_nibi.sh` /
+  `infer_mantis_lora_subject_windows_gpu_nibi.sh` (and the Stage 1
+  equivalents); both files parse clean (`ast.parse`); `list`/`status`
+  subcommands unaffected by the new flag. `find_batch_size_mantis_gpu.sh`
+  (`_PROBE_BATCH_SCRIPT`) left untouched — not yet implemented on either
+  cluster, out of scope here.
+
+  **Practical takeaway for real submission**: always pass `--cluster nibi`
+  to both generators when working in this worktree on Nibi — e.g.
+  `python scripts/gen_commands_mantis_lora.py --cluster nibi train
+  <exp_id>`. Omitting it silently defaults to Fir's script path.
+
+  **Status: Nibi is now genuinely ready for Phase 2 (LoRA) submission.**
+  Env, checkpoint, GPU allocation, data, Stage 1 warm-start checkpoints,
+  and the command generator's cluster targeting are all verified working
+  on this cluster. No jobs submitted yet — next action is the user's own
+  call on which (task, head, context) combinations to start with.
+
+- **2026-09-11/12: real Phase 2 submission immediately hit two genuine
+  problems, both now diagnosed with hard evidence, not guessed.**
+
+  **Problem 1 — every non-30s context OOM'd, even on a whole H100.**
+  User submitted `sex_binary_lstm` at 30s/10m/40m/80m via
+  `gen_commands_mantis_lora.py`. 30s succeeded (early-stopped epoch 7,
+  12.8 min, real achieved 33.99 TFLOP/s — confirmed genuinely running
+  LoRA-adapted backbone compute, not a shortcut: trainable params
+  3,500,546 = exactly head (3,279,362) + LoRA (221,184), and TFLOP/s is
+  ~1264x Stage 1's frozen-embedding number for the identical experiment).
+  **10m, 40m, and 80m all failed with `CUDA out of memory`, on a full
+  80GB H100, every one topping out at 78.6-78.8/79.18 GiB.** Root cause,
+  found by actually reading the registry, not assumed:
+  `experiments/v2_mantis_lora_registry.yaml`'s
+  `gradient_accumulation.context_micro_batch` was a flat `32` at **every**
+  context (30s through 240m) — its own comment already said "NOT YET
+  GPU-CALIBRATED FOR STAGE 2 ... revisit after checklist 2.6's real pilot
+  ... if a context OOMs," and that pilot had never actually been run.
+  Memory scales with `micro_batch × epochs-per-window` (documented
+  earlier in this file, already hit twice before by OSF and PhysioOmni),
+  so 10m (20 epochs/window) already exceeds capacity at micro_batch=32,
+  same as 80m (160 epochs/window) — this isn't a long-context-only
+  problem, it breaks almost immediately past 30s.
+
+  User's own diagnostic question mattered here: the 30s run showed only
+  6.87% GPU utilization, so "why does something *smaller* OOM?" — answer,
+  confirmed not assumed: TFLOP/s is a compute-throughput number, memory is
+  a completely separate resource; a run can be memory-full while nowhere
+  near peak FLOP/s, which is exactly what's happening.
+
+  User's first fix attempt — manually editing
+  `jobs/train_mantis_lora_gpu_nibi.sh`'s `--gpus=h100:1` down to
+  `h100_3g.40gb:1` to "not lose priority" — **made the actual problem
+  worse, not better**: the bottleneck was memory capacity, and a 40GB
+  slice has less of it than the 80GB that had already failed. Reverted
+  back to `--gpus=h100:1` in that file, and enabled
+  `training.checkpoint_tokgen: true` in `configs/phase0_mantis_lora_config.yaml`
+  (the cheap first memory-mitigation rung already built into
+  `CombinedMantisLoRAModel`, ~1.3% extra FLOPs for a real activation-memory
+  cut) — both real fixes, but incomplete without Problem 2 below.
+
+  **Problem 2 — a whole H100 request then sat PENDING for ~44 hours on
+  Nibi specifically**, directly contradicting this project's own
+  Fir-derived assumption ("whole card costs nothing extra in queue time,
+  `--test-only` showed identical estimates") — that finding was OSF's, on
+  Fir, and does **not** transfer to Nibi. Real, current cluster telemetry
+  (`squeue`/`sinfo`, checked directly, not inferred): whole `h100:1`
+  requests were **772 pending vs. 90 running (8.6x oversubscribed)**
+  cluster-wide at the time; `3g.40gb` slices were **worse** (242 pending
+  / 8 running, ~30x) — so the user's own instinct ("requesting the whole
+  GPU is not a good idea") was right, just not for the reason first
+  guessed (it's a queue-contention problem specific to Nibi's current
+  load, not a memory-vs-priority tradeoff). `1g.10gb` (54/69) and
+  `2g.20gb` (3/14) slices were barely contended — real headroom, not
+  assumed. **Corrected takeaway: on Nibi, the right GPU size is whichever
+  slice actually has queue headroom right now, not reflexively "whole
+  card" — check `squeue -o "%.10i %.8T %b" --states=PENDING|RUNNING`
+  before choosing, don't assume Fir's precedent holds.**
+
+  **Fix in progress**: a memory-calibration pilot
+  (`/scratch/boshra95/tmp_mantis_lora_memory_pilot/pilot_memory.py`,
+  ephemeral/uncommitted, matches Pilot 3's convention) measures real
+  `torch.cuda.max_memory_allocated()` for one forward+backward step per
+  context (10m/40m/80m/120m/240m), with `checkpoint_tokgen` on, trying
+  micro_batch candidates `[32,24,16,12,8,6,4,3,2,1]` and picking the
+  largest that fits under 85% of whatever GPU it's given (reads real
+  device memory at runtime, not hardcoded — same script works at any
+  slice size). First submitted against a whole H100 — cancelled once the
+  ~44h projected start was found — **resubmitted against
+  `nvidia_h100_80gb_hbm3_2g.20gb:1`** (job 21777147), chosen for good
+  queue headroom, not maximum memory. Once real numbers land: update
+  `v2_mantis_lora_registry.yaml`'s `context_micro_batch` with them
+  (replacing the flat placeholder `32`), and decide the real production
+  job script's GPU size from whether 20GB actually fits the longer
+  contexts even at micro_batch=1 — if not, `checkpoint_chunks` (the
+  coarser rung) or a slightly larger slice are the next levers, not a
+  whole card by default.

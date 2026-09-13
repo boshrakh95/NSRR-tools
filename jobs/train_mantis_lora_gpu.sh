@@ -2,9 +2,9 @@
 #SBATCH --job-name=mantis_lora_sweep
 #SBATCH --account=def-egranger_gpu
 #SBATCH --time=04:00:00
-#SBATCH --gpus=h100:1
+#SBATCH --gpus=nvidia_h100_80gb_hbm3_2g.20gb:1
 #SBATCH --cpus-per-task=4
-#SBATCH --mem=64000M
+#SBATCH --mem=32000M
 #SBATCH --exclude=fc11006,fc11013,fc11010,fc10713
 #SBATCH --signal=B:USR1@120            # send SIGUSR1 to bash 120s before wall time
 #SBATCH --output=/home/boshra95/NSRR-tools-mantis/logs_mantis_lora/%x_%j.out
@@ -20,18 +20,22 @@
 # known gap as Stage 1: check whether wandb is installed in mantis_env
 # before assuming this works).
 #
-# GPU size: **whole H100 (`--gpus=h100:1`), NOT a MIG slice** — a
-# deliberate, plan-mandated decision (§4.5), NOT the "get minimal, escalate
-# only on real OOM" rule Stage 1 extraction follows. The reason is memory,
-# not throughput: Stage 2's backward pass needs ~240 MB of activation
-# memory per epoch-unit (micro_batch × N raw epochs per window, §4.3) — at
-# 240m context (480 epochs/window) even a micro_batch=1 floor needs ~480
-# epoch-units, which does not fit in anything smaller than the full 80 GB
-# card. This is not optional at long contexts, unlike OSF's own 1g.10gb→
-# 3g.40gb upgrade (which measured ZERO throughput speedup, since that was
-# a throughput argument, not a memory one, and was tested only in the
-# overhead-bound 30s regime). Treat any speed gain here as a bonus;
-# measure real per-epoch cost at 40m+, never 30s (§13.3/§4.1).
+# GPU size: REVISED 2026-09-12 (real GPU testing on Nibi, NOT re-verified
+# on Fir specifically — but this is a code/architecture fact, not a
+# cluster-specific one, so it should transfer). The plan's original
+# "whole card, memory-mandated" reasoning (§4.5) is now obsolete — see
+# train_mantis_lora.py's module docstring. That reasoning assumed
+# checkpoint_tokgen (all chunks' activations retained for one shared
+# backward()); real testing found checkpoint_tokgen actually CRASHES the
+# LSTM head, and the working alternative, checkpoint_chunks (recomputes
+# each chunk during backward instead of keeping them all live), keeps
+# peak memory FLAT and low regardless of context length — measured
+# 12.85 GB (10m) to 14.39 GB (240m), effective_batch=32, micro_batch=32
+# (the original unmodified registry placeholder — no recalibration
+# needed after all). A 20 GB slice leaves real margin above that
+# ceiling. If a real Fir run shows a different number, update this and
+# MANTIS_CLAUDE.md — don't assume the Nibi numbers transfer blindly,
+# verify.
 #
 # --time=04:00:00 default (not 24h) is ALSO a deliberate plan decision
 # (§4.5): --time dominates queue position far more than GPU type on this
@@ -49,12 +53,15 @@
 # Auto-resume on timeout: same mechanism as train_mantis_context_sweep_gpu.sh
 # (--signal=B:USR1@120 + bash trap + resume.pt, saved every epoch).
 #
-# Memory-mitigation ladder (§4.3/§14.8), if the whole-card allocation
-# still OOMs at the longest contexts: lower CONTEXT_MICRO_BATCH (raise
-# ACCUM_STEPS proportionally to hold effective_batch=32), then set
-# CHECKPOINT_TOKGEN=1 (first rung — ~1.3% extra compute for ~39% less
-# activation memory, cheaper than whole-model checkpointing), then
-# CHECKPOINT_CHUNKS=1 (coarser, more memory saved, more recompute cost).
+# Memory: configs/phase0_mantis_lora_config.yaml already defaults
+# checkpoint_chunks=true (checkpoint_tokgen=false — CRASHES the LSTM head,
+# see train_mantis_lora.py's module docstring, real-GPU-confirmed
+# 2026-09-12) — this alone keeps peak memory flat and low (~13-14.4 GB,
+# 10m through 240m on Nibi) at the original, unmodified micro_batch=32.
+# If a future context or task/head still OOMs despite this: lower
+# CONTEXT_MICRO_BATCH first (raise ACCUM_STEPS proportionally to hold
+# effective_batch=32) before reaching for anything else — do NOT set
+# CHECKPOINT_TOKGEN=1 below, it will crash any LSTM-headed run.
 #
 # Usage examples:
 #   sbatch --export=ALL,TASK=apnea_binary,HEAD=lstm jobs/train_mantis_lora_gpu.sh
@@ -67,8 +74,11 @@
 #   # Filter to specific datasets:
 #   sbatch --export=ALL,TASK=apnea_binary,HEAD=lstm,DATASETS="apples shhs" jobs/train_mantis_lora_gpu.sh
 #
-#   # Enable tokgen gradient-checkpointing (first memory-mitigation rung):
-#   sbatch --export=ALL,TASK=apnea_binary,HEAD=lstm,CONTEXT=240m,CHECKPOINT_TOKGEN=1 jobs/train_mantis_lora_gpu.sh
+#   # Force whole-chunk gradient-checkpointing explicitly (already the
+#   # config default — only needed if using a config that overrides it off):
+#   sbatch --export=ALL,TASK=apnea_binary,HEAD=lstm,CONTEXT=240m,CHECKPOINT_CHUNKS=1 jobs/train_mantis_lora_gpu.sh
+#   # Do NOT set CHECKPOINT_TOKGEN=1 for an LSTM head — real-GPU-confirmed
+#   # crash, see train_mantis_lora.py's module docstring.
 #
 # Or single default run (uses task/head from phase0_mantis_lora_config.yaml):
 #   sbatch jobs/train_mantis_lora_gpu.sh
