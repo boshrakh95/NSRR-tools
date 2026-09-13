@@ -109,8 +109,14 @@ import yaml
 REGISTRY_PATH = Path(__file__).parent.parent / "experiments" / "v2_mantis_registry.yaml"
 JOBS_DIR = Path(__file__).parent.parent / "jobs"
 
-_TRAIN_SCRIPT = "train_mantis_context_sweep_gpu.sh"
-_INFER_SCRIPT = "infer_mantis_subject_windows_gpu.sh"
+_TRAIN_SCRIPT_BY_CLUSTER = {
+    "fir": "train_mantis_context_sweep_gpu.sh",
+    "nibi": "train_mantis_context_sweep_gpu_nibi.sh",
+}
+_INFER_SCRIPT_BY_CLUSTER = {
+    "fir": "infer_mantis_subject_windows_gpu.sh",
+    "nibi": "infer_mantis_subject_windows_gpu_nibi.sh",
+}
 _PROBE_BATCH_SCRIPT = "find_batch_size_mantis_gpu.sh"  # NOT YET IMPLEMENTED — see probe-batch docstring above
 
 # ── Wall-time lookup tables ────────────────────────────────────────────────────
@@ -316,7 +322,8 @@ def resolve_batch_accum(exp: dict, registry: dict, context: str,
 
 
 def build_train_cmd(exp: dict, registry: dict, context: str,
-                    override_time: str = None, override_batch_size: int = None) -> str:
+                    override_time: str = None, override_batch_size: int = None,
+                    cluster: str = "fir") -> str:
     cfg = exp.get("config") or registry["config"]
     logs_dir = registry.get("logs_dir", str(Path(__file__).parent.parent / "logs_mantis"))
     n_size = exp.get("n_size", "large")
@@ -346,11 +353,13 @@ def build_train_cmd(exp: dict, registry: dict, context: str,
         f"--output={logs_dir}/{stem}_%j.out "
         f"--error={logs_dir}/{stem}_%j.err"
     )
-    return f"{env_str} sbatch {sbatch_opts} {JOBS_DIR}/{_TRAIN_SCRIPT}"
+    train_script = _TRAIN_SCRIPT_BY_CLUSTER[cluster]
+    return f"{env_str} sbatch {sbatch_opts} {JOBS_DIR}/{train_script}"
 
 
 def build_infer_cmd(exp: dict, registry: dict, split: str = "test",
-                    override_time: str = None, override_batch_size: int = None) -> str:
+                    override_time: str = None, override_batch_size: int = None,
+                    cluster: str = "fir") -> str:
     cfg = exp.get("config") or registry["config"]
     logs_dir = registry.get("logs_dir", str(Path(__file__).parent.parent / "logs_mantis"))
     n_size = exp.get("n_size", "large")
@@ -381,7 +390,8 @@ def build_infer_cmd(exp: dict, registry: dict, split: str = "test",
         f"--output={logs_dir}/{stem}_%j.out "
         f"--error={logs_dir}/{stem}_%j.err"
     )
-    return f"{env_str} sbatch {sbatch_opts} {JOBS_DIR}/{_INFER_SCRIPT}"
+    infer_script = _INFER_SCRIPT_BY_CLUSTER[cluster]
+    return f"{env_str} sbatch {sbatch_opts} {JOBS_DIR}/{infer_script}"
 
 
 def build_analyze_cmd(exp: dict, registry: dict, plot: bool = False,
@@ -533,7 +543,7 @@ def cmd_train(args, registry):
         batch_label = f"GRAD-ACCUM (effective_batch={ga.get('effective_batch', 32)}, accum varies by context)"
     else:
         batch_label = f"FLAT batch={exp['batch_size']}, accum_steps=1"
-    print(f"# Training commands for: {args.exp_id}")
+    print(f"# Training commands for: {args.exp_id}  (cluster: {args.cluster})")
     print(f"# Task: {exp['task']}  Head: {exp['head']}  LR: {exp['lr']}  N-size: {n_size}")
     print(f"# Datasets: {exp['datasets']}")
     print(f"# Batch mode: {batch_label}")
@@ -556,7 +566,8 @@ def cmd_train(args, registry):
         status_tag = "  # already trained" if trained else f"  # est. {wall}  [{batch_tag}]"
         print(build_train_cmd(exp, registry, ctx,
                               override_time=getattr(args, "override_time", None),
-                              override_batch_size=getattr(args, "override_batch_size", None)) + status_tag)
+                              override_batch_size=getattr(args, "override_batch_size", None),
+                              cluster=args.cluster) + status_tag)
 
 
 def cmd_infer(args, registry):
@@ -572,13 +583,14 @@ def cmd_infer(args, registry):
     wall = estimate_infer_time(n_size, exp["head"], ctx_list)
     if not tr:
         print(f"# WARNING: no trained contexts found for '{args.exp_id}'. Command uses all contexts from registry.")
-    print(f"# Inference command for: {args.exp_id}  split={split}")
+    print(f"# Inference command for: {args.exp_id}  split={split}  (cluster: {args.cluster})")
     print(f"# Trained contexts: {tr or 'none found — check results dir'}")
     print(f"# Est. wall time: {wall}  Logs → {registry.get('logs_dir', 'logs_mantis/')}")
     print()
     print(build_infer_cmd(exp, registry, split,
                           override_time=getattr(args, "override_time", None),
-                          override_batch_size=getattr(args, "override_batch_size", None)))
+                          override_batch_size=getattr(args, "override_batch_size", None),
+                          cluster=args.cluster))
 
 
 def cmd_analyze(args, registry):
@@ -785,6 +797,11 @@ def main():
     )
     parser.add_argument("--registry", default=str(REGISTRY_PATH),
                         help="Path to v2_mantis_registry.yaml (or v2_mantis_plus_registry.yaml)")
+    parser.add_argument("--cluster", default="fir", choices=["fir", "nibi"],
+                        help="Which cluster's job script to target for train/infer "
+                             "(default: fir). Nibi uses the *_nibi.sh sibling scripts "
+                             "with different SLURM account/partition/exclude settings — "
+                             "see jobs/test_gpu_setup_nibi.sh.")
     sub = parser.add_subparsers(dest="command")
 
     p_list = sub.add_parser("list", help="List all experiments and their status")
