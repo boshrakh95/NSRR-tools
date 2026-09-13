@@ -73,30 +73,56 @@ otherwise stated, all primary results use the Transformer head").
 
 ---
 
+> **⚠ Update 2026-09-13 — Mantis Stage 1 (frozen) results now in this document;
+> Stage 2 (LoRA) is not.** Mantis is no longer excluded (§0's "Mantis is
+> intentionally excluded" text above describes this document's original state,
+> before this update — left as-is; see §6.5 for the current framing). New/updated
+> content: §1's architecture table (Mantis column filled in), §2.4 (the full
+> results comparison — **read this first**: Mantis's frozen encoder beats SleepFM
+> on sex, age, and the secondary OSA task, contradicting a real, pre-registered
+> "expect a weak frozen result" prediction), §3.3/§3.4 (Stage 2 LoRA's honest,
+> more-incomplete-than-OSF-or-PhysioOmni status, plus a real metric-comparability
+> problem: no comparable frozen-vs-LoRA number exists for Mantis yet, for reasons
+> beyond coverage), §4's Mantis subsection (real measured GPU-efficiency data), §5
+> (new caveats), and §6.5 (updated framing recommendation). As with §7's own
+> precedent, everything above this notice describing Mantis as excluded or
+> placeholder-only is left unchanged, not fixed in place.
+
+---
+
 ## 1. Architecture & Input-Handling Comparison
 
 Adapted and extended from the three-way table already drafted in
 `docs/TSFM_PHYSIOOMNI_IMPLEMENTATION_PLAN.md` §20 (code-verified there; reused here,
 not re-derived) plus checkpoint/license facts from `docs/TSFM_BASELINE_CANDIDATES.md`
-§2.1-2.2. A Mantis row is left as a placeholder.
+§2.1-2.2. **The Mantis column below is now filled in (2026-09-13, Stage 1/frozen
+results only) — it was originally left as a placeholder** (see §2.4 for the full
+results comparison this table's facts support).
 
-| | SleepFM | OSF | PhysioOmni | Mantis *(placeholder)* |
+> **⚠ Verification note, added 2026-09-13.** The original placeholder text pointed
+> to "§5.4" for more on Mantis's synthetic-pretraining framing. No §5.4 exists in
+> this document's current numbering (§5 has no subsections) — a stale cross-reference
+> from an earlier draft, not fixed at the time. The content that reference was
+> presumably pointing to now lives in §2.4 and §6.5 below.
+
+| | SleepFM | OSF | PhysioOmni | Mantis |
 |---|---|---|---|---|
-| **Role in study** | This paper's primary encoder | Sleep-PSG-specific FM baseline | General physiological (non-sleep-specific) FM baseline | General-purpose classification-native TSFM baseline |
-| **Checkpoint / license** | (used throughout paper; not itself under license review here) | HF `yang-ai-lab/OSF-Base`; **MIT confirmed** | HF `Weibang/PhysioOmni`; **code repo has no LICENSE file; HF weights repo declares CC-BY-4.0** — state both facts if shipped | `paris-noah/Mantis-8M`; pretrained **exclusively on synthetic data**, not physiological signal — a different comparison in kind (see §5.4) |
-| **Native per-call window** | Exactly 300s (5 min); incomplete trailing chunks dropped | Exactly 30s; no cross-epoch attention anywhere in the model | No fixed requirement — variable-length token sequence; real per-modality ceiling: EEG 512s / EOG 256s / ECG 102s / EMG 102s at its own reference resample rates | *TBD once implemented* |
-| **What our pipeline actually uses per call** | 300s (5s sub-patches within) | 30s (architecturally forced) | 30s (a **deliberate choice**, not architecturally forced — see below) | *TBD* |
-| **Channels used** | 4 modality groups (BAS/RESP/EKG/EMG), reduced (7-8ch) or full (≤23ch) config | 12-channel fixed input incl. snore + full thoracic/abdominal/airflow — **requires our full-channel HDF5s**, not the reduced/fast config | EEG/EOG/ECG/EMG only — **no respiratory pathway at all** (confirmed at 4 independent code locations); fast-channel HDF5s suffice | *TBD* |
-| **Apnea comparable?** | Yes (reference) | Yes | **No — excluded**, stated reason (no RESP pathway; adding one would require new-modality pretraining, not fine-tuning) | *TBD* |
-| **Output / embedding shape (this project's convention)** | `[T,4,128]`, flat dim 512 | `[T,2,768]` (CLS ⊕ mean-pooled patches), flat dim 1536 | `[T,500]` (concatenated per-modality CLS, 2D, no sub-token axis) | *TBD* |
-| **Sequence-head `input_dim`** | 512 | 1536 | 500 | *TBD* |
-| **Encoder parameter count** | ~4.4M (Supplementary §"Model Parameter Counts") | 85,325,568 (strict-load-verified) | 13,871,304 total across 4 independent encoders (EEG 7.84M; EOG/ECG/EMG ~2.01M each) | 8M |
-| **Fusion in released weights** | Contrastive alignment across 4 modality encoders; each still outputs its own vector | Single unified ViT — full fusion | **None** — 4 fully independent tokenizers/encoders, no cross-modal attention in the checkpoint; any fusion is downstream-constructed by us | *TBD* |
-| **Usage mode (Plan A/B/C)** | B (only option) | B (only option — architecture leaves no other choice) | **B (chosen)** — architecture could theoretically support up to ~1.7–8.5 min native, still short of every sweep point past 30s | *TBD* |
-| **SleepFM baseline used for comparison** | — | `phase0_v3_full` (full-channel) | `phase0_v3` (reduced/fast-channel, paper-primary) | *TBD* |
-| **Pretraining-cohort overlap with our 4 test cohorts** | N/A | **SHHS: severe (confirmed, exact-ID match, 87.7% of our SHHS test subjects were in OSF's own pretrain train/valid split). STAGES: confirmed clean. MrOS: confirmed clean (downstream/eval-only in OSF, not pretraining). APPLES: confirmed clean.** | None of our 4 cohorts are in PhysioOmni's pretraining corpus (TUH/CAP/Sleep-EDF/DEAP — none are NSRR) | *TBD* |
-| **Peer review status** | Published (ICML 2024 + Nat. Med. extension) | Published (ICML 2026) | **arXiv only, v3 dated 2026-03 — never peer-reviewed** | *TBD* |
+| **Role in study** | This paper's primary encoder | Sleep-PSG-specific FM baseline | General physiological (non-sleep-specific) FM baseline | General-purpose, non-physiological TSFM baseline — classification-native, pretrained on generic time-series (not physiological signal at all) |
+| **Checkpoint / license** | (used throughout paper; not itself under license review here) | HF `yang-ai-lab/OSF-Base`; **MIT confirmed** | HF `Weibang/PhysioOmni`; **code repo has no LICENSE file; HF weights repo declares CC-BY-4.0** — state both facts if shipped | HF `paris-noah/Mantis-8M`, real-time-series pretraining — **this is the checkpoint all Stage 1 results below use**, correcting this table's own original placeholder text (below), which assumed the *synthetic*-only `MantisPlus` checkpoint would be the one reported. `MantisPlus` (CauKer-synthetic-only pretrain, architecturally identical, differs by exactly 2 buffer tensors) exists as a planned internal ablation and has **not been run** — deferred, not dropped. License: **Apache-2.0 confirmed** (repo `LICENSE` + all three HF model cards) — the cleanest license of the three baselines |
+| **Native per-call window** | Exactly 300s (5 min); incomplete trailing chunks dropped | Exactly 30s; no cross-epoch attention anywhere in the model | No fixed requirement — variable-length token sequence; real per-modality ceiling: EEG 512s / EOG 256s / ECG 102s / EMG 102s at its own reference resample rates | 512 samples (32 patches × 16) as released. We regenerate the sinusoidal positional buffer to cover 240 patches (3840 samples) instead, so a full 30-s epoch at 128 Hz is fed **natively**, not interpolated down to the released 512-sample window (3840→512 would give ~17 Hz effective resolution, below Nyquist for spindles/beta/EMG — rejected outright, not just judged suboptimal) |
+| **What our pipeline actually uses per call** | 300s (5s sub-patches within) | 30s (architecturally forced) | 30s (a **deliberate choice**, not architecturally forced — see below) | 30s (3840 samples, 240 patches) — a full scoring epoch, via the buffer-regeneration above, not the architecturally-forced ceiling OSF has |
+| **Channels used** | 4 modality groups (BAS/RESP/EKG/EMG), reduced (7-8ch) or full (≤23ch) config | 12-channel fixed input incl. snore + full thoracic/abdominal/airflow — **requires our full-channel HDF5s**, not the reduced/fast config | EEG/EOG/ECG/EMG only — **no respiratory pathway at all** (confirmed at 4 independent code locations); fast-channel HDF5s suffice | 6-slot canonical map (2 EEG-adjacent + LOC + ROC + EKG + EMG/CHIN + RESP, with per-slot candidate lists per cohort — our fast-channel data is **not** a uniform 6-channel set across cohorts, see `MANTIS_CLAUDE.md`) — same fast/reduced-channel HDF5 tree PhysioOmni uses, not OSF's full-channel tree |
+| **Apnea comparable?** | Yes (reference) | Yes | **No — excluded**, stated reason (no RESP pathway; adding one would require new-modality pretraining, not fine-tuning) | **Yes** — channel-independent by construction (`Conv1d(in_channels=1)` per channel), so the RESP slot is processed by the identical encoder as every other channel; no architectural exclusion needed, unlike PhysioOmni |
+| **Output / embedding shape (this project's convention)** | `[T,4,128]`, flat dim 512 | `[T,2,768]` (CLS ⊕ mean-pooled patches), flat dim 1536 | `[T,500]` (concatenated per-modality CLS, 2D, no sub-token axis) | `[T,6,512]` per channel — `combined` token = concat(CLS, mean-pooled patches) from the model's **last** transformer layer (empirically confirmed choice, not the authors' own per-checkpoint "optimal layer" recipe — see §2.4), flat dim 3072 |
+| **Sequence-head `input_dim`** | 512 | 1536 | 500 | 3072 |
+| **Encoder parameter count** | ~4.4M (Supplementary §"Model Parameter Counts") | 85,325,568 (strict-load-verified) | 13,871,304 total across 4 independent encoders (EEG 7.84M; EOG/ECG/EMG ~2.01M each) | 8,037,632 live params (identical for Mantis-8M and MantisPlus) — the "~8.1M" figure usually quoted for this model is the checkpoint-file total, which also includes a non-trainable positional buffer and a `prj` head that is dead weight at inference |
+| **Fusion in released weights** | Contrastive alignment across 4 modality encoders; each still outputs its own vector | Single unified ViT — full fusion | **None** — 4 fully independent tokenizers/encoders, no cross-modal attention in the checkpoint; any fusion is downstream-constructed by us | **None** — channel-independent by construction, the same structural pattern as PhysioOmni (not a fused single-tensor design like SleepFM/OSF); channels are combined only downstream, by our own sequence heads |
+| **Usage mode (Plan A/B/C)** | B (only option) | B (only option — architecture leaves no other choice) | **B (chosen)** — architecture could theoretically support up to ~1.7–8.5 min native, still short of every sweep point past 30s | B (only option) — `self.seq_len` is never referenced in `forward()`; no native long-context path exists at all |
+| **SleepFM baseline used for comparison** | — | `phase0_v3_full` (full-channel) | `phase0_v3` (reduced/fast-channel, paper-primary) | `phase0_v3` (reduced/fast-channel, paper-primary) — same as PhysioOmni, not OSF's `phase0_v3_full` |
+| **Pretraining-cohort overlap with our 4 test cohorts** | N/A | **SHHS: severe (confirmed, exact-ID match, 87.7% of our SHHS test subjects were in OSF's own pretrain train/valid split). STAGES: confirmed clean. MrOS: confirmed clean (downstream/eval-only in OSF, not pretraining). APPLES: confirmed clean.** | None of our 4 cohorts are in PhysioOmni's pretraining corpus (TUH/CAP/Sleep-EDF/DEAP — none are NSRR) | **Provably zero** — Mantis-8M's pretraining corpus is generic real time-series archives, not physiological signal of any kind; no NSRR cohort could appear in it by construction. This rests on the published pretraining-corpus description, not an exact-ID check the way OSF's overlap was quantified — no ID-level check is possible (or needed) when the pretraining data was never PSG in the first place |
+| **Peer review status** | Published (ICML 2024 + Nat. Med. extension) | Published (ICML 2026) | **arXiv only, v3 dated 2026-03 — never peer-reviewed** | arXiv only (`arXiv:2502.15637`); peer-review status not otherwise confirmed in our own docs — treat as unreviewed until directly checked, same category as PhysioOmni |
 | **A caveat worth stating if PhysioOmni is cited on its own merits** | — | — | On its own best-fit downstream task (HMC sleep staging) in its own paper, PhysioOmni's reported number (0.7377 balanced accuracy) **does not beat its own paper's non-foundation-model baseline** (FeatFusion, 0.7478) | — |
+| **A caveat worth stating if Mantis's frozen result is cited on its own merits** | — | — | — | The opposite direction of caveat from PhysioOmni's: `docs/TSFM_THIRD_MODEL_DECISION.md` explicitly pre-committed to expecting **a weak frozen result** ("Expect — and pre-commit to reporting — a weak frozen result... general-purpose pretraining transfers to sleep PSG only with adaptation"), citing published evidence that freezing this class of model "leads to a huge decrease in performance" on EEG. **That prediction did not hold** — see §2.4. Worth stating precisely because it was a real, pre-registered expectation that the data contradicted, not a post-hoc framing choice |
 
 **Why OSF and PhysioOmni are each compared against a different SleepFM variant, not the
 same one**: OSF needs full-channel signal (thoracic/abdominal/airflow/snore), which
@@ -107,6 +133,10 @@ EEG/EOG/ECG/EMG, which the paper-primary reduced/fast-channel tree
 baselines each was actually run against, and the reduced- vs. full-channel gap itself
 is non-trivial (Section 5.7 of `npj_main.tex`, "Full-channel configuration helps
 cardiorespiratory task": +0.03–0.05 AUROC for apnea/BMI, smaller for sex).
+
+**Mantis uses the fast/reduced-channel tree and compares against `phase0_v3`, the
+same baseline as PhysioOmni** — the same warning applies: do not cross-compare
+Mantis's numbers against `phase0_v3_full`.
 
 ---
 
@@ -276,6 +306,177 @@ have zero LoRA cells**, and no comparison table should imply otherwise.
   a pattern that adds no new information, consistent with how `npj_main.tex` itself
   treats the LSTM head as secondary evidence.
 
+### 2.4 Mantis (Stage 1, frozen) vs. SleepFM (reduced/fast-channel) — added 2026-09-13
+
+**Scope of this subsection: Stage 1 (frozen encoder) only.** Stage 2 (LoRA) is
+actively running as of this writing and is nowhere near comparable coverage —
+see §3.4 for its own honest accounting, with no results table, for reasons
+explained there. Numbers below are pulled directly from
+`results/collected/phase0_mantis/analysis.csv` (already collected; matches
+`MANTIS_CLAUDE.md`'s own "14/14 task×head done" status note) against
+`results/collected/phase0_v3/analysis.csv` — same metric convention as the rest
+of this document (`mean_prob_auroc`, test split, `k = "all"`, Transformer head).
+The checkpoint is **`Mantis-8M`** (real-time-series pretraining), not the
+synthetic-only `MantisPlus` ablation (deferred, not run) — see §1's corrected
+table entry. Unlike PhysioOmni, **apnea is in scope** for Mantis (channel-independent
+architecture, no respiratory-pathway exclusion needed), so all seven tasks this
+document covers for SleepFM/OSF are covered here too.
+
+**sex_binary**
+
+| Model | 30s | 10m | 40m | 80m | 120m | 240m |
+|---|---|---|---|---|---|---|
+| SleepFM (reduced-ch.) | 0.832 | 0.851 | 0.872 | 0.897 | 0.905 | 0.910 |
+| Mantis-frozen | 0.863 | 0.891 | 0.916 | 0.927 | 0.935 | 0.923 |
+
+**age_class**
+
+| Model | 30s | 10m | 40m | 80m | 120m | 240m |
+|---|---|---|---|---|---|---|
+| SleepFM (reduced-ch.) | 0.854 | 0.870 | 0.877 | 0.900 | 0.902 | 0.905 |
+| Mantis-frozen | 0.856 | 0.885 | 0.912 | 0.918 | 0.923 | 0.919 |
+
+**apnea_binary**
+
+| Model | 30s | 10m | 40m | 80m | 120m | 240m |
+|---|---|---|---|---|---|---|
+| SleepFM (reduced-ch.) | 0.753 | 0.793 | 0.825 | 0.847 | 0.857 | 0.854 |
+| Mantis-frozen | 0.733 | 0.792 | 0.832 | 0.851 | 0.857 | 0.842 |
+
+**bmi_binary**
+
+| Model | 30s | 10m | 40m | 80m | 120m | 240m |
+|---|---|---|---|---|---|---|
+| SleepFM (reduced-ch.) | 0.747 | 0.755 | 0.755 | 0.769 | 0.766 | 0.777 |
+| Mantis-frozen | 0.746 | 0.774 | 0.782 | 0.778 | 0.781 | 0.770 |
+
+**sleep_efficiency_binary**
+
+| Model | 30s | 10m | 40m | 80m | 120m | 240m |
+|---|---|---|---|---|---|---|
+| SleepFM (reduced-ch.) | 0.707 | 0.711 | 0.760 | 0.796 | 0.815 | 0.831 |
+| Mantis-frozen | 0.707 | 0.720 | 0.764 | 0.787 | 0.807 | 0.827 |
+
+**depression_extreme_binary** (secondary; APPLES + STAGES)
+
+| Model | 30s | 10m | 40m | 80m | 120m | 240m |
+|---|---|---|---|---|---|---|
+| SleepFM (reduced-ch.) | 0.756 | 0.739 | 0.750 | 0.749 | 0.754 | 0.746 |
+| Mantis-frozen | 0.751 | 0.748 | 0.755 | 0.746 | 0.760 | 0.755 |
+
+**osa_binary_apples_postqc** (secondary; APPLES only)
+
+| Model | 30s | 10m | 40m | 80m | 120m | 240m |
+|---|---|---|---|---|---|---|
+| SleepFM (reduced-ch.) | 0.789 | 0.804 | 0.853 | 0.888 | 0.856 | 0.861 |
+| Mantis-frozen | 0.818 | 0.837 | 0.872 | 0.887 | 0.879 | 0.903 |
+
+**Headline finding, stated plainly per this project's own standing instruction not
+to soften a result either way: Mantis's frozen encoder beats SleepFM outright on
+sex (+1.3 to +4.4pp at every single context) and on age (+0.2 to +3.5pp at every
+context, smallest at 30s), and wins at five of six contexts on the secondary OSA
+task (+1.9 to +4.2pp, with an essential tie at 80m: −0.1pp)** — the largest margin
+of any comparison in this document, at its largest point (240m: +4.2pp). This is a
+general-purpose, non-physiological time-series model — pretrained on generic
+time-series archives, never on a physiological signal, let alone PSG — outperforming
+a domain-specific encoder pretrained on 585,000 hours of real PSG, **frozen, with no
+fine-tuning at all.**
+[All percentage-point figures independently recomputed from the tables above,
+`round((mantis - sleepfm) * 100, 1)` per context — verify against the raw tables
+before quoting a different range.]
+
+**This directly contradicts a real, pre-registered prediction, not a strawman.**
+`docs/TSFM_THIRD_MODEL_DECISION.md` explicitly committed, before any Mantis code
+was written, to "expect — and pre-commit to reporting — a weak frozen result,"
+citing published evidence that freezing this class of model "leads to a huge
+decrease in performance" on EEG, and framed a good Stage 1 result as the unlikely
+outcome. That expectation did not hold for sex, age, and OSA. Report this as the
+genuine surprise it is, not as a foregone conclusion dressed up after the fact.
+
+Apnea, sleep efficiency, and BMI are closer calls, not clean Mantis wins, and none
+should be folded into the headline above:
+- **Apnea** is closely matched at every context (within 2.0pp either direction),
+  essentially tied at its own saturation point (0.857 vs. 0.857 at 120m), with no
+  consistent direction — Mantis trails at 30s/10m/240m (−2.0, −0.1, −1.2pp) and
+  edges ahead at 40m/80m (+0.7, +0.4pp).
+- **Sleep efficiency** is nearly tied through 40m (0.0 to +0.9pp) and runs slightly
+  *behind* SleepFM from 80m on (−0.4 to −0.9pp) — the one task where Mantis is
+  consistently, if narrowly, the weaker model at long context.
+- **BMI** is close throughout with no consistent direction (−0.7 to +2.7pp; Mantis
+  ahead at four of six contexts, SleepFM ahead at 30s and 240m).
+- **Depression** is flat and noisy for both models, as established elsewhere in
+  this document.
+
+#### 2.4.1 Context-sensitivity comparison — the most important finding in this section
+
+The paper's and this document's central claim is that context value is
+task-specific, not that any particular AUROC number replicates exactly. The
+question that matters most for Mantis is whether *which* tasks are context-sensitive
+looks the same under a completely different, non-physiological encoder.
+**It does, almost exactly.**
+
+| Task | Mantis $L^*$ | Mantis $\Delta$ (30s→best) | SleepFM $L^*$ | SleepFM $\Delta$ (30s→best) |
+|---|---|---|---|---|
+| Apnea detection | 120m | +0.123 | 120m | +0.103 |
+| Sleep efficiency | 240m (still rising) | +0.120 | 240m (still rising) | +0.124 |
+| Sex classification | 120m | +0.072 | 240m (still rising) | +0.079 |
+| Age-group prediction | 80m | +0.066 | 120m | +0.051 |
+| BMI (obese) | 40m | +0.036 | 240m (nominal; flat) | +0.030 |
+| OSA severity (secondary) | 240m | +0.085 | 80m | +0.098 |
+| Depression (secondary) | 120m | +0.009 | 30s (no benefit) | +0.000 |
+
+($L^*$: smallest context within 0.005 AUROC of the sweep peak, same definition as
+`npj_main.tex` equation (7); $\Delta$: peak minus 30s, both at $K=K_{\max}$,
+Transformer head, independently computed from the collected CSVs above, not copied
+from any planning doc.)
+
+**The qualitative split replicates cleanly**: sleep efficiency and apnea are the
+two most context-sensitive tasks under both encoders (their exact rank order swaps
+by a hair — apnea edges ahead for Mantis, sleep efficiency for SleepFM — but both
+remain the top two by a wide margin over everything else); sex and age form a
+context-sensitive-but-more-moderate middle tier under both; BMI is the least
+context-sensitive primary task under both, with closely matched $\Delta$ (+0.036
+vs. +0.030). This is a genuine generalization result: a completely different,
+non-physiological pretraining source produces the same qualitative task ordering
+the paper's central SleepFM-based finding rests on.
+
+**One real divergence, flagged rather than resolved, per this document's own
+standing practice (§7.2's precedent)**: SleepFM's sex AUROC rises monotonically
+through every context tested, still climbing at 240m, the paper's own basis for
+calling sex "still rising at the longest context evaluated." **Mantis's sex AUROC
+peaks at 120m (0.935) and then *declines* at 240m (0.923, Transformer; 0.925→0.922,
+LSTM)** — the same shape SleepFM shows for no primary task. Two things are true at
+once here: **no bootstrap confidence interval has been computed for any Mantis
+number** (the CI columns in `phase0_mantis/analysis.csv` are entirely `NaN` —
+confirmed directly, not assumed), so there is no statistical basis yet to call this
+dip real rather than sampling noise; and the test-subject count is stable and large
+at both contexts (1,431 subjects at every context for sex, no cohort-dropout
+confound). This is reported as an open, unresolved divergence, not a claim that
+Mantis's context-value story differs from SleepFM's — the weight of the other six
+tasks argues the split replicates. Whether this is real requires a bootstrap CI
+pass this document does not yet have.
+
+#### 2.4.2 Caveats specific to the Mantis comparison
+
+- **No bootstrap confidence intervals exist for any Mantis number** — every
+  `mean_prob_auroc_ci_lo`/`_hi` cell in `phase0_mantis/analysis.csv` is `NaN`,
+  confirmed directly. Every point estimate above, not just the sex 240m dip, should
+  be read with this in mind; OSF's and PhysioOmni's own CI status is not
+  independently re-verified here, but Mantis's absence is a real, checked fact,
+  not an assumption.
+- **A small test-population mismatch exists between Mantis and SleepFM, the same
+  class of issue already documented for OSF in §2.3** (though smaller in absolute
+  size here): test-subject counts differ by single-digit-to-a-few-dozen subjects
+  per task (e.g. apnea_binary: 2,077 vs. 2,054; depression_extreme_binary: 241 vs.
+  229), consistent with a slightly different per-subject embedding-extraction
+  success population shifting `rng.shuffle()`'s output the same way OSF's did.
+  **Not independently investigated to OSF's level of rigor** (no exact-ID
+  cross-check was run) — flagged as an open item, not a resolved non-issue.
+- **`mean_pool` head was never run for Mantis, matching OSF's and PhysioOmni's own
+  status** — no H3-style "does the MeanPool-vs-temporal-head gap replicate" claim
+  can be made from this data.
+- **Val-split threshold-tuning was never run**, same standing caveat as §5.
+
 ---
 
 ## 3. Honest computational-cost narrative
@@ -366,6 +567,133 @@ something inherent to PhysioOmni itself.
 | SleepFM | Complete: all tasks × 3 heads × 6 contexts | N/A (SleepFM used frozen throughout the paper) | — |
 | OSF | Complete: 5 Tier-1 tasks × 2 heads × 6 contexts (`mean_pool` not run) | 5 tasks × 2 heads × **5 of 6 contexts** (`30s`–`120m`; `240m` withheld) | Deliberate, uniform, cost-curve-informed; documented before the fact |
 | PhysioOmni | Complete: 4 tasks (apnea excluded) × 2 heads × 6 contexts (`mean_pool` not run) | **9 of 48** task×head×context cells; 2 of 4 tasks have zero LoRA cells | Architectural compute ceiling + a real 15-day operational GPU-billing incident + a sequence of real bugs; not a single clean rule |
+| Mantis | Complete: 7 tasks (apnea included) × 2 heads × 6 contexts (`mean_pool` not run) | **Training completed for 5 of 30 LSTM cells** (30s only, for `age_class`/`apnea_binary`/`bmi_binary`/`sex_binary`/`depression_extreme_binary`; `depression_extreme_binary` additionally has 10m). Zero cells for `sleep_efficiency_binary`, `osa_binary_apples_postqc`, or any Transformer-head run. **Subject-level K-aggregated inference has never been run for any cell** — see §3.4 | Actively running as of this writing (2026-09-13); GPU memory/queue calibration still in progress, not a deliberate stop — see §3.4 |
+
+---
+
+### 3.4 Mantis Stage 2 (LoRA) — actively running, more incomplete than the table above suggests, added 2026-09-13
+
+**This is not a results section — no comparable frozen-vs-LoRA AUROC number exists
+for Mantis yet, for a reason beyond incomplete coverage.** State this plainly before
+anything else: `infer_mantis_lora_subject_windows.py` (the subject-level,
+K-aggregated inference script — the one that produces the `mean_prob_auroc,
+k="all"` metric this entire document is built on) **has not been run for any
+Mantis LoRA checkpoint, at any context.** The `test_auroc` value currently sitting
+in each `summary.csv` on disk is computed by the training script's own held-out
+evaluation over a small fixed set of windows per subject (the same `w=5`-style
+window-sampling convention used for training/validation, not the full,
+non-overlapping, subject-aggregated $K_{\max}$ protocol). **These numbers are not
+directly comparable to any other figure in this document, including Mantis's own
+Stage 1 numbers in §2.4, and are deliberately not reproduced here** — showing them
+side-by-side with §2.4's table would repeat exactly the mistake this document
+elsewhere warns against (§2.3's convention statement: never present numbers under
+different metrics as if they were the same measurement). A real Stage 1-vs-Stage 2
+comparison for Mantis requires that inference script to be run first.
+
+**Exactly which cells have completed training, checked directly against
+`/scratch/boshra95/psg/unified/results/phase0_mantis_lora/` as of 2026-09-13**
+(a `metrics.json` alongside `best_model.pt` means done; a lone `resume.pt` with no
+`metrics.json` means still training):
+
+| Task | 30s | 10m | 40m | 80m | 120m | 240m |
+|---|---|---|---|---|---|---|
+| `age_class` (lstm) | done | in progress | — | — | — | — |
+| `apnea_binary` (lstm) | done | in progress | — | — | — | — |
+| `bmi_binary` (lstm) | done | in progress | — | — | — | — |
+| `sex_binary` (lstm) | done | in progress | — | — | — | — |
+| `depression_extreme_binary` (lstm) | done | done | in progress | in progress | — | — |
+| `sleep_efficiency_binary` | — | — | — | — | — | — |
+| `osa_binary_apples_postqc` | — | — | — | — | — | — |
+
+No Transformer-head LoRA run has been started for any task. `mean_pool` is
+deferred, matching PhysioOmni's own LoRA registry precedent. Several of the
+"in progress" cells above are running on the cluster right now, so this table is a
+snapshot, not a fixed state — re-check the results directory directly rather than
+trusting this table if it matters later.
+
+**Real, measured per-training-epoch cost at 30s** (from each completed run's own
+`summary.csv`, `training_time_min / n_epochs_run` — a real measurement, not
+inferred):
+
+| Task | Epochs run | Wall time (min) | Min/epoch | Achieved TFLOP/s |
+|---|---|---|---|---|
+| `apnea_binary` | 16 | 24.72 | **1.55** | 6.63 (1.34% of a whole-H100 TF32 peak) |
+| `bmi_binary` | 10 | 11.06 | 1.11 | 6.63 |
+| `sex_binary` | 17 | 17.03 | 1.00 | 6.62 |
+| `depression_extreme_binary` | 8 | 11.52 | 1.44 | 6.62 |
+| `age_class` | 15 | 165.77 | **11.05** | 6.64 |
+
+`age_class`'s wall-clock time is 7-10× every other task's, despite **essentially
+identical achieved TFLOP/s** across all five rows (~6.6, all within 0.3%) — the
+anomaly is in wall-clock time, not compute throughput, which points toward
+something external (all four 30s jobs ran concurrently on the same shared node,
+`g34`) rather than a genuine per-task compute difference. **Not investigated
+further, per explicit decision** — `apnea_binary`'s clean 1.55 min/epoch is used
+below as the representative 30s baseline; `age_class`'s number is reported as a
+real measurement but flagged as an unexplained outlier, not used for any
+extrapolation.
+
+**One real longer-context data point exists**: `depression_extreme_binary`'s 10m
+run completed (9 epochs, 85.48 min → **9.50 min/epoch**). Its own 10m/30s ratio is
+**6.6×** — well below the ~20× this codebase's own documented mechanism for OSF
+would predict from raw-epoch-count scaling alone (10m has 20 raw 30-s epochs per
+training window vs. 30s's 1; §3.1's finding that LoRA compute scales
+~linearly in raw epochs per window was established on OSF and explicitly flagged
+in `MANTIS_CLAUDE.md` as "relevant to Mantis's eventual LoRA stage too," not yet
+confirmed for Mantis specifically until now). Plausible explanation, not yet
+verified by a controlled A/B: Mantis had TF32 and a large `chunk_batch_size` (192,
+confirmed via Pilot 3 to show no further sensitivity to this knob) built in from
+day one, unlike OSF and PhysioOmni, which discovered these fixes only after
+weeks of running unoptimized — so Mantis's 30s baseline may already be closer to
+its own compute-bound ceiling than OSF's 30s number was, making the jump to 10m
+proportionally smaller. **This is one data point, from the smallest task in the
+comparison (5,615 training windows vs. 43,000-48,000 for the four larger Tier-1
+tasks) — it may not transfer directly to the larger tasks' own 10m cost, which is
+why the estimate below is still labeled an estimate, not deflated by this factor.**
+
+**ESTIMATE, explicitly not a measurement, for the four larger Tier-1 tasks'
+longer contexts** — using the same naive linear-in-raw-epochs assumption this
+document already applies to OSF in §3.1, anchored to `apnea_binary`'s measured
+30s baseline (1.55 min/epoch):
+
+| Context | Raw epochs/window (vs. 30s) | **ESTIMATED** min/epoch |
+|---|---|---|
+| 10m | 20× | **~31** |
+| 40m | 80× | **~124** |
+| 80m | 160× | **~248** |
+| 120m | 240× | **~371** |
+| 240m | 480× | **~742** |
+
+**This estimate is very likely an overstatement, based on the one real longer-context
+measurement available** (depression's 10m came in at 6.6× its own 30s cost, not the
+naive 20× used to build this table) — but that correction factor is not applied
+here, because it comes from a much smaller task and has not been confirmed for
+`apnea_binary`/`bmi_binary`/`sex_binary`/`age_class` specifically. Treat the table
+above as a conservative upper bound pending a real 10m measurement on one of the
+four larger tasks (already running as of this writing).
+
+**Why this is worth stating as a finding, not just an apology for missing cells**:
+fine-tuning a raw-signal backbone end-to-end at PSG-scale context lengths is
+genuinely, structurally expensive — even a small, 8M-parameter, efficiently-batched
+model whose 30s condition already reaches double-digit-percent of a whole H100's
+TF32 peak faces a real per-epoch cost that plausibly reaches several hours by
+240m for the larger tasks. This is a real, honest constraint on what "just fine-tune
+the backbone at every context length" costs in practice for long PSG recordings,
+independent of which specific model is used, and is itself part of the answer to
+why this comparison's LoRA stage — across all three baselines, not only Mantis —
+is the least complete part of this document.
+
+**Other real, concrete incompleteness causes, not generic scheduling color**: the
+registry's `context_micro_batch` was a flat, uncalibrated `32` at every context
+(the registry's own comment already flagged this as unresolved, dated before this
+session) — this OOM'd every context past 30s on a **whole 80GB H100**, not a small
+slice, once real jobs were submitted. Separately, a whole-H100 request queued for
+approximately 44 hours on the Nibi cluster specifically (772 pending vs. 90 running
+GPU-wide at the time) — directly contradicting this project's own Fir-cluster-derived
+assumption that a whole-card request costs nothing extra in queue time; that finding
+was real for Fir and does not transfer to Nibi's current load. A memory-calibration
+pilot to fix the `context_micro_batch` values (rather than the flat placeholder) is
+in progress as of this writing.
 
 ---
 
@@ -466,16 +794,46 @@ if it goes in the paper:
   incident get folded into "the architecture is inefficient"; it's a distinct,
   non-architectural cause that happened to compound with the real architectural one.
 
-### Mantis — no data yet, flagged for when it lands
+### Mantis — measured (partial), and diagnosed: efficient from day one, not yet a completed picture
 
-Not implemented in this repo yet. Two things worth checking once it is, for
-consistency with the above: (1) its native context length is short (built and
-pretrained as a lightweight, ~8M-parameter classification-native model), so it will
-likely face the same "granularity vs. batching" question as OSF once fine-tuned —
-worth measuring rather than assuming either way; (2) since it is pretrained on
-synthetic, not physiological, data, its useful hidden dims/tensor shapes weren't
-scoped against real PSG signal characteristics at all — an unknown, not a predicted
-problem, until measured.
+**Updated 2026-09-13, real measurements, superseding the "no data yet" placeholder
+above.** Two of the two things flagged as unknowns when this section was a stub are
+now partially answered:
+
+- **Its architecture is the best-shaped of the three fine-tuned backbones, and this
+  now shows up in real numbers, not just structural inference.** One joint tensor
+  per channel call (`Conv1d(in_channels=1)`, applied identically to every channel —
+  channel-independent, but each call is still a single, well-shaped op, not
+  PhysioOmni's four-way split), `hidden_dim=256` (attention inner dim 1024) — a
+  clean power of 2, unlike PhysioOmni's d=100. At 30s, Mantis's LoRA condition
+  already reaches **~6.6 TFLOP/s, ~1.34% of a whole H100's TF32 peak** (§3.4) —
+  roughly **10× PhysioOmni's own measured 30s-adjacent regime** (~0.69 TFLOP/s,
+  ~3.6% of a smaller `3g.40gb` slice's peak; the two percentages are against
+  different-sized GPU allocations, so compare the raw TFLOP/s, not the percentages,
+  when reading these side by side) and in the same rough range as OSF's own
+  30s number (~2.0 TFLOP/s on a smaller slice).
+- **It was pretrained on "general time series" real data (Mantis-8M) for the
+  Stage 1 sweep, not the synthetic-only checkpoint** — correcting this section's
+  own earlier placeholder text, which assumed the opposite (synthetic pretraining)
+  and speculated about hidden dims never being "scoped against real PSG signal
+  characteristics." That framing was about the wrong checkpoint. The synthetic
+  (`MantisPlus`) ablation remains unrun, deferred, not dropped (§1).
+
+**What is genuinely still unknown, not yet measured**: the "granularity vs.
+batching" question this section originally flagged is only half-answered. Mantis
+was built with TF32 and a large `chunk_batch_size` (192) from day one (unlike OSF
+and PhysioOmni, which discovered these only after weeks of unoptimized running),
+and Pilot 3 confirmed no further sensitivity to `chunk_batch_size` at the
+embedding-extraction stage — but that pilot measured **frozen-encoder extraction**,
+not the LoRA (backprop) condition this section is actually about. The one real
+LoRA-stage longer-context data point (`depression_extreme_binary`'s 10m run, §3.4)
+shows a 6.6× cost increase over 30s, well below the ~20× naive raw-epoch-count
+scaling — consistent with Mantis already being closer to compute-bound at 30s than
+OSF was, but from a single data point on the smallest task in the comparison, not
+yet confirmed on any of the four larger Tier-1 tasks. **The honest state of this
+question is: better-shaped than PhysioOmni, plausibly better-behaved than OSF's
+initial (pre-fix) numbers, but not yet proven at the scale (larger tasks, longer
+contexts) that would settle it.**
 
 ### Honest opinion, one paragraph, for the paper if this ships
 
@@ -489,8 +847,17 @@ tuning, and once fixed reaches respectable GPU utilization at long context.
 **PhysioOmni's inefficiency looks structural**: its four-encoder, small-hidden-dim
 design has a utilization ceiling that the same batching fix does not move, which
 points to a property of the released architecture rather than of how carefully it was
-driven. If the paper wants one sentence: OSF's GPU-cost problem is an engineering
-problem; PhysioOmni's looks like an architecture problem.
+driven. **Mantis, so far, looks like neither problem** — its measured 30s TFLOP/s
+already exceeds PhysioOmni's by roughly an order of magnitude, and its one real
+longer-context measurement scaled better than OSF's own initial, unoptimized numbers
+did — but "so far" is doing real work in that sentence: the sweep is far less
+complete than either of the other two models' LoRA stages were at a comparable point
+in their own timelines (§3.4), and this section's earlier optimism about OSF's own
+fixability looked equally reasonable before PhysioOmni's structural ceiling was
+found, so Mantis's apparent efficiency should be read as encouraging, not settled.
+If the paper wants one sentence: OSF's GPU-cost problem was an engineering problem;
+PhysioOmni's looks like an architecture problem; Mantis's, on the evidence so far,
+looks like neither — but the evidence so far is thin.
 
 ---
 
@@ -508,6 +875,21 @@ problem; PhysioOmni's looks like an architecture problem.
   baseline" and "PhysioOmni vs. its own (different) SleepFM baseline." A reader should
   not walk away thinking OSF beats PhysioOmni head-to-head; that comparison was never
   run under matched conditions.
+- **(Added 2026-09-13) Mantis's frozen-encoder wins (sex, age, OSA — §2.4) have no
+  bootstrap confidence interval behind them yet** — every CI cell for Mantis in
+  `phase0_mantis/analysis.csv` is `NaN`. Treat every Mantis point estimate,
+  especially the sex 240m decline, as provisional until a CI pass exists.
+- **(Added 2026-09-13) Mantis Stage 2 (LoRA) produces no valid frozen-vs-LoRA
+  comparison at all yet** — not because of coverage alone, but because the
+  subject-level, $K_{\max}$-aggregated inference script has never been run against
+  any Mantis LoRA checkpoint (§3.4). The window-level numbers currently on disk
+  should not be compared to any `mean_prob_auroc` figure elsewhere in this document.
+- **(Added 2026-09-13) A three-way "SleepFM vs. OSF vs. PhysioOmni vs. Mantis"
+  leaderboard is not supportable from this data**, for the same reason §1 already
+  gives for OSF vs. PhysioOmni: Mantis and PhysioOmni share a SleepFM baseline
+  (`phase0_v3`), but OSF does not (`phase0_v3_full`) — any apparent "Mantis beats
+  OSF" or "OSF beats Mantis" comparison built from this document's tables would be
+  comparing each model against a different reference point, not against each other.
 
 ---
 
@@ -573,6 +955,10 @@ encoder choice"* or *"Generalization across frozen encoders."*
 | Any PhysioOmni-LoRA number | Only 9/48 cells exist; `bmi_binary`/`age_class` have zero LoRA cells — state coverage explicitly, do not imply a completed sweep |
 | Any OSF-LoRA number at 240m | Does not exist — do not show an empty/interpolated cell |
 | Any cross-model "OSF vs. PhysioOmni" framing | Invalid — they were compared against different SleepFM baselines (full- vs. reduced-channel), never against each other under matched conditions |
+| Any Mantis Stage 1 number | No bootstrap CI computed yet (all `NaN` in the collected CSV); checkpoint is `Mantis-8M` (real-time-series pretraining), not the synthetic-only `MantisPlus` ablation, which has not been run |
+| Any Mantis sex_binary number at 240m specifically | AUROC declines from its 120m peak (0.935→0.923, Transformer) rather than continuing to rise like SleepFM's — flagged as unresolved, not statistical noise vs. real effect, pending a CI pass (§2.4.1) |
+| Any Mantis Stage 2 (LoRA) number | **Do not report at all as a comparison to anything else in this document** — subject-level $K_{\max}$-aggregated inference has never been run for any Mantis LoRA checkpoint; the on-disk numbers are a different, window-level metric (§3.4) |
+| Any cross-model "Mantis vs. OSF" or "Mantis vs. PhysioOmni" framing | Mantis and PhysioOmni share a SleepFM baseline (`phase0_v3`); OSF does not (`phase0_v3_full`) — same invalidity as the OSF-vs-PhysioOmni row above |
 
 ### 6.4 Where Mantis slots in later
 
@@ -593,6 +979,82 @@ column/row ready for Mantis. Two things worth deciding now so Mantis drops in cl
    decision together, rather than just appending a column — a 3-model comparison may
    change which framing (robustness check vs. something stronger) is actually
    supportable.
+
+> **⚠ Verification note, added 2026-09-13.** Point 1 above describes Mantis as
+> "pretrained exclusively on synthetic data." **This is not the checkpoint the
+> actual Stage 1 sweep used.** The production results in §2.4 use `Mantis-8M`
+> (real-time-series pretraining); the synthetic-only `MantisPlus` ablation this
+> paragraph describes has not been run (§1). Left as originally written per this
+> document's own "don't fix in place" convention — see §6.5 for the corrected,
+> results-informed version of this framing decision.
+
+### 6.5 Mantis results now exist — updated framing (added 2026-09-13)
+
+**Point 2 above asked for this once results existed — here it is.**
+
+**Does Mantis change the §0/§6.1 "generalization/robustness check, not a
+leaderboard" recommendation, or reinforce it? It reinforces it, more strongly than
+OSF or PhysioOmni did individually.** §2.4's central finding — the qualitative
+context-sensitivity split (sleep efficiency and apnea most sensitive; sex and age
+moderately so; BMI least) replicates almost exactly under an encoder with **zero
+physiological pretraining at all** — is a stronger generalization result than
+either OSF's (a sleep-specific encoder, contamination-confounded on SHHS) or
+PhysioOmni's (a physiological-but-non-sleep encoder that underperformed SleepFM
+throughout, so its agreement on task ranking was less informative — a weaker model
+that happens to rank tasks the same way is a less surprising confirmation than a
+*stronger*, unrelated-domain model that does). If the paper adopts one framing
+sentence for the three-model result together, it should lead with this: *the
+task-specific value of context length is not an artifact of SleepFM's specific
+pretraining — it replicates under a sleep-specific encoder, a general physiological
+encoder, and a non-physiological, general-time-series encoder alike.*
+
+**This does not mean Mantis is "just another confirmation" to fold in quietly.**
+Two things distinguish it from OSF/PhysioOmni's own additions and should not be
+smoothed over:
+
+1. **Mantis's frozen encoder beats SleepFM on multiple tasks (sex, age, OSA) —
+   OSF only won this cleanly on the static/structural tasks (sex, age, BMI) with a
+   contamination caveat attached to its strongest cohort, and PhysioOmni never won
+   anywhere.** A non-physiological encoder outright beating a 585,000-hour
+   PSG-specific one, with a completely clean contamination story (§1: "provably
+   zero" overlap, no exact-ID check even needed), is the single most attention-worthy
+   number this document now contains, not a footnote.
+2. **This result directly falsified a real, pre-registered prediction**
+   (`docs/TSFM_THIRD_MODEL_DECISION.md`'s "expect a weak frozen result"). If this
+   material ships, that pre-registration is worth keeping in the write-up
+   explicitly — it is what turns "Mantis did surprisingly well" from a
+   post-hoc-sounding claim into a genuinely falsifiable one that was, in fact,
+   falsified.
+
+**Placement, extending §6.2's plan rather than replacing it**: the "why these three
+baselines, why now" framing already in this task's brief — SleepFM was the only
+model available when the paper's core methodology was designed; OSF, PhysioOmni,
+and Mantis were added later, close to submission, specifically because the
+supervisor asked why no comparison against recent TSFMs existed — is honest and
+should appear plainly in whichever paper section introduces this material, not
+softened or over-apologized for. Concretely:
+
+- **Main text**: extend the same short Results subsection §6.2 proposes for
+  OSF/PhysioOmni (after "Modality group ablation," before Discussion) with Mantis's
+  headline finding — the context-sensitivity replication, stated as this
+  subsection's lead sentence per the framing above, with the sex/age/OSA wins as a
+  second, clearly-flagged sentence. **Stage 2 (LoRA) is not ready for the main text
+  in any form** — §3.4's metric-comparability problem means there is nothing to
+  show yet, not just an incomplete table.
+- **Discussion**: the same Limitations-paragraph rewrite §6.2 proposes for
+  OSF/PhysioOmni should now say all three were tested, with Mantis explicitly
+  named as the one carrying zero physiological pretraining.
+- **Supplementary**: §1's completed architecture table, §2.4's full per-task tables,
+  and §3.4's honest LoRA-incompleteness accounting (including the per-epoch-cost
+  finding, which is a genuine methodological contribution about the cost of
+  fine-tuning raw-signal TSFMs at PSG scale, worth keeping even if the LoRA
+  results themselves aren't ready) all belong in the same extended `sec:supp-sota`
+  location §6.2 already designates.
+- **Do not add Mantis's Stage 2 to any table yet** — not because of low coverage
+  alone (OSF's own LoRA table has real, accepted gaps at 240m), but because §3.4
+  found there is currently no metric on disk for Mantis Stage 2 that is comparable
+  to anything else in this document. Coverage and comparability are separate
+  problems here, and only coverage would resolve on its own with more compute time.
 
 ---
 
