@@ -470,6 +470,19 @@ on Compute Canada. An agent picking this up on the cluster should start at
 This paper repo is referenced (read-only) for framing/consistency by that
 effort, but no code or content here needs to change for it.
 
+**Update 2026-09-16: this section is now stale relative to actual progress —
+MOMENT was replaced by Mantis (`NSRR-tools/docs/TSFM_THIRD_MODEL_DECISION.md`),
+OSF/PhysioOmni Stage 1+2 results exist, and Mantis Stage 1 is complete with
+Stage 2 (LoRA) actively running. Left as-is per this repo's "don't fix
+superseded status notes in place" convention (see `RESULTS_REWRITE.md`'s
+pattern above) — the current synthesis is
+`NSRR-tools/docs/TSFM_MODEL_COMPARISON.md`, and a first-draft set of actual
+paper additions (new Results subsection, new Methods subsection, a Discussion
+edit, and a Supplementary outline), verified against the collected CSVs, is
+now at `TSFM_BASELINE_RESULTS_DRAFT.md` in this same directory, awaiting
+review. Nothing from that draft has been pasted into `npj_main.tex` or
+`npj_supplementary.tex` yet.**
+
 ---
 
 ## Pending Work (as of 2026-07-28)
