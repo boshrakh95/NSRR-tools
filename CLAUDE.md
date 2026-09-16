@@ -165,7 +165,7 @@ documented in `docs/EXPERIMENTS_GUIDE.md` as the figure-generation path,
 but that is no longer how the actual paper figures are produced.** The
 user now maintains figure-generation code directly in notebooks at
 `results/paper_figures/notebooks_npj/` (one notebook per figure, e.g.
-`main_fig2_kvsk.ipynb`, `sfig14_task_landscape.ipynb`) — the plotting
+`main_fig2_kvsk.ipynb`, `sfig21_task_landscape.ipynb`) — the plotting
 logic was originally copied out of the `plot_*.py` scripts into these
 notebooks, and **the notebooks, not the scripts, are what's edited now**.
 When paper figure order changes, the user renames/edits the notebooks
