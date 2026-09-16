@@ -9,15 +9,16 @@ HALF_W  = 3.5    # single-column width (inches)
 DPI_OUT = 300    # output DPI (PDF is vector; PNG preview uses this)
 
 # ── Typography ─────────────────────────────────────────────────────────────────
-# FONT_BASE  = 8    # axes tick/label baseline
-# FONT_TITLE = 8    # panel title
-# FONT_ANNOT = 6    # small annotations
-# FONT_LABEL = 7    # x/y axis labels
+FONT_BASE  = 8    # axes tick/label baseline
+FONT_TITLE = 8    # panel title
+FONT_ANNOT = 6    # small annotations
+FONT_LABEL = 7    # x/y axis labels
 
-FONT_BASE  = 11    # axes tick/label baseline
-FONT_TITLE = 11    # panel title
-FONT_ANNOT = 11    # small annotations
-FONT_LABEL = 11    # x/y axis labels
+# Previous values, kept for reference:
+#   original (built the 2026-07-27 figure batch): 8 / 8 / 6 / 7
+#   2026-07-28 16:00: 8/8/8/8   2026-07-28 16:08: 9/9/9/9
+#   2026-07-28 17:55: 10/10/10/10  (main_fig2/3/4/6, ext_fig1-3, sfig5, sfig15)
+#   2026-07-30 14:46: 11/11/11/11  (never used to build any figure in the paper)
 
 # ── Head colour/marker scheme ─────────────────────────────────────────────────
 HEAD_STYLE = {

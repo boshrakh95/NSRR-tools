@@ -401,7 +401,7 @@ def vs_total_panel(ax, heatmap_df: pd.DataFrame, col: str = "auroc"):
                 markevery=max(1, len(ks) // 10))
 
     ax.set_xscale("log")
-    ax.set_xlabel("Total context (min) = L × K", fontsize=FONT_LABEL)
+    ax.set_xlabel("Total budget (min) = L × K", fontsize=FONT_LABEL)
     ax.set_ylabel("AUROC (%)", fontsize=FONT_LABEL)
     ax.legend(title="Context L", fontsize=FONT_ANNOT, title_fontsize=FONT_ANNOT,
               frameon=False)
@@ -559,7 +559,7 @@ def combined_iso_panel(ax, heatmap_df: pd.DataFrame, col: str = "auroc",
                     xytext=(0, 4), textcoords="offset points")
 
     ax.set_xscale("log")
-    ax.set_xlabel("Total context (min) = L × K", fontsize=FONT_LABEL)
+    ax.set_xlabel("Total budget (min) = L × K", fontsize=FONT_LABEL)
     ax.set_ylabel("AUROC (%)", fontsize=FONT_LABEL)
     ax.grid(True, alpha=0.25, lw=0.5)
     _spine_clean(ax)
