@@ -1,1 +1,11 @@
 {"ts":"2026-09-13T02:35:32-04:00","job_id":"21839554","node":"g34","status":"STARTED","task":"sex_binary","head":"lstm","context":"10m","lr":"1e-4","datasets":"apples shhs"}
+{"ts":"2026-09-13T14:32:56-04:00","job_id":"21839554","node":"g34","status":"TIMEOUT_REQUEUED","task":"sex_binary","head":"lstm","context":"10m","lr":"1e-4","datasets":"apples shhs"}
+{"ts":"2026-09-13T14:35:33-04:00","job_id":"21861351","node":"g30","status":"STARTED","task":"sex_binary","head":"lstm","context":"10m","lr":"1e-4","datasets":"apples shhs"}
+{"ts":"2026-09-14T02:33:25-04:00","job_id":"21861351","node":"g30","status":"TIMEOUT_REQUEUED","task":"sex_binary","head":"lstm","context":"10m","lr":"1e-4","datasets":"apples shhs"}
+{"ts":"2026-09-14T02:36:54-04:00","job_id":"21895829","node":"g30","status":"STARTED","task":"sex_binary","head":"lstm","context":"10m","lr":"1e-4","datasets":"apples shhs"}
+{"ts":"2026-09-14T14:34:43-04:00","job_id":"21895829","node":"g30","status":"TIMEOUT_REQUEUED","task":"sex_binary","head":"lstm","context":"10m","lr":"1e-4","datasets":"apples shhs"}
+{"ts":"2026-09-14T14:35:06-04:00","job_id":"21927436","node":"g33","status":"STARTED","task":"sex_binary","head":"lstm","context":"10m","lr":"1e-4","datasets":"apples shhs"}
+{"ts":"2026-09-15T02:32:42-04:00","job_id":"21927436","node":"g33","status":"TIMEOUT_REQUEUED","task":"sex_binary","head":"lstm","context":"10m","lr":"1e-4","datasets":"apples shhs"}
+{"ts":"2026-09-15T02:35:54-04:00","job_id":"21975046","node":"g31","status":"STARTED","task":"sex_binary","head":"lstm","context":"10m","lr":"1e-4","datasets":"apples shhs"}
+{"ts":"2026-09-15T14:33:24-04:00","job_id":"21975046","node":"g31","status":"TIMEOUT_REQUEUED","task":"sex_binary","head":"lstm","context":"10m","lr":"1e-4","datasets":"apples shhs"}
+{"ts":"2026-09-16T06:19:39-04:00","job_id":"22000548","node":"g34","status":"STARTED","task":"sex_binary","head":"lstm","context":"10m","lr":"1e-4","datasets":"apples shhs"}
