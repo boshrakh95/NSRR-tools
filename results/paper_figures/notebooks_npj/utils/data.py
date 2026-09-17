@@ -71,6 +71,58 @@ def load_heatmap(experiment: str, task: str, head: str,
     return df.sort_values(["context_length_min", "k"]).reset_index(drop=True)
 
 
+def load_heatmap_from_collected(collected_root: Path, experiment: str, task: str,
+                                head: str, split: str = "test") -> pd.DataFrame:
+    """Build a heatmap_df-equivalent DataFrame directly from a `collected/`
+    analysis.csv, for backbones that don't have a
+    final_results/{experiment}/inference/{task}_{head}/heatmap_df_{split}.csv
+    tree — added 2026-09-17 for the TSFM baseline comparison (OSF, PhysioOmni,
+    Mantis), which only have `results/collected/{experiment}/analysis.csv`
+    (some in this repo, Mantis's in the separate NSRR-tools-mantis worktree —
+    pass that worktree's `results/collected` as `collected_root` for it).
+
+    Purely additive: does not change `load_heatmap` or any other function.
+    Confirmed the same fine-grained K-grid already exists in analysis.csv as
+    in the real heatmap_df_test.csv files (docs/npj_paper_md_files/
+    TSFM_BASELINE_RESULTS_DRAFT.md, Section 7), including how the `k="all"`
+    row is represented: heatmap_df_test.csv stores it as a *fractional* K
+    equal to n_segments/n_subjects (the true mean windows aggregated per
+    subject, since K_max varies by subject), not the literal string "all" —
+    reproduced here so `panels.kvsk_panel`/`panels.heatmap_panel` (which sort
+    and interpolate on a numeric `k` column) work unmodified on the result.
+
+    Returns columns: task, head, context_length, k, context_label,
+    context_length_min, auroc, n_subjects, n_segments (a subset of
+    heatmap_df's columns — enough for panels.kvsk_panel/heatmap_panel, not a
+    full replica of every column heatmap_df_test.csv carries).
+    """
+    p = Path(collected_root) / experiment / "analysis.csv"
+    if not p.exists():
+        return pd.DataFrame()
+    df = pd.read_csv(p)
+    df = df[(df["task"] == task) & (df["head"] == head) &
+            (df["split"] == split)].copy()
+    if df.empty:
+        return df
+
+    df["context_label"] = df["context_length"].astype(str)
+    df["context_length_min"] = df["context_label"].map(
+        lambda s: CONTEXT_TO_MIN.get(s.strip()))
+
+    is_all = df["k"].astype(str) == "all"
+    k_str = df["k"].astype(str).copy()
+    k_str[is_all] = (df.loc[is_all, "n_segments"] /
+                     df.loc[is_all, "n_subjects"]).astype(str)
+    df["k"] = k_str.astype(float)
+    df["auroc"] = df["mean_prob_auroc"]
+
+    keep = ["task", "head", "context_length", "k", "context_label",
+            "context_length_min", "auroc", "n_subjects", "n_segments"]
+    return (df[keep]
+            .sort_values(["context_length_min", "k"])
+            .reset_index(drop=True))
+
+
 # ── Collected prediction parquets ─────────────────────────────────────────────
 
 def load_parquets(experiment: str, task: str, head: str,
