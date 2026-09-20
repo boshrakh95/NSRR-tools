@@ -101,14 +101,19 @@ DATASETS=${DATASETS:-""}
 NO_ALL_WINDOWS=${NO_ALL_WINDOWS:-""}   # set to 1 to use K=5 (training eval mode)
 BATCH_SIZE=${BATCH_SIZE:-32}
 RUN_TAG=${RUN_TAG:-""}                 # must match RUN_TAG used during training
+# Optional, log/status-file naming ONLY (never affects outputs or which checkpoint
+# is read, unlike RUN_TAG): lets a duplicate submission of the same inference
+# (e.g. under a second SLURM account) keep its own .log/.jsonl instead of
+# interleaving with the original's. Carried through auto-requeues via --export=ALL.
+LOG_SUFFIX=${LOG_SUFFIX:-""}
 
 # ── Job run tracking ──────────────────────────────────────────────────────────
 _EXP_TAG="${TASK}_${HEAD}"
 [ -n "$RUN_TAG" ] && _EXP_TAG="${_EXP_TAG}_${RUN_TAG}"
-_STATUS_FILE="$LOGS_DIR/status/infer_${_EXP_TAG}_${SPLIT}.jsonl"
+_STATUS_FILE="$LOGS_DIR/status/infer_${_EXP_TAG}${LOG_SUFFIX}_${SPLIT}.jsonl"
 
 # Persistent inference log — all resubmissions append here.
-_INFER_LOG="$LOGS_DIR/infer_${_EXP_TAG}_${SPLIT}.log"
+_INFER_LOG="$LOGS_DIR/infer_${_EXP_TAG}${LOG_SUFFIX}_${SPLIT}.log"
 exec > >(tee -a "$_INFER_LOG") 2>&1
 
 _write_status() {
