@@ -1240,3 +1240,50 @@ files across all cohorts for NaN/Inf/shape/degenerate issues — clean.
   contexts even at micro_batch=1 — if not, `checkpoint_chunks` (the
   coarser rung) or a slightly larger slice are the next levers, not a
   whole card by default.
+
+- **2026-09-19/20: two real bugs found while starting LoRA inference and
+  checking the depression 80m run — both fixed, both were my own misses
+  from the 2026-09-12 restructure or pre-existing resume logic.**
+
+  **1. `infer_mantis_lora_subject_windows.py` was never updated for the
+  two-piece checkpoint format** (train_mantis_lora.py stopped wrapping the
+  whole model in peft on 2026-09-12). All 5 first inference jobs failed in
+  ~1-2 min with `'CombinedMantisLoRAModel' object has no attribute
+  'peft_config'`. Fixed: it now loads via `train_mantis_lora.load_combined_state`
+  (expects `{"lora_state_dict","head_state_dict"}`). Verified on CPU against
+  real checkpoints (age_class + depression, 30s + 10m: loads, finite logits)
+  before resubmitting. Inference resubmitted as jobs 22314995-22314999
+  (`--account=def-egranger_gpu`, 4 h) for exactly the contexts that had a
+  `metrics.json`: age/apnea/sex 30s+10m, bmi 30s, depression 30s+10m+40m.
+  Note the generator's "trained" status checks `best_model.pt` only, which
+  exists from epoch 1 — always restrict `CONTEXTS` by `metrics.json`.
+
+  **2. Resume-after-early-stop loop (train_mantis_lora.py).** `resume.pt` is
+  only deleted after the final evaluation (train+val+test passes). If the
+  wall-time limit hit during that evaluation, the requeue resumed at epoch
+  N+1, trained a whole extra epoch, re-checked patience, and timed out in
+  the evaluation again. At 80m an epoch is ~228 min (measured, one segment
+  each) and the evaluation does not fit in the ~1 h left of a 5 h job, so
+  `depression_extreme_binary/lstm/80m` looped: early-stopped at epoch 10
+  (best 0.8193 @ epoch 5), then trained epochs 11, 12 (past patience), where
+  epoch 13 reached val AUROC 0.8246 and **overwrote `best_model.pt`** — the
+  epoch-5 checkpoint is gone. It then hit patience again at 18 and trained
+  19, 20, 21 the same way; ~11 extra epochs (~55 GPU-h) in total.
+  **Consequence for results: the depression 80m checkpoint was selected
+  after the patience-5 window had closed (epoch 13 rather than epoch 5).
+  Either disclose that, or re-run 80m — decision pending with the user.**
+  `depression_extreme_binary/lstm/40m` had one such spurious epoch (9) but
+  it did not improve, so its best checkpoint (epoch 3) is unaffected.
+  Scan of all training logs for epochs with patience > 5/5 finds no other
+  run. Fix: on resume with `no_improve >= patience`, skip the epoch loop and
+  go straight to the final evaluation. Tested on CPU with a real (tiny) run
+  that early-stops, is "killed" before `metrics.json`, and resumes: no extra
+  epoch, identical metrics.
+
+  **Also fixed: `training_time_min` was wrong for every resumed run**
+  (only the last segment; e.g. the logs' "Training time: 227.9 min" for
+  depression 80m is one segment, not the run). Cumulative time now carried
+  through `resume.pt` (`accumulated_time_min`). Runs already in flight when
+  this was fixed still undercount (their `resume.pt` held segment-only
+  time) — use SLURM `sacct` elapsed sums for those, as was done for the 30s
+  per-epoch estimates.

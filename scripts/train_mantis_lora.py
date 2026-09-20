@@ -508,12 +508,32 @@ def train_one_context(
         no_improve = _rckpt["no_improve"]
         history = _rckpt["history"]
         start_epoch = _rckpt["epoch"] + 1
+        # Cumulative training minutes from all PREVIOUS segments. resume.pt
+        # files written before 2026-09-20 stored only the last segment's
+        # time under this key, so a run that was already mid-flight then
+        # undercounts; use SLURM elapsed times for those.
+        prior_train_min = float(_rckpt.get("accumulated_time_min", 0.0))
         del _rckpt
     else:
         best_monitor = float("-inf") if monitor_higher_is_better else float("inf")
         no_improve = 0
         history = []
         start_epoch = 1
+        prior_train_min = 0.0
+
+    # Early stopping already fired in a previous segment, and that segment
+    # was killed (wall-time limit) during the final evaluation below —
+    # resume.pt is only deleted after the evaluation finishes. Without this
+    # check the restart trains ANOTHER full epoch before re-checking
+    # patience, then times out in the evaluation again: found 2026-09-20,
+    # depression_extreme_binary/lstm/80m looped through 11 extra ~5 h epochs
+    # this way (and one of them overwrote best_model.pt after patience had
+    # already been exhausted).
+    _epoch_range = range(start_epoch, epochs + 1)
+    if _resuming and no_improve >= patience:
+        print(f"  [RESUME] Early stopping already triggered "
+              f"(patience {no_improve}/{patience}) — skipping straight to final evaluation.")
+        _epoch_range = range(0)
 
     # Achieved-TFLOP/s (plan §4.1): fwd+bwd over every channel-epoch the
     # backbone actually processes per training epoch (unlike Stage 1,
@@ -521,7 +541,7 @@ def train_one_context(
     flops_per_channel_epoch = GFLOP_PER_CHANNEL_EPOCH * 1e9
 
     t0 = time.time()
-    for epoch in range(start_epoch, epochs + 1):
+    for epoch in _epoch_range:
         _t_epoch_start = time.time()
         train_loss, train_logits, train_targets = run_epoch(
             model, train_loader, optimizer, criterion, device, scaler, train=True,
@@ -593,15 +613,15 @@ def train_one_context(
             "best_monitor": best_monitor,
             "no_improve": no_improve,
             "history": history,
-            "accumulated_time_min": (time.time() - t0) / 60,
+            "accumulated_time_min": prior_train_min + (time.time() - t0) / 60,
         }, resume_path)
 
         if no_improve >= patience:
             print(f"  Early stop at epoch {epoch}.")
             break
 
-    elapsed = time.time() - t0
-    print(f"  Training time: {elapsed/60:.1f} min")
+    elapsed = (time.time() - t0) + prior_train_min * 60
+    print(f"  Training time: {elapsed/60:.1f} min (cumulative across resume segments)")
 
     # ── Evaluation on best checkpoint ────────────────────────────────────────
     load_combined_state(model, torch.load(ckpt_path, map_location="cpu", weights_only=False))

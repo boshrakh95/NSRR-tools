@@ -3,8 +3,8 @@
 infer_mantis_lora_subject_windows.py — Mantis baseline, Stage 2 Step 2
 (LoRA inference) (checklist 2.5)
 
-Loads a train_mantis_lora.py checkpoint (LoRA deltas + sequence_head, via
-peft's get_peft_model_state_dict/set_peft_model_state_dict) and runs
+Loads a train_mantis_lora.py checkpoint (backbone LoRA deltas + sequence_head,
+via train_mantis_lora.load_combined_state) and runs
 inference on ALL available windows per subject (not capped at K=5), saving
 per-window probabilities/predictions for downstream subject-level
 aggregation — same purpose and output schema as Stage 1's
@@ -71,7 +71,6 @@ import numpy as np
 import pandas as pd
 import torch
 import yaml
-from peft import set_peft_model_state_dict
 from torch.utils.data import DataLoader, Subset
 
 _ROOT = Path(__file__).resolve().parent.parent
@@ -79,7 +78,7 @@ sys.path.insert(0, str(_ROOT / "src"))
 from nsrr_tools.datasets.mantis_raw_epoch_dataset import MantisRawEpochWindowDataset
 
 sys.path.insert(0, str(_ROOT / "scripts"))
-from train_mantis_lora import build_combined_lora_model  # noqa: E402
+from train_mantis_lora import build_combined_lora_model, load_combined_state  # noqa: E402
 
 # How often run_inference() flushes partial progress to disk, independent
 # of any signal — bounds lost work on a timeout to ~this many seconds.
@@ -349,11 +348,17 @@ def main():
             # straight from cfg, not auto-detected from checkpoint tensor
             # shapes — Stage 2's config isn't varied per checkpoint the way
             # Stage 1's was. If cfg drifts from what a checkpoint was
-            # trained with, set_peft_model_state_dict fails loudly on a
-            # shape mismatch rather than silently loading wrong weights.
+            # trained with, loading fails loudly on a shape mismatch rather
+            # than silently loading wrong weights.
+            #
+            # Checkpoint format is train_mantis_lora.py's two-piece dict
+            # ({"lora_state_dict", "head_state_dict"}, changed 2026-09-12
+            # when peft stopped wrapping sequence_head) — must go through
+            # load_combined_state, not peft's set_peft_model_state_dict on
+            # the whole model (the combined model is no longer a PeftModel).
             model = build_combined_lora_model(cfg, num_classes, args.head_type, device)
-            peft_state = torch.load(ckpt_path, map_location="cpu", weights_only=False)
-            set_peft_model_state_dict(model, peft_state)
+            ckpt_state = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+            load_combined_state(model, ckpt_state)
             model.eval()
             print(f"  num_classes: {num_classes}")
 
