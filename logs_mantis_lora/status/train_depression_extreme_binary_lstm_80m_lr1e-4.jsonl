@@ -26,3 +26,17 @@
 {"ts":"2026-09-15T22:28:25-04:00","job_id":"22002059","node":"g33","status":"TIMEOUT_REQUEUED","task":"depression_extreme_binary","head":"lstm","context":"80m","lr":"1e-4","datasets":"apples stages"}
 {"ts":"2026-09-16T06:15:38-04:00","job_id":"22038173","node":"g33","status":"STARTED","task":"depression_extreme_binary","head":"lstm","context":"80m","lr":"1e-4","datasets":"apples stages"}
 {"ts":"2026-09-16T11:13:25-04:00","job_id":"22038173","node":"g33","status":"TIMEOUT_REQUEUED","task":"depression_extreme_binary","head":"lstm","context":"80m","lr":"1e-4","datasets":"apples stages"}
+{"ts":"2026-09-18T07:11:53-04:00","job_id":"22068916","node":"g34","status":"STARTED","task":"depression_extreme_binary","head":"lstm","context":"80m","lr":"1e-4","datasets":"apples stages"}
+{"ts":"2026-09-18T12:09:18-04:00","job_id":"22068916","node":"g34","status":"TIMEOUT_REQUEUED","task":"depression_extreme_binary","head":"lstm","context":"80m","lr":"1e-4","datasets":"apples stages"}
+{"ts":"2026-09-18T18:59:31-04:00","job_id":"22224847","node":"g34","status":"STARTED","task":"depression_extreme_binary","head":"lstm","context":"80m","lr":"1e-4","datasets":"apples stages"}
+{"ts":"2026-09-18T23:57:21-04:00","job_id":"22224847","node":"g34","status":"TIMEOUT_REQUEUED","task":"depression_extreme_binary","head":"lstm","context":"80m","lr":"1e-4","datasets":"apples stages"}
+{"ts":"2026-09-19T02:04:03-04:00","job_id":"22262861","node":"g32","status":"STARTED","task":"depression_extreme_binary","head":"lstm","context":"80m","lr":"1e-4","datasets":"apples stages"}
+{"ts":"2026-09-19T07:01:36-04:00","job_id":"22262861","node":"g32","status":"TIMEOUT_REQUEUED","task":"depression_extreme_binary","head":"lstm","context":"80m","lr":"1e-4","datasets":"apples stages"}
+{"ts":"2026-09-19T07:03:39-04:00","job_id":"22274755","node":"g31","status":"STARTED","task":"depression_extreme_binary","head":"lstm","context":"80m","lr":"1e-4","datasets":"apples stages"}
+{"ts":"2026-09-19T12:01:30-04:00","job_id":"22274755","node":"g31","status":"TIMEOUT_REQUEUED","task":"depression_extreme_binary","head":"lstm","context":"80m","lr":"1e-4","datasets":"apples stages"}
+{"ts":"2026-09-19T12:01:54-04:00","job_id":"22283250","node":"g33","status":"STARTED","task":"depression_extreme_binary","head":"lstm","context":"80m","lr":"1e-4","datasets":"apples stages"}
+{"ts":"2026-09-19T16:59:31-04:00","job_id":"22283250","node":"g33","status":"TIMEOUT_REQUEUED","task":"depression_extreme_binary","head":"lstm","context":"80m","lr":"1e-4","datasets":"apples stages"}
+{"ts":"2026-09-19T17:02:09-04:00","job_id":"22295402","node":"g33","status":"STARTED","task":"depression_extreme_binary","head":"lstm","context":"80m","lr":"1e-4","datasets":"apples stages"}
+{"ts":"2026-09-19T21:59:46-04:00","job_id":"22295402","node":"g33","status":"TIMEOUT_REQUEUED","task":"depression_extreme_binary","head":"lstm","context":"80m","lr":"1e-4","datasets":"apples stages"}
+{"ts":"2026-09-19T22:54:47-04:00","job_id":"22304429","node":"g30","status":"STARTED","task":"depression_extreme_binary","head":"lstm","context":"80m","lr":"1e-4","datasets":"apples stages"}
+{"ts":"2026-09-20T03:52:17-04:00","job_id":"22304429","node":"g30","status":"TIMEOUT_REQUEUED","task":"depression_extreme_binary","head":"lstm","context":"80m","lr":"1e-4","datasets":"apples stages"}
