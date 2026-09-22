@@ -1124,14 +1124,14 @@ use them. Two new notebooks are now at
 `NSRR-tools/results/paper_figures/notebooks_npj/`, named to make clear they're
 exploratory drafts, not paper-numbered:
 
-- **`tsfm_fig_kvsk.ipynb`** — analog of `main_fig2_kvsk.ipynb`. Grid layout:
+- **`sfig26_tsfm_kvsk.ipynb`** — analog of `main_fig2_kvsk.ipynb`. Grid layout:
   one row per encoder (SleepFM reduced-channel, SleepFM full-channel, OSF
   full-channel, PhysioOmni reduced-channel, Mantis reduced-channel), one
   column per representative task (age, sleep efficiency, sex — the same three
   tasks the paper's own Fig. 2 uses, chosen there to show three distinct
   $K$-saturation regimes). Same `kvsk_panel` function the real Fig. 2 uses,
   same context-length color palette, same iso-budget dashed lines.
-- **`tsfm_fig_heatmap.ipynb`** — analog of `main_fig3_heatmap.ipynb`. Same
+- **`sfig27_tsfm_heatmap.ipynb`** — analog of `main_fig3_heatmap.ipynb`. Same
   5-row (encoder) $\times$ 4-column (sex, apnea, sleep efficiency, BMI) grid.
   PhysioOmni's apnea cell renders as "no data" (the panel functions' own
   existing behavior for an empty DataFrame), since PhysioOmni has no
@@ -1197,8 +1197,8 @@ cell source directly instead, which exercises the identical code path).
 **Both completed with no errors**, and the PhysioOmni × apnea cell correctly
 came back as an empty DataFrame (0 rows), exercising the "no data" path
 rather than crashing. The rendered PDFs and PNGs are already sitting at
-`NSRR-tools/results/paper_figures/draft_tsfm/tsfm_fig_kvsk.{pdf,png}` and
-`tsfm_fig_heatmap.{pdf,png}` — open them directly if you don't want to run
+`NSRR-tools/results/paper_figures/final_npj/sfig26_tsfm_kvsk.{pdf,png}` and
+`sfig27_tsfm_heatmap.{pdf,png}` — open them directly if you don't want to run
 Jupyter yourself first.
 
 **What the rendered figures actually show, worth knowing before you open

@@ -268,18 +268,29 @@ def kvsk_panel(ax, heatmap_df: pd.DataFrame, col: str = "auroc",
 def heatmap_panel(ax, heatmap_df: pd.DataFrame, col: str = "auroc",
                   budget: float = 480.0,
                   show_ylabels: bool = True, show_cbar: bool = True,
-                  show_cbar_label: bool = True):
+                  show_cbar_label: bool = True,
+                  vmin: float = None, vmax: float = None):
     """2-D context × K heatmap with iso-compute lines.
 
     show_ylabels  : show y-axis tick labels (context lengths) — False for
                     right-hand panels in a multi-column row.
-    show_cbar     : always True; kept for API compatibility.
+    show_cbar     : draw this panel's own colour bar. Set False when several
+                    panels share one scale and a single bar serves them all.
+    vmin, vmax    : fix the colour scale (in AUROC %) instead of deriving it
+                    from this panel's own data. Pass the same pair to every
+                    panel that should be directly comparable. Left as None
+                    (the default) each panel scales to itself, which is the
+                    original behaviour.
     show_cbar_label : show the "AUROC (%)" text label on the colour bar —
                     False for left-hand panels so the bar is visible but
                     not labelled (the right neighbour carries the label).
     """
     if heatmap_df.empty:
-        ax.text(0.5, 0.5, "no data", ha="center", va="center",
+        # Blank the axes entirely so an intentionally-absent panel (e.g.
+        # PhysioOmni x apnea, which has no respiratory pathway) reads as a
+        # deliberate omission rather than a failed render.
+        ax.set_axis_off()
+        ax.text(0.5, 0.5, "not applicable", ha="center", va="center",
                 transform=ax.transAxes, fontsize=FONT_BASE, color="gray")
         return
 
@@ -310,12 +321,15 @@ def heatmap_panel(ax, heatmap_df: pd.DataFrame, col: str = "auroc",
 
     valid = matrix[~np.isnan(matrix)] * 100
     if valid.size == 0:
-        ax.text(0.5, 0.5, "no data", ha="center", va="center",
+        ax.set_axis_off()
+        ax.text(0.5, 0.5, "not applicable", ha="center", va="center",
                 transform=ax.transAxes, fontsize=FONT_BASE, color="gray")
         return
 
-    vmin = float(np.floor(valid.min() / 5) * 5)
-    vmax = float(np.ceil(valid.max() / 5) * 5)
+    if vmin is None:
+        vmin = float(np.floor(valid.min() / 5) * 5)
+    if vmax is None:
+        vmax = float(np.ceil(valid.max() / 5) * 5)
 
     cbar_label = "AUROC (%)" if show_cbar_label else ""
     ytick_labels = [ctx_lbl.get(c, str(c)) for c in contexts]
@@ -324,7 +338,7 @@ def heatmap_panel(ax, heatmap_df: pd.DataFrame, col: str = "auroc",
         cmap=sns.color_palette("YlOrRd", as_cmap=True),
         xticklabels=[str(k) for k in sub_ks],
         yticklabels=ytick_labels if show_ylabels else False,
-        cbar=True,
+        cbar=show_cbar,
         cbar_kws={"label": cbar_label, "shrink": 0.8},
         linewidths=0.2, linecolor="white",
         mask=np.isnan(matrix), vmin=vmin, vmax=vmax,

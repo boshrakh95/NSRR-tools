@@ -490,7 +490,7 @@ encoders and all six contexts together for easy row-by-row comparison
 executed-and-verified figure notebooks analogous to Fig.~2/Fig.~3 at
 `NSRR-tools/results/paper_figures/notebooks_npj/tsfm_fig_{kvsk,heatmap}.ipynb`
 (Section 7), with rendered output already at
-`NSRR-tools/results/paper_figures/draft_tsfm/`. **Building Section 6.7 also
+`NSRR-tools/results/paper_figures/final_npj/`. **Building Section 6.7 also
 caught and fixed a real $\Delta$-computation bug** (global peak used instead
 of the value at $L^*$) that had produced six slightly-wrong numbers in
 Section 3's cross-encoder table — corrected, documented in Section 6.7, none
