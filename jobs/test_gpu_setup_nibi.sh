@@ -5,8 +5,8 @@
 #SBATCH --gpus=h100:1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=16000M
-#SBATCH --output=/home/boshra95/NSRR-tools-mantis/logs_mantis/%x_%j.out
-#SBATCH --error=/home/boshra95/NSRR-tools-mantis/logs_mantis/%x_%j.err
+#SBATCH --output=/home/boshra95/NSRR-tools/logs_mantis/%x_%j.out
+#SBATCH --error=/home/boshra95/NSRR-tools/logs_mantis/%x_%j.err
 
 # Nibi GPU-allocation smoke test — run this FIRST, before submitting any real
 # Mantis job here, to confirm the SLURM directives below are actually valid
@@ -47,7 +47,7 @@
 
 set -e
 
-cd /home/boshra95/NSRR-tools-mantis
+cd /home/boshra95/NSRR-tools
 mkdir -p logs_mantis
 
 echo "========================================================================"

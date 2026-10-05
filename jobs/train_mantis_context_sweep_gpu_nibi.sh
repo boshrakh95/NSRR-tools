@@ -6,8 +6,8 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32000M
 #SBATCH --signal=B:USR1@120            # send SIGUSR1 to bash 120s before wall time
-#SBATCH --output=/home/boshra95/NSRR-tools-mantis/logs_mantis/%x_%j.out
-#SBATCH --error=/home/boshra95/NSRR-tools-mantis/logs_mantis/%x_%j.err
+#SBATCH --output=/home/boshra95/NSRR-tools/logs_mantis/%x_%j.out
+#SBATCH --error=/home/boshra95/NSRR-tools/logs_mantis/%x_%j.err
 
 # Mantis baseline — Stage 1 Step 8 — Context-Length Sweep Training (nibi-specific)
 #
@@ -75,7 +75,7 @@ set -e
 _SCRIPT_PATH="$(realpath "$0")"
 _PYTHON_PID=""
 
-cd /home/boshra95/NSRR-tools-mantis
+cd /home/boshra95/NSRR-tools
 LOGS_DIR=${LOGS_DIR:-logs_mantis}
 mkdir -p "$LOGS_DIR"
 mkdir -p "$LOGS_DIR/status"

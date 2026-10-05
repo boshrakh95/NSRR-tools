@@ -7,8 +7,8 @@
 #SBATCH --mem=32000M
 #SBATCH --exclude=fc11006,fc11013,fc11010,fc10713
 #SBATCH --signal=B:USR1@120            # send SIGUSR1 to bash 120s before wall time
-#SBATCH --output=/home/boshra95/NSRR-tools-mantis/logs_mantis/%x_%j.out
-#SBATCH --error=/home/boshra95/NSRR-tools-mantis/logs_mantis/%x_%j.err
+#SBATCH --output=/home/boshra95/NSRR-tools/logs_mantis/%x_%j.out
+#SBATCH --error=/home/boshra95/NSRR-tools/logs_mantis/%x_%j.err
 
 # Mantis baseline — Stage 1 Step 8 — Context-Length Sweep Training
 #
@@ -17,7 +17,7 @@
 # docs/TSFM_MANTIS_IMPLEMENTATION_PLAN.md §10/§13. Same structure, same
 # auto-resume mechanism, same status/log conventions as OSF's/PhysioOmni's
 # job scripts; only the venv, worktree path, target script, log dir, and job
-# name differ. Runs from THIS worktree (/home/boshra95/NSRR-tools-mantis,
+# name differ. Runs from THIS worktree (/home/boshra95/NSRR-tools,
 # mantis-implementation branch) — never touches NSRR-tools or NSRR-tools-omni
 # (see plan §0's worktree isolation rule).
 #
@@ -66,7 +66,7 @@ set -e
 _SCRIPT_PATH="$(realpath "$0")"
 _PYTHON_PID=""
 
-cd /home/boshra95/NSRR-tools-mantis
+cd /home/boshra95/NSRR-tools
 LOGS_DIR=${LOGS_DIR:-logs_mantis}
 mkdir -p "$LOGS_DIR"
 mkdir -p "$LOGS_DIR/status"

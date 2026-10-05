@@ -5,8 +5,8 @@
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=32000M
 #SBATCH --signal=B:USR1@120
-#SBATCH --output=/home/boshra95/NSRR-tools-mantis/logs_mantis_lora/precompute_cache_%x_%j.out
-#SBATCH --error=/home/boshra95/NSRR-tools-mantis/logs_mantis_lora/precompute_cache_%x_%j.err
+#SBATCH --output=/home/boshra95/NSRR-tools/logs_mantis_lora/precompute_cache_%x_%j.out
+#SBATCH --error=/home/boshra95/NSRR-tools/logs_mantis_lora/precompute_cache_%x_%j.err
 
 # Mantis baseline — Stage 2 (LoRA) — Raw signal cache precompute (checklist 2.2)
 #
@@ -62,7 +62,7 @@ set -e
 _SCRIPT_PATH="$(realpath "$0")"
 _PYTHON_PID=""
 
-cd /home/boshra95/NSRR-tools-mantis
+cd /home/boshra95/NSRR-tools
 LOGS_DIR=${LOGS_DIR:-logs_mantis_lora}
 mkdir -p "$LOGS_DIR"
 
