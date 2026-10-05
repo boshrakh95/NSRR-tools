@@ -218,6 +218,53 @@ def deployment_scenario_panel(ax, heatmap_df: pd.DataFrame, task: str,
 # xfig_06 — Modality Radar Chart
 # ═══════════════════════════════════════════════════════════════════════════════
 
+# Row keys for table6_modality.csv. A bare prefix of the display label is NOT
+# safe here: TASK_LABEL["sleep_efficiency_binary"][:4] is "slee", which matches
+# both "Sleep apnea (AHI>=15)" and "Sleep efficiency", and .iloc[0] then
+# silently handed sleep efficiency the apnea row -- the two polygons came out
+# identical and apnea overdrew sleep efficiency, so sleep efficiency appeared
+# in the legend but never on the chart. These keys are chosen to match exactly
+# one row each.
+_MODALITY_ROW_KEY = {
+    "sex_binary":                "sex",
+    "age_class":                 "age",
+    "apnea_binary":              "apnea",
+    "bmi_binary":                "bmi",
+    "sleep_efficiency_binary":   "efficiency",
+    "depression_extreme_binary": "depression",
+    "osa_binary_apples_postqc":  "osa",
+}
+
+
+def _match_modality_row(modality_df: pd.DataFrame, task_col: str, task: str):
+    """Resolve one task key to exactly one row of a modality table.
+
+    Returns the row as a Series, or None if it cannot be resolved
+    unambiguously. Ambiguity warns rather than silently picking a row.
+    """
+    col = modality_df[task_col].astype(str)
+
+    exact = modality_df[col == task]
+    if len(exact) == 1:
+        return exact.iloc[0]
+
+    key = _MODALITY_ROW_KEY.get(task)
+    if key is None:
+        key = TASK_LABEL.get(task, task).lower()[:4]
+
+    hits = modality_df[col.str.lower().str.contains(key, na=False, regex=False)]
+    if len(hits) == 1:
+        return hits.iloc[0]
+    if len(hits) == 0:
+        warnings.warn(f"modality table has no row for task {task!r} (key {key!r}); skipping")
+        return None
+    warnings.warn(
+        f"task {task!r} (key {key!r}) matches {len(hits)} modality rows "
+        f"{list(hits[task_col])}; skipping rather than guessing"
+    )
+    return None
+
+
 def modality_radar_panel(ax, modality_df: pd.DataFrame,
                           tasks: list[str] | None = None):
     """Polar/radar chart: each axis = modality importance (-ΔAUROC) per task.
@@ -244,15 +291,9 @@ def modality_radar_panel(ax, modality_df: pd.DataFrame,
     palette = sns.color_palette("tab10", len(tasks))
 
     for task_idx, task in enumerate(tasks):
-        # Match task in table (partial match for display names)
-        row = modality_df[modality_df[task_col].str.lower().str.contains(
-            TASK_LABEL.get(task, task).lower()[:4], na=False)]
-        if row.empty:
-            # Try exact task key
-            row = modality_df[modality_df[task_col] == task]
-        if row.empty:
+        row = _match_modality_row(modality_df, task_col, task)
+        if row is None:
             continue
-        row = row.iloc[0]
 
         try:
             vals = [abs(float(str(row[c]).replace("+", ""))) for c in delta_cols]

@@ -1,6 +1,31 @@
 #!/usr/bin/env python3
 """Helper script to (re-)create all paper-figure notebooks.
 
+!!  STALE AS OF 2026-09-16 -- DO NOT RUN WITHOUT UPDATING IT FIRST.  !!
+
+    This script is a one-off bootstrap from 2026-07-28. It has since
+    diverged from the notebooks actually used for the npj submission:
+
+      * it defines only 12 supplementary notebooks; there are now 23
+      * its numbering is a third, older scheme that matches neither the
+        pre- nor post-2026-09-16 layout (e.g. here sfig1 = k_aggregation
+        and sfig9 = aucpr; in the submission k_aggregation is S-8 and the
+        PR figure is S-16)
+
+    Running it as-is would overwrite the maintained notebooks with that
+    stale 12-figure scheme and silently break the numbering contract
+    described below.
+
+    The supplementary figure numbers are load-bearing: sfigN_<slug>.pdf,
+    the \\begin{figure*} order in npj_supplementary.tex, and every
+    hardcoded "Supplementary Figure S-N" in npj_main.tex must all agree,
+    because \\ref cannot cross the two documents. The authoritative order
+    is the order the figures are first cited in the main paper.
+
+    To regenerate a single figure, open its notebook (sfigN_<slug>.ipynb)
+    and run it; it writes straight into
+    npj_digital_medicine_submission/figures/.
+
 Run from the notebooks/ directory:
   python _create_notebooks.py
 
