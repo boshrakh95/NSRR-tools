@@ -130,32 +130,132 @@ wall-clock despite more FLOPs**. Verify with a pilot; don't take it on faith.
 
 ## Environment
 
-**Not built yet.** Plan: `/home/boshra95/mantis_env`, `pip install mantis-tsfm`,
-plus `peft`.
+**Built and verified 2026-09-06.** `/home/boshra95/mantis_env`, Python
+3.10.13. Real gotchas hit while building it, worth knowing before rebuilding:
 
-Do **not** reuse `osf_env` or `physioomni_env` — each has an
-`nsrr_tools_src.pth` pointing at ONE worktree's `src/`, so reusing one
-silently imports another branch's `nsrr_tools`, and repointing it breaks that
-branch's live environment. PhysioOmni hit exactly this.
+- **`pip install -r osf_env_requirements.txt` cannot be reused wholesale.**
+  `accelerate==1.2.1` and `scikit-learn==1.7.2` are not in the CC wheelhouse
+  (they were installed into `osf_env`/`physioomni_env` from PyPI originally);
+  a plain `--no-index -r requirements.txt` aborts the **entire batch** on the
+  first unsatisfiable pin, silently dropping everything else in that command
+  (this cost two rebuild cycles — `pandas`/`h5py`/`einops` were missing
+  because `PyYAML==6.0.3` doesn't exist in the wheelhouse either, only
+  `6.0.2`). **Install in small batches and verify each one**, not one big
+  `-r` file.
+- **Installing `accelerate`/`peft` from PyPI silently upgraded `torch` to
+  2.6.0**, overwriting the wheelhouse's pinned 2.5.1. Caught by re-checking
+  `torch.__version__` after every batch, not assumed. Fixed with
+  `pip install --no-index --no-deps --force-reinstall torch==2.5.1
+  torchvision==0.20.1 torchaudio==2.5.1` run *after* peft/accelerate/transformers.
+- **`pyarrow` needs the same `.pth` fix `physioomni_env` already found** — CC
+  ships a dummy stub wheel; the real compiled package lives under the `arrow`
+  environment module. Copied `physioomni_env`'s
+  `pyarrow_arrow_module.pth` verbatim (same absolute path, no `module load`
+  needed at runtime). `df.to_parquet()` verified working.
+- **`mantis-tsfm` was installed with `--no-deps`** — every real dependency
+  (`torch`, `einops`, `safetensors`, `huggingface_hub`) was already pinned
+  above; installing normally would have let it pull `datasets>=4.0` from
+  PyPI, which we don't need (see below).
+- `pip` correctly complains that `datasets>=4.0` (a `mantis-tsfm` declared
+  dependency) is missing — **left uninstalled, deliberately.** Verified:
+  `mantis/__init__.py` only lists submodule names, it doesn't import them;
+  `from mantis.architecture import MantisV1` imports cleanly with zero
+  `datasets` dependency. `datasets` is only needed by `mantis.trainer`
+  (`MantisTrainer.pretrain`/`.fit`), which we never use — we call the
+  architecture directly and load weights manually (plan §3.4).
 
-Record here once built: Python/torch versions, package count, and confirmation
-that `import nsrr_tools` resolves to `/home/boshra95/NSRR-tools-mantis/src`.
+**Versions** (torch/numpy/scipy/pandas/h5py/einops match `osf_env`/
+`physioomni_env` exactly, for numerical parity across the three baselines):
+
+```
+torch 2.5.1+computecanada    numpy 2.1.1+computecanada    scipy 1.14.1+computecanada
+pandas 2.2.3+computecanada   h5py 3.12.0+computecanada    einops 0.8.0+computecanada
+safetensors 0.8.0            huggingface_hub 0.36.2       peft 0.14.0+computecanada
+transformers 4.47.0+computecanada   accelerate 1.2.1      scikit-learn 1.7.2
+mantis-tsfm 1.1.0            pyarrow 18.1.0 (via .pth)
+```
+(`safetensors`/`huggingface_hub`/`scikit-learn` are newer than
+`osf_env`'s — pulled in transitively resolving `peft`/`transformers`/
+`mantis-tsfm`; none of these affect training numerics, only checkpoint I/O
+and sklearn API, both exercised by real code below.)
+
+51 packages installed.
+
+**Confirmed** (all live-checked, not assumed):
+- `import nsrr_tools` resolves to `/home/boshra95/NSRR-tools-mantis/src/nsrr_tools`
+  (own `nsrr_tools_src.pth`, not shared with `osf_env`/`physioomni_env`).
+- `nsrr_tools.datasets` imports with **zero** errors.
+- `nsrr_tools.core` correctly **fails** on `import pyedflib` — same gotcha
+  `physioomni_env` found, re-verified here rather than assumed. Confirms the
+  channel-loader placement decision (`datasets/`, not `core/`, plan §7).
+- `torch.cuda.is_available()` is `False` on the login node, as expected —
+  real GPU checks wait for a job.
+- `from mantis.architecture import MantisV1, MantisV2` imports cleanly.
 
 ## Checkpoint
 
-**Not downloaded yet.** License **Apache-2.0** (confirmed from the repo's
-`LICENSE`) — the cleanest of the three baselines.
+**Downloaded and strict-load-verified 2026-09-06** — `scripts/verify_mantis_checkpoint.py`,
+PASSING on both `Mantis-8M` and `MantisPlus` at
+`/home/boshra95/mantis_checkpoints/{Mantis-8M,MantisPlus}/`, byte sizes
+matching the remote header read exactly (32,466,928 / 32,467,192). License
+**Apache-2.0** (confirmed from the repo's `LICENSE` and all three HF model
+cards' `cardData`) — the cleanest of the three baselines.
 
-| Checkpoint | Params (verified) | Notes |
-|---|---|---|
-| `paris-noah/Mantis-8M` | 8.11 M | headline model, optimal layer 2 |
-| `paris-noah/MantisPlus` | 8.11 M | optimal layer 1 |
-| `paris-noah/MantisV2` | 4.19 M | **same FLOPs** — pick on quality, not speed |
+Checkpoint-file totals read directly from each `model.safetensors` header
+over HTTP range requests, 2026-08-27 (not from the papers, not from the
+README):
 
-Also run the **synthetic-pretrained (CauKer)** checkpoint: provably zero
-physiological or NSRR exposure, which is a uniquely clean contamination story
-against OSF's quantified 87.7 % SHHS overlap, and a free ablation on whether
-physiological pretraining data matters at all.
+| Checkpoint | Module | File total (incl. buffer + `prj`) | Pretraining data | Optimal frozen layer (not used, see below) |
+|---|---|---:|---|---|
+| `paris-noah/Mantis-8M` | `MantisV1` | 8,112,384 | real time series | 2 |
+| `paris-noah/MantisPlus` | `MantisV1` | 8,112,402 | **CauKer 2M — synthetic only** | 1 |
+| `paris-noah/MantisV2` | `MantisV2` | 4,188,690 | CauKer 2M — synthetic only | 2 |
+
+**⚠️ A real second checkpoint-loading bug, found only by running the load
+(not by reading the source more carefully) — 2026-09-06.** Dropping
+`pos_encoder.pe` is not the only surgery needed. `output_token='combined'`
+(our decided setting, §3.3 below) doubles `self.hidden_dim`, which also
+resizes `self.prj` — the pretraining-only contrastive projector — to 512-dim,
+colliding with the checkpoint's native 256-dim `prj` and raising the same
+hard `RuntimeError: size mismatch` even under `strict=False`. `prj` is dead
+weight at inference regardless (`MantisV1.forward` only calls it when
+`pre_training=True`), so it must be dropped alongside `pos_encoder.pe`. See
+plan §1.0 #6 and §3.4.
+
+**Correction to the "8.11M" headline figure**: it is the checkpoint-file
+total, including the non-trainable `pos_encoder.pe` buffer (8,448 elements)
+and the dead `prj` head (66,304 elements at its native shape). **The number
+that matters for model-size claims and the LoRA-adapted fraction is
+8,037,632 live parameters, identical for both checkpoints.**
+
+**LoRA — live-verified against both real checkpoints**: `target_modules=
+["to_qkv","to_out.0"]` injects **exactly 12** LoRA-wrapped Linears (6 blocks
+× 2) and **exactly 221,184** trainable params ≈ **2.75 %** of 8,037,632.
+`modules_to_save` correctly leaves a stand-in head trainable while freezing
+every non-LoRA backbone param.
+
+**`Mantis-8M` and `MantisPlus` differ by exactly 2 tensors / 18 params** —
+`tokgen_unit.scalar_encoders.{0,1}.scales`, a deterministic constant buffer.
+Architecturally identical (confirmed again by the missing-key sets above:
+Mantis-8M is missing those 2 keys entirely, MantisPlus is not). **So the
+synthetic-pretraining ("CauKer") ablation the plan wanted is `MantisPlus`,
+and running it is one config line** — a perfectly controlled contrast
+against OSF's quantified 87.7 % SHHS overlap.
+
+**Correction to the 2026-08-22 skeleton**: `MantisV2` does **not** have the
+same FLOPs as Mantis-8M. Its attention inner dim is 256 (`wQKV [768,256]`),
+not V1's 1024, and its MLP is SwiGLU — it is roughly **2× cheaper per token**.
+Its conv kernel is 41, not 17, and its LoRA targets are `wQKV`/`wO`, not
+`to_qkv`/`to_out.0`. Documented, not run (plan §5.1).
+
+**On the "optimal frozen layer" column above**: decided AGAINST using it
+(plan §3.3, checklist decision, not a pilot). The authors' own
+`getting_started/intermediate_layers.ipynb` does not reproduce its own
+README table (Mantis-8M's best in that notebook is layer 1 or 3, not 2), and
+per-checkpoint layer truncation would make Mantis the only truncated encoder
+in the paper, halve its LoRA depth vs OSF's/PhysioOmni's 12/12, and break the
+Mantis-8M-vs-MantisPlus ablation into two variables. **Decided: `combined @
+last` for both checkpoints** — `input_dim=3072`.
 
 ## Reference materials
 
@@ -169,33 +269,70 @@ physiological pretraining data matters at all.
 
 ## Key facts to keep front-of-mind
 
+**All re-verified 2026-08-27 against real code, real checkpoint headers and
+real HDF5 files. Five skeleton claims were wrong — see plan §1.0.**
+
 - **Architecture**: `hidden_dim=256`, `num_patches=32`, `transf_depth=6`,
-  `heads=8`, `dim_head=128` (inner 1024), `mlp_dim=512`. Tokenizer is a Conv1d
-  with `kernel_size = patch_window_size + 1`.
-- **Our data is 128 Hz**, 6 fast channels (`EEG, LOC, ROC, EKG, EMG, Airflow`),
-  already z-scored, `float16`. **No EDF reprocessing needed.**
-- **30 s epoch = 3840 samples; Mantis pretrained on 512.** Recommended fix
-  (plan §2): `seq_len=3840, num_patches=240`, which keeps `patch_window_size=16`
-  and the conv kernel identical to pretraining. Regenerate the sinusoidal
-  positional buffer (sized `num_patches+1`, so it size-mismatches on load).
-  **Do NOT interpolate 3840→512** — that's 17 Hz effective, Nyquist 8.5 Hz,
-  and destroys spindles (11–16 Hz), beta, and EMG/ECG morphology.
-- **Channel-independent by construction.** `transform(three_dim=True)` returns
-  `(N, C, 256)` — structurally identical to SleepFM's `[T, 4, 128]`, so the
-  dataset fork is a three-constant change. **Keep per-channel embeddings; do
-  not average or vote** — let the sequence head combine them, as the SleepFM
-  pipeline already does.
-- **LoRA targets `["to_qkv", "to_out.0"]`** — same lucidrains-style ViT blocks
-  as OSF, so its config transfers. Live-verify anyway.
-- **No contamination concern** (general/synthetic pretraining, not NSRR) —
-  verify rather than assume.
+  `heads=8`, `dim_head=128` (inner 1024), `mlp_dim=512`. Tokenizer is a
+  Conv1d with `kernel_size = patch_window_size + 1` (17), **`same`-padded at
+  full sample resolution**, followed by a plain mean over `patch_window_size`
+  positions. `self.seq_len` is never used in `forward()`.
+- **30 s epoch = 3840 samples; Mantis pretrained on 512.** Fix:
+  `seq_len=3840, num_patches=240`, which keeps `patch_window_size=16` and
+  `kernel_size=17` **identical to pretraining**. Regenerate the sinusoidal
+  positional buffer (`num_patches+1` = 241 positions). **Do NOT interpolate
+  3840→512** — 17 Hz effective, Nyquist 8.5 Hz, destroys spindles (11–16 Hz),
+  beta, and EMG/ECG morphology.
+- **⚠️ `from_pretrained` CANNOT be used for the 240-patch model.**
+  `PyTorchModelHubMixin.from_pretrained` rebuilds the model from the repo's
+  `config.json` (`seq_len:512, num_patches:32`), and passing `num_patches=240`
+  as a kwarg then hard-raises `RuntimeError: size mismatch for
+  …pos_encoder.pe`. **Verified empirically**: `load_state_dict` raises on a
+  shape mismatch **even with `strict=False`** (torch 2.5.1). Load manually:
+  `hf_hub_download` → `safetensors.load_file` → `sd.pop("vit_unit.pos_encoder.pe")`
+  → `net.load_state_dict(sd, strict=False)` (the `vit_unit`→`transf_unit`
+  rename pre-hook fires here) → assert missing keys ⊆
+  `{pos_encoder.pe, scalar_encoders.{0,1}.scales}`. Plan §3.4.
+- **⚠️ The frozen embedding is 512-dim per channel, not 256** — if we follow
+  the authors' own documented recipe. README + `intermediate_layers.ipynb`:
+  frozen extraction is best with `return_transf_layer=2, output_token='combined'`
+  → `cat(cls, mean)` = 512. `FLAT_DIM = 6×512 = 3072`, not 1536. This is a
+  live decision (plan §3.3), pilot-confirmed before anything is locked.
+- **⚠️ Our fast-channel data is NOT a uniform 6 channels.** Measured across
+  all four cohorts (250-subject samples): APPLES/MrOS/STAGES carry **8**
+  channels with different names (`C3-M2`, `C4-M1`, `CHIN`, `LLEG`…); SHHS
+  carries 6, and **its RESP channel is `Airflow` for ~75 % and `Thor` for
+  ~25 %**. STAGES has real gaps (~10 % no `EKG`, ~22 % no chin). The skeleton's
+  "6 fast channels (EEG, LOC, ROC, EKG, EMG, Airflow)" was true of one SHHS
+  file only. → fixed 6-slot canonical map with per-slot candidate lists, plan
+  §2.2.
+- **Channel-independent by construction** (`Conv1d(in_channels=1)`).
+  `transform(three_dim=True)` returns `(N, C, D)` — structurally identical to
+  OSF's `[T, 2, 768]`, so the dataset fork is a three-constant change.
+  **Keep per-channel embeddings; do not average or vote.**
+- **Normalization: feed our z-scored data as-is.** The conv path is
+  scale-invariant (`ts_scaler` z-scores each series); the only scale-sensitive
+  path is the per-patch mean/std `MultiScaledScalarEncoder`, whose grid
+  (`1e-4…1e4`) is centred on the O(1) values night-level z-scoring produces.
+  Restoring µV would *introduce* the volts-vs-µV cross-cohort inconsistency
+  PhysioOmni had to fight. Plan §3.2.
+- **LoRA targets `["to_qkv", "to_out.0"]`** — confirmed against the real
+  checkpoint tensor names (`…layers.{0..5}.0.fn.to_qkv.weight [3072,256]`,
+  `…to_out.0.weight [256,1024]`). Expect **12** wrapped Linears (6 blocks × 2).
+- **Zero `BatchNorm` in the backbone** — confirmed by grep; the only
+  `BatchNorm1d` is in the library's default fine-tuning head, which we don't
+  use. So `chunk_batch_size` is mathematically inert.
+- **Apnea is IN SCOPE** (unlike PhysioOmni) — Mantis is modality-agnostic and
+  the RESP slot exists. 5 Tier-1 tasks, same as OSF.
+- **The fast-tree HDF5 datasets are gzip-compressed, chunked at 38,400
+  samples (300 s)** — so a Stage 2 raw-signal cache is warranted, and it
+  should be `[T, 6, 3840]` fp16 **epoch-major** so an N-epoch window is one
+  contiguous read.
 - **Expect a weak frozen (Stage 1) result.** The published Mantis-on-EEG study
   found freezing the encoder "leads to a huge decrease in performance" on EEG.
   If Stage 1 is poor and Stage 2 rescues it, that is a *finding* — general
   pretraining transfers to sleep PSG only with adaptation. Report it honestly;
   never leave it looking like a completed unremarkable table cell.
-
----
 
 ## Status log
 
@@ -208,3 +345,945 @@ Append dated entries here as work happens (newest last).
   cloned to `/home/boshra95/mantis`. No environment, no checkpoint, no code.
   Everything in the plan's §6 checklist is open; first task is reading the
   Mantis repo in detail and expanding the plan.
+
+- **2026-08-27** — **Mantis repo, checkpoints and our own data re-verified;
+  `docs/TSFM_MANTIS_IMPLEMENTATION_PLAN.md` expanded from skeleton (526 lines)
+  to a full cluster-runnable plan (~1,760 lines).** Still **no environment, no
+  checkpoint downloaded, no code**. What was actually verified, and how:
+  - Read `/home/boshra95/mantis` `architecture/version1.py`, `version2.py`,
+    `tokgen_utils/*`, `transformer_v1_utils/*`, `transformer_v2_utils/*`,
+    `trainer/trainer.py`, README and the `getting_started/` notebooks in full.
+  - Read all three checkpoints' `model.safetensors` headers over HTTP range
+    requests → real param counts, real tensor names/shapes, and the
+    Mantis-8M-vs-MantisPlus 2-tensor diff.
+  - Fetched all three `config.json` files → confirmed `seq_len:512,
+    num_patches:32` is baked into the repo config.
+  - Reproduced the `load_state_dict(..., strict=False)` shape-mismatch raise
+    locally on torch 2.5.1, and read `huggingface_hub/hub_mixin.py` to confirm
+    `from_pretrained` rebuilds from config.
+  - Measured real per-cohort HDF5 channel availability (250-subject random
+    samples × 4 cohorts), plus HDF5 chunking/compression and scratch quota.
+  - Confirmed Fir has whole-card `gpu:h100:4` nodes.
+  **Five skeleton claims were wrong** (embedding dim, `from_pretrained`,
+  MantisV2 FLOPs, our channel set, where the CauKer checkpoint lives) — all
+  corrected above and tabulated in plan §1.0. All seven of the skeleton's §5
+  open questions are resolved in plan §5. Three pilots (windowing, output
+  token/layer, throughput+memory) are specified in plan §13 and must run
+  before any full sweep. Next action: user reviews the plan, then checklist
+  0.1 (build `mantis_env`).
+
+- **2026-09-06** — Plan §3.3/§13 rewritten after user pushback that the
+  pilots were unexplained and the fairness comparison with the other three
+  backbones was under-argued. Decided (not piloted): **`combined @ last`**
+  for output token/layer (rejects the authors' per-checkpoint intermediate
+  layer — their own notebook doesn't reproduce it, and following it would
+  make Mantis the only truncated encoder and break the MantisPlus ablation
+  into two variables) and **Option D** for windowing (matches the interface
+  every other backbone uses; Option B's extra pooling stage was judged the
+  worse asymmetry). Both pilots reframed as confirmatory, scored by a
+  single-epoch sleep-staging probe (existing per-subject annotation `.npy`
+  files) instead of 30s `sex_binary` val AUROC — ~20,000 held-out epochs vs
+  ~165 subjects, detects 0.005 not 0.04. Folded in OSF's
+  `docs/LORA_GPU_THROUGHPUT_INVESTIGATION.md` (from `osf-implementation`):
+  corrected the "TF32 both flags default off" claim (cudnn's is already
+  True), and replaced "0.14% of peak" as a universal Mantis expectation with
+  OSF's real measured overhead-bound-at-30s / compute-bound-at-40m+ pattern
+  — Pilot 3 now profiles at 40m, not 30s.
+
+  **Then implementation started, Phase 0.** `mantis_env` built (0.1) — not a
+  trivial `pip install -r`, see "Environment" section above for the real
+  gotchas (wheelhouse gaps, a silent torch 2.6.0 upgrade, the pyarrow `.pth`
+  fix). Both checkpoints downloaded (0.2), byte-exact to the earlier remote
+  read. `scripts/verify_mantis_checkpoint.py` written and PASSING on both
+  (0.3) — and it caught a **second real checkpoint-loading bug** no amount
+  of reading the source had surfaced: `prj` collides in `combined` mode
+  exactly the way `pos_encoder.pe` does, for a different reason (`hidden_dim`
+  doubling, not sequence length). Also corrected the "8.11M" headline
+  parameter count — that number includes a non-trainable buffer and a
+  dead-at-inference head; the number that matters is 8,037,632. LoRA
+  injection (12 modules, 221,184 params, 2.75%) and `modules_to_save`
+  behavior are now real-checkpoint-verified, not reasoned about. **User
+  confirmed the Phase 0 verify output matches — proceeded to Phase 1.**
+
+  **Phase 1.1 — `mantis_channel_loader.py` + its test, done and PASSING.**
+  Built as one complete shared module from day one per plan §7 (not just
+  the channel-reading piece): `load_subject_channels`, `get_epoch_count`,
+  `epochs_to_model_input` (both `full_epoch`/`subwindow` windowing modes),
+  and `load_mantis_backbone`/`sinusoidal_pe` (the manual-load logic from
+  checklist 0.3, factored into the shared module this time). One real fix
+  made along the way to the plan's own §13.1 text: it described three
+  windowing values behind one config key, but Option D and D-interp produce
+  **identical model input** — they differ only in the backbone's positional
+  buffer — so `epochs_to_model_input` takes just `windowing:
+  full_epoch|subwindow`, and D-vs-D-interp is `load_mantis_backbone`'s
+  separate `pe_mode` argument, matching what `configs/phase0_mantis_config.yaml`'s
+  template already had. Corrected in the plan doc, not just the code.
+
+  Real-data test (`scripts/test_mantis_channel_loader.py`, launch.json "🦗
+  Mantis Phase1 Step1"): default 2-subject × 4-cohort run passed everything
+  — `[6,n]` shape exact, zero NaN, both windowing modes correct-shaped on
+  real signal — and, by luck, the very first SHHS subject (`200001_v1`)
+  exercised BOTH documented SHHS fallbacks at once (generic `EEG` key AND
+  `Thor` RESP source). **Went beyond the checklist's own scope**: since the
+  default sample never hit an actually-absent slot or a fallback beyond the
+  1st alternate, random-sampled STAGES directly to find and test
+  `STLK00151` (genuinely no ECG candidate — confirmed exact-zero, not
+  skipped) and `MSTR00178` (no `CHIN`/`EMG` — correctly fell through to the
+  3rd-tier `LLEG` candidate). Both real, both previously untested paths.
+  **User confirmed, proceeded to 1.2/1.3.**
+
+  **Phase 1.2/1.3 — `extract_mantis_embeddings.py` + `configs/phase0_mantis_config.yaml`,
+  done and real-data-verified.** Stage 1's absent-slot contract (§2.2:
+  skip the forward, write exact zero) is deliberately different from Stage
+  2's (§14.2: run uniformly then zero the output, needed only for Stage 2's
+  batch-uniformity constraint) — the script only batches *present* slots per
+  subject, `chunk_batch_size // n_present`. Verified twice before trusting
+  any real run: a synthetic ordering test through `epochs_to_model_input`
+  (distinct constants per slot/epoch, both windowing modes) and an
+  end-to-end run of the real selection/scatter logic against a fake
+  backbone with a genuinely partial present-set — confirms the logic itself
+  independent of the real (slow) model.
+
+  **Real incident during the CPU smoke test**: launched three single-subject
+  extractions (APPLES/SHHS/STAGES) concurrently and none finished after
+  ~40 minutes. Root cause was NOT a code bug — `uptime` showed the shared
+  login node at load average 13–19 across 87 other users, plus each of our
+  own processes independently spawning ~34 threads. Killed all three,
+  re-ran serially with `OMP_NUM_THREADS=8`/`MKL_NUM_THREADS=8`: clean
+  ~2.6–3.2 min/subject. **Lesson recorded in plan §4.10 — never run
+  concurrent CPU debug subjects on the login node, even 2–3 of them.**
+
+  Real results, all matching step 1.1's loader-only predictions for the
+  same exact subjects: `APL0001` → `(1143,6,512)`, zero missing, zero
+  NaN/Inf, per-slot std 1.68–2.23; `STLK00151` → `(1148,6,512)`,
+  `slots_missing:['ECG']`, that slot's mean AND std both exactly 0.0, every
+  other slot non-degenerate; `200001_v1` → `(1084,6,512)`, `resp_source:
+  Thor`, correct fallback log, zero NaN/Inf. **User confirmed, proceeded to
+  1.4.**
+
+  **Phase 1.4 — Pilot 3 (throughput + `chunk_batch_size` A/B), done
+  2026-09-06 with a real H100.** Scope was revised on explicit user
+  instruction mid-step: the real `jobs/extract_mantis_embeddings_{gpu,cpu}.sh`
+  files are **deferred until the whole step-by-step implementation is
+  finished** (matching OSF's/PhysioOmni's own final job scripts, not written
+  piecemeal) — this project now runs three distinct paths: (1) few-subject
+  CPU debug stays on `launch.json` + login node, (2) heavier one-off checks
+  like this pilot go through a quick `sbatch --account=def-egranger_gpu` job
+  (never `def-forouzan_gpu`, reserved for the real sweep, and never the
+  login node), (3) full production `jobs/*.sh` come only at the end. The
+  pilot itself ran via an ephemeral, **uncommitted** script
+  (`/scratch/boshra95/tmp_mantis_pilot3/`), first mistakenly requesting a
+  whole card (`--gpus=h100:1`) — queued 30+ min with no clear resource win
+  for a quick test — corrected to a `1g.10gb` MIG slice per direct user
+  feedback ("get minimal for your test"), which scheduled and ran in ~6
+  minutes total.
+
+  **Two real operational bugs found and fixed along the way, both now in
+  plan §4.10**: (1) `/tmp` is **node-local** on this cluster — config files
+  written there from the login node were invisible to the compute node the
+  job actually ran on, a `FileNotFoundError` one line after a successful
+  `nvidia-smi` call. Fixed by moving everything to `/scratch`. (2)
+  `nvidia-smi --query-gpu=memory.total` reported the **full 80GB** from
+  inside a 10GB MIG job — device queries can't be trusted to self-report
+  slice size on this cluster.
+
+  **Real measured results**: 4.370 TFLOP/s (`chunk_batch_size=192`) vs
+  4.341 TFLOP/s (`=48`) — a 0.7% difference, i.e. **no measurable
+  sensitivity to this knob**, unlike OSF's real 3.28× — confirms plan
+  §4.4's prediction and keeps 192 as the config default. The achieved-TFLOP/s
+  gate itself needed a real fix, not just a number: the script's first
+  printout said "0.88% of H100 peak," comparing against the *full card*
+  while running on a **1/7 slice** — the true figure, against what was
+  actually allocated, is **6.18%**, past the 5% gate, ~44× PhysioOmni's
+  historical 0.14%. Fixed with an explicit `--gpu-fraction` CLI flag
+  (default `1/7`) rather than auto-detection, since (2) above shows
+  auto-detection can't be trusted here. **Also corrected plan §4.5**: its
+  "request a whole card" argument is Stage-2-specific (backward-pass
+  activation memory) — Stage 1 has no such constraint and, per explicit
+  user instruction, stays on a MIG slice unless a real OOM forces
+  otherwise, never pre-emptively for throughput. No new launch.json entry
+  needed — this was GPU-only pilot work, not something to hand to
+  interactive login-node debugging.
+
+  **User then asked for a full accuracy audit of the plan** after the
+  "sleep-staging probe" name understandably read as scope creep (sleep
+  staging is one of the project's 7 real tasks, per `CLAUDE.md`, but
+  explicitly NOT one of the TSFM baselines' 5 Tier-1 tasks). Audited and
+  confirmed: every task-scope mention (§5.5, §5.8, §11, the real config,
+  the real registry description) consistently says 5 Tier-1 tasks only;
+  no stale `1536`/`return_transf_layer: 2` values from pre-decision drafts
+  survive anywhere; the real config and script match the §3.3 decision
+  exactly (`return_transf_layer: -1`, `output_token: combined`,
+  `embed_dim: 512`, `input_dim: 3072`); run-count arithmetic (90/60/60)
+  checks out; and running 1.2-1.4 before the confirmatory 1.5/1.6 pilots
+  is fine because those steps validate code correctness, not the
+  windowing/layer choice — the one thing that DOES depend on that choice
+  (full 4-cohort extraction, 1.11) is still correctly gated behind them.
+
+  **Phase 1.5 — `scripts/probe_mantis_staging.py`, done and PASSING.**
+  Restating clearly since the name caused confusion: this is a throwaway
+  engineering instrument for deciding checklist 1.6's windowing/layer
+  config, not a paper deliverable — sleep staging stays out of scope for
+  all 5 real comparison tasks. Verified two ways: synthetic data (a
+  hand-built perfect-signal embedding scored F1=1.0/κ=1.0; pure noise
+  scored F1=0.21/κ=0.01, correct chance level for 5 classes; injected
+  NaN and all-zero subjects were both correctly detected and skipped)
+  and real data (3 fresh APPLES extractions + 1 pre-existing real SHHS
+  embedding found already sitting in the production output dir from
+  earlier debugging — verified numerically identical to an
+  already-confirmed-correct run, kept rather than deleted). Real-data run:
+  correct `flat_dim=3072`, correct subject-wise split, correct
+  too-few-subjects warning. **User confirmed, proceeded to 1.6.**
+
+  **Phase 1.6 — Pilots 1+2 run for real, 2026-09-07. BOTH windowing and
+  output-layer decisions now EMPIRICALLY CONFIRMED, not just reasoned
+  about.** New script `scripts/pilot_mantis_windowing_layer.py` runs 3
+  windowing variants (D, D-interp, B) and captures all 4 (layer, token)
+  combinations from ONE forward pass per variant, via a manual replication
+  of `TransformerUnit.forward()`'s internals (`MantisV1.forward()` itself
+  only returns one combination per call). **Verified bit-identical
+  (max abs diff 0.0) against the model's own forward() for all 4
+  combinations individually, on the real checkpoint**, before trusting it
+  on any data — then verified the full pipeline end-to-end on a tiny
+  4-subject CPU run before spending real GPU time.
+
+  Real run: 100 subjects (50 APPLES + 50 SHHS), `def-egranger_gpu`,
+  `1g.10gb` MIG slice, ~61 min total (extraction ~39 min, scoring ~20 min
+  — scoring was slower than expected due to a real `lbfgs` non-convergence
+  warning at `max_iter=1000`; doesn't affect the relative comparison since
+  it applies identically to all 12 variants, but would matter if this
+  probe is ever reused at larger scale). Per-subject extraction cost
+  matched Pilot 3's prediction closely: D 8.0s, Dinterp 7.7s, B 7.4s.
+
+  **Full 12-row table** (weighted F1 / kappa, 100 subjects, 30 held out):
+
+  | variant | layer | token | F1 | kappa |
+  |---|---|---|---:|---:|
+  | D | L2 | cls | 0.7331 | 0.6164 |
+  | D | L2 | combined | 0.7158 | 0.5920 |
+  | D | Llast | cls | 0.7250 | 0.6072 |
+  | **D** | **Llast** | **combined** | **0.7125** | **0.5889** |
+  | Dinterp | L2 | cls | 0.7444 | 0.6297 |
+  | Dinterp | L2 | combined | 0.7236 | 0.6022 |
+  | Dinterp | Llast | cls | 0.7281 | 0.6094 |
+  | Dinterp | Llast | combined | 0.7106 | 0.5832 |
+  | B | L2 | cls | 0.7242 | 0.6076 |
+  | B | L2 | combined | 0.7177 | 0.5955 |
+  | B | Llast | cls | 0.7334 | 0.6224 |
+  | B | Llast | combined | 0.7029 | 0.5793 |
+
+  (Bold row = the decided configuration, `combined @ last` on Option D,
+  `input_dim=3072`.)
+
+  **Decisions**: Windowing — D vs B (combined@last): gap -0.0096, escape
+  hatch needs >0.15 → **Option D CONFIRMED**. D vs D-interp: D higher by
+  0.0019, within the tie-break band → plain D wins either way. Output
+  layer — @2 vs @last (Option D): gap 0.0033, escape hatch needs >0.08 →
+  **combined @ last CONFIRMED**. **All 12 variants span only 0.0415
+  weighted F1 (0.7029-0.7444)** — none of these implementation choices
+  moved the needle much; the cross-model fairness reasoning behind both
+  decisions was never fighting the data.
+
+  Real embeddings for all 100 subjects × 12 variants kept at
+  `/scratch/boshra95/psg/unified/embeddings/mantis_pilot12/` — real GPU
+  compute, and the 11 not-taken rows are the paper's supplementary
+  "what we gave up" numbers (§3.3, §13.1/§13.2). **This closes Pilots 1
+  and 2 entirely — the embedding format (Option D, `combined @ last`,
+  `input_dim=3072`) is now empirically confirmed for both stages, not
+  just decided.**
+
+- **2026-09-07 — Checklist 1.7 done**: `mantis_context_window_dataset.py` +
+  `test_mantis_context_window_dataset.py`. Forked
+  `osf_context_window_dataset.py` per plan §8 — only the module-level
+  shape constants changed (`EMBED_DIM=512, N_SUBTOKENS=6, FLAT_DIM=3072`),
+  everything else (K-sampling, `SubjectGroupedSampler`, window index math,
+  padding, `collate_fn`) copied unchanged since it's pure integer
+  arithmetic over T/N. Added a real-data guard (`_assert_embed_dim`) that
+  loads one real subject's `.npy` at dataset-build time and asserts its
+  shape is exactly `(6, 512)`, so a stale/wrong-variant `embedding_dir`
+  fails immediately with a clear message instead of a confusing shape
+  error inside a DataLoader worker later.
+
+  Tested on the real 100-subject Pilot 1/2 population
+  (`mantis_pilot12/D_Llast_combined/`, the exact production Option-D
+  combined@last variant) via a new `--embedding-dir` CLI override on the
+  test script — the production `embedding_dir` only has 4 real subjects
+  extracted so far (1.11 not yet run). 69/14/15 train/val/test subjects
+  after the recording-length filter (1 of 100 excluded, genuinely short).
+  Verified at 30s/10m/240m/full_night: shapes/dtypes correct, K-sampling
+  respects `K_max=5`, `SubjectGroupedSampler` keeps each subject's items
+  consecutive, full_night `collate_fn` pads correctly to the batch's
+  longest subject.
+
+  **Real-data finding (not a bug)**: at 240m, the seq2label right-padding
+  branch structurally never fires on production data —
+  `min_recording_patches=480` already guarantees every kept subject has
+  ≥480 epochs. Added a synthetic unit test (`T=7 < N=10`) directly against
+  the window-builder functions to cover that branch: right-pad is exact
+  zero, mask correct, real region matches source data exactly, including
+  an offset `window_start` and the seq2seq causal left-pad case. Both real
+  and synthetic checks passed first try.
+
+  Next: checklist 1.8, `train_mantis_context_sweep.py` + job script (CPU
+  smoke test on the pilot subset). Per the user's 2026-09-07 instruction,
+  `docs/MANTIS_EXPERIMENTS_GUIDE.md` should be started once 1.8-1.10 exist
+  (real submittable/runnable scripts), not deferred to the end.
+
+- **2026-09-07 — Checklist 1.8 done**: `train_mantis_context_sweep.py` +
+  `jobs/train_mantis_context_sweep_gpu.sh`. Forked
+  `train_physioomni_context_sweep.py` — same function boundaries kept
+  unmodified (`run_epoch`, `compute_metrics`, etc.) for future Stage 2
+  reuse, only the dataset import and `--wandb-project` default changed.
+
+  Two required deviations from the template (plan §4): TF32 enabled at
+  startup instead of autocast/fp16 (config already had
+  `mixed_precision: false`; `scaler` is now hardcoded `None` regardless of
+  config to make that invariant explicit); and achieved-TFLOP/s logged
+  every epoch via a new head-FLOP estimator. Verified the estimator isn't
+  just plausible but actually correct: for the LSTM head at N=1 it gives
+  exactly `2 × N × total_weight_params`, matching the real printed
+  trainable-param count (3,279,362) against the standard `nn.LSTM`
+  parameter-count formula by hand. Logged as N/A (not a misleading
+  near-zero) for full_night and for non-CUDA devices, since the "% of H100
+  peak" comparison doesn't apply to either.
+
+  CPU-smoke-tested against the same 100-subject Pilot 1/2 population used
+  in 1.7 (production extraction, checklist 1.11, hasn't run yet) — LSTM
+  head/30s (full split, early-stopped epoch 21) and Transformer head/10m
+  (10-subject limit, exercises CLS+positional-encoding+masking) both
+  reached `Status: SUCCESS` with correct outputs. `jobs/
+  train_mantis_context_sweep_gpu.sh` forked from PhysioOmni's own job
+  script — same auto-resume-on-timeout and status-JSONL machinery,
+  `def-forouzan_gpu` (a real production script now, not a debug job) —
+  not yet run as an actual sbatch job since there's no GPU need until
+  real data exists.
+
+  **What this step means in plain terms**: checklist 1.7 gave us a way to
+  hand context windows of Mantis embeddings to a model; this step gives us
+  the model training loop itself — the code that actually takes those
+  windows, trains a small classifier (LSTM/Transformer/MeanPool) on top of
+  the frozen Mantis embeddings, and reports accuracy/AUROC per context
+  length. It's "frozen backbone, train a head" — the entire Stage 1
+  comparison this baseline exists to run. Nothing here touches GPU/Mantis
+  backbone compute directly (that already happened during extraction,
+  checklist 1.6/1.11); this step is cheap by design. Next: checklist 1.9,
+  the inference script that turns a trained checkpoint into per-window
+  predictions for the paper's actual result tables.
+
+- **2026-09-07 — Checklist 1.9 done**: `infer_mantis_subject_windows.py` +
+  `jobs/infer_mantis_subject_windows_gpu.sh`. Forked
+  `infer_physioomni_subject_windows.py` unchanged except the dataset
+  import, an `--embedding-dir` override, and TF32 enabled at startup
+  (§4.2). Batch-size auto-scaling reference (`_ref_bs=64`) is carried
+  forward with the same honest caveat OSF's and PhysioOmni's scripts
+  already carry: still not GPU-verified for any of the three.
+
+  Trained a real checkpoint (LSTM/30s, full 98-subject pilot split) and
+  ran inference against it end-to-end (15 test subjects, 14,712 rows).
+  Verified the actual parquet file, not just that it ran: exactly the 7
+  documented columns, correct dtypes, **zero NaN anywhere**,
+  `prob_class0+prob_class1` sums to 1.0 every row, `window_idx` restarts
+  at 0 per subject.
+
+  **Real bug found and fixed along the way**: while debugging a
+  `--limit 2` smoke-test run, hit a genuine latent bug — if the
+  early-stopping monitor is `NaN` for an entire run (happens when a tiny
+  validation split has only one class present, since AUROC needs both),
+  `NaN > -inf` is always `False` in Python, so no checkpoint was ever
+  saved, and evaluation crashed trying to load one that didn't exist. This
+  bug is NOT new to Mantis — confirmed present, byte-identical, in OSF's
+  and PhysioOmni's own original `train_*_context_sweep.py` scripts too. Per
+  the worktree isolation rule, only fixed it here (a safety-net checkpoint
+  save that doesn't fake progress or reset patience); flagged to the user
+  that those other two scripts carry the same bug if it's ever worth
+  fixing there.
+
+  **What this step means in plain terms**: checklist 1.8 gave us a trained
+  classifier per context length; this step turns that trained classifier
+  into the actual numbers the paper needs — a per-window prediction table
+  (subject, true label, predicted label, probability) that downstream
+  analysis code aggregates into subject-level AUROC/F1 and, eventually,
+  the context-length comparison plots. Both frozen-backbone scripts
+  (train + infer) are now written, tested, and correctness-checked against
+  real embeddings and real checkpoints. Next: checklist 1.10, the registry
+  + command generator that lets the user run the whole sweep with short
+  `gen_commands_mantis.py` calls instead of hand-typed CLI invocations —
+  after that, `docs/MANTIS_EXPERIMENTS_GUIDE.md` starts, per the user's
+  instruction to begin it once real submittable steps exist.
+
+- **2026-09-07 — Checklist 1.10 done**: `v2_mantis_registry.yaml` +
+  `gen_commands_mantis.py`. 5 Tier-1 tasks × 3 heads = 15 experiments,
+  fields copied verbatim from `v2_osf_registry.yaml` per plan §5.8 —
+  unlike PhysioOmni, apnea_binary IS included (Mantis is channel-agnostic,
+  RESP goes through the same encoder as every other slot, making it the
+  only baseline directly comparable to OSF on apnea). Verified against a
+  real checkpoint (trained at the exact production path the registry
+  expects, no `run_tag`): `list`/`status`/`infer` all correctly detected
+  the trained context and generated the right commands. Test checkpoint
+  removed afterward.
+
+  **`docs/MANTIS_EXPERIMENTS_GUIDE.md` created**, per the user's earlier
+  instruction to start it once real submittable steps exist — filled in
+  incrementally alongside the plan doc from here.
+
+  **Also done, ahead of schedule**: `jobs/extract_mantis_embeddings_gpu.sh`
+  (checklist 1.4 had explicitly deferred this file until the step-by-step
+  implementation finished — that's now). Real per-subject GPU cost from
+  Pilot 3/Pilot 1-2: ~8.0s/subject (Option D). While preparing this,
+  found and fixed a real correctness gap in
+  `extract_mantis_embeddings.py`: the embedding write was
+  `np.save(out_path, emb)` directly, not atomic — a SLURM timeout mid-write
+  could leave a truncated `.npy` that the skip-check would treat as "done"
+  forever after, a real risk across many sharded jobs at ~15,000-subject
+  scale. Fixed with temp-file + `os.replace()`; caught and fixed a second
+  bug in the fix itself along the way (numpy silently appends `.npy` to a
+  filename that doesn't already end in it, so a naive `X.npy.tmp123` temp
+  name becomes `X.npy.tmp123.npy` on disk) before it ever ran for real.
+  Verified end-to-end with a real single-subject CPU extraction, then the
+  SLURM wrapper itself with two real `sbatch` submissions (not just
+  syntax-checked) — the first accidentally only hit the skip-path (those
+  subjects already existed), caught and re-verified against genuinely
+  fresh subjects (job 58534992): 3/3 extracted, 6.20% of the allocated
+  1g.10gb slice's peak (matches Pilot 3's independent 6.18% measurement),
+  zero leftover temp files. **The user can now start real sharded batch
+  extraction**, see `docs/MANTIS_EXPERIMENTS_GUIDE.md` Step 1.
+
+  **What this step means in plain terms**: 1.7-1.9 built the pieces
+  (dataset, train, infer); this step is the "remote control" that ties
+  them together — instead of typing out long training/inference commands
+  by hand for each of the 15 (task, head) combinations, `gen_commands_mantis.py`
+  reads one registry file and prints the exact ready-to-submit `sbatch`
+  command, already knowing which contexts are done and which still need
+  running. Combined with the newly-written extraction job script, this is
+  the point where the Mantis pipeline stops being "code being built" and
+  starts being "a pipeline you submit jobs to" — the shift the user's
+  MANTIS_EXPERIMENTS_GUIDE.md request anticipated. Next: checklist 1.11,
+  the real full-population extraction (sharded GPU jobs across all 4
+  cohorts), which can now start immediately.
+
+**2026-09-07 — Phase 2 (Stage 2, LoRA) implementation starts, in parallel
+with the user submitting real Phase 1 production jobs.** Two standing
+instructions for this phase: MantisPlus ablation (checklist 1.13) is
+deferred until explicitly asked for later, not dropped; and — since LoRA
+fine-tuning runs the full backbone per step and is real GPU compute, unlike
+Stage 1's frozen-embedding head training — every Phase 2 step should
+actively apply this project's hard-won efficiency lessons (TF32,
+achieved-TFLOP/s from day one, measured `chunk_batch_size`, gradient
+accumulation, tokgen checkpointing) rather than write-naive-then-optimize.
+
+- **Checklist 2.1 done**: extended `mantis_channel_loader.py` with the 5
+  Stage 2 raw-signal cache functions (`cache_path_for`, `save_signal_cache`,
+  `load_signal_cache_window`, `get_cached_t_epochs`, `cache_exists`).
+  Reused two real lessons from PhysioOmni's own cache build rather than
+  re-deriving them: atomic `meta.json` write via temp-file+`os.replace`
+  (PhysioOmni had SIGTERM/OOM-killed jobs leave zero-byte meta.json files
+  that broke training), and direct seek+read instead of `mmap_mode="r"`
+  (PhysioOmni measured mmap as *slower* on this cluster's Lustre
+  filesystem for this access pattern). Mantis's version is simpler than
+  PhysioOmni's — one fixed-shape `[T,6,3840]` file per subject instead of
+  several ragged per-channel files, so a plain function suffices, no
+  custom lazy-reader class needed.
+
+  Added a real round-trip test (`test_mantis_channel_loader.py
+  --test-cache`, synthetic 137-epoch array): all 5 functions, 5 different
+  window reads (byte-identical to direct slicing), the out-of-range-window
+  error path, the incomplete-cache (no meta.json) path, and zero leftover
+  temp files — all passed first try, including the private numpy API this
+  relies on (untested in `mantis_env` specifically before now).
+
+  **What this step means in plain terms**: Stage 1 reads pre-extracted
+  embeddings for training; Stage 2 (LoRA) needs to feed the actual raw
+  signal through the backbone during training, since the backbone itself
+  is being fine-tuned. Reading raw signal directly from the compressed
+  HDF5 files on every training step would be slow (gzip decompression on
+  the critical path, every epoch, every experiment) — this cache step
+  builds the plumbing for a fast, pre-sliced, uncompressed copy of the raw
+  signal that training will read from instead. This step only builds and
+  tests the low-level read/write functions; the actual cache-building job
+  (checklist 2.2) that populates it from real subjects comes next.
+
+- **Checklist 2.2 done (code)**: `precompute_mantis_raw_signal_cache.py`
+  + `jobs/precompute_mantis_raw_signal_cache.sh` +
+  `configs/phase0_mantis_lora_config.yaml`. Genuinely simpler and faster
+  than OSF's/PhysioOmni's own precompute — Mantis needs no resampling at
+  all (already 128 Hz), pure read+reshape, real measured **~5.3
+  subjects/s** single-process.
+
+  Verified three ways: local 3-subject test; real-data correctness check
+  (cached array byte-identical to an independently-computed ground truth,
+  for all 3 real APPLES subjects, whole array and a middle window —
+  APL0001's file size, 52,669,568 bytes, matches the plan's own predicted
+  number exactly); and the actual job script verified with a real
+  `sbatch` job that wrote 3 valid entries to the real production cache
+  path (kept, not deleted — legitimate real data). `diskusage_report`
+  checked (8,442/19,000 GiB used) — comfortable headroom for the eventual
+  ~720GB full cache.
+
+  **Full ~14,994-subject build deliberately NOT launched** — real,
+  quota-relevant production operation, explicit user checkpoint. Code is
+  ready whenever the user wants to start it (`docs/MANTIS_EXPERIMENTS_GUIDE.md`
+  will get a Stage 2 section with the exact sharded commands once Stage 2
+  is further along).
+
+  **What this step means in plain terms**: this is the job that actually
+  populates the cache the previous step only built the plumbing for — it
+  reads each subject's raw signal once, reshapes it into the fast layout
+  Stage 2 training needs, and writes it to a permanent location so every
+  future LoRA training run reads a cheap local file instead of decompressing
+  HDF5 chunks on every step. Only run on 3 real subjects so far, as a
+  correctness/speed check — the real ~15,000-subject build is a deliberate
+  next decision for the user, not something to launch automatically given
+  its size and disk-quota relevance. Next: checklist 2.3, the PyTorch
+  dataset class that reads from this cache during actual training.
+
+**2026-09-08 — Phase 1 extraction confirmed complete, checklist 2.3
+done.** Full embedding extraction finished while Phase 2 was being built:
+14,993/14,994 subjects (99.99%) across all 4 cohorts, one known-bad file
+(`stages/STLK00096`, no usable channels at all — same subject PhysioOmni's
+own extraction already flagged, not new). Spot-checked 60 random real
+files across all cohorts for NaN/Inf/shape/degenerate issues — clean.
+**User is clear to proceed to the Stage 1 training sweep (checklist
+1.12).**
+
+- **Checklist 2.3 done**: `mantis_raw_epoch_dataset.py` +
+  `test_mantis_raw_epoch_dataset.py`. Near-verbatim fork of
+  `osf_raw_epoch_dataset.py`, simpler in one real way (epoch-major cache
+  means no reshape on read) and deliberately NOT optimized in another
+  (no per-worker full-subject materialization) — reasoning: PhysioOmni's
+  own measurement shows I/O matters for cheap 30s contexts but is noise
+  next to compute for the expensive long contexts, so that's not where
+  the efficiency mandate should spend effort.
+
+  Found a real gap in my own first test attempt (not the dataset code):
+  a small `--limit 25` raw cache didn't overlap with which subjects the
+  shuffled train/val/test split actually selects, since `limit` applies
+  after the shuffle. Fixed by precomputing the FULL real APPLES cohort's
+  cache instead (1104 subjects, 1.8 min, 9.79 subjects/s parallel) —
+  genuine production progress, not wasted test setup.
+
+  All checks passed against real data: correct shapes at 30s/10m, zero
+  NaN. Most importantly, the split-match assertion — verifying Stage 1's
+  and Stage 2's train/val/test subject pools are IDENTICAL, not just
+  "probably fine because they share code" — passed exactly (759/161/164
+  subjects matched across all three splits). Missing-cache error path
+  also verified for real.
+
+  **What this step means in plain terms**: this is the dataset class LoRA
+  training will actually pull batches from — it reads windows of raw
+  signal from the fast cache (not embeddings, since the backbone itself
+  gets fine-tuned in Stage 2) and guarantees the exact same subjects end
+  up in the exact same train/val/test splits as Stage 1, which is what
+  makes the frozen-vs-LoRA comparison fair. Next: checklist 2.4,
+  `train_mantis_lora.py` — the actual LoRA training loop, the biggest
+  remaining Phase 2 piece.
+
+- **Checklist 2.4 done**: `train_mantis_lora.py` + a new persisted
+  correctness test, `test_mantis_lora_model.py`. `CombinedMantisLoRAModel`
+  wraps the backbone + sequence head as one module before a single
+  `get_peft_model()` call, same pattern as OSF's/PhysioOmni's own Stage 2.
+
+  **Real design decision, not just a fork**: the plan's pseudocode
+  implied a separate `present` tensor threaded into `forward()`, but that
+  would have broken `run_epoch`'s fixed 2-argument contract (the reason
+  it's reusable unmodified across all three baselines' Stage 1 AND now
+  Stage 2). Solved instead by detecting absent channels directly from the
+  raw input — an absent slot is already exact zero for the whole
+  recording by construction, and real signal is never exactly all-zero,
+  so this needs no new tensor anywhere in the pipeline.
+
+  Achieved-TFLOP/s and TF32 wired in from the start (efficiency mandate),
+  now measuring real backbone compute since Stage 2's cost — unlike Stage
+  1's cheap head-only training — is backbone-dominated. Both
+  gradient-checkpointing memory-mitigation rungs implemented as
+  opt-in/default-off from day one rather than added reactively after a
+  future OOM.
+
+  **All three correctness checks passed on the first real run**: (1) the
+  absent-slot zero-fill math verified in isolation; (2) a real forward+
+  backward against the ACTUAL Mantis-8M checkpoint confirmed 24 LoRA
+  params and 10 sequence_head params with finite AND nonzero gradients
+  (checked for both, since an all-zero gradient would pass a naive
+  "no NaN" check while being silently broken) — the 24 matches the
+  earlier live-verified 12 target modules × 2 params/module exactly; (3)
+  both gradient-checkpointing rungs bit-identical to baseline (max abs
+  diff 0.0), matching PhysioOmni's own precedent for this exact kind of
+  check.
+
+  **What this step means in plain terms**: this is the actual LoRA
+  fine-tuning script — the piece that takes the frozen backbone and
+  starts adapting it (a small number of extra parameters injected into
+  its attention layers) jointly with the classifier head, instead of just
+  training a head on top of frozen embeddings like Stage 1 did. This is
+  the most technically novel and error-prone part of the whole Stage 2
+  build (getting gradients to flow correctly through a wrapped,
+  partially-frozen model is a common source of silent bugs), which is why
+  it got the most thorough real-checkpoint verification of any step so
+  far — confirmed working correctly, not just "runs without crashing."
+  Next: checklist 2.5, the inference script + registry + command
+  generator + job scripts that make LoRA runs submittable the same way
+  Stage 1's are.
+
+- **Checklist 2.5 done**: `infer_mantis_lora_subject_windows.py`,
+  `v2_mantis_lora_registry.yaml` (10 experiments — mean_pool deferred,
+  matching PhysioOmni's own LoRA registry precedent, not OSF's 15),
+  `gen_commands_mantis_lora.py`, and both job scripts.
+
+  Two real GPU-sizing decisions, both plan-mandated, worth remembering:
+  training uses the **whole H100** (`--gpus=h100:1`), not a MIG slice —
+  purely a memory argument (backward-pass activations at 240m need ~480
+  epoch-units, doesn't fit smaller), not a throughput one; inference
+  stays on a MIG slice since it runs under `no_grad()`. Training also
+  defaults to `--time=04:00:00`, not 24h — wall-time affects queue
+  position more than GPU size on this cluster, and auto-resume makes a
+  short request nearly free.
+
+  Verified against real data end-to-end: trained a tiny real checkpoint,
+  ran "all windows" inference against it (2,084 real items), watched the
+  periodic-checkpoint mechanism actually fire mid-run (not just present
+  in the code), and inspected the output parquet directly (correct
+  schema, zero NaN). Then trained a second real checkpoint at the exact
+  production registry path and confirmed `gen_commands_mantis_lora.py`'s
+  `list`/`status`/`infer`/`train` all correctly detect it.
+
+  **What this step means in plain terms**: Stage 1 (frozen backbone) and
+  now Stage 2 (LoRA) both have their full train → infer → command-
+  generator → job-script pipeline in place. Everything through checklist
+  2.5 is now "code done, real-checkpoint verified" — what's left is
+  running it for real: checklist 2.6 is a real GPU pilot to measure
+  actual memory/time costs and calibrate the placeholder numbers this
+  step's wall-time tables and batch sizes are seeded with, then 2.7's
+  config audit, then the real sweep (2.8).
+
+- **2026-09-09: Stage 1 and Stage 2 guide/plan docs confirmed complete
+  and cluster-ready.** User asked directly whether the implementation was
+  finished enough to copy the repo to a second cluster (Rorqual) and
+  submit jobs on both in parallel. Found and fixed two real gaps before
+  answering yes: `docs/MANTIS_EXPERIMENTS_GUIDE.md` had no Stage 2
+  section at all, and `extract_mantis_embeddings_gpu.sh` (Stage 1
+  extraction) had no Rorqual variant (Stage 1 training/inference and
+  Stage 2 training/inference already did — those 4 scripts existed on
+  disk, pre-written but never committed; verified via `bash -n` and diffed
+  against their Fir counterparts before committing them). Both fixed,
+  full Step 9 (Stage 2) section added to the guide, Rorqual cluster
+  differences (partition, node-exclude list, disjoint shard ranges across
+  clusters) documented in a new guide section.
+
+- **2026-09-09: added 2 Tier-2 secondary tasks to the registry** —
+  `depression_extreme_binary` and `osa_binary_apples_postqc`, at the
+  user's request ("our two secondary tasks of sleepfm... it doesn't make
+  sense if I don't run these tasks for other models"). Real definitions
+  verified against SleepFM's own `v2_registry.yaml` and the actual
+  `task_subjects` CSVs on disk before adding anything — not guessed from
+  the name. Important finding: **`osa_binary_apples_postqc` is a
+  genuinely different task from the existing Tier-1 `apnea_binary`**, not
+  a duplicate — different severity threshold/grouping, APPLES-only scope
+  (N=1,516) vs. apnea_binary's 4-cohort AHI≥15 definition (N much
+  larger). `depression_extreme_binary` (N=1,761, APPLES+STAGES,
+  extreme-group BDI/PHQ-9 design) was the other task added. Stage 1 got 6
+  new experiments (3 heads each, 21 total); Stage 2 LoRA got 4 (2 heads
+  each, `mean_pool` deferred same as Tier-1, 14 total). No script changes
+  were needed — the training/dataset code has no hardcoded task
+  allowlist, and the wall-time tables already had `n_size: small` entries
+  from the original build. Verified end-to-end (not just "YAML parses"):
+  `gen_commands_mantis.py`/`gen_commands_mantis_lora.py`'s `list` and
+  `train` subcommands both correctly recognize and generate real,
+  fully-parameterized sbatch commands for the new tasks.
+
+  **Flagged to the user, not actioned**: the user's phrasing implies they
+  also want these two tasks added to OSF's and PhysioOmni's own
+  registries for parity — that's real, but out of scope for this
+  worktree/session under the standing worktree-isolation rule. Needs a
+  separate session opened in each of those worktrees.
+
+- **2026-09-10/11: second cluster (Nibi) set up from scratch, in parallel
+  with Fir**, so Phase 2 (LoRA) jobs can run independently of Fir's queue.
+  This repo/worktree (`NSRR-tools-mantis` @ `mantis-implementation`) and
+  five `jobs/*_nibi.sh` scripts already existed on `main`/this branch
+  before this session; everything below is what this session actually
+  built and verified on Nibi itself.
+
+  **GPU smoke test (`jobs/test_gpu_setup_nibi.sh`) PASSED, job 21655871.**
+  Confirms all three previously-unverified SLURM directives in the five
+  `_nibi.sh` scripts are correct as written — no fixes needed: `--gpus=h100:1`
+  allocates a whole 80GB H100 (`MIG M. Disabled`, full 81,559MiB visible,
+  not a slice), no `--partition` needed (scheduler auto-selected
+  `gpubase_bygpu_b1`, confirmed via `scontrol show job`), no `--exclude`
+  needed (job ran clean on node `g21`). `def-egranger_gpu` and
+  `def-forouzan_gpu` both resolve via `sacctmgr show associations`.
+
+  **`/home/boshra95/mantis_env` built from scratch on Nibi, python/3.10.13,
+  small-batch installs per this file's own "Environment" section above —
+  one real gap found in that section's own package list.** Reproduced the
+  documented wheelhouse gaps exactly: `accelerate==1.2.1` and
+  `scikit-learn==1.7.2` are confirmed absent from the cp310 wheelhouse
+  here too (checked directly: wheelhouse jumps `accelerate` 1.1.1→1.3.0,
+  and `scikit-learn` cp310 tops out at 1.5.2) — installed both from PyPI,
+  then re-pinned `torch==2.5.1/torchvision==0.20.1/torchaudio==2.5.1` via
+  `--no-index --no-deps --force-reinstall` as a precaution (torch was
+  NOT actually upgraded this time, unlike Fir's build, but re-pinned
+  anyway since the risk is the same mechanism). `peft==0.14.0`'s own
+  wheelhouse install pulled in `accelerate==1.14.0` transitively first —
+  had to be corrected to 1.2.1 afterward, in that order (peft before the
+  accelerate/scikit-learn PyPI batch), not before.
+
+  **Real gap in this file's own "Environment" section**: `loguru` is a
+  genuine runtime dependency of `nsrr_tools.datasets`
+  (`base_adapter.py` imports it directly) but isn't in the documented
+  package list or the "51 packages installed" count above — `import
+  nsrr_tools.datasets` failed with `ModuleNotFoundError: No module named
+  'loguru'` until installed (`loguru==0.7.3`, wheelhouse). Either Fir's
+  env picked it up transitively through a path Nibi's install order
+  didn't hit, or the doc's package list was already incomplete when
+  written. Added here so a third cluster's build doesn't hit the same gap.
+
+  pyarrow fixed the same way as documented, but **rebuilt from scratch
+  rather than copied** — no `physioomni_env` exists on Nibi to copy the
+  `.pth` from (only `NSRR-tools`/OSF and `NSRR-tools-mantis` are cloned
+  here). Found Nibi's own `arrow/18.1.0` module's cp310 build directly
+  (`/cvmfs/.../arrow/18.1.0/lib/python3.10/site-packages`, confirmed via
+  `module show arrow/18.1.0` + a filesystem check — EasyBuild ships
+  parallel python3.10/3.11/3.12 builds under one module version) and
+  pointed `pyarrow_arrow_module.pth` at it directly. `df.to_parquet()`
+  round-trip verified working, same as Fir's check.
+
+  All of MANTIS_CLAUDE.md's own "Confirmed" import checks re-verified on
+  Nibi, plus the two above: `nsrr_tools` resolves to this worktree's
+  `src/`; `nsrr_tools.datasets`/`.models`/`.utils` and
+  `sequence_head.build_head` all import cleanly; `nsrr_tools.core`
+  correctly still fails on `pyedflib` (channel-loader placement decision
+  re-confirmed a third time); `torch.cuda.is_available()` is `False` on
+  the login node as expected; `from mantis.architecture import MantisV1,
+  MantisV2` imports cleanly.
+
+  **Mantis reference repo cloned to `/home/boshra95/mantis`, pinned to
+  commit `9018b98`** (same commit as Fir's copy).
+
+  **Both checkpoints downloaded to `/home/boshra95/mantis_checkpoints/`
+  and PASSED `scripts/verify_mantis_checkpoint.py`** — byte-identical to
+  Fir's remote-header read (32,466,928 / 32,467,192), and every number in
+  the script's output matches this file's documented expected values
+  exactly: 8,037,632 live params both checkpoints, 12 LoRA-wrapped
+  Linears / 221,184 trainable params (2.75%) both checkpoints, zero
+  BatchNorm, `modules_to_save` behavior correct, batched-channel forward
+  NaN/Inf-free on both.
+
+  **`~/.wandb_key` — still missing, not created.** Needs the user's own
+  W&B API key; out of scope for an agent to generate.
+
+  **Data (Globus transfer from Fir, `/scratch/boshra95/psg/...`) — the
+  parts Phase 2 actually needs are complete, not partial.** Exact file
+  counts checked against this file's own documented Fir completion
+  numbers: `embeddings/mantis_30sec/` has 14,993 `.npy` files across the
+  4 cohorts (apples 1104, mros 3933, shhs 8444, stages 1512) — matches
+  Fir's "14,993/14,994 (99.99%)" note above exactly, same one known-bad
+  STAGES subject. `unified/mantis_raw_signal_128hz/` (the Stage 2 raw
+  cache Stage 2 training actually reads from, not the original HDF5s)
+  has 14,994 subjects across all 4 cohorts (apples 1104, mros 3933, shhs
+  8444, stages 1513) — the full target count. `targets_v2/` (master
+  targets CSV/parquet + per-cohort CSVs + task subject lists) is present
+  and small. **`psg/{cohort}/derived/` (the original fast-channel HDF5s)
+  has NOT landed and, on inspection of `mantis_raw_epoch_dataset.py`'s
+  own read path, isn't actually needed for Phase 2** — Stage 2 training
+  reads the raw-signal cache directly, not the original HDF5s; flagging
+  this in case a future session assumes the derived tree is a blocker
+  when it isn't.
+
+  **Real open gap, not yet resolved: no Stage 1 checkpoints exist on
+  Nibi** (`results/phase0_mantis*` doesn't exist on this cluster at all).
+  Every Phase 2 context length other than 30s warm-starts from that same
+  (task, head)'s own converged 30s LoRA checkpoint, and 30s itself
+  warm-starts from Stage 1's frozen-backbone head checkpoint (this
+  file's "Frozen vs. LoRA-fine-tuned conditions" section above) — so
+  Phase 2 on Nibi needs either Fir's already-trained Stage 1 checkpoints
+  transferred over too, or Stage 1 needs to be re-run here first. Not
+  decided in this session; flagged to the user rather than assumed
+  either way.
+
+  **Also found, not fixed (out of scope, flagged to the user):**
+  `/scratch/boshra95/psg/nsrr/{apples,mros,shhs,stages}/raw_tar/` (raw
+  EDF tarballs, ~1.6TB, unrelated to anything Phase 2 needs) had pushed
+  scratch quota to 174% (1782/1024 GiB) before the user started deleting
+  it mid-session (in progress: down to 725G as of this entry, quota still
+  over at 179%/1834GiB since `psg/unified/` landed 950G in the meantime).
+  Also found `/scratch/boshra95/stages/stages/{original,processed}`
+  (160G) — confirmed by content (per-subject `ecg_segmented`,
+  `master_masks`, `cognitive_targets.csv`) to belong to the unrelated
+  `CogPSGFormerPP` project also in this account's home dir, not
+  NSRR-tools/Mantis — left untouched, not part of this cleanup.
+
+  **No training/inference jobs submitted this session** — setup and
+  verification only, per explicit user instruction. Nibi is ready for
+  Phase 2 submission once `~/.wandb_key` exists and the Stage-1-checkpoint
+  question above is resolved.
+
+- **2026-09-11: both open gaps from the entry above resolved by the user;
+  Nibi is now ready for real Phase 2 submission.** Quota: user deleted
+  `psg/nsrr/raw_tar/` entirely and confirmed no other cleanup needed —
+  `/scratch` is now 956GiB/1024GiB (93%), healthy. Stage 1 checkpoints:
+  user copied `results/phase0_mantis/` over from Fir — **verified via
+  `gen_commands_mantis.py list`, not just file presence**: all 7 tasks ×
+  lstm/transformer (14/14) show `analyzed (6/6 trained, 6/6 inferred)` —
+  every context length 30s through 240m, not just the 30s tier needed for
+  LoRA warm-starting. Only `mean_pool` is pending, matching Fir's own
+  documented status. wandb explicitly deprioritized by the user for now
+  (`~/.wandb_key` still absent — fine, `train_mantis_lora.py` doesn't wire
+  W&B in anyway per the job-script comments).
+
+  **Real gap found and fixed while checking readiness**:
+  `gen_commands_mantis.py`/`gen_commands_mantis_lora.py` always printed
+  the Fir job-script path (`jobs/{train,infer}_mantis*_gpu.sh`, no `_nibi`
+  suffix) with no cluster awareness at all — confirmed by generating a
+  real `train sex_binary_lstm` command and reading the emitted `sbatch`
+  line. Copy-pasting that as-is on Nibi would have submitted under Fir's
+  `--account=def-egranger_gpu` with Fir's `--exclude=fc11006,...` node
+  list (Fir-only node names, meaningless/potentially-rejected on Nibi) —
+  a real cluster-naming-convention violation, not caught by file presence
+  checks alone. **Fixed in both generators**: `_TRAIN_SCRIPT`/
+  `_INFER_SCRIPT` module constants replaced with
+  `_{TRAIN,INFER}_SCRIPT_BY_CLUSTER` dicts, `build_train_cmd`/
+  `build_infer_cmd` take a `cluster` kwarg (default `"fir"`, preserves
+  existing behavior/callers), and a new top-level `--cluster {fir,nibi}`
+  flag threads through `cmd_train`/`cmd_infer` in both scripts. Verified:
+  default (no flag) output is byte-identical to before on both scripts;
+  `--cluster nibi` correctly swaps in `train_mantis_lora_gpu_nibi.sh` /
+  `infer_mantis_lora_subject_windows_gpu_nibi.sh` (and the Stage 1
+  equivalents); both files parse clean (`ast.parse`); `list`/`status`
+  subcommands unaffected by the new flag. `find_batch_size_mantis_gpu.sh`
+  (`_PROBE_BATCH_SCRIPT`) left untouched — not yet implemented on either
+  cluster, out of scope here.
+
+  **Practical takeaway for real submission**: always pass `--cluster nibi`
+  to both generators when working in this worktree on Nibi — e.g.
+  `python scripts/gen_commands_mantis_lora.py --cluster nibi train
+  <exp_id>`. Omitting it silently defaults to Fir's script path.
+
+  **Status: Nibi is now genuinely ready for Phase 2 (LoRA) submission.**
+  Env, checkpoint, GPU allocation, data, Stage 1 warm-start checkpoints,
+  and the command generator's cluster targeting are all verified working
+  on this cluster. No jobs submitted yet — next action is the user's own
+  call on which (task, head, context) combinations to start with.
+
+- **2026-09-11/12: real Phase 2 submission immediately hit two genuine
+  problems, both now diagnosed with hard evidence, not guessed.**
+
+  **Problem 1 — every non-30s context OOM'd, even on a whole H100.**
+  User submitted `sex_binary_lstm` at 30s/10m/40m/80m via
+  `gen_commands_mantis_lora.py`. 30s succeeded (early-stopped epoch 7,
+  12.8 min, real achieved 33.99 TFLOP/s — confirmed genuinely running
+  LoRA-adapted backbone compute, not a shortcut: trainable params
+  3,500,546 = exactly head (3,279,362) + LoRA (221,184), and TFLOP/s is
+  ~1264x Stage 1's frozen-embedding number for the identical experiment).
+  **10m, 40m, and 80m all failed with `CUDA out of memory`, on a full
+  80GB H100, every one topping out at 78.6-78.8/79.18 GiB.** Root cause,
+  found by actually reading the registry, not assumed:
+  `experiments/v2_mantis_lora_registry.yaml`'s
+  `gradient_accumulation.context_micro_batch` was a flat `32` at **every**
+  context (30s through 240m) — its own comment already said "NOT YET
+  GPU-CALIBRATED FOR STAGE 2 ... revisit after checklist 2.6's real pilot
+  ... if a context OOMs," and that pilot had never actually been run.
+  Memory scales with `micro_batch × epochs-per-window` (documented
+  earlier in this file, already hit twice before by OSF and PhysioOmni),
+  so 10m (20 epochs/window) already exceeds capacity at micro_batch=32,
+  same as 80m (160 epochs/window) — this isn't a long-context-only
+  problem, it breaks almost immediately past 30s.
+
+  User's own diagnostic question mattered here: the 30s run showed only
+  6.87% GPU utilization, so "why does something *smaller* OOM?" — answer,
+  confirmed not assumed: TFLOP/s is a compute-throughput number, memory is
+  a completely separate resource; a run can be memory-full while nowhere
+  near peak FLOP/s, which is exactly what's happening.
+
+  User's first fix attempt — manually editing
+  `jobs/train_mantis_lora_gpu_nibi.sh`'s `--gpus=h100:1` down to
+  `h100_3g.40gb:1` to "not lose priority" — **made the actual problem
+  worse, not better**: the bottleneck was memory capacity, and a 40GB
+  slice has less of it than the 80GB that had already failed. Reverted
+  back to `--gpus=h100:1` in that file, and enabled
+  `training.checkpoint_tokgen: true` in `configs/phase0_mantis_lora_config.yaml`
+  (the cheap first memory-mitigation rung already built into
+  `CombinedMantisLoRAModel`, ~1.3% extra FLOPs for a real activation-memory
+  cut) — both real fixes, but incomplete without Problem 2 below.
+
+  **Problem 2 — a whole H100 request then sat PENDING for ~44 hours on
+  Nibi specifically**, directly contradicting this project's own
+  Fir-derived assumption ("whole card costs nothing extra in queue time,
+  `--test-only` showed identical estimates") — that finding was OSF's, on
+  Fir, and does **not** transfer to Nibi. Real, current cluster telemetry
+  (`squeue`/`sinfo`, checked directly, not inferred): whole `h100:1`
+  requests were **772 pending vs. 90 running (8.6x oversubscribed)**
+  cluster-wide at the time; `3g.40gb` slices were **worse** (242 pending
+  / 8 running, ~30x) — so the user's own instinct ("requesting the whole
+  GPU is not a good idea") was right, just not for the reason first
+  guessed (it's a queue-contention problem specific to Nibi's current
+  load, not a memory-vs-priority tradeoff). `1g.10gb` (54/69) and
+  `2g.20gb` (3/14) slices were barely contended — real headroom, not
+  assumed. **Corrected takeaway: on Nibi, the right GPU size is whichever
+  slice actually has queue headroom right now, not reflexively "whole
+  card" — check `squeue -o "%.10i %.8T %b" --states=PENDING|RUNNING`
+  before choosing, don't assume Fir's precedent holds.**
+
+  **Fix in progress**: a memory-calibration pilot
+  (`/scratch/boshra95/tmp_mantis_lora_memory_pilot/pilot_memory.py`,
+  ephemeral/uncommitted, matches Pilot 3's convention) measures real
+  `torch.cuda.max_memory_allocated()` for one forward+backward step per
+  context (10m/40m/80m/120m/240m), with `checkpoint_tokgen` on, trying
+  micro_batch candidates `[32,24,16,12,8,6,4,3,2,1]` and picking the
+  largest that fits under 85% of whatever GPU it's given (reads real
+  device memory at runtime, not hardcoded — same script works at any
+  slice size). First submitted against a whole H100 — cancelled once the
+  ~44h projected start was found — **resubmitted against
+  `nvidia_h100_80gb_hbm3_2g.20gb:1`** (job 21777147), chosen for good
+  queue headroom, not maximum memory. Once real numbers land: update
+  `v2_mantis_lora_registry.yaml`'s `context_micro_batch` with them
+  (replacing the flat placeholder `32`), and decide the real production
+  job script's GPU size from whether 20GB actually fits the longer
+  contexts even at micro_batch=1 — if not, `checkpoint_chunks` (the
+  coarser rung) or a slightly larger slice are the next levers, not a
+  whole card by default.
+
+- **2026-09-19/20: two real bugs found while starting LoRA inference and
+  checking the depression 80m run — both fixed, both were my own misses
+  from the 2026-09-12 restructure or pre-existing resume logic.**
+
+  **1. `infer_mantis_lora_subject_windows.py` was never updated for the
+  two-piece checkpoint format** (train_mantis_lora.py stopped wrapping the
+  whole model in peft on 2026-09-12). All 5 first inference jobs failed in
+  ~1-2 min with `'CombinedMantisLoRAModel' object has no attribute
+  'peft_config'`. Fixed: it now loads via `train_mantis_lora.load_combined_state`
+  (expects `{"lora_state_dict","head_state_dict"}`). Verified on CPU against
+  real checkpoints (age_class + depression, 30s + 10m: loads, finite logits)
+  before resubmitting. Inference resubmitted as jobs 22314995-22314999
+  (`--account=def-egranger_gpu`, 4 h) for exactly the contexts that had a
+  `metrics.json`: age/apnea/sex 30s+10m, bmi 30s, depression 30s+10m+40m.
+  Note the generator's "trained" status checks `best_model.pt` only, which
+  exists from epoch 1 — always restrict `CONTEXTS` by `metrics.json`.
+
+  **2. Resume-after-early-stop loop (train_mantis_lora.py).** `resume.pt` is
+  only deleted after the final evaluation (train+val+test passes). If the
+  wall-time limit hit during that evaluation, the requeue resumed at epoch
+  N+1, trained a whole extra epoch, re-checked patience, and timed out in
+  the evaluation again. At 80m an epoch is ~228 min (measured, one segment
+  each) and the evaluation does not fit in the ~1 h left of a 5 h job, so
+  `depression_extreme_binary/lstm/80m` looped: early-stopped at epoch 10
+  (best 0.8193 @ epoch 5), then trained epochs 11, 12 (past patience), where
+  epoch 13 reached val AUROC 0.8246 and **overwrote `best_model.pt`** — the
+  epoch-5 checkpoint is gone. It then hit patience again at 18 and trained
+  19, 20, 21 the same way; ~11 extra epochs (~55 GPU-h) in total.
+  **Consequence for results: the depression 80m checkpoint was selected
+  after the patience-5 window had closed (epoch 13 rather than epoch 5).
+  Either disclose that, or re-run 80m — decision pending with the user.**
+  `depression_extreme_binary/lstm/40m` had one such spurious epoch (9) but
+  it did not improve, so its best checkpoint (epoch 3) is unaffected.
+  Scan of all training logs for epochs with patience > 5/5 finds no other
+  run. Fix: on resume with `no_improve >= patience`, skip the epoch loop and
+  go straight to the final evaluation. Tested on CPU with a real (tiny) run
+  that early-stops, is "killed" before `metrics.json`, and resumes: no extra
+  epoch, identical metrics.
+
+  **Also fixed: `training_time_min` was wrong for every resumed run**
+  (only the last segment; e.g. the logs' "Training time: 227.9 min" for
+  depression 80m is one segment, not the run). Cumulative time now carried
+  through `resume.pt` (`accumulated_time_min`). Runs already in flight when
+  this was fixed still undercount (their `resume.pt` held segment-only
+  time) — use SLURM `sacct` elapsed sums for those, as was done for the 30s
+  per-epoch estimates.

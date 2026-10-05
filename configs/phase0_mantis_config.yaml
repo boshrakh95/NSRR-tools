@@ -1,0 +1,117 @@
+# ============================================================
+# Phase 0 — Mantis Stage 1 (frozen backbone) Config
+# ============================================================
+# See docs/TSFM_MANTIS_IMPLEMENTATION_PLAN.md §9 for the full derivation of
+# every value below. This is Stage 1's config (frozen embeddings + our
+# sequence head); Stage 2 (LoRA) gets its own, forked config later
+# (phase0_mantis_lora_config.yaml, plan §14.6) — never edited in place
+# alongside this one.
+
+# ── Embedding extraction ─────────────────────────────────────────────────────
+embedding:
+  repo_id:        "paris-noah/Mantis-8M"      # MantisPlus ablation: swap this line
+  local_dir:      "/home/boshra95/mantis_checkpoints/Mantis-8M"
+  seq_len:        3840        # 30s @ 128Hz  (Option D, §3.1)
+  num_patches:    240         # -> patch_window_size 16, kernel 17, as pretrained
+  windowing:      "full_epoch"        # full_epoch | subwindow  (tensor shape, §13.1)
+  pe_mode:        "extrapolate"       # extrapolate | interpolate  (backbone PE buffer only,
+                                      # meaningful only when windowing=full_epoch; §3.1/§3.4)
+  return_transf_layer: -1     # LAST layer — matches SleepFM/OSF/PhysioOmni (§3.3).
+                              # Deliberately NOT the authors' per-checkpoint
+                              # intermediate layer (2 for Mantis-8M, 1 for
+                              # MantisPlus): that does not reproduce in their own
+                              # notebook, would make Mantis the only truncated
+                              # encoder, would halve its LoRA depth vs OSF's 12/12,
+                              # and would make the MantisPlus ablation two-variable.
+  output_token:   "combined"  # cls_token | mean_token | combined. 'combined' =
+                              # cat(cls, mean) — the ROBUST half of the authors'
+                              # recipe (beats cls at 6/6 layers in their notebook).
+  embed_dim:      512         # 512 for 'combined', 256 otherwise. ASSERTED at runtime.
+  chunk_batch_size: 192       # CHANNEL-epochs per forward call = 32 epochs x 6 (§4.4)
+  output_dir:     "/scratch/boshra95/psg/unified/embeddings/mantis_30sec"
+  datasets: [apples, shhs, mros, stages]
+
+# ── HDF5 signal data (fast-channel tree) ─────────────────────────────────────
+data:
+  hdf5_dir: "/scratch/boshra95/psg"
+  epoch_seconds: 30
+  source_hz: 128
+  denormalize: false          # §3.2 — feed the stored z-scored values as-is
+  # Fixed 6-slot canonical map, measured per cohort 2026-08-27 (§2.1/§2.2).
+  # Order here IS the channel axis order of the saved [T, 6, D] array.
+  channel_candidates:
+    EEG:   [C3-M2, EEG, C4-M1, O1-M2]
+    EOG_L: [LOC]
+    EOG_R: [ROC]
+    ECG:   [EKG, ECG-L]
+    EMG:   [CHIN, EMG, LLEG, RLEG]
+    RESP:  [Airflow, Thor, ABD]
+
+# ── Context-window dataset ───────────────────────────────────────────────────
+dataset:
+  embedding_dir: "/scratch/boshra95/psg/unified/embeddings/mantis_30sec"
+  label_source:  "/scratch/boshra95/psg/unified/targets_v2/master_targets.parquet"
+  task_subject_dir: "/scratch/boshra95/psg/unified/targets_v2/task_subjects"
+  sleep_stage_dir:  "/scratch/boshra95/psg"
+  context_lengths: ["30s", "10m", "40m", "80m", "120m", "240m"]
+  task: "sex_binary"
+  task_type: "seq2label"
+  datasets: [apples, shhs, mros, stages]
+  train_split: 0.70
+  val_split:   0.15
+  test_split:  0.15
+  split_seed:  42            # SAME seed as SleepFM phase0_v3
+  windows_per_subject: 5
+  # seq2seq params carried for config-shape parity; inert for the seq2label scope
+  seq2seq_context_mode: "centered"
+  seq2seq_padding_policy: "complete_only"
+  seq2seq_max_padding_fraction: 0.5
+  min_past_denom: 8
+  max_min_past_patches: 40
+  min_recording_patches: 480   # 240m in 30s-epoch units — NOT SleepFM's 2880
+
+# ── Sequence head ────────────────────────────────────────────────────────────
+# hidden_dim/num_layers held at phase0_v3's seq2label values. Only input_dim
+# changes (6 x embed_dim), preserving "architecture held constant, only the
+# encoder changes".
+model:
+  input_dim: 3072            # 6 x 512 (combined @ last, §3.3).
+                             # MUST equal 6 * embedding.embed_dim — asserted at
+                             # dataset-build time against a real .npy's shape.
+  head_type: "lstm"
+  hidden_dim: 128
+  num_layers: 1
+  num_heads: 8
+  dropout: 0.3
+  num_classes: 2
+
+# ── Training — Stage 1 values held identical to OSF/PhysioOmni Stage 1 ───────
+training:
+  epochs: 40
+  lr: 1.0e-4
+  weight_decay: 1.0e-3
+  optimizer: "adamw"    # NOTE: not read — hardcoded to Adam in the fork's run loop.
+  scheduler: "cosine"   # NOTE: not read — hardcoded CosineAnnealingLR.
+  early_stopping_patience: 10
+  device: "cuda"        # NOTE: not read — comes from --cpu / torch.cuda.is_available().
+  mixed_precision: false        # TF32 instead (§4.2), not autocast/fp16
+  class_weights: "auto"
+  early_stopping_monitor: "val_auroc"
+  weighted_sampler: false
+  windows_strategy: "fixed"
+  token_budget_minutes: 240
+  k_max: 50
+  context_lr_overrides:
+    "120m": 5.0e-5
+    "240m": 5.0e-5
+  overfit_epochs: 0
+  save_snapshots: true
+  snapshot_interval: 5
+
+analysis:
+  bootstrap_samples: 0
+
+# REQUIRED — the train_*_context_sweep.py family reads
+# cfg["logging"]["results_dir"] via bare bracket access, no default.
+logging:
+  results_dir: "/scratch/boshra95/psg/unified/results/phase0_mantis"
