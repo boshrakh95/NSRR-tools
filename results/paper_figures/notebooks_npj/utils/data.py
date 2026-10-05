@@ -78,8 +78,8 @@ def load_heatmap_from_collected(collected_root: Path, experiment: str, task: str
     final_results/{experiment}/inference/{task}_{head}/heatmap_df_{split}.csv
     tree — added 2026-09-17 for the TSFM baseline comparison (OSF, PhysioOmni,
     Mantis), which only have `results/collected/{experiment}/analysis.csv`
-    (some in this repo, Mantis's in the separate NSRR-tools-mantis worktree —
-    pass that worktree's `results/collected` as `collected_root` for it).
+    (all in this repo's own `results/collected` since mantis-implementation
+    was merged into main on 2026-10-05).
 
     Purely additive: does not change `load_heatmap` or any other function.
     Confirmed the same fine-grained K-grid already exists in analysis.csv as

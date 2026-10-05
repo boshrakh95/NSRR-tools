@@ -38,7 +38,7 @@ SECONDARY = {"osa_binary_apples_postqc", "depression_extreme_binary"}
 SOURCES = {
     "OSF": Path("/Users/boshra/NSRR-workspace/NSRR-tools/results/collected/phase0_osf/analysis.csv"),
     "PhysioOmni": Path("/Users/boshra/NSRR-workspace/NSRR-tools/results/collected/phase0_physioomni/analysis.csv"),
-    "Mantis": Path("/Users/boshra/NSRR-workspace/NSRR-tools-mantis/results/collected/phase0_mantis/analysis.csv"),
+    "Mantis": Path("/Users/boshra/NSRR-workspace/NSRR-tools/results/collected/phase0_mantis/analysis.csv"),
 }
 
 TASK_ORDER = {
